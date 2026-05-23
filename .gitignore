@@ -1,0 +1,14 @@
+node_modules
+bun.lock
+dist
+*.log
+.DS_Store
+.bun
+
+# Test artefacts
+.tmp
+.fhr-verify
+tests/.tmp
+playwright-report
+test-results
+heaps

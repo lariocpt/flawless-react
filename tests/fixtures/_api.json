@@ -1,0 +1,55 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Fixture", "version": "1.0.0" },
+  "paths": {
+    "/api/users": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "List users",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "default": {
+                    "value": [{ "id": 1, "name": "Alice" }]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Create user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "integer" },
+                    "name": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": { "id": 1, "name": "Alice" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

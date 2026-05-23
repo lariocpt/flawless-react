@@ -1,0 +1,37 @@
+{
+  "name": "finish-him-react",
+  "version": "0.1.0-dev",
+  "description": "Static-analysis-driven React profiling/test-suite generator. Point it at a .tsx (component or composite dashboard) and get back a runnable Playwright suite wired up to react-performance-testing and react-scan.",
+  "type": "module",
+  "author": "Lario Borges",
+  "license": "MIT",
+  "bin": {
+    "finish-him-react": "./bin/finish-him-react"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "dev": "bun src/cli.ts",
+    "lint": "biome lint",
+    "format": "biome format --write",
+    "check": "biome check",
+    "check:fix": "biome check --write"
+  },
+  "dependencies": {
+    "typescript": "^5.6.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@types/bun": "latest",
+    "@types/react": "^18.3.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}
