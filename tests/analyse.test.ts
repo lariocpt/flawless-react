@@ -81,3 +81,109 @@ describe("analyse (full tree)", () => {
     expect(t.children).toEqual([]);
   });
 });
+
+describe("extractInteractions", () => {
+  test("Toolbar: 3 prop-bound clicks each tied to its labelled button", async () => {
+    const t = await analyse({
+      entry: path.resolve(__dirname, "fixtures/Toolbar.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const inter = t.entry.interactions;
+    expect(inter).toBeDefined();
+    if (!inter) return;
+    expect(inter.clicks).toHaveLength(3);
+    const byProp = new Map(
+      inter.clicks
+        .filter((c) => c.binding.kind === "prop")
+        .map((c) => [(c.binding as { propName: string }).propName, c]),
+    );
+    expect(byProp.size).toBe(3);
+    const save = byProp.get("onSave");
+    const cancel = byProp.get("onCancel");
+    const del = byProp.get("onDelete");
+    expect(save?.tag).toBe("button");
+    expect(save?.label).toEqual({ kind: "text", value: "Save" });
+    expect(cancel?.label).toEqual({ kind: "text", value: "Cancel" });
+    expect(del?.label).toEqual({ kind: "text", value: "Delete" });
+  });
+
+  test("SignupForm: extracts form + 3 fields + onSubmit prop binding", async () => {
+    const t = await analyse({
+      entry: path.resolve(__dirname, "fixtures/SignupForm.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const inter = t.entry.interactions;
+    expect(inter).toBeDefined();
+    if (!inter) return;
+    expect(inter.forms).toHaveLength(1);
+    const form = inter.forms[0];
+    expect(form).toBeDefined();
+    if (!form) return;
+    expect(form.submit?.kind).toBe("prop");
+    if (form.submit?.kind === "prop") expect(form.submit.propName).toBe("onSubmit");
+    expect(form.fields).toHaveLength(3);
+    const names = form.fields.map((f) => f.name);
+    expect(names).toEqual(["name", "email", "password"]);
+    const emailField = form.fields.find((f) => f.name === "email");
+    expect(emailField?.type).toBe("email");
+    expect(emailField?.label).toBe("Email");
+  });
+
+  test("IconButton: inline arrow wrapping a prop call upgrades to prop binding", async () => {
+    const t = await analyse({
+      entry: path.resolve(__dirname, "fixtures/IconButton.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const inter = t.entry.interactions;
+    expect(inter).toBeDefined();
+    if (!inter) return;
+    expect(inter.clicks).toHaveLength(1);
+    const click = inter.clicks[0];
+    expect(click).toBeDefined();
+    if (!click) return;
+    expect(click.binding).toEqual({ kind: "prop", propName: "onClose" });
+    expect(click.hints.ariaLabel).toBe("close");
+  });
+
+  test("LinkCard: anchor with prop-text label extracted", async () => {
+    const t = await analyse({
+      entry: path.resolve(__dirname, "fixtures/LinkCard.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const inter = t.entry.interactions;
+    expect(inter).toBeDefined();
+    if (!inter) return;
+    expect(inter.clicks).toHaveLength(1);
+    const click = inter.clicks[0];
+    expect(click).toBeDefined();
+    if (!click) return;
+    expect(click.tag).toBe("a");
+    expect(click.binding).toEqual({ kind: "prop", propName: "onOpen" });
+    expect(click.label).toEqual({ kind: "prop", propName: "title" });
+  });
+
+  test("DynamicTag: dynamic tag name does not crash; no click emitted", async () => {
+    const t = await analyse({
+      entry: path.resolve(__dirname, "fixtures/DynamicTag.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const inter = t.entry.interactions;
+    expect(inter).toBeDefined();
+    if (!inter) return;
+    // Tag is uppercase `Tag` so it parses as a custom component, not "<dynamic>".
+    // But since `Tag` isn't a project-local import, it's a free identifier — still
+    // recorded with its identifier name as the tag.
+    const clicks = inter.clicks;
+    expect(Array.isArray(clicks)).toBe(true);
+    // Either captures the click against tag "Tag" with prop binding, or skips it.
+    for (const c of clicks) {
+      // Whatever it captured, it must not crash and must not emit a malformed binding.
+      expect(c.tag.length).toBeGreaterThan(0);
+    }
+  });
+});

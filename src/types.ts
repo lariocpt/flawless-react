@@ -2,6 +2,57 @@ export type PropPrimitive = string | number | boolean | null;
 export type PropValue = PropPrimitive | PropValue[] | { [k: string]: PropValue };
 export type PropsShape = Record<string, PropValue>;
 
+export type HandlerBinding =
+  | { kind: "prop"; propName: string }
+  | { kind: "local"; localName: string }
+  | { kind: "inline" };
+
+export type LabelSource =
+  | { kind: "text"; value: string }
+  | { kind: "prop"; propName: string }
+  | { kind: "aria"; value: string }
+  | { kind: "testid"; value: string }
+  | { kind: "none" };
+
+export interface ElementHints {
+  testid?: string;
+  ariaLabel?: string;
+  role?: string;
+  id?: string;
+  name?: string;
+  type?: string;
+  placeholder?: string;
+}
+
+export interface ClickHandler {
+  event: string;
+  tag: string;
+  label: LabelSource;
+  hints: ElementHints;
+  binding: HandlerBinding;
+}
+
+export interface FieldInfo {
+  tag: "input" | "select" | "textarea";
+  type?: string;
+  name?: string;
+  id?: string;
+  placeholder?: string;
+  label?: string;
+}
+
+export interface FormInfo {
+  submit: HandlerBinding | undefined;
+  fields: FieldInfo[];
+  hints: { testid?: string; ariaLabel?: string; id?: string };
+}
+
+export interface InteractionInfo {
+  clicks: ClickHandler[];
+  forms: FormInfo[];
+  propUsage: Array<{ propName: string; tag: string }>;
+}
+
 export interface ComponentInfo {
   componentName: string;
   filePath: string;
@@ -10,6 +61,7 @@ export interface ComponentInfo {
   variants: PropsShape[];
   hooks: string[];
   unresolvedProps: string[];
+  interactions?: InteractionInfo;
 }
 
 export interface ComponentTree {

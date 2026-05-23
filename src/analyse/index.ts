@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AnalyseOptions, ComponentInfo, ComponentTree } from "../types.ts";
 import { extractHooks } from "./extractHooks.ts";
+import { extractInteractions } from "./extractInteractions.ts";
 import { extractProps } from "./extractProps.ts";
 import { parseFile } from "./parseFile.ts";
 import { walkChildren } from "./walkChildren.ts";
@@ -24,6 +25,7 @@ async function analyseOne(
     parsed.propsTypeRef,
   );
   const hooks = extractHooks(parsed.bodyNode);
+  const interactions = extractInteractions(parsed.bodyNode, propsShape, unresolvedProps);
 
   const info: ComponentInfo = {
     componentName: parsed.componentName,
@@ -33,6 +35,7 @@ async function analyseOne(
     variants,
     hooks,
     unresolvedProps,
+    interactions,
   };
 
   let children: ComponentTree[] = [];
@@ -58,6 +61,7 @@ async function analyseOne(
 }
 
 export { extractHooks } from "./extractHooks.ts";
+export { extractInteractions } from "./extractInteractions.ts";
 export { extractProps } from "./extractProps.ts";
 export { parseFile } from "./parseFile.ts";
 export { walkChildren } from "./walkChildren.ts";

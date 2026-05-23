@@ -1,4 +1,5 @@
 import path from "node:path";
+import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
 import type { ComponentInfo, ComponentTree, MockRoute, PropsShape } from "../types.ts";
 
 const NL = "\n";
@@ -706,6 +707,8 @@ function spec(c: FlatComponent, variants: number): string {
   const variantsLiteral = JSON.stringify(c.info.variants.slice(0, variants));
   const hooksLiteral = JSON.stringify(c.info.hooks);
   const forcedIterations = Math.max(10, variants * 10);
+  const targetedClick = emitPlaywrightClickTarget(c.info.interactions);
+  const clickButtonExpr = targetedClick ?? `page.locator("button").first()`;
 
   return `import { test, expect } from "@playwright/test";
 import budgets from "../budgets.json" with { type: "json" };
@@ -770,9 +773,9 @@ test(\`\${NAME}: variant matrix\`, async ({ page }, testInfo) => {
 
 test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
   await mountComponent(page, NAME, DEFAULTS);
-  const button = page.locator("button").first();
+  const button = ${clickButtonExpr};
   const hasButton = (await button.count()) > 0;
-  test.skip(!hasButton, "component does not render a button");
+  test.skip(!hasButton, "component does not render a clickable target");
   await bracketScenario(page, "click-rerender", testInfo, async () => {
     await clearScanEvents(page);
     const before = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
@@ -816,12 +819,12 @@ test(\`\${NAME}: forced rerender x \${${forcedIterations}}\`, async ({ page }, t
 // (Memory tab → load → Comparison view).
 test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
   await mountComponent(page, NAME, DEFAULTS);
-  const button = page.locator("button").first();
+  const button = ${clickButtonExpr};
   const hasButton = (await button.count()) > 0;
-  test.skip(!hasButton, "component does not render a button");
+  test.skip(!hasButton, "component does not render a clickable target");
   await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
     const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
-    await repeatClick(page, "button", 50);
+    for (let __i = 0; __i < 50; __i++) await button.click();
     await page.waitForFunction(
       ([n, b]) => {
         const v = window.__profile.getRenderInfo().renderCount as Record<string, { value: number } | undefined>;

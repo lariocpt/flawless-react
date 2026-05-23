@@ -1,12 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { ComponentTree, Finding, RunContext, Task, TaskResult } from "../types.ts";
-import { runEslint } from "./eslintRunner.ts";
+import { runBiome } from "./biomeRunner.ts";
 
 export const a11yScan: Task = {
   id: "a11y",
   label: "Accessibility / web-standards scan",
-  description: "eslint-plugin-jsx-a11y over the targeted tree (file:line)",
+  description: "Biome a11y rules over the targeted tree (file:line)",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
     const reportsDir = path.join(ctx.outDir, "reports");
@@ -17,11 +17,11 @@ export const a11yScan: Task = {
     try {
       for (const tree of ctx.trees) {
         const files = collectFiles(tree);
-        const findings = await runEslint({
+        const findings = await runBiome({
           files,
           source: "a11y",
-          plugins: ["jsx-a11y"],
-          rules: jsxA11yRules(),
+          rules: biomeA11yRules(),
+          categoryPrefix: "lint/a11y",
         });
         const out = path.join(reportsDir, `${tree.entry.componentName}.a11y.json`);
         const report = {
@@ -67,36 +67,39 @@ function collectFiles(tree: ComponentTree): string[] {
   return out;
 }
 
-function jsxA11yRules(): Record<string, "error" | "warn"> {
+function biomeA11yRules(): unknown {
   return {
-    "jsx-a11y/alt-text": "error",
-    "jsx-a11y/anchor-has-content": "error",
-    "jsx-a11y/anchor-is-valid": "warn",
-    "jsx-a11y/aria-activedescendant-has-tabindex": "error",
-    "jsx-a11y/aria-props": "error",
-    "jsx-a11y/aria-proptypes": "error",
-    "jsx-a11y/aria-role": "error",
-    "jsx-a11y/aria-unsupported-elements": "error",
-    "jsx-a11y/click-events-have-key-events": "warn",
-    "jsx-a11y/heading-has-content": "error",
-    "jsx-a11y/html-has-lang": "error",
-    "jsx-a11y/iframe-has-title": "error",
-    "jsx-a11y/img-redundant-alt": "warn",
-    "jsx-a11y/interactive-supports-focus": "warn",
-    "jsx-a11y/label-has-associated-control": "warn",
-    "jsx-a11y/mouse-events-have-key-events": "warn",
-    "jsx-a11y/no-access-key": "error",
-    "jsx-a11y/no-autofocus": "warn",
-    "jsx-a11y/no-distracting-elements": "error",
-    "jsx-a11y/no-interactive-element-to-noninteractive-role": "error",
-    "jsx-a11y/no-noninteractive-element-interactions": "warn",
-    "jsx-a11y/no-noninteractive-element-to-interactive-role": "error",
-    "jsx-a11y/no-noninteractive-tabindex": "warn",
-    "jsx-a11y/no-redundant-roles": "error",
-    "jsx-a11y/no-static-element-interactions": "warn",
-    "jsx-a11y/role-has-required-aria-props": "error",
-    "jsx-a11y/role-supports-aria-props": "error",
-    "jsx-a11y/scope": "error",
-    "jsx-a11y/tabindex-no-positive": "warn",
+    recommended: false,
+    a11y: {
+      noAccessKey: "error",
+      noAriaUnsupportedElements: "error",
+      noAutofocus: "warn",
+      noDistractingElements: "error",
+      noHeaderScope: "error",
+      noInteractiveElementToNoninteractiveRole: "error",
+      noLabelWithoutControl: "warn",
+      noNoninteractiveElementToInteractiveRole: "error",
+      noNoninteractiveTabindex: "warn",
+      noPositiveTabindex: "warn",
+      noRedundantAlt: "warn",
+      noRedundantRoles: "error",
+      useAltText: "error",
+      useAnchorContent: "error",
+      useAriaActivedescendantWithTabindex: "error",
+      useAriaPropsForRole: "error",
+      useButtonType: "error",
+      useFocusableInteractive: "warn",
+      useHeadingContent: "error",
+      useHtmlLang: "error",
+      useIframeTitle: "error",
+      useKeyWithClickEvents: "warn",
+      useKeyWithMouseEvents: "warn",
+      useMediaCaption: "warn",
+      useValidAnchor: "warn",
+      useValidAriaProps: "error",
+      useValidAriaRole: "error",
+      useValidAriaValues: "error",
+      useValidLang: "error",
+    },
   };
 }

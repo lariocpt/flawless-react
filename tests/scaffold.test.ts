@@ -232,3 +232,85 @@ describe("scaffold (file writes)", () => {
     }
   });
 });
+
+describe("renderUnitBrowser interaction-aware", () => {
+  test("Toolbar unit spec targets each named button + asserts handler isolation", async () => {
+    const { renderUnitBrowser } = await import("../src/scaffold-tests/templates.ts");
+    const trees = [
+      await analyse({
+        entry: path.resolve(__dirname, "fixtures/Toolbar.tsx"),
+        depth: 0,
+        includeChildren: false,
+      }),
+    ];
+    const files = renderUnitBrowser({ trees, outDir: await tmpDir(), variants: 3 });
+    const unit = files.find((f) => f.relPath === "unit/Toolbar.test.tsx");
+    expect(unit).toBeDefined();
+    const src = unit?.content ?? "";
+    expect(src).toContain('type Props = React.ComponentProps<typeof Toolbar>');
+    expect(src).toContain('handlers: Record<string, ReturnType<typeof vi.fn>>');
+    expect(src).toContain('merged as unknown as Props');
+    expect(src).toContain('screen.getByRole("button", { name: "Save" })');
+    expect(src).toContain('screen.getByRole("button", { name: "Cancel" })');
+    expect(src).toContain('screen.getByRole("button", { name: "Delete" })');
+    expect(src).toContain('expect(handlers.onSave).toHaveBeenCalled()');
+    expect(src).toContain('expect(handlers.onCancel).not.toHaveBeenCalled()');
+    expect(src).toContain('expect(handlers.onDelete).not.toHaveBeenCalled()');
+    // No fireEvent import (not used).
+    expect(src).not.toContain('fireEvent');
+    // No legacy first-button click fallback path.
+    expect(src).not.toContain('container.querySelector("button")');
+  });
+
+  test("SignupForm unit spec fills labelled inputs + submits + asserts onSubmit", async () => {
+    const { renderUnitBrowser } = await import("../src/scaffold-tests/templates.ts");
+    const trees = [
+      await analyse({
+        entry: path.resolve(__dirname, "fixtures/SignupForm.tsx"),
+        depth: 0,
+        includeChildren: false,
+      }),
+    ];
+    const files = renderUnitBrowser({ trees, outDir: await tmpDir(), variants: 3 });
+    const unit = files.find((f) => f.relPath === "unit/SignupForm.test.tsx");
+    expect(unit).toBeDefined();
+    const src = unit?.content ?? "";
+    expect(src).toContain('screen.getByLabelText("Name")');
+    expect(src).toContain('screen.getByLabelText("Email")');
+    expect(src).toContain('screen.getByLabelText("Password")');
+    expect(src).toContain('expect(handlers.onSubmit).toHaveBeenCalled()');
+  });
+
+  test("IconButton unit spec uses aria-label locator + upgraded prop binding", async () => {
+    const { renderUnitBrowser } = await import("../src/scaffold-tests/templates.ts");
+    const trees = [
+      await analyse({
+        entry: path.resolve(__dirname, "fixtures/IconButton.tsx"),
+        depth: 0,
+        includeChildren: false,
+      }),
+    ];
+    const files = renderUnitBrowser({ trees, outDir: await tmpDir(), variants: 3 });
+    const unit = files.find((f) => f.relPath === "unit/IconButton.test.tsx");
+    expect(unit).toBeDefined();
+    const src = unit?.content ?? "";
+    expect(src).toContain('screen.getByLabelText("close")');
+    expect(src).toContain('expect(handlers.onClose).toHaveBeenCalled()');
+  });
+
+  test("Toolbar perf spec targets a named button (not .first())", async () => {
+    const tree = await analyse({
+      entry: path.resolve(__dirname, "fixtures/Toolbar.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const out = await tmpDir();
+    const files = renderSuite({ tree, outDir: out, variants: 3, report: false });
+    const spec = files.find((f) => f.relPath === "tests/Toolbar.profile.spec.ts");
+    expect(spec).toBeDefined();
+    const sc = spec?.content ?? "";
+    expect(sc).toContain('page.getByRole("button", { name: "Save" })');
+    // Legacy fallback should be gone for components that have interactions.
+    expect(sc).not.toContain('page.locator("button").first()');
+  });
+});
