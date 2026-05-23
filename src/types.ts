@@ -103,6 +103,7 @@ export interface CliArgs {
   inlineSummary: boolean;
   nextjs: string | undefined;
   appResolver: string | undefined;
+  swaggerUrl: string | undefined;
 }
 
 export type NextjsRouter = "app" | "pages";
@@ -112,6 +113,8 @@ export interface NextjsApiRoute {
   methods: string[];
   file: string;
   responseShape?: unknown;
+  /** Per-method response body (from OpenAPI example/schema). */
+  responseBodies?: Record<string, unknown>;
 }
 
 export interface NextjsContext {

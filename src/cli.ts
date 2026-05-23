@@ -3,6 +3,7 @@ import path from "node:path";
 import { analyse } from "./analyse/index.ts";
 import { emitNextjsMocks } from "./nextjs/emit.ts";
 import { detectNextjs, mergeIntoNextPackageJson } from "./nextjs/detect.ts";
+import { fetchLiveSwagger } from "./nextjs/liveSpec.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printFindings, printSummaryTable, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import { runGeneratedTests } from "./runner/runTests.ts";
@@ -43,6 +44,11 @@ Options:
                          everything under <nextRoot>/flawless/.
   --app-resolver <file>  Override the auto-detected Next.js app resolver (alias for --provider
                          in Next.js mode; the file must default-export a wrapper component).
+  --swagger-url <url>    Fetch an OpenAPI spec from a live URL (e.g.
+                         http://localhost:3000/api/docs from next-swagger-doc) and prefer it
+                         over static AST inference. In --nextjs mode the default URL above is
+                         tried automatically with a short timeout; pass --swagger-url to
+                         force a specific URL or skip the auto-try via --swagger-url=off.
   --depth N              Levels of locally-imported children to follow (default 3)
   --variants N           Variant rows per component (default 5)
   --include-children     Walk children (default true). Pass --include-children=false to skip.
@@ -81,6 +87,7 @@ export function parseArgs(argv: string[]): CliArgs {
   let inlineSummary = true;
   let nextjs: string | undefined;
   let appResolver: string | undefined;
+  let swaggerUrl: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -143,6 +150,12 @@ export function parseArgs(argv: string[]): CliArgs {
       appResolver = v;
     } else if (a.startsWith("--app-resolver=")) {
       appResolver = a.slice("--app-resolver=".length);
+    } else if (a === "--swagger-url") {
+      const v = argv[++i];
+      if (v === undefined) throw new Error("--swagger-url requires a value");
+      swaggerUrl = v;
+    } else if (a.startsWith("--swagger-url=")) {
+      swaggerUrl = a.slice("--swagger-url=".length);
     } else if (a === "--no-interactive") {
       noInteractive = true;
     } else if (a === "--run-tests") {
@@ -191,6 +204,7 @@ export function parseArgs(argv: string[]): CliArgs {
     inlineSummary,
     nextjs,
     appResolver,
+    swaggerUrl,
   };
 }
 
@@ -265,6 +279,30 @@ export async function main(argv: string[]): Promise<void> {
     process.stdout.write(
       `nextjs: ${nextCtx.root} (router=${nextCtx.router}, api-routes=${nextCtx.apiRoutes.length}, app-resolver=${nextCtx.appResolver ?? "<none>"})\n`,
     );
+
+    if (args.swaggerUrl !== "off") {
+      const live = await fetchLiveSwagger(args.swaggerUrl);
+      if (live.ok && live.routes) {
+        const byPath = new Map(live.routes.map((r) => [r.path, r] as const));
+        for (const ar of nextCtx.apiRoutes) {
+          const match = byPath.get(ar.path);
+          if (match) {
+            ar.responseBodies = match.responseBodies;
+            for (const m of match.methods) {
+              if (!ar.methods.includes(m)) ar.methods.push(m);
+            }
+          }
+        }
+        for (const lr of live.routes) {
+          if (!nextCtx.apiRoutes.some((ar) => ar.path === lr.path)) nextCtx.apiRoutes.push(lr);
+        }
+        process.stdout.write(
+          `nextjs: enriched routes from live OpenAPI at ${live.url} (paths=${live.routes.length})\n`,
+        );
+      } else if (args.swaggerUrl !== undefined) {
+        process.stderr.write(`nextjs: live spec at ${live.url} unavailable (${live.error}); using static AST output\n`);
+      }
+    }
   }
 
   outDir = path.resolve(outDir ?? defaultOutDir());
