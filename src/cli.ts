@@ -266,6 +266,7 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   let nextCtx: NextjsContext | undefined;
+  let liveSpec: unknown;
   let providerOverride = args.provider ?? args.appResolver;
   if (args.nextjs !== undefined) {
     try {
@@ -296,6 +297,7 @@ export async function main(argv: string[]): Promise<void> {
         for (const lr of live.routes) {
           if (!nextCtx.apiRoutes.some((ar) => ar.path === lr.path)) nextCtx.apiRoutes.push(lr);
         }
+        liveSpec = live.rawSpec;
         process.stdout.write(
           `nextjs: enriched routes from live OpenAPI at ${live.url} (paths=${live.routes.length})\n`,
         );
@@ -376,7 +378,7 @@ export async function main(argv: string[]): Promise<void> {
 
   if (nextCtx) {
     try {
-      const nm = await emitNextjsMocks(nextCtx, outDir);
+      const nm = await emitNextjsMocks(nextCtx, outDir, { liveSpec });
       process.stdout.write(
         `nextjs: wrote ${nm.written.length} mock file(s) under ${path.relative(process.cwd(), outDir)}/mocks/\n`,
       );

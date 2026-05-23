@@ -8,6 +8,7 @@ export interface LiveSpecResult {
   ok: boolean;
   url: string;
   routes: NextjsApiRoute[] | undefined;
+  rawSpec: unknown;
   error?: string;
 }
 
@@ -25,11 +26,11 @@ export async function fetchLiveSwagger(
       clearTimeout(timer);
     }
     if (!res.ok) {
-      return { ok: false, url, routes: undefined, error: `HTTP ${res.status}` };
+      return { ok: false, url, routes: undefined, rawSpec: undefined, error: `HTTP ${res.status}` };
     }
     const ct = res.headers.get("content-type") ?? "";
     if (!ct.includes("application/json")) {
-      return { ok: false, url, routes: undefined, error: `unexpected content-type: ${ct}` };
+      return { ok: false, url, routes: undefined, rawSpec: undefined, error: `unexpected content-type: ${ct}` };
     }
     const spec = (await res.json()) as Parameters<typeof extractRoutes>[0];
     const mockRoutes = extractRoutes(spec);
@@ -50,8 +51,8 @@ export async function fetchLiveSwagger(
         });
       }
     }
-    return { ok: true, url, routes: [...grouped.values()] };
+    return { ok: true, url, routes: [...grouped.values()], rawSpec: spec };
   } catch (err) {
-    return { ok: false, url, routes: undefined, error: (err as Error).message };
+    return { ok: false, url, routes: undefined, rawSpec: undefined, error: (err as Error).message };
   }
 }

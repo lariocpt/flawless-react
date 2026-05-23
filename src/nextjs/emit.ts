@@ -11,9 +11,15 @@ export interface EmitNextjsResult {
   handlersPath: string;
 }
 
+export interface EmitNextjsOptions {
+  /** When present, written verbatim to swagger.json instead of buildSwagger(routes). */
+  liveSpec?: unknown;
+}
+
 export async function emitNextjsMocks(
   ctx: NextjsContext,
   outDir: string,
+  opts: EmitNextjsOptions = {},
 ): Promise<EmitNextjsResult> {
   const mocksDir = path.join(outDir, "mocks");
   await mkdir(mocksDir, { recursive: true });
@@ -26,7 +32,7 @@ export async function emitNextjsMocks(
 
   const written: string[] = [];
 
-  const swagger = buildSwagger(ctx.apiRoutes, path.basename(ctx.root));
+  const swagger = opts.liveSpec ?? buildSwagger(ctx.apiRoutes, path.basename(ctx.root));
   await Bun.write(swaggerPath, `${JSON.stringify(swagger, null, 2)}\n`);
   written.push(swaggerPath);
 
