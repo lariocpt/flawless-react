@@ -60,6 +60,27 @@ bun run test:headed    # visible Chromium
 
 You should see Playwright report five tests per analysed component (`mounts at defaults`, `variant matrix`, `click rerender`, `forced rerender × N`, `stress-click-rerender × 50`) and console lines with timing summaries. After the run, `./heaps/` contains `.heapsnapshot` artefacts for every stress scenario, loadable in Chrome DevTools' Memory tab.
 
+## Next.js mode
+
+Pass `--nextjs [<path>]` to target an existing Next.js project. Pass nothing — or `--nextjs .` — to use the current directory.
+
+```bash
+cd my-next-app
+bunx flawless-react app/page.tsx --nextjs
+```
+
+In this mode flawless:
+
+- detects whether you're on the **App Router** (`app/`) or **Pages Router** (`pages/`)
+- auto-uses `app/layout.tsx` (or `pages/_app.tsx`) as the test-time provider, so context/css carries through
+- walks `app/api/**/route.ts` (or `pages/api/**`) and emits `flawless/swagger.json` + `flawless/mocks/handlers.ts` (MSW)
+- wires MSW into the host bundle for Playwright tests **and** into Vitest's setup for jsdom-based unit tests, so the same handlers intercept `fetch` at every layer
+- merges its dev deps (`vitest`, `msw`, `@testing-library/*`, `@playwright/test`, …) into your project's `package.json` as `devDependencies`
+- adds `flawless:unit` / `flawless:perf` / `flawless:browser` scripts so you can `bun run flawless:unit` etc. from your project root
+- writes the runnable harness to **`<project-root>/flawless/`** — no separate npm project, no duplicated deps
+
+Override the auto-detected app resolver with `--app-resolver <file>` if you have a custom wrapper. The generated `flawless/mocks/handlers.ts` is yours to edit — flawless won't overwrite it once it exists, so swap the empty `HttpResponse.json({})` bodies for realistic fixtures.
+
 ## CLI reference
 
 ```text

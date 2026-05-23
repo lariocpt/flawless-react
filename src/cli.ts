@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { analyse } from "./analyse/index.ts";
+import { emitNextjsMocks } from "./nextjs/emit.ts";
+import { detectNextjs, mergeIntoNextPackageJson } from "./nextjs/detect.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printFindings, printSummaryTable, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import { runGeneratedTests } from "./runner/runTests.ts";
@@ -8,6 +10,7 @@ import { TASKS, findTask } from "./tasks/index.ts";
 import type {
   CliArgs,
   ComponentTree,
+  NextjsContext,
   PropsShape,
   RunContext,
   Task,
@@ -33,6 +36,13 @@ Options:
   --run-tests            After generating, run the produced test suites.
   --no-inline-summary    Don't drop <Component>.flawless.json next to each source file.
   --json                 Print machine-readable JSON summary to stdout.
+  --nextjs [<path>]      Treat <path> (or cwd) as a Next.js project: detect router style,
+                         emit MSW handlers + swagger from app/api or pages/api, auto-set the
+                         app resolver from app/layout.tsx or pages/_app.tsx, merge generated
+                         deps into the project's package.json (devDependencies) and place
+                         everything under <nextRoot>/flawless/.
+  --app-resolver <file>  Override the auto-detected Next.js app resolver (alias for --provider
+                         in Next.js mode; the file must default-export a wrapper component).
   --depth N              Levels of locally-imported children to follow (default 3)
   --variants N           Variant rows per component (default 5)
   --include-children     Walk children (default true). Pass --include-children=false to skip.
@@ -69,6 +79,8 @@ export function parseArgs(argv: string[]): CliArgs {
   let json = false;
   let runTests = false;
   let inlineSummary = true;
+  let nextjs: string | undefined;
+  let appResolver: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -116,6 +128,21 @@ export function parseArgs(argv: string[]): CliArgs {
       tasks = parseTaskList(v);
     } else if (a.startsWith("--tasks=")) {
       tasks = parseTaskList(a.slice("--tasks=".length));
+    } else if (a === "--nextjs") {
+      const peek = argv[i + 1];
+      if (peek !== undefined && !peek.startsWith("-")) {
+        nextjs = argv[++i] as string;
+      } else {
+        nextjs = ".";
+      }
+    } else if (a.startsWith("--nextjs=")) {
+      nextjs = a.slice("--nextjs=".length) || ".";
+    } else if (a === "--app-resolver") {
+      const v = argv[++i];
+      if (v === undefined) throw new Error("--app-resolver requires a file path");
+      appResolver = v;
+    } else if (a.startsWith("--app-resolver=")) {
+      appResolver = a.slice("--app-resolver=".length);
     } else if (a === "--no-interactive") {
       noInteractive = true;
     } else if (a === "--run-tests") {
@@ -162,6 +189,8 @@ export function parseArgs(argv: string[]): CliArgs {
     json,
     runTests,
     inlineSummary,
+    nextjs,
+    appResolver,
   };
 }
 
@@ -222,6 +251,22 @@ export async function main(argv: string[]): Promise<void> {
     taskIds = ["perf-harness"];
   }
 
+  let nextCtx: NextjsContext | undefined;
+  let providerOverride = args.provider ?? args.appResolver;
+  if (args.nextjs !== undefined) {
+    try {
+      nextCtx = await detectNextjs(args.nextjs);
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+      process.exit(2);
+    }
+    if (outDir === undefined) outDir = path.join(nextCtx.root, "flawless");
+    if (providerOverride === undefined) providerOverride = nextCtx.appResolver;
+    process.stdout.write(
+      `nextjs: ${nextCtx.root} (router=${nextCtx.router}, api-routes=${nextCtx.apiRoutes.length}, app-resolver=${nextCtx.appResolver ?? "<none>"})\n`,
+    );
+  }
+
   outDir = path.resolve(outDir ?? defaultOutDir());
 
   const files = await expandGlob(pattern);
@@ -263,10 +308,11 @@ export async function main(argv: string[]): Promise<void> {
     variants: args.variants,
     force: args.force,
     report: args.report,
-    provider: args.provider,
+    provider: providerOverride,
     apiSpec: args.apiSpec,
     inlineSummary: args.inlineSummary,
     json: args.json,
+    nextjs: nextCtx,
   };
 
   const results: TaskResult[] = [];
@@ -287,6 +333,40 @@ export async function main(argv: string[]): Promise<void> {
         summary: "task threw",
         error: (err as Error).message,
       });
+    }
+  }
+
+  if (nextCtx) {
+    try {
+      const nm = await emitNextjsMocks(nextCtx, outDir);
+      process.stdout.write(
+        `nextjs: wrote ${nm.written.length} mock file(s) under ${path.relative(process.cwd(), outDir)}/mocks/\n`,
+      );
+      await mergeIntoNextPackageJson(
+        nextCtx.root,
+        {},
+        {
+          msw: "^2.6.0",
+          vitest: "^2.1.0",
+          jsdom: "^25.0.0",
+          "@testing-library/react": "^16.0.0",
+          "@testing-library/user-event": "^14.5.0",
+          "@testing-library/jest-dom": "^6.5.0",
+          "@playwright/test": "^1.49.0",
+          "react-scan": "^0.4.3",
+        },
+        {
+          "flawless:unit": `vitest run --root ${path.relative(nextCtx.root, outDir)}`,
+          "flawless:perf": `playwright test --config ${path.relative(nextCtx.root, outDir)}/playwright.config.ts ${path.relative(nextCtx.root, outDir)}/tests`,
+          "flawless:browser": `playwright test --config ${path.relative(nextCtx.root, outDir)}/browser/playwright.config.ts`,
+        },
+      );
+      process.stdout.write(
+        `nextjs: merged dev deps + flawless:* scripts into ${path.join(nextCtx.root, "package.json")}\n`,
+      );
+    } catch (err) {
+      anyFailed = true;
+      process.stderr.write(`nextjs emit failed: ${(err as Error).message}\n`);
     }
   }
 

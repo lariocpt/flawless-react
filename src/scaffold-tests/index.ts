@@ -8,6 +8,8 @@ export interface ScaffoldUnitBrowserOptions {
   trees: ComponentTree[];
   outDir: string;
   variants: number;
+  skipInnerPackageJson?: boolean;
+  mswSetup?: boolean;
 }
 
 export async function scaffoldUnitBrowser(opts: ScaffoldUnitBrowserOptions): Promise<string[]> {
@@ -23,8 +25,10 @@ export async function scaffoldUnitBrowser(opts: ScaffoldUnitBrowserOptions): Pro
     written.push(abs);
   }
 
-  await mergePackageJson(outDir);
-  written.push(path.join(outDir, "package.json"));
+  if (!opts.skipInnerPackageJson) {
+    await mergePackageJson(outDir);
+    written.push(path.join(outDir, "package.json"));
+  }
   return written;
 }
 

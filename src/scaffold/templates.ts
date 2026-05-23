@@ -23,26 +23,31 @@ export interface RenderOptions {
   providerImportPath?: string;
   mockRoutes?: MockRoute[];
   suiteName?: string;
+  nextjsHost?: boolean;
+  mswSetup?: boolean;
 }
 
 export function renderSuite(opts: RenderOptions): RenderedFile[] {
   const trees: ComponentTree[] = [opts.tree, ...(opts.extraTrees ?? [])];
   const flat = flattenMany(trees, opts.outDir);
   const hasMock = Array.isArray(opts.mockRoutes);
+  const useMsw = Boolean(opts.mswSetup);
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
   const files: RenderedFile[] = [
-    { relPath: "package.json", content: pkgJson(suiteName) },
-    { relPath: "tsconfig.json", content: tsConfig() },
     { relPath: "playwright.config.ts", content: playwrightConfig(hasMock) },
     { relPath: "host/server.ts", content: hostServer(hasMock) },
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
-    { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath) },
+    { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath, useMsw) },
     { relPath: "tests/_helpers.ts", content: helpers() },
     { relPath: "tests/_heap.ts", content: heapHelper() },
     { relPath: "budgets.json", content: budgets(flat, opts.variants) },
     { relPath: "README.md", content: readme(suiteName, flat.map((c) => c.info.componentName)) },
   ];
+  if (!opts.nextjsHost) {
+    files.unshift({ relPath: "tsconfig.json", content: tsConfig() });
+    files.unshift({ relPath: "package.json", content: pkgJson(suiteName) });
+  }
   for (const c of flat) {
     files.push({
       relPath: `tests/${c.info.componentName}.profile.spec.ts`,
@@ -315,7 +320,7 @@ export {};
 `;
 }
 
-function hostMain(flat: FlatComponent[], providerImportPath?: string): string {
+function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup = false): string {
   const imports = flat
     .map((c) => `import { ${componentImportSpec(c.info.componentName)} } from "${c.importPath}";`)
     .join(NL);
@@ -328,12 +333,17 @@ function hostMain(flat: FlatComponent[], providerImportPath?: string): string {
     ? `import AppProvider from ${JSON.stringify(providerImportPath)};\n`
     : "";
   const wrapBody = providerImportPath ? "createElement(AppProvider as never, null, tree)" : "tree";
+  const mswImport = mswSetup ? `import { startMockWorker } from "../mocks/browser.ts";\n` : "";
+  const mswBoot = mswSetup
+    ? `\n// Boot MSW before any component mounts so fetch() in render-time effects is intercepted.\nawait startMockWorker();\n`
+    : "";
 
   return `import "./_polyfill.ts";
 import { createElement, Profiler, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { scan } from "react-scan";
-${providerImport}${imports}
+${mswImport}${providerImport}${imports}
+${mswBoot}
 
 // We measure renders with React's built-in Profiler rather than
 // react-performance-testing's patching: the latter only instruments the

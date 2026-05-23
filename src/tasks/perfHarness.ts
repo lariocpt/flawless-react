@@ -29,6 +29,8 @@ export const perfHarness: Task = {
       report: ctx.report,
       provider: ctx.provider,
       apiSpec: ctx.apiSpec,
+      nextjsHost: ctx.nextjs !== undefined,
+      mswSetup: ctx.nextjs !== undefined,
     });
     const components = [first, ...rest].map((t) => t.entry.componentName);
     return {

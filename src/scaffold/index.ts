@@ -26,6 +26,8 @@ export async function scaffold(tree: ComponentTree, opts: ScaffoldOptions): Prom
     report: opts.report,
     providerImportPath,
     mockRoutes,
+    nextjsHost: opts.nextjsHost,
+    mswSetup: opts.mswSetup,
   });
 
   const written: string[] = [];

@@ -21,6 +21,8 @@ export const unitAndBrowser: Task = {
       trees: ctx.trees,
       outDir: ctx.outDir,
       variants: ctx.variants,
+      skipInnerPackageJson: ctx.nextjs !== undefined,
+      mswSetup: ctx.nextjs !== undefined,
     });
     const names = ctx.trees.flatMap((t) => collectNames(t));
     return {

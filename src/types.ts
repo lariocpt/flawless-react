@@ -39,6 +39,8 @@ export interface ScaffoldOptions {
   apiSpec: string | undefined;
   extraTrees?: ComponentTree[];
   suiteName?: string;
+  nextjsHost?: boolean;
+  mswSetup?: boolean;
 }
 
 export type TaskId = "perf-harness" | "unit-browser" | "perf-static" | "a11y" | "react-rules";
@@ -72,6 +74,7 @@ export interface RunContext {
   apiSpec: string | undefined;
   inlineSummary: boolean;
   json: boolean;
+  nextjs: NextjsContext | undefined;
 }
 
 export interface Task {
@@ -98,4 +101,22 @@ export interface CliArgs {
   json: boolean;
   runTests: boolean;
   inlineSummary: boolean;
+  nextjs: string | undefined;
+  appResolver: string | undefined;
+}
+
+export type NextjsRouter = "app" | "pages";
+
+export interface NextjsApiRoute {
+  path: string;
+  methods: string[];
+  file: string;
+  responseShape?: unknown;
+}
+
+export interface NextjsContext {
+  root: string;
+  router: NextjsRouter;
+  appResolver: string | undefined;
+  apiRoutes: NextjsApiRoute[];
 }

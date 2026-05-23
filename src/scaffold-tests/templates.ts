@@ -15,6 +15,7 @@ export interface UnitBrowserRenderOptions {
   trees: ComponentTree[];
   outDir: string;
   variants: number;
+  mswSetup?: boolean;
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
@@ -22,7 +23,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const browserFlat = flattenForDir(opts.trees, opts.outDir, "browser");
   const files: RenderedFile[] = [
     { relPath: "vitest.config.ts", content: vitestConfig() },
-    { relPath: "setup.ts", content: setupTs() },
+    { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) },
     { relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() },
   ];
   for (const c of unitFlat) {
@@ -74,8 +75,20 @@ export default defineConfig({
 `;
 }
 
-function setupTs(): string {
+function setupTs(mswSetup: boolean): string {
+  if (!mswSetup) {
+    return `import "@testing-library/jest-dom/vitest";
+`;
+  }
   return `import "@testing-library/jest-dom/vitest";
+import { afterAll, afterEach, beforeAll } from "vitest";
+import { server } from "./mocks/node.ts";
+
+// MSW node server intercepts fetch() inside jsdom — same handlers your browser
+// suite uses, so unit and browser layers agree on what /api/* returns.
+beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 `;
 }
 
