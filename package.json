@@ -1,12 +1,12 @@
 {
-  "name": "finish-him-react",
-  "version": "0.1.0-dev",
-  "description": "Static-analysis-driven React profiling/test-suite generator. Point it at a .tsx (component or composite dashboard) and get back a runnable Playwright suite wired up to react-performance-testing and react-scan.",
+  "name": "flawless-react",
+  "version": "0.2.0-dev",
+  "description": "Multi-task quality kit for React components: scaffolds Playwright perf harness + Vitest unit + browser tests, runs static perf analysis, accessibility scan (ESLint+jsx-a11y), and Biome-driven React correctness rules. Point it at a .tsx file or glob and pick what to run.",
   "type": "module",
   "author": "Lario Borges",
   "license": "MIT",
   "bin": {
-    "finish-him-react": "./bin/finish-him-react"
+    "flawless-react": "./bin/flawless-react"
   },
   "files": [
     "bin",
@@ -24,6 +24,12 @@
     "check:fix": "biome check --write"
   },
   "dependencies": {
+    "@clack/prompts": "^0.7.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-jsx-a11y": "^6.10.0",
+    "eslint-plugin-react": "^7.37.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
     "typescript": "^5.6.0"
   },
   "devDependencies": {

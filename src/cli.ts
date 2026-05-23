@@ -1,31 +1,57 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { analyse } from "./analyse/index.ts";
-import { scaffold } from "./scaffold/index.ts";
-import type { CliArgs, PropsShape } from "./types.ts";
+import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
+import { printFindings, printSummaryTable, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
+import { runGeneratedTests } from "./runner/runTests.ts";
+import { TASKS, findTask } from "./tasks/index.ts";
+import type {
+  CliArgs,
+  ComponentTree,
+  PropsShape,
+  RunContext,
+  Task,
+  TaskId,
+  TaskResult,
+} from "./types.ts";
 
-const HELP = `finish-him-react — static-analysis-driven React profiling/test-suite generator
+const HELP = `flawless-react — multi-task quality kit for React components
 
 Usage:
-  finish-him-react <entry.tsx> [options]
+  flawless-react <entry-or-glob> [options]
+  flawless-react                       (interactive menu)
+
+Positional:
+  <entry-or-glob>      A .tsx file path or a glob (e.g. "src/**/*.tsx").
+                       Each matched file is analysed as its own entry component.
 
 Options:
-  --out <dir>          Output directory (default: <cwd>/<ComponentName>.profile)
-  --depth N            Levels of locally-imported children to follow (default 3)
-  --variants N         Variant rows in the test matrix (default 5)
-  --include-children   Walk children (default true). Pass --include-children=false to skip.
-  --props '<json>'     Override the synthesized default props (merged on top of static parse)
-  --provider <file>    Path to a .tsx file that default-exports a Provider wrapper component.
-                       The host will wrap every mounted component inside it — use this for
-                       Redux, React Query, theming, or any other context-based stores.
-  --api <spec>         Path to an OpenAPI/Swagger JSON or YAML file. Scaffolds a standalone
-                       Bun mock server (mock/server.ts) with static route handlers generated
-                       from the spec's example responses. The host server proxies all
-                       non-asset requests to the mock server automatically.
-  --force              Overwrite an existing output dir
-  --report             Emit scripts/report.mjs to aggregate run output
-  -h, --help           Show this help
-  -V, --version        Show version
+  --out <dir>            Output directory (default: ./.flawless)
+  --tasks <csv>          Comma-separated task ids to run (skip the interactive menu).
+                         Available: perf-harness, unit-browser, perf-static, a11y, react-rules
+  --no-interactive       Never prompt; require a positional + --tasks.
+  --run-tests            After generating, run the produced test suites.
+  --no-inline-summary    Don't drop <Component>.flawless.json next to each source file.
+  --json                 Print machine-readable JSON summary to stdout.
+  --depth N              Levels of locally-imported children to follow (default 3)
+  --variants N           Variant rows per component (default 5)
+  --include-children     Walk children (default true). Pass --include-children=false to skip.
+  --props '<json>'       Override the synthesised default props for the first entry.
+  --provider <file>      Path to a .tsx file default-exporting a Provider wrapper.
+  --api <spec>           Path to an OpenAPI/Swagger spec; scaffolds a mock server.
+  --force                Overwrite an existing output dir.
+  --report               Emit scripts/report.mjs to aggregate run output.
+  -h, --help             Show this help.
+  -V, --version          Show version.
 `;
+
+const VALID_TASK_IDS: ReadonlySet<TaskId> = new Set<TaskId>([
+  "perf-harness",
+  "unit-browser",
+  "perf-static",
+  "a11y",
+  "react-rules",
+]);
 
 export function parseArgs(argv: string[]): CliArgs {
   let entry: string | undefined;
@@ -38,6 +64,11 @@ export function parseArgs(argv: string[]): CliArgs {
   let propsOverride: PropsShape | undefined;
   let provider: string | undefined;
   let apiSpec: string | undefined;
+  let tasks: TaskId[] | undefined;
+  let noInteractive = false;
+  let json = false;
+  let runTests = false;
+  let inlineSummary = true;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -79,6 +110,20 @@ export function parseArgs(argv: string[]): CliArgs {
       apiSpec = v;
     } else if (a.startsWith("--api=")) {
       apiSpec = a.slice("--api=".length);
+    } else if (a === "--tasks") {
+      const v = argv[++i];
+      if (v === undefined) throw new Error("--tasks requires a csv value");
+      tasks = parseTaskList(v);
+    } else if (a.startsWith("--tasks=")) {
+      tasks = parseTaskList(a.slice("--tasks=".length));
+    } else if (a === "--no-interactive") {
+      noInteractive = true;
+    } else if (a === "--run-tests") {
+      runTests = true;
+    } else if (a === "--no-inline-summary") {
+      inlineSummary = false;
+    } else if (a === "--json") {
+      json = true;
     } else if (a === "--force") {
       force = true;
     } else if (a === "--report") {
@@ -87,7 +132,7 @@ export function parseArgs(argv: string[]): CliArgs {
       process.stdout.write(HELP);
       process.exit(0);
     } else if (a === "-V" || a === "--version") {
-      process.stdout.write("finish-him-react 0.1.0-dev\n");
+      process.stdout.write("flawless-react 0.2.0-dev\n");
       process.exit(0);
     } else if (a.startsWith("--")) {
       throw new Error(`unknown flag: ${a}`);
@@ -98,9 +143,6 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  if (entry === undefined) {
-    throw new Error("missing required entry .tsx path. See --help.");
-  }
   if (!Number.isFinite(depth) || depth < 0) throw new Error(`--depth must be >= 0`);
   if (!Number.isFinite(variants) || variants < 0) throw new Error(`--variants must be >= 0`);
 
@@ -115,13 +157,31 @@ export function parseArgs(argv: string[]): CliArgs {
     propsOverride,
     provider,
     apiSpec,
+    tasks,
+    noInteractive,
+    json,
+    runTests,
+    inlineSummary,
   };
 }
 
-function defaultOutDir(entry: string, componentName: string): string {
-  const cwd = process.cwd();
-  void entry;
-  return path.join(cwd, `${componentName}.profile`);
+function parseTaskList(s: string): TaskId[] {
+  const parts = s
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const ids: TaskId[] = [];
+  for (const p of parts) {
+    if (!VALID_TASK_IDS.has(p as TaskId)) {
+      throw new Error(`unknown task id: ${p}. Available: ${[...VALID_TASK_IDS].join(", ")}`);
+    }
+    ids.push(p as TaskId);
+  }
+  return ids;
+}
+
+function defaultOutDir(): string {
+  return path.join(process.cwd(), ".flawless");
 }
 
 export async function main(argv: string[]): Promise<void> {
@@ -133,42 +193,140 @@ export async function main(argv: string[]): Promise<void> {
     process.exit(2);
   }
 
-  const tree = await analyse({
-    entry: args.entry,
-    depth: args.depth,
-    includeChildren: args.includeChildren,
-  });
+  let pattern = args.entry;
+  let outDir = args.out;
+  let taskIds = args.tasks;
 
-  if (args.propsOverride) {
-    tree.entry.propsShape = { ...tree.entry.propsShape, ...args.propsOverride };
+  const wantInteractive = !args.noInteractive && pattern === undefined && process.stdin.isTTY;
+  if (wantInteractive) {
+    const picked = await promptInteractive({
+      taskChoices: TASKS.map((t) => ({ id: t.id, label: t.label, description: t.description })),
+      defaultTaskIds: ["perf-harness", "perf-static"],
+    });
+    if (!picked) {
+      process.exit(0);
+    }
+    pattern = picked.pattern;
+    outDir = picked.outDir;
+    taskIds = picked.tasks;
   }
 
-  if (tree.entry.unresolvedProps.length > 0 && !args.propsOverride) {
+  if (pattern === undefined) {
     process.stderr.write(
-      `warning: could not synthesize defaults for props: ${tree.entry.unresolvedProps.join(", ")}\n` +
-        `  edit the generated tests' DEFAULTS constant, or re-run with --props '<json>'.\n`,
+      "missing entry path or glob. Pass a .tsx path, a glob, or run in a TTY for the interactive menu. See --help.\n",
     );
+    process.exit(2);
   }
 
-  const outDir = args.out ?? defaultOutDir(args.entry, tree.entry.componentName);
+  if (taskIds === undefined || taskIds.length === 0) {
+    taskIds = ["perf-harness"];
+  }
 
-  const written = await scaffold(tree, {
+  outDir = path.resolve(outDir ?? defaultOutDir());
+
+  const files = await expandGlob(pattern);
+  if (files.length === 0) {
+    process.stderr.write(`no files matched: ${pattern}\n`);
+    process.exit(2);
+  }
+
+  const trees: ComponentTree[] = [];
+  for (const file of files) {
+    try {
+      const tree = await analyse({
+        entry: file,
+        depth: args.depth,
+        includeChildren: args.includeChildren,
+      });
+      trees.push(tree);
+    } catch (err) {
+      process.stderr.write(`warning: skipping ${file}: ${(err as Error).message}\n`);
+    }
+  }
+  if (trees.length === 0) {
+    process.stderr.write("no analysable components found\n");
+    process.exit(2);
+  }
+
+  const firstTree = trees[0];
+  if (firstTree && args.propsOverride) {
+    firstTree.entry.propsShape = { ...firstTree.entry.propsShape, ...args.propsOverride };
+  }
+
+  const selected = taskIds
+    .map((id) => findTask(id))
+    .filter((t): t is Task => Boolean(t));
+
+  const ctx: RunContext = {
+    trees,
     outDir,
     variants: args.variants,
     force: args.force,
     report: args.report,
     provider: args.provider,
     apiSpec: args.apiSpec,
-  });
-
-  const summary = {
-    outDir,
-    componentName: tree.entry.componentName,
-    children: tree.children.map((c) => c.entry.componentName),
-    hooks: tree.entry.hooks,
-    props: tree.entry.propsShape,
-    filesWritten: written.length,
-    nextSteps: [`cd ${outDir}`, "bun install", "bun run test"],
+    inlineSummary: args.inlineSummary,
+    json: args.json,
   };
-  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+
+  const results: TaskResult[] = [];
+  let anyFailed = false;
+  for (const task of selected) {
+    try {
+      const r = await task.run(ctx);
+      results.push(r);
+      if (!r.ok) anyFailed = true;
+      printFindings(r.findings);
+    } catch (err) {
+      anyFailed = true;
+      results.push({
+        id: task.id,
+        ok: false,
+        outputs: [],
+        findings: [],
+        summary: "task threw",
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  if (args.inlineSummary) {
+    await writeInlineSummaries(trees, results, outDir);
+  }
+  await writeSummaryJson(outDir, results);
+  printSummaryTable(results);
+
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify({ outDir, results }, null, 2)}\n`);
+  }
+
+  const wantToRunTests =
+    !anyFailed &&
+    selected.some((t) => t.id === "perf-harness" || t.id === "unit-browser") &&
+    (args.runTests || (wantInteractive && (await confirmRunTests())));
+
+  if (wantToRunTests) {
+    await runGeneratedTests(outDir, selected.map((t) => t.id));
+  }
+
+  if (wantInteractive) {
+    await outro(anyFailed ? "done (with failures)" : "done");
+  }
+
+  process.exit(anyFailed ? 1 : 0);
+}
+
+async function expandGlob(pattern: string): Promise<string[]> {
+  const abs = path.resolve(pattern);
+  if (existsSync(abs)) return [abs];
+  const hasGlobChar = /[*?[\]{}]/.test(pattern);
+  if (!hasGlobChar) {
+    return [];
+  }
+  const glob = new Bun.Glob(pattern);
+  const out: string[] = [];
+  for await (const f of glob.scan({ cwd: process.cwd(), absolute: true })) {
+    out.push(f);
+  }
+  return out.sort();
 }

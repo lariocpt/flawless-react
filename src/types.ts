@@ -37,10 +37,53 @@ export interface ScaffoldOptions {
   report: boolean;
   provider: string | undefined;
   apiSpec: string | undefined;
+  extraTrees?: ComponentTree[];
+  suiteName?: string;
+}
+
+export type TaskId = "perf-harness" | "unit-browser" | "perf-static" | "a11y" | "react-rules";
+
+export interface Finding {
+  rule: string;
+  severity: "error" | "warn";
+  file: string;
+  line: number;
+  column: number;
+  message: string;
+  source: TaskId;
+}
+
+export interface TaskResult {
+  id: TaskId;
+  ok: boolean;
+  outputs: string[];
+  findings: Finding[];
+  summary: string;
+  error?: string;
+}
+
+export interface RunContext {
+  trees: ComponentTree[];
+  outDir: string;
+  variants: number;
+  force: boolean;
+  report: boolean;
+  provider: string | undefined;
+  apiSpec: string | undefined;
+  inlineSummary: boolean;
+  json: boolean;
+}
+
+export interface Task {
+  id: TaskId;
+  label: string;
+  description: string;
+  needsTree: boolean;
+  run(ctx: RunContext): Promise<TaskResult>;
 }
 
 export interface CliArgs {
-  entry: string;
+  entry: string | undefined;
   out: string | undefined;
   depth: number;
   variants: number;
@@ -50,4 +93,9 @@ export interface CliArgs {
   propsOverride: PropsShape | undefined;
   provider: string | undefined;
   apiSpec: string | undefined;
+  tasks: TaskId[] | undefined;
+  noInteractive: boolean;
+  json: boolean;
+  runTests: boolean;
+  inlineSummary: boolean;
 }

@@ -1,6 +1,6 @@
 # Architecture
 
-`finish-him-react` runs in two phases per invocation: **analyse** and **scaffold**. The CLI ([src/cli.ts](../src/cli.ts)) is just the glue. There is no runtime; the tool exits as soon as the files are written.
+`flawless-react` is structured as a task registry. The CLI ([src/cli.ts](../src/cli.ts)) parses args (or prompts for them), expands the positional glob into entry files, analyses each into a `ComponentTree`, then dispatches the selected tasks against a shared `RunContext`. Each task in [src/tasks/](../src/tasks/) is self-contained; they share the analyse output and write their own slice of the output dir (`tests/`, `unit/`, `browser/`, `reports/`).
 
 ```text
                  entry.tsx

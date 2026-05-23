@@ -1,6 +1,16 @@
-# finish-him-react
+# flawless-react
 
-A static-analysis-driven React profiling/test-suite generator. Point it at a `.tsx` file (a single component or a composite dashboard) and you get back a self-contained, runnable Playwright project that exercises and profiles the component(s) in a real browser.
+A multi-task quality kit for React components. Point it at a `.tsx` file (or a glob), pick which checks to run, and get back a runnable Playwright + Vitest suite, an accessibility scan, and a Biome-driven correctness report — with file:line findings for every issue.
+
+Run it with no args for an interactive checkbox menu of five tasks:
+
+1. Generate the **performance testing harness** (Playwright + React `<Profiler>` + react-scan).
+2. Generate **extensive unit + browser tests** (Vitest + @testing-library/react + Playwright functional).
+3. **Static React perf analysis** (rerender storms, missing memoisation, unresolved props).
+4. **Accessibility / web standards scan** (ESLint + eslint-plugin-jsx-a11y, file:line findings).
+5. **Functionally important React rules** (Biome — useExhaustiveDependencies, useHookAtTopLevel, useJsxKeyInIterable, and friends).
+
+Pass a single positional that resolves to a file or a glob (e.g. `src/**/*.tsx`) — each match becomes an entry component and runs against every selected task. A small `<Component>.flawless.json` is dropped next to every source file so issues surface where the code lives.
 
 The tool itself is a thin scaffolder. The intelligence is the static analysis that decides what to import, what props to vary, and which children to walk into. The runtime measurement is done by React's built-in [`<Profiler>`](https://react.dev/reference/react/Profiler) for per-component `renderCount` / `renderTime` and [`react-scan`](https://github.com/aidenybai/react-scan) for detecting unnecessary rerenders. Memory profiling uses Chrome DevTools Protocol's `HeapProfiler.takeHeapSnapshot` and writes `.heapsnapshot` files to a clean `./heaps/` directory.
 
@@ -26,14 +36,14 @@ Once the suite is generated, it belongs to you — there is no regeneration step
 
 Manually wiring up a Playwright + `<Profiler>` + `react-scan` harness for a non-trivial component takes a couple of hours of fiddly boilerplate: bundle the component for the browser, host it, expose a JS API to drive renders, write the test scaffolding, define budgets, hand-pick prop variations, polyfill Node globals for CJS deps, set up Provider context, mock the backend. None of that work is interesting.
 
-`finish-him-react` reads the component's type signature, discovers its child components by walking the JSX, and produces all of that scaffolding mechanically. You get a runnable suite in seconds, and you can then **edit it like normal test code** — tighten budgets, add scenarios, mock data sources, swap in real fixtures.
+`flawless-react` reads the component's type signature, discovers its child components by walking the JSX, and produces all of that scaffolding mechanically. You get a runnable suite in seconds, and you can then **edit it like normal test code** — tighten budgets, add scenarios, mock data sources, swap in real fixtures.
 
 ## Install
 
 ```bash
-bun add -g finish-him-react
+bun add -g flawless-react
 # or one-shot, no install
-bunx finish-him-react ./src/Dashboard.tsx
+bunx flawless-react ./src/Dashboard.tsx
 ```
 
 Requires Bun >= 1.1.
@@ -41,7 +51,7 @@ Requires Bun >= 1.1.
 ## Quickstart
 
 ```bash
-bunx finish-him-react ./src/Dashboard.tsx --out .profile/dashboard
+bunx flawless-react ./src/Dashboard.tsx --out .profile/dashboard
 cd .profile/dashboard
 bun install
 bun run test           # headless Chromium
@@ -53,7 +63,7 @@ You should see Playwright report five tests per analysed component (`mounts at d
 ## CLI reference
 
 ```text
-finish-him-react <entry.tsx> [options]
+flawless-react <entry.tsx> [options]
 ```
 
 | Flag | Default | Effect |
@@ -131,7 +141,7 @@ export const Dashboard: FC<DashboardProps> = ({ title, count }) => {
 Run:
 
 ```bash
-bunx finish-him-react ./src/Dashboard.tsx
+bunx flawless-react ./src/Dashboard.tsx
 ```
 
 The CLI prints something like:
@@ -187,13 +197,13 @@ export default function AppProvider({ children }: { children: ReactNode }) {
 ```
 
 ```bash
-bunx finish-him-react ./src/Dashboard.tsx --provider ./src/providers/AppProvider.tsx
+bunx flawless-react ./src/Dashboard.tsx --provider ./src/providers/AppProvider.tsx
 ```
 
 If the component fetches data, point `--api` at your OpenAPI / Swagger spec:
 
 ```bash
-bunx finish-him-react ./src/Dashboard.tsx --api ./docs/api.yaml
+bunx flawless-react ./src/Dashboard.tsx --api ./docs/api.yaml
 ```
 
 The scaffolder reads the spec at generation time, walks every `paths.<route>.<method>.responses` and emits static handlers in `mock/routes.ts` (priority: first `examples` → `example` → schema-synthesised default). The mock listens on port 5174; the host server (5173) transparently proxies every non-asset request to it, so `fetch('/api/users')` from your component hits the mock without any code changes. Edit `mock/routes.ts` freely after generation to add stateful logic or per-test overrides.

@@ -1,6 +1,6 @@
 # The generated suite
 
-Every file in `<outDir>/` is a string template emitted by [src/scaffold/templates.ts](../src/scaffold/templates.ts). The suite is fully standalone — it knows nothing about `finish-him-react` once it's written, and you can commit, edit, fork, or delete it without affecting the generator.
+Every file in `<outDir>/` is a string template emitted by [src/scaffold/templates.ts](../src/scaffold/templates.ts). The suite is fully standalone — it knows nothing about `flawless-react` once it's written, and you can commit, edit, fork, or delete it without affecting the generator.
 
 This document walks through each file and what to change in it.
 

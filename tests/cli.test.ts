@@ -40,8 +40,9 @@ describe("parseArgs", () => {
     expect(a.variants).toBe(7);
   });
 
-  test("missing entry throws", () => {
-    expect(() => parseArgs([])).toThrow(/missing required entry/);
+  test("entry is optional (interactive mode handles missing entry)", () => {
+    const a = parseArgs([]);
+    expect(a.entry).toBeUndefined();
   });
 
   test("unknown flag throws", () => {
@@ -50,5 +51,26 @@ describe("parseArgs", () => {
 
   test("negative depth rejected", () => {
     expect(() => parseArgs(["./Foo.tsx", "--depth=-1"])).toThrow(/--depth/);
+  });
+
+  test("--tasks csv parses to TaskId[]", () => {
+    const a = parseArgs(["./Foo.tsx", "--tasks=perf-harness,a11y,react-rules"]);
+    expect(a.tasks).toEqual(["perf-harness", "a11y", "react-rules"]);
+  });
+
+  test("--tasks rejects unknown ids", () => {
+    expect(() => parseArgs(["./Foo.tsx", "--tasks=perf-harness,bogus"])).toThrow(/unknown task/);
+  });
+
+  test("--no-interactive + --run-tests + --no-inline-summary flags parse", () => {
+    const a = parseArgs(["./Foo.tsx", "--no-interactive", "--run-tests", "--no-inline-summary"]);
+    expect(a.noInteractive).toBe(true);
+    expect(a.runTests).toBe(true);
+    expect(a.inlineSummary).toBe(false);
+  });
+
+  test("glob pattern allowed as positional", () => {
+    const a = parseArgs(["src/**/*.tsx"]);
+    expect(a.entry).toBe("src/**/*.tsx");
   });
 });

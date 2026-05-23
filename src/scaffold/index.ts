@@ -19,6 +19,8 @@ export async function scaffold(tree: ComponentTree, opts: ScaffoldOptions): Prom
 
   const files = renderSuite({
     tree,
+    extraTrees: opts.extraTrees,
+    suiteName: opts.suiteName,
     outDir,
     variants: opts.variants,
     report: opts.report,
