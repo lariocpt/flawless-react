@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { analyse } from "./analyse/index.ts";
 import { emitNextjsMocks } from "./nextjs/emit.ts";
-import { detectNextjs, mergeIntoNextPackageJson } from "./nextjs/detect.ts";
+import { detectComponentsGlob, detectNextjs, mergeIntoNextPackageJson } from "./nextjs/detect.ts";
 import { fetchLiveSwagger } from "./nextjs/liveSpec.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printFindings, printSummaryTable, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
@@ -254,13 +254,6 @@ export async function main(argv: string[]): Promise<void> {
     taskIds = picked.tasks;
   }
 
-  if (pattern === undefined) {
-    process.stderr.write(
-      "missing entry path or glob. Pass a .tsx path, a glob, or run in a TTY for the interactive menu. See --help.\n",
-    );
-    process.exit(2);
-  }
-
   if (taskIds === undefined || taskIds.length === 0) {
     taskIds = ["perf-harness"];
   }
@@ -277,6 +270,13 @@ export async function main(argv: string[]): Promise<void> {
     }
     if (outDir === undefined) outDir = path.join(nextCtx.root, "flawless");
     if (providerOverride === undefined) providerOverride = nextCtx.appResolver;
+    if (pattern === undefined) {
+      const detected = detectComponentsGlob(nextCtx.root);
+      if (detected) {
+        pattern = detected;
+        process.stdout.write(`nextjs: no entry passed — defaulting to ${path.relative(nextCtx.root, detected)}\n`);
+      }
+    }
     process.stdout.write(
       `nextjs: ${nextCtx.root} (router=${nextCtx.router}, api-routes=${nextCtx.apiRoutes.length}, app-resolver=${nextCtx.appResolver ?? "<none>"})\n`,
     );
@@ -305,6 +305,13 @@ export async function main(argv: string[]): Promise<void> {
         process.stderr.write(`nextjs: live spec at ${live.url} unavailable (${live.error}); using static AST output\n`);
       }
     }
+  }
+
+  if (pattern === undefined) {
+    process.stderr.write(
+      "missing entry path or glob. Pass a .tsx path, a glob, or run in a TTY for the interactive menu. See --help.\n",
+    );
+    process.exit(2);
   }
 
   outDir = path.resolve(outDir ?? defaultOutDir());

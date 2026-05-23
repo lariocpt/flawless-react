@@ -95,6 +95,13 @@ async function detectAppResolver(
   return undefined;
 }
 
+export function detectComponentsGlob(nextRoot: string): string | undefined {
+  for (const rel of ["components", "src/components", "app/components"]) {
+    if (isDir(path.join(nextRoot, rel))) return path.join(nextRoot, rel, "**/*.tsx");
+  }
+  return undefined;
+}
+
 export async function mergeIntoNextPackageJson(
   nextRoot: string,
   deps: Record<string, string>,
