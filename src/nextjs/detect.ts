@@ -95,6 +95,34 @@ async function detectAppResolver(
   return undefined;
 }
 
+export function updateGitignore(nextRoot: string, entries: string[]): string[] {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const gipath = path.join(nextRoot, ".gitignore");
+  let current = "";
+  if (existsSync(gipath)) {
+    try {
+      current = fs.readFileSync(gipath, "utf8");
+    } catch {
+      current = "";
+    }
+  }
+  const have = new Set(
+    current
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
+  const added: string[] = [];
+  for (const e of entries) {
+    if (!have.has(e)) added.push(e);
+  }
+  if (added.length === 0) return [];
+  const sep = current === "" || current.endsWith("\n") ? "" : "\n";
+  const block = `${sep}\n# flawless-react — generated reports + sidecars\n${added.join("\n")}\n`;
+  fs.writeFileSync(gipath, current + block);
+  return added;
+}
+
 export function detectComponentsGlob(nextRoot: string): string | undefined {
   for (const rel of ["components", "src/components", "app/components"]) {
     if (isDir(path.join(nextRoot, rel))) return path.join(nextRoot, rel, "**/*.tsx");

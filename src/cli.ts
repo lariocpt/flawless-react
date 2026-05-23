@@ -2,7 +2,12 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { analyse } from "./analyse/index.ts";
 import { emitNextjsMocks } from "./nextjs/emit.ts";
-import { detectComponentsGlob, detectNextjs, mergeIntoNextPackageJson } from "./nextjs/detect.ts";
+import {
+  detectComponentsGlob,
+  detectNextjs,
+  mergeIntoNextPackageJson,
+  updateGitignore,
+} from "./nextjs/detect.ts";
 import { fetchLiveSwagger } from "./nextjs/liveSpec.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printFindings, printSummaryTable, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
@@ -411,6 +416,18 @@ export async function main(argv: string[]): Promise<void> {
       process.stdout.write(
         `nextjs: merged dev deps + flawless:* scripts into ${path.join(nextCtx.root, "package.json")}\n`,
       );
+      const added = updateGitignore(nextCtx.root, [
+        "flawless/reports/",
+        "flawless/heaps/",
+        "flawless/playwright-report/",
+        "flawless/node_modules/",
+        "*.flawless.json",
+      ]);
+      if (added.length > 0) {
+        process.stdout.write(
+          `nextjs: added ${added.length} entry(ies) to .gitignore (${added.join(", ")})\n`,
+        );
+      }
     } catch (err) {
       anyFailed = true;
       process.stderr.write(`nextjs emit failed: ${(err as Error).message}\n`);
