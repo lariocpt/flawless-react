@@ -45,7 +45,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    BASE=$(node -p "require('./package.json').version" | sed 's/-dev$//')
+                    BASE=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1) ; BASE=${BASE%-dev}
                     SHA=$(git rev-parse --short HEAD)
                     # Two schemes on purpose — see publish/bin/apps-publish's header. semver
                     # ignores build metadata after `+` when ordering, so the registry cannot use
@@ -93,8 +93,7 @@ pipeline {
                     ')
                     trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 
-                    node -e "const f='package.json',p=require('./'+f);p.version=process.env.V;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')" \
-                        V="$APPS_VERSION"
+                    sed -i '0,/"version"/s|"version"[[:space:]]*:[[:space:]]*"[^"]*"|"version": "'"$APPS_VERSION"'"|' package.json
                     docker cp "$PWD/." "$CID:/w" >/dev/null
                     git checkout -- package.json
 
@@ -142,8 +141,7 @@ pipeline {
                         # the compiled artifact — that goes to the apps plane, not the registry.
                         cp -r bin src README.md LICENSE package.json npmstage/
                         rm -f npmstage/bin/flawless-react-bin
-                        node -e "const f='npmstage/package.json',p=require('./'+f);p.version=process.env.V;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')" \
-                            V="$NPM_VERSION"
+                        sed -i '0,/"version"/s|"version"[[:space:]]*:[[:space:]]*"[^"]*"|"version": "'"$NPM_VERSION"'"|' npmstage/package.json
 
                         # Token never in argv (visible in host `ps`) and never in the log.
                         set +x
