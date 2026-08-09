@@ -27,12 +27,50 @@ export interface RunBiomeOptions {
   categoryPrefix?: string;
 }
 
+/** Where the biome executable might be, in order of preference.
+ *
+ * This used to check exactly one path — `findProjectRoot()/node_modules/.bin/biome` — which
+ * is correct for a source install (biome is a dependency, so it sits in our own
+ * node_modules) and wrong everywhere else.
+ *
+ * It matters because flawless-react is also shipped as a `bun build --compile` binary. In a
+ * compiled binary `import.meta.url` points into Bun's virtual filesystem, so findProjectRoot()
+ * walks six levels of a path that does not exist on disk and falls back to `process.cwd()` —
+ * the user's project, which almost never has biome. The result was that the two biome-backed
+ * tasks (a11y, react-rules) hard-failed in the binary while the other three worked.
+ *
+ * Checking a few plausible locations makes the binary useful whenever biome is reachable at
+ * all, and keeps the source install behaving exactly as before. */
+function resolveBiomeBin(): string | null {
+  const candidates = [
+    // 1. Our own node_modules. This is the source-install case and stays first, so a
+    //    source install always uses the biome version pinned in our package.json.
+    path.join(findProjectRoot(), "node_modules", ".bin", "biome"),
+    // 2. The project being analysed. A React codebase that lints with biome already has it.
+    path.join(process.cwd(), "node_modules", ".bin", "biome"),
+  ];
+  for (const c of candidates) if (existsSync(c)) return c;
+  // 3. Anything on PATH — a global install, or a distro package.
+  try {
+    const onPath = Bun.which("biome");
+    if (onPath) return onPath;
+  } catch {
+    // Bun.which is unavailable under plain Node; the candidates above are the answer there.
+  }
+  return null;
+}
+
 export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
   if (opts.files.length === 0) return [];
-  const projectRoot = findProjectRoot();
-  const biomeBin = path.join(projectRoot, "node_modules", ".bin", "biome");
-  if (!existsSync(biomeBin)) {
-    throw new Error(`biome binary not found at ${biomeBin}. Run \`bun install\`.`);
+  const biomeBin = resolveBiomeBin();
+  if (!biomeBin) {
+    throw new Error(
+      "biome executable not found. Looked in this package's node_modules, " +
+        `${path.join(process.cwd(), "node_modules", ".bin", "biome")}, and on PATH.\n` +
+        "  Source install:   bun install\n" +
+        "  Compiled binary:  install biome in the project you are scanning " +
+        "(bun add -d @biomejs/biome) or put it on PATH.",
+    );
   }
 
   const tmp = await mkdtemp(path.join(tmpdir(), "fhr-biome-"));

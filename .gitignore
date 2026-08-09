@@ -5,6 +5,12 @@ dist
 .DS_Store
 .bun
 
+# The compiled binary from `bun run build` — ~94 MB, produced and published by CI.
+# Committing it is what happened in the crust repo: two 91 MB ELFs are in that history and
+# its .git is 36 MB, growing with every rebuild.
+# bin/flawless-react (the four-line bun shim) IS tracked; only the artifact is not.
+bin/flawless-react-bin
+
 # Test artefacts
 .tmp
 .fhr-verify

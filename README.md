@@ -40,13 +40,30 @@ Manually wiring up a Playwright + `<Profiler>` + `react-scan` harness for a non-
 
 ## Install
 
+Two channels, both served from the LAN on big-cachy. They ship different things, so pick by
+whether the target machine has Bun.
+
+**Source package** — every task works with no further setup, because `@biomejs/biome` comes
+along as a real dependency. Requires Bun >= 1.1 at runtime.
+
 ```bash
-bun add -g flawless-react
+bun add -g flawless-react --registry https://npm.in.drlario.org
 # or one-shot, no install
 bunx flawless-react ./src/Dashboard.tsx
 ```
 
-Requires Bun >= 1.1.
+**Standalone binary** — no Bun needed, nothing to install alongside it.
+
+```bash
+curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- flawless-react
+```
+
+One caveat worth knowing before you pick it: the binary is self-contained Bun, but it cannot
+carry biome inside itself. `perf-harness`, `unit-browser` and `perf-static` work anywhere;
+`a11y` and `react-rules` shell out to biome and will look for it in the project you are
+scanning (`node_modules/.bin/biome`) and then on `PATH`. Any React codebase that already
+lints with biome satisfies that for free — otherwise `bun add -d @biomejs/biome` in that
+project, or use the source package.
 
 ## Quickstart
 

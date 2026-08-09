@@ -1,7 +1,7 @@
 {
   "name": "flawless-react",
   "version": "0.2.0-dev",
-  "description": "Multi-task quality kit for React components: scaffolds Playwright perf harness + Vitest unit + browser tests, runs static perf analysis, accessibility scan (ESLint+jsx-a11y), and Biome-driven React correctness rules. Point it at a .tsx file or glob and pick what to run.",
+  "description": "Multi-task quality kit for React components: scaffolds Playwright perf harness + Vitest unit + browser tests, runs static perf analysis, an accessibility scan, and Biome-driven React correctness rules. Point it at a .tsx file or glob and pick what to run.",
   "type": "module",
   "author": "Lario Borges",
   "license": "MIT",
@@ -18,6 +18,7 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "dev": "bun src/cli.ts",
+    "build": "bun build --compile --minify --outfile bin/flawless-react-bin src/bin.ts",
     "lint": "biome lint",
     "format": "biome format --write",
     "check": "biome check",
@@ -34,5 +35,8 @@
   },
   "engines": {
     "bun": ">=1.1.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.in.drlario.org"
   }
 }
