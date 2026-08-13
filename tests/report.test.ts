@@ -52,7 +52,8 @@ describe("renderReportMarkdown", () => {
     // count into a claim you can check.
     const md = renderReportMarkdown(INPUT);
     expect(md).toContain("| **total** | **1** | **2** |");
-    expect(md).toContain("1 + 2 + 1 = 4");
+    expect(md).toContain("1 + 2 = 3");
+    expect(md).toContain("A further 1 file(s) yielded no component at all");
   });
 
   test("each excluded component is named with its reason", () => {

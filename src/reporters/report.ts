@@ -92,16 +92,24 @@ export function renderReportMarkdown(input: ReportInput): string {
   lines.push(
     `| **total** | **${hostedTotal}** | **${excludedTotal}** |`,
     "",
-    `Unreadable files: ${unparseable.length}. ` +
-      `${hostedTotal} + ${excludedTotal} + ${unparseable.length} = ` +
-      `${hostedTotal + excludedTotal + unparseable.length} — every component the analyser saw ` +
-      "is in exactly one of those columns.",
+    `${hostedTotal} + ${excludedTotal} = ${hostedTotal + excludedTotal} — every component ` +
+      "the analyser found is in exactly one of those columns. " +
+      (unparseable.length > 0
+        ? `A further ${unparseable.length} file(s) yielded no component at all; they are listed below.`
+        : "Every file it was pointed at yielded at least one component."),
     "",
   );
 
   if (unparseable.length > 0) {
     lines.push("### Files no component could be read from", "");
-    for (const u of unparseable) lines.push(`- \`${rel(u.file)}\` — ${u.reason}`);
+    for (const u of unparseable) {
+      // The reason usually repeats the absolute path the header already carries.
+      const reason = u.reason
+        .replace(u.file, "")
+        .replace(/\s+in\s*[.:]/, ":")
+        .trim();
+      lines.push(`- \`${rel(u.file)}\` — ${reason}`);
+    }
     lines.push("");
   }
 
@@ -127,8 +135,10 @@ export function renderReportMarkdown(input: ReportInput): string {
     lines.push("Every component is mountable in the browser host.", "");
   } else {
     lines.push(
-      `${excluded.length} component(s) have no browser profile spec. Each still has a unit`,
-      "spec; these are the ones that cannot be driven in the profiling host.",
+      `${excluded.length} component(s) have no browser profile spec. Most still have a unit`,
+      "spec — these are only the ones that cannot mount in the profiling host. The",
+      "exception is `not exported`: nothing can import those, so they have no spec of",
+      "any kind and are covered through the parent that renders them.",
       "",
       "| Component | File | Reason |",
       "| --- | --- | --- |",
