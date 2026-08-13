@@ -75,7 +75,30 @@ Walks the resolved `InterfaceDeclaration` or `TypeAliasDeclaration`, or an inlin
 | inline `{ a: string; … }` | recurse | — |
 | `"a"` / `42` / `true` (literal) | that literal | — |
 | `"a" \| "b" \| "c"` (union of literals) | first literal | all literals → variant rows |
-| anything else | — | added to `unresolvedProps` |
+| `A & B` (intersection) | merged left-to-right | union of both sides' variants |
+| `ComponentProps<"div">` and friends | curated host-element table | — |
+| `ComponentProps<typeof LocalX>` | resolved through X, one import hop | inherited |
+| `VariantProps<typeof xVariants>` | cva `defaultVariants`, else first option | every option per key |
+| anything else | — | prop name → `unresolvedProps`, type name → `unresolvedTypes` |
+
+An intersection operand that resolves to nothing contributes only its
+`unresolvedTypes` entry, so `ButtonPrimitive.Props & VariantProps<typeof
+buttonVariants>` still yields the cva half rather than being dropped whole.
+Conflicts resolve `literal > variant > interface > component > host`, ties to the
+right-most operand.
+
+The host-element table (`hostProps.ts`) is curated rather than a DOM model, and
+three of its omissions are deliberate: `value`/`checked` are never synthesised
+(React's controlled-input warning makes `userEvent.type` a silent no-op),
+`placeholder`/`name`/`required` are never synthesised (`getByPlaceholderText("")`
+throws), and `type` is always a real literal rather than `""`.
+
+A prop the type layer cannot resolve gets one more chance: if the body uses it to
+index a same-file object literal with literal keys — the
+`const STATUS_LABEL: Record<JobStatus, string> = { requested: … }` pattern —
+those keys ARE the union, and the first becomes the default
+(`resolveIndexKeys.ts`). A spread inside that literal gives up, because a partial
+key list would produce a default that is not in the union at all.
 
 The variant matrix is **pairwise**, not cartesian: for each union prop, we generate one row per literal with all other props at their defaults. This keeps `--variants` honest as a row count.
 
@@ -253,7 +276,7 @@ The split lets us:
 ## What's intentionally absent
 
 - **No runtime.** The CLI never imports React or Playwright. It does not boot a server (the e2e task *emits* a config that boots the target's dev server; it does not run one itself).
-- **No type checker.** The analyser runs `ts.createSourceFile`, not a full TypeScript program. Imported prop types are chased exactly one file deep; unions of non-literals, generics and intersections land in `unresolvedProps`.
+- **No type checker.** The analyser runs `ts.createSourceFile`, not a full TypeScript program. Imported prop types are chased two hops at most; unions of non-literals and generics other than the ones tabled above land in `unresolvedProps`, and the type names that defeated it land in `unresolvedTypes`.
 - **No code generation framework.** Templates are string concatenations. Easy to read, easy to diff against generated output, easy to grep.
 
 The consequence is worth stating plainly: every rule that cannot be decided

@@ -1,5 +1,14 @@
 # The generated suite
 
+This walks the **perf-harness** output file by file. The other six tasks write
+into the same output directory; [what each task writes](#what-the-other-tasks-write)
+at the end of this page covers those.
+
+> The profile specs live under `profile/`, not `tests/`. Bun treats a positional
+> argument to `bun test` as a path *substring*, so a suite emitted into
+> `flawless/tests/` gets collected by any project whose own script reads
+> `bun test tests` — which is most of them.
+
 Every file in `<outDir>/` is a string template emitted by [src/scaffold/templates.ts](../src/scaffold/templates.ts). The suite is fully standalone — it knows nothing about `flawless-react` once it's written, and you can commit, edit, fork, or delete it without affecting the generator.
 
 This document walks through each file and what to change in it.
@@ -91,7 +100,7 @@ window.__profile = {
 
 **Edit when**: you want to wrap components in a provider (React Router, theme, query client, store) — prefer the `--provider <file>` flag at scaffold time, which threads your wrapper through `mount` / `rerender` for you. You can also expose additional helpers on `window.__profile` if your tests need them.
 
-## `tests/_helpers.ts`
+## `profile/_helpers.ts`
 
 Thin wrappers around `page.evaluate(...)` so the spec files stay readable: `mountComponent`, `rerenderComponent`, `unmount`, `getRenderInfo`, `getScanEvents`, `clearScanEvents`, plus `summarize(samples)` which computes `min / avg / p50 / p95 / max`.
 
@@ -150,7 +159,7 @@ Body extraction priority: first `application/json` example → schema-synthesise
 
 **Edit when**: you want stateful mocks (a route handler that mutates an in-memory store and the next GET reflects that), conditional responses based on query/body, or delayed responses. The generated file is a starting point — replace any route's static body with a function that inspects the `Request` and returns a `Response`.
 
-## `tests/_heap.ts`
+## `profile/_heap.ts`
 
 Drives the browser's V8 heap profiler via Playwright's CDP session (`HeapProfiler.takeHeapSnapshot`). Produces `.heapsnapshot` artifacts attached to the Playwright report — the same format Chrome DevTools' Memory tab consumes, so two snapshots can be loaded and diff'd via the Comparison view.
 
@@ -172,7 +181,7 @@ Persisted snapshots land in `<suite-root>/heaps/<spec>__<test>__<label>.heapsnap
 
 **Edit when**: you want different snapshot timing (mid-scenario, not just before/after), or you want the byte-delta logged as a hard assertion: `expect(after.byteLength - before.byteLength).toBeLessThan(THRESHOLD)`.
 
-## `tests/<Component>.profile.spec.ts`
+## `profile/<Component>.profile.spec.ts`
 
 One spec per analysed component. Each spec is **fully self-contained** — its `DEFAULTS`, `VARIANTS`, and `HOOKS` are baked in as literals at the top. There is no shared fixture file, no implicit dependency between specs.
 
@@ -216,7 +225,7 @@ A leak-detection scenario. Mounts the component, takes a baseline heap snapshot,
 
 There is no assertion on byte delta — it's too noisy across machines and React versions. The value is the saved snapshots: open them in Chrome DevTools' Memory tab → Comparison view and look for unexpected retained objects (detached DOM nodes, growing arrays of listener closures).
 
-The other three scenarios (`variant matrix`, `click rerender`, `forced rerender × N`) are wrapped by `bracketScenario(...)` from `tests/_heap.ts`. They take before/after snapshots too, but **only attach them on failure** — keeping passing-run artifacts small.
+The other three scenarios (`variant matrix`, `click rerender`, `forced rerender × N`) are wrapped by `bracketScenario(...)` from `profile/_heap.ts`. They take before/after snapshots too, but **only attach them on failure** — keeping passing-run artifacts small.
 
 **Edit when**: 50 clicks isn't enough to surface a slow leak (bump to 500); you want to assert a hard byte-delta ceiling (replace the `bracketScenario` body with explicit `takeHeapSnapshot` calls and `expect(after - before).toBeLessThan(...)`).
 
@@ -243,3 +252,94 @@ Reads `playwright-report/index.html` from the last run and writes a `report.md` 
 ## `README.md`
 
 A short user-facing README for the *generated* suite, separate from this repo's README. It documents how to run, what's measured, and how to customise. It is also editable by you and never overwritten by the tool unless you re-run with `--force`.
+
+
+---
+
+## What the other tasks write
+
+`perf-harness` owns everything above. The rest of the output directory:
+
+### `unit-browser` → `unit/` (or beside the source with `--colocate`)
+
+- **`vitest.config.ts`** — jsdom environment, the project's tsconfig `paths` as
+  `resolve.alias`, and `resolve.dedupe: ["react", "react-dom"]`. The dedupe is
+  not cosmetic: in a workspace where `react` resolves to the repo root and
+  `react-dom` to the package, `react-dom/server` sets its hook dispatcher on a
+  different React instance than the component reads from, and every hook call
+  fails with `Cannot read properties of null (reading 'useEffect')`.
+- **`setup.ts`** — `@testing-library/jest-dom`, the jsdom gaps real component
+  stacks hit (`matchMedia`, `ResizeObserver`, `IntersectionObserver`,
+  `scrollIntoView`), MSW wiring when `--api` was used, and an in-memory `Storage`
+  fallback. That last one matters on Node ≥ 22, which defines a `localStorage`
+  global that is inert without `--localstorage-file`; persistence middleware
+  (zustand `persist`, redux-persist) is otherwise handed `undefined` and throws
+  on its first write.
+- **`<Component>.test.tsx`** — one per exported component. What it contains
+  depends on what the analyser could prove:
+
+  | Signal | Assertion |
+  | --- | --- |
+  | root tag | `container.querySelector("div")` is not null |
+  | `children` provably reaches the DOM | a sentinel child is found by `getByText` |
+  | `className` provably lands on a host element | a sentinel class is found in the container |
+  | a cva table | every option of every key renders a **distinct** class list |
+  | literal copy under the initial render | `getByText` per string |
+  | interactions | the element is found, clicked, and the component survives |
+  | none of the above | `test.skip` naming which preconditions failed |
+
+  A component behind an undecidable early return gets `expect(() =>
+  renderTarget()).not.toThrow()` instead of a claim that something appeared —
+  `if (toasts.length === 0) return null` backed by a store hook may legitimately
+  render nothing.
+
+- Server components get a different template: the component is awaited rather
+  than mounted, `render()` sits inside the same `try` as the call, `notFound()` /
+  `redirect()` are recognised as legitimate outcomes, and anything else is
+  rethrown as itself. When the analyser admitted it could not infer a data
+  dependency's shape, the resulting crash is reported as a skip — the tool
+  failing on a fixture it never had is not the application failing.
+- Components that cannot mount standalone — a `<Dialog.Content>` outside its
+  Root, a layout returning `<html>` — get a spec that asserts what IS true and
+  states the reason in the file.
+
+### `unit-browser` → `browser/<Component>.spec.ts`
+
+Playwright specs that drive the perf host rather than jsdom, for the same
+interactions. Emitted only for components that mount standalone, and only when
+`perf-harness` is in the same run — they need its host.
+
+### `--api` → `mocks/`
+
+`handlers.ts`, `node.ts`, `browser.ts`: MSW handlers derived from the OpenAPI
+spec's example responses, shared by the unit suite (node) and the browser host
+(worker), so both layers agree on what `/api/*` returns.
+
+### Next.js mode → `provider.tsx`
+
+The client-safe provider chain, derived from the app-router layout's JSX around
+`{children}`. Non-literal props the layout passed are emitted as
+`TODO(flawless)` comments rather than guessed at. Written once and never
+overwritten.
+
+### `e2e` → `e2e/`
+
+`playwright.config.ts` (pointed at the target's real dev server, overridable
+with `FLAWLESS_E2E_BASEURL`), a `global-setup.ts` stub for login, and one spec
+per app-router page asserting the route loads without console or page errors,
+plus up to three interactions harvested from the page's component tree.
+
+### `load` → `load/`
+
+crust pipes per route and per API operation. Run with `bun run flawless:load`.
+
+### Every run → `REPORT.md` and `reports/`
+
+`REPORT.md` accounts for every component the analyser found: how many can mount
+in the browser host, how many cannot and why, and which files yielded no
+component at all. It carries no timestamp and every list is sorted, so a second
+identical run leaves `git status` empty.
+
+`reports/summary.json` is the machine-readable per-task result, and
+`<Component>.flawless.json` sidecars carry per-component findings unless
+`--no-inline-summary`.

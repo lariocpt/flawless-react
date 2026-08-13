@@ -127,6 +127,15 @@ flawless-react <entry.tsx> [options]
 | `--ci` | off | Shorthand for `--no-interactive --json`. |
 | `--force` | off | Overwrite an existing output directory (and regenerate colocated specs). |
 | `--report` | off | Emit `scripts/report.mjs` so `bun run report` aggregates run output into a markdown summary. |
+| `--tasks <ids>` | all seven | Comma-separated subset: `perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`. |
+| `--roots <mode>` | `primary` | `exported` emits one tree per *exported* component — what a whole-app sweep needs, since a shadcn `card.tsx` exports seven of them. |
+| `--exclude <glob>` | see below | Repeatable. Added to the defaults, which already skip `*.flawless.test.*`, `*.test.*`, `*.spec.*`, `*.stories.*`, `*.d.ts`, `node_modules`, `.next`, `dist`, `build`, `coverage` and the output directory itself. |
+| `--no-default-excludes` | off | Drop those defaults and use only what `--exclude` names. |
+| `--no-interactive` | off | Never prompt. Required in CI and by any script. |
+| `--run-tests` | off | Run the generated suites after writing them. |
+| `--json` | off | Print the machine-readable run result to stdout. |
+| `--no-inline-summary` | off | Skip the per-component `<Component>.flawless.json` sidecars. |
+| `--swagger-url <url>` | auto-probe | Fetch the OpenAPI spec over HTTP instead of reading a file. `off` disables the probe entirely. |
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
@@ -290,7 +299,10 @@ Anything that could not be derived is left as a `TODO(flawless)` marker rather t
 The static analyser is deliberately narrow — it favours predictability over cleverness.
 
 - **Component shape**: `const X: React.FC<Props> = …`, exported function declarations, JSX-returning arrows, anonymous `export default (…) => …` (named after the file), and `memo()` / `forwardRef()` wrappers. HOCs, decorators and dynamic component factories are still not detected.
-- **Props type**: same-file types resolve directly; an imported `Props` type is chased **one file deep**. Anything further, plus **unions of non-literals**, intersections and generics, lands in `unresolvedProps` — pass `--props '{…}'` or edit the spec's `DEFAULTS`.
+- **Props type**: same-file types resolve directly; imported types are chased **two hops**. Intersections (`A & B`), host-element props (`ComponentProps<"div">`), `ComponentProps<typeof LocalX>` and cva tables (`VariantProps<typeof buttonVariants>`) all resolve. **Unions of non-literals**, `Omit`/`Pick`/`Partial`, `z.infer` aliases and anything in `node_modules` do not — they land in `unresolvedProps` (the prop) and `unresolvedTypes` (the type that defeated it). Pass `--props '{…}'` or edit the spec's `DEFAULTS`.
+- **What the specs assert**: literal copy the component renders unconditionally, the root tag, children and `className` passthrough when the value provably reaches the DOM, and that every cva option renders a *distinct* class list. Never a specific Tailwind token — `cn()` is usually tailwind-merge, which drops base classes a later variant conflicts with.
+- **Which render is described**: the JSX the component produces at the props the spec passes, not the last `return` in the body. A guard the analyser can decide is followed; one it cannot, that returns nothing, falls through to the tail and is flagged; one it cannot, that returns content, produces no description at all.
+- **Mocks**: emitted from a component's OWN imports. Client specs mock an allowlist only (`next/navigation`, `next/headers`, `server-only`, `next/link`, `next/font/*`, and any `"use server"` module) — mocking a `cn` util would strip every className off the markup. A component that renders `<Link>` only through a child gets no `next/link` mock in its own spec.
 - **Type → default value**: primitives, arrays (always `[]`), inline object types (recursive), literals, and `Promise<T>` (synthesised unwrapped, re-wrapped at render time for Next.js `params`).
 - **Variant matrix**: only union-of-literal props produce variants. The matrix is "pairwise" — vary one prop at a time around the defaults, not the full cartesian product.
 - **Children**: relative imports **and** tsconfig `paths` aliases (with `extends` chains), member tags like `<UI.Badge/>`, namespace imports, and same-file components. Anything in `node_modules` is skipped. Depth defaults to 3, cycle-guarded.
