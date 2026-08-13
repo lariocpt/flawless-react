@@ -200,7 +200,9 @@ function routeSpec(
   const paramLines = dynamic
     ? `import { routeUrl } from "./params";\n\nconst ROUTE_TEMPLATE = ${JSON.stringify(route.urlPath)};`
     : "";
-  const urlExpr = dynamic ? `routeUrl(ROUTE_TEMPLATE)` : JSON.stringify(route.urlPath);
+  // `as string` after the skip below: test.skip() ends the test at runtime but
+  // TypeScript cannot see that, and every navigation would otherwise be an error.
+  const urlExpr = dynamic ? `routeUrl(ROUTE_TEMPLATE) as string` : JSON.stringify(route.urlPath);
   const skipLine = dynamic
     ? `\n  test.skip(\n    ROUTE === undefined,\n    \`no id fixture for ${route.urlPath} — fill flawless/e2e/params.json\`,\n  );`
     : "";

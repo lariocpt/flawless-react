@@ -326,6 +326,15 @@ ${tree}
  * and a wrong-shaped fixture is worse than an empty one because the specs go
  * green against a fiction.
  */
+/** Source text on one line, so it can sit inside a doc comment. */
+function flatten(text: string): string {
+  const one = text
+    .replace(/^\{|\}$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return one.length > 90 ? `${one.slice(0, 87)}…` : one;
+}
+
 function renderFixtures(
   layoutFile: string,
   holes: Array<{ owner: string; name: string; exprText: string; line: number }>,
@@ -343,7 +352,7 @@ function renderFixtures(
   const entries = holes
     .map(
       (h) =>
-        `  /** ${layoutRel}:${h.line} passed ${h.name}={${h.exprText.replace(/^\{|\}$/g, "")}} to <${h.owner}>. */\n` +
+        `  /** ${layoutRel}:${h.line} passed ${h.name}={${flatten(h.exprText)}} to <${h.owner}>. */\n` +
         `  ${h.name}: {} as ComponentProps<typeof ${h.owner.split(".")[0]}>[${JSON.stringify(h.name)}],`,
     )
     .join("\n\n");

@@ -208,7 +208,7 @@ describe("e2e task", () => {
     // defaulted to "REPLACE_WITH_SEEDED_ID", navigated to a URL that 404s, and
     // reported the tool's missing fixture as an application bug.
     expect(spec).toContain('import { routeUrl } from "./params";');
-    expect(spec).toContain("const ROUTE = routeUrl(ROUTE_TEMPLATE);");
+    expect(spec).toContain("const ROUTE = routeUrl(ROUTE_TEMPLATE) as string;");
     expect(spec).toContain("test.skip(");
     expect(spec).toContain("fill flawless/e2e/params.json");
     expect(spec).toContain("GET /things/[id] renders without console or page errors");
