@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { analyse } from "./analyse/index.ts";
+import { analyseFile } from "./analyse/index.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
@@ -19,6 +19,7 @@ import type {
   NextjsApiRoute,
   NextjsContext,
   PropsShape,
+  RootMode,
   RunContext,
   Task,
   TaskId,
@@ -48,6 +49,11 @@ export interface CoreOptions {
   swaggerUrl?: string;
   colocate?: boolean;
   runTests?: boolean;
+  /** "exported" emits a tree per exported component in each entry file. */
+  roots?: RootMode;
+  /** Extra globs to skip, appended to DEFAULT_EXCLUDES. */
+  exclude?: readonly string[];
+  useDefaultExcludes?: boolean;
   /** Interactive confirm already happened (CLI); when false, runTests decides alone. */
   log?: boolean;
 }
@@ -153,7 +159,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
 
   outDir = path.resolve(outDir ?? path.join(process.cwd(), ".flawless"));
 
-  const files = await expandGlob(pattern);
+  const files = await expandGlob(pattern, {
+    ...(opts.exclude ? { exclude: opts.exclude } : {}),
+    ...(opts.useDefaultExcludes === undefined
+      ? {}
+      : { useDefaultExcludes: opts.useDefaultExcludes }),
+  });
   if (files.length === 0) {
     throw new UsageError(`no files matched: ${pattern}`);
   }
@@ -161,12 +172,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const trees: ComponentTree[] = [];
   for (const file of files) {
     try {
-      const tree = await analyse({
-        entry: file,
-        depth: opts.depth ?? 3,
-        includeChildren: opts.includeChildren ?? true,
-      });
-      trees.push(tree);
+      trees.push(
+        ...(await analyseFile({
+          entry: file,
+          depth: opts.depth ?? 3,
+          includeChildren: opts.includeChildren ?? true,
+          roots: opts.roots ?? "primary",
+        })),
+      );
     } catch (err) {
       warn(`warning: skipping ${file}: ${(err as Error).message}`);
     }
@@ -352,18 +365,57 @@ function mergeRoutes(nextCtx: NextjsContext, routes: NextjsApiRoute[]): void {
   }
 }
 
-export async function expandGlob(pattern: string): Promise<string[]> {
+/**
+ * Never analysed by a glob. The first entry is the important one: without it a
+ * second `src/**\/*.tsx` run analyses the specs the first run generated, and
+ * writes specs for its own specs.
+ */
+export const DEFAULT_EXCLUDES: readonly string[] = [
+  "**/*.flawless.test.*",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*.stories.*",
+  "**/*.d.ts",
+  "**/node_modules/**",
+  "**/.next/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/coverage/**",
+  "**/flawless/**",
+];
+
+export interface ExpandGlobOptions {
+  /** Appended to the defaults unless `useDefaultExcludes` is false. */
+  exclude?: readonly string[];
+  useDefaultExcludes?: boolean;
+}
+
+export async function expandGlob(pattern: string, opts: ExpandGlobOptions = {}): Promise<string[]> {
   const abs = path.resolve(pattern);
+  // An explicit path wins over every exclusion — otherwise you could never
+  // deliberately point the tool at a file the defaults would skip.
   if (existsSync(abs)) return [abs];
   const hasGlobChar = /[*?[\]{}]/.test(pattern);
   if (!hasGlobChar) {
     return [];
   }
+
+  const excludes = [
+    ...(opts.useDefaultExcludes === false ? [] : DEFAULT_EXCLUDES),
+    ...(opts.exclude ?? []),
+  ].map((p) => new Bun.Glob(p));
+  const cwd = process.cwd();
+  const isExcluded = (file: string): boolean => {
+    const rel = path.relative(cwd, file);
+    // Match both forms: users write "**/*.test.*" and "src/**/*.test.tsx".
+    return excludes.some((g) => g.match(file) || g.match(rel));
+  };
+
   const glob = new Bun.Glob(pattern);
   const out: string[] = [];
   try {
-    for await (const f of glob.scan({ cwd: process.cwd(), absolute: true })) {
-      out.push(f);
+    for await (const f of glob.scan({ cwd, absolute: true })) {
+      if (!isExcluded(f)) out.push(f);
     }
   } catch {
     // A glob rooted at a directory that doesn't exist throws ENOENT rather

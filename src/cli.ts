@@ -2,7 +2,7 @@ import { runCore, UsageError } from "./core.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
 import { TASKS } from "./tasks/index.ts";
-import type { CliArgs, PropsShape, TaskId } from "./types.ts";
+import type { CliArgs, PropsShape, RootMode, TaskId } from "./types.ts";
 
 const HELP = `flawless-react — multi-task quality kit for React components
 
@@ -19,6 +19,13 @@ Options:
   --tasks <csv>          Comma-separated task ids to run (skip the interactive menu).
                          Available: perf-harness, unit-browser, perf-static, a11y,
                          react-rules, e2e, load
+  --roots <mode>         primary (default) analyses each file's main component;
+                         exported emits a tree per exported component, which is what a
+                         whole-app sweep needs (a shadcn card.tsx exports 7 of them).
+  --exclude <glob>       Skip matching files (repeatable). Appended to the defaults,
+                         which already skip *.flawless.test.*, *.test.*, *.spec.*,
+                         *.d.ts, node_modules, .next, dist, build, coverage, flawless/.
+  --no-default-excludes  Drop those defaults (then a glob can match generated specs).
   --colocate             Emit unit specs beside the analysed sources as
                          <name>.flawless.test.tsx (existing colocated specs are kept
                          unless --force). The flawless/ dir keeps config + mocks.
@@ -82,6 +89,9 @@ export function parseArgs(argv: string[]): CliArgs {
   let swaggerUrl: string | undefined;
   let colocate = false;
   let ci = false;
+  let roots: RootMode = "primary";
+  const exclude: string[] = [];
+  let useDefaultExcludes = true;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -150,6 +160,18 @@ export function parseArgs(argv: string[]): CliArgs {
       swaggerUrl = v;
     } else if (a.startsWith("--swagger-url=")) {
       swaggerUrl = a.slice("--swagger-url=".length);
+    } else if (a === "--roots" || a.startsWith("--roots=")) {
+      const v = a.startsWith("--roots=") ? a.slice("--roots=".length) : argv[++i];
+      if (v !== "primary" && v !== "exported") {
+        throw new Error(`--roots must be "primary" or "exported", got: ${v ?? "<missing>"}`);
+      }
+      roots = v;
+    } else if (a === "--exclude" || a.startsWith("--exclude=")) {
+      const v = a.startsWith("--exclude=") ? a.slice("--exclude=".length) : argv[++i];
+      if (v === undefined) throw new Error("--exclude requires a glob");
+      exclude.push(v);
+    } else if (a === "--no-default-excludes") {
+      useDefaultExcludes = false;
     } else if (a === "--colocate") {
       colocate = true;
     } else if (a === "--ci") {
@@ -207,6 +229,9 @@ export function parseArgs(argv: string[]): CliArgs {
     swaggerUrl,
     colocate,
     ci,
+    roots,
+    exclude,
+    useDefaultExcludes,
   };
 }
 
@@ -277,6 +302,9 @@ export async function main(argv: string[]): Promise<void> {
       nextjs: args.nextjs,
       swaggerUrl: args.swaggerUrl,
       colocate: args.colocate,
+      roots: args.roots,
+      exclude: args.exclude,
+      useDefaultExcludes: args.useDefaultExcludes,
       runTests: args.runTests || (wantInteractive && (await confirmRunTests())),
     });
   } catch (err) {

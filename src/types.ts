@@ -324,10 +324,15 @@ export interface ComponentTree {
   children: ComponentTree[];
 }
 
+/** Which components in an entry file become roots of their own tree. */
+export type RootMode = "primary" | "exported";
+
 export interface AnalyseOptions {
   entry: string;
   depth: number;
   includeChildren: boolean;
+  /** Default "primary" — one tree per file, as the tool has always behaved. */
+  roots?: RootMode;
 }
 
 export interface MockRoute {
@@ -424,6 +429,9 @@ export interface CliArgs {
   swaggerUrl: string | undefined;
   colocate: boolean;
   ci: boolean;
+  roots: RootMode;
+  exclude: string[];
+  useDefaultExcludes: boolean;
 }
 
 export type NextjsRouter = "app" | "pages";

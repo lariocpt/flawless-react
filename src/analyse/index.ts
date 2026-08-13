@@ -14,19 +14,47 @@ import { SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
 
 export async function analyse(opts: AnalyseOptions): Promise<ComponentTree> {
+  const trees = await analyseFile({ ...opts, roots: "primary" });
+  const first = trees[0];
+  if (!first) {
+    throw new Error(`parseFile: could not locate a React component in ${opts.entry}`);
+  }
+  return first;
+}
+
+/**
+ * One tree per root component in the entry file.
+ *
+ * `roots: "primary"` keeps the historical behaviour (the file's main component).
+ * `roots: "exported"` returns one tree per *exported* component, which is what a
+ * whole-app sweep needs: `ui/card.tsx` exports 7 components, and pointing the
+ * tool at that file previously described only the first.
+ *
+ * Each root gets its OWN `visited` set. Sharing one would make the second root
+ * come back childless, because the first would already have claimed their
+ * shared children. The resolver and parse cache ARE shared — that is what keeps
+ * a 175-root sweep affordable.
+ */
+export async function analyseFile(opts: AnalyseOptions): Promise<ComponentTree[]> {
   const resolver = new ModuleResolver();
   const cache = new SourceFileCache();
-  const visited = new Set<string>();
-  return analyseOne(
-    path.resolve(opts.entry),
-    0,
-    opts,
-    visited,
-    opts.entry,
-    resolver,
-    undefined,
-    cache,
-  );
+  const absPath = path.resolve(opts.entry);
+
+  let rootNames: Array<string | undefined> = [undefined];
+  if (opts.roots === "exported") {
+    const parsed = await parseFile(absPath);
+    const exported = parsed.components.filter((c) => c.exportKind !== "none");
+    const chosen = exported.length > 0 ? exported : parsed.components.slice(0, 1);
+    rootNames = chosen.map((c) => c.componentName);
+  }
+
+  const out: ComponentTree[] = [];
+  for (const name of rootNames) {
+    out.push(
+      await analyseOne(absPath, 0, opts, new Set<string>(), opts.entry, resolver, name, cache),
+    );
+  }
+  return out;
 }
 
 async function analyseOne(
