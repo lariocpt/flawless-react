@@ -61,7 +61,13 @@ into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 
 Driven by static analysis, so they only assert what can be derived:
 
-- render at defaults, plus a variant matrix for literal-union props;
+- the rendered root tag, when the analyser could pin it down;
+- `children` and `className` passthrough, but only when the value provably
+  reaches the DOM — accepting a prop is not rendering it;
+- for a cva/`tv` component, that every option of every key renders a **distinct**
+  class list. Never a specific Tailwind token: `cn()` is usually tailwind-merge,
+  which drops base classes a later variant conflicts with;
+- literal copy the component renders unconditionally;
 - one test per detected interaction, with negative assertions on every other
   handler prop (a click that fires two callbacks fails);
 - state-derived tests: initial-state witnesses and handler→setter tests;
@@ -69,6 +75,21 @@ Driven by static analysis, so they only assert what can be derived:
   empty** cases via `server.use(...)` overrides;
 - async server components get `await Component(props)` plus `vi.mock` stubs
   for their non-component imports (no browser spec — they cannot mount).
+
+Everything above describes the render the component produces **at the props the
+spec passes**, not the last `return` in its body. A guard the analyser can decide
+is followed; one it cannot that returns nothing falls through to the tail; one it
+cannot that returns content produces no description at all.
+
+Client specs mock an **allowlist only** — `next/navigation`, `next/headers`,
+`server-only`, `next/link`, `next/font/*` and any `"use server"` module. Mocking
+a `cn` util would strip every className off the markup, and mocking a UI
+component would replace the element the interaction tests click.
+
+When nothing is derivable the spec emits `test.skip` naming which preconditions
+failed. **A skip with a reason is the intended output there — do not "fix" it by
+deleting the assertion or by hand-writing one.** Fix the generator, or give the
+component the `data-testid` / fixture the skip asks for.
 
 Anything the analyser could not derive is a `TODO(flawless)` marker, never a
 silently passing assertion. **The hardening loop is: run the suite, fill the
@@ -170,8 +191,20 @@ your `package.json`.
 
 ## Limits worth stating up front
 
-Static analysis only: no type checker, so imported prop types resolve one file
-deep, non-literal unions and generics land in `unresolvedProps`, and hook
-analysis bails whenever it cannot be certain. A green generated suite means
-"nothing obviously broken", not "covered" — the value is in the scaffolding you
-harden, and in the findings.
+Static analysis only, no type checker. Imported prop types resolve two hops;
+intersections, host-element props (`ComponentProps<"div">`),
+`ComponentProps<typeof LocalX>` and cva tables all resolve. Non-literal unions,
+`Omit`/`Pick`/`Partial`, `z.infer` aliases and anything in `node_modules` do not
+— the prop lands in `unresolvedProps` and the type that defeated it in
+`unresolvedTypes`.
+
+Mocks come from a component's **own** imports, so one that renders `<Link>` only
+through a child gets no `next/link` mock in its own spec.
+
+Every run writes `flawless/REPORT.md`, which accounts for every component found:
+how many can mount in the browser profiling host, how many cannot and why, and
+which files yielded no component at all. Read it before quoting a coverage
+number — a file count is not coverage.
+
+A green generated suite means "nothing obviously broken", not "covered" — the
+value is in the scaffolding you harden, and in the findings.
