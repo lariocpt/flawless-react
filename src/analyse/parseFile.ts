@@ -19,6 +19,13 @@ export interface ParsedComponentUnit {
   componentName: string;
   /** The arrow/function node whose body holds the JSX + hooks. */
   bodyNode: ts.Node;
+  /**
+   * Raw first-param type (or FC type argument) exactly as written — an
+   * intersection, a qualified reference, anything. `propsTypeRef` /
+   * `propsTypeLiteral` keep their narrow meanings for existing callers; this
+   * is what the type resolver dispatches on.
+   */
+  propsTypeNode: ts.TypeNode | undefined;
   /** Props type reference (`React.FC<Props>` arg or first-param type). */
   propsTypeRef: ts.TypeReferenceNode | undefined;
   /** Inline first-param object type: `({a}: {a: string})`. */
@@ -307,9 +314,13 @@ function unitFromInitializer(
       fcPropsArg && ts.isTypeReferenceNode(fcPropsArg) ? fcPropsArg : fromParams.propsTypeRef;
     const propsTypeLiteral =
       fcPropsArg && ts.isTypeLiteralNode(fcPropsArg) ? fcPropsArg : fromParams.propsTypeLiteral;
+    // `React.FC<Props>` states the props type more precisely than the
+    // destructured parameter, so it wins when both are present.
+    const propsTypeNode = fcPropsArg ?? fromParams.propsTypeNode;
     return {
       componentName: name,
       bodyNode: init,
+      propsTypeNode,
       propsTypeRef,
       propsTypeLiteral,
       paramName: fromParams.paramName,
@@ -372,6 +383,7 @@ function unwrapWrappers(expr: ts.Expression): {
 }
 
 function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration> }): {
+  propsTypeNode: ts.TypeNode | undefined;
   propsTypeRef: ts.TypeReferenceNode | undefined;
   propsTypeLiteral: ts.TypeLiteralNode | undefined;
   paramName: string | undefined;
@@ -380,6 +392,7 @@ function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration>
 } {
   const first = fn.parameters[0];
   const empty = {
+    propsTypeNode: undefined,
     propsTypeRef: undefined,
     propsTypeLiteral: undefined,
     paramName: undefined,
@@ -405,7 +418,14 @@ function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration>
       }
     }
   }
-  return { propsTypeRef, propsTypeLiteral, paramName, destructuredProps, destructuredAliases };
+  return {
+    propsTypeNode: first.type,
+    propsTypeRef,
+    propsTypeLiteral,
+    paramName,
+    destructuredProps,
+    destructuredAliases,
+  };
 }
 
 function containsJsx(node: ts.Node): boolean {

@@ -10,12 +10,23 @@ import { extractState } from "./extractState.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { ModuleResolver } from "./resolveModule.ts";
+import { SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
 
 export async function analyse(opts: AnalyseOptions): Promise<ComponentTree> {
   const resolver = new ModuleResolver();
+  const cache = new SourceFileCache();
   const visited = new Set<string>();
-  return analyseOne(path.resolve(opts.entry), 0, opts, visited, opts.entry, resolver, undefined);
+  return analyseOne(
+    path.resolve(opts.entry),
+    0,
+    opts,
+    visited,
+    opts.entry,
+    resolver,
+    undefined,
+    cache,
+  );
 }
 
 async function analyseOne(
@@ -26,6 +37,7 @@ async function analyseOne(
   importSpecifier: string,
   resolver: ModuleResolver,
   preferredName: string | undefined,
+  cache: SourceFileCache,
 ): Promise<ComponentTree> {
   const parsed = await parseFile(absPath);
   const unit =
@@ -37,14 +49,26 @@ async function analyseOne(
   }
   visited.add(`${absPath}::${unit.componentName}`);
 
-  const { propsShape, variants, unresolvedProps, propPositions, promiseProps } = extractProps(
+  const props = extractProps(
     parsed.sourceFile,
-    unit.propsTypeRef,
+    unit.propsTypeNode,
     unit.propsTypeLiteral,
     parsed.imports,
     absPath,
     resolver,
+    cache,
   );
+  const {
+    propsShape,
+    variants,
+    unresolvedProps,
+    unresolvedTypes,
+    propPositions,
+    promiseProps,
+    variantOptions,
+    hostElement,
+    acceptsChildren,
+  } = props;
   const hooks = extractHooks(unit.bodyNode);
   const interactions = extractInteractions(
     unit.bodyNode,
@@ -53,9 +77,8 @@ async function analyseOne(
     unresolvedProps,
   );
 
-  const extracted = { propsShape, variants, unresolvedProps, propPositions, promiseProps };
   const state = extractState(unit.bodyNode, parsed.sourceFile);
-  const scope = buildComponentScope(unit, extracted, state, unit.bodyNode);
+  const scope = buildComponentScope(unit, props, state, unit.bodyNode);
   const hookDetails = extractHookDetails(unit.bodyNode, parsed.sourceFile, scope);
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
@@ -82,6 +105,10 @@ async function analyseOne(
     wrappers: unit.wrappers,
     propPositions,
     promiseProps,
+    unresolvedTypes,
+    variantOptions,
+    acceptsChildren,
+    ...(hostElement ? { hostElement } : {}),
     state,
     hookDetails,
     propUsage,
@@ -116,6 +143,7 @@ async function analyseOne(
           ref.absPath,
           resolver,
           ref.exportedName,
+          cache,
         );
         childTree.entry.localTag = ref.localName;
         children.push(childTree);

@@ -181,6 +181,64 @@ export interface ChildAttrInfo {
   pos: SourcePosition;
 }
 
+/** Inferred shape of a value an async server component awaits. */
+export type MockShape =
+  | { kind: "array"; element?: MockShape }
+  | { kind: "object"; fields: MockField[] }
+  | { kind: "string" }
+  | { kind: "number" }
+  | { kind: "date-string" }
+  | { kind: "truthy-object" }
+  | { kind: "unknown" };
+
+export interface MockField {
+  name: string;
+  shape: MockShape;
+  /** Field is rendered as JSX text, so a spec can assert its value. */
+  rendersAsText: boolean;
+}
+
+/** A module-level data dependency awaited by an async server component. */
+export interface DataDepInfo {
+  /** Local binding name; undefined for a destructured binding. */
+  varName: string | undefined;
+  /** Callee as written: "listRecentInsights", "db.query.foo.findMany". */
+  callee: string;
+  /** Root identifier of the callee, for joining to moduleImports. */
+  calleeRoot: string;
+  /** Specifier the callee was imported from, when resolvable. */
+  specifier?: string;
+  awaited: boolean;
+  shape: MockShape;
+  /** Inference was contradictory or absent — the spec emits a TODO. */
+  uncertain: boolean;
+  pos: SourcePosition;
+}
+
+export type GuardEffect =
+  | "notFound"
+  | "redirect"
+  | "permanentRedirect"
+  | "unauthorized"
+  | "forbidden"
+  | "throw";
+
+/** An early-exit guard in a component body: `if (!x) notFound()`. */
+export interface GuardInfo {
+  effect: GuardEffect;
+  callee: string;
+  /** Module the guard callee came from ("next/navigation"). */
+  specifier?: string;
+  /** Condition source text, one line, <= 80 chars. */
+  conditionRaw: string;
+  conditionKind: "falsy" | "truthy" | "comparison" | "complex";
+  /** dataDeps var names referenced by the condition, in source order. */
+  depVars: string[];
+  /** The mocked return value that makes this guard fire. */
+  triggerValue?: "undefined" | "null" | "empty-array";
+  pos: SourcePosition;
+}
+
 /** A fetch() call site inside the component body. */
 export interface FetchCallInfo {
   /** URL with interpolations replaced by :holes — "/api/buildings/:buildingId/ai/ask". */
@@ -204,6 +262,8 @@ export interface ModuleImportInfo {
   hasDefault: boolean;
   /** Absolute path when the specifier resolves to a project-local module. */
   resolvedPath?: string;
+  /** Resolved target file begins with a "use server" directive. */
+  isServerAction?: boolean;
   pos: SourcePosition;
 }
 
@@ -228,6 +288,26 @@ export interface ComponentInfo {
   /** JSX tag the parent used for this child (differs from componentName under aliasing). */
   localTag?: string;
   propUsage?: PropUsage[];
+  /**
+   * Type expressions the analyser gave up on ("Omit", "ButtonPrimitive.Props").
+   * Distinct from `unresolvedProps`, which names actual props — the two were
+   * previously conflated in one array that every consumer read as prop names.
+   */
+  unresolvedTypes?: string[];
+  /** Host element the props type is anchored to: "div", "button", "input". */
+  hostElement?: string;
+  /** Component renders JSX children (declared prop, or a children-taking host). */
+  acceptsChildren?: boolean;
+  /** prop → full literal option list, for grouped variant describes. */
+  variantOptions?: Record<string, PropValue[]>;
+  /** Lowercase host tag of the unconditionally-returned JSX root, when unambiguous. */
+  rootTag?: string;
+  /** Literal text rendered unconditionally by the happy-path return. */
+  staticText?: string[];
+  /** Awaited module-level data dependencies (async server components only). */
+  dataDeps?: DataDepInfo[];
+  /** Early-exit guards: `if (!x) notFound()`. */
+  guards?: GuardInfo[];
   /** Declaration site of every prop seen on the props type (resolved or not). */
   propPositions?: Record<string, SourcePosition>;
   /** Props whose declared type is Promise<...> (e.g. Next.js 15 `params`). */
