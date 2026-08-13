@@ -11,6 +11,7 @@ import { emitNextjsMocks } from "./nextjs/emit.ts";
 import { fetchLiveSwagger, loadLocalSpec } from "./nextjs/liveSpec.ts";
 import { ensureClientProviderWrapper, isUsableUnitProvider } from "./nextjs/providerWrapper.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
+import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
 import { runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { findTask } from "./tasks/index.ts";
@@ -170,6 +171,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   }
 
   const trees: ComponentTree[] = [];
+  const unparseable: UnparseableFile[] = [];
   for (const file of files) {
     try {
       trees.push(
@@ -181,6 +183,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         })),
       );
     } catch (err) {
+      // Also recorded so REPORT.md can account for it. A stderr line is lost in
+      // a hundred-file sweep, and a component that vanished silently is exactly
+      // what makes a coverage number meaningless.
+      unparseable.push({ file, reason: (err as Error).message });
       warn(`warning: skipping ${file}: ${(err as Error).message}`);
     }
   }
@@ -305,11 +311,19 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     await writeInlineSummaries(trees, results, outDir);
   }
   await writeSummaryJson(outDir, results);
+  const reportPath = await writeReportMarkdown({
+    trees,
+    results,
+    outDir,
+    projectRoot: nextCtx?.root,
+    unparseable,
+  });
 
   // Format everything we wrote with the host project's own formatter so
   // generation never churns the target repo's lint/format state.
   const styleRoot = nextCtx?.root ?? outDir;
   const writtenFiles = [
+    reportPath,
     ...results.flatMap((r) => r.outputs),
     // swagger.json + mocks are rewritten on every run; if they are not written
     // in the project's own style, its formatter (or a pre-commit hook) will
