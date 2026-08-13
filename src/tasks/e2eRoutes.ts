@@ -56,6 +56,14 @@ export const e2eRoutes: Task = {
       written.push(setupPath);
     }
 
+    const paramsJsonPath = path.join(e2eDir, "params.json");
+    const wroteParams = await writeParams(paramsJsonPath, pages);
+    if (wroteParams) written.push(paramsJsonPath);
+
+    const paramsHelperPath = path.join(e2eDir, "params.ts");
+    await Bun.write(paramsHelperPath, paramsHelper());
+    written.push(paramsHelperPath);
+
     const readmePath = path.join(e2eDir, "README.md");
     if (!existsSync(readmePath)) {
       await Bun.write(readmePath, e2eReadme(port));
@@ -184,19 +192,18 @@ function routeSpec(
   tree: ComponentTree,
   route: NonNullable<ReturnType<typeof pageFileToRoute>>,
 ): string {
-  const paramLines = route.params
-    .map((p) =>
-      p.toUpperCase() === "ID"
-        ? `const ID = process.env.FLAWLESS_E2E_ID ?? "REPLACE_WITH_SEEDED_ID"; // TODO(flawless)`
-        : `const ${p.toUpperCase()} = process.env.FLAWLESS_E2E_${p.toUpperCase()} ?? process.env.FLAWLESS_E2E_ID ?? "REPLACE_WITH_SEEDED_${p.toUpperCase()}"; // TODO(flawless)`,
-    )
-    .join("\n");
-  let urlExpr = `\`${route.urlPath}\``;
-  for (const p of route.params) {
-    urlExpr = urlExpr
-      .replace(`[...${p}]`, `\${${p.toUpperCase()}}`)
-      .replace(`[${p}]`, `\${${p.toUpperCase()}}`);
-  }
+  // A parameterised route reads its ids from the shared fixture rather than from
+  // a const per spec. The old form defaulted to "REPLACE_WITH_SEEDED_ID", which
+  // navigated to a URL that 404s — so an unfilled fixture was reported as an
+  // application bug, thirty times over.
+  const dynamic = route.params.length > 0;
+  const paramLines = dynamic
+    ? `import { routeUrl } from "./params";\n\nconst ROUTE_TEMPLATE = ${JSON.stringify(route.urlPath)};`
+    : "";
+  const urlExpr = dynamic ? `routeUrl(ROUTE_TEMPLATE)` : JSON.stringify(route.urlPath);
+  const skipLine = dynamic
+    ? `\n  test.skip(\n    ROUTE === undefined,\n    \`no id fixture for ${route.urlPath} — fill flawless/e2e/params.json\`,\n  );`
+    : "";
 
   // Up to 3 interactions harvested from the page's component tree.
   const clicks = collectClicks(tree).slice(0, 3);
@@ -224,7 +231,7 @@ function routeSpec(
 ${paramLines}
 const ROUTE = ${urlExpr};
 
-test("GET ${route.urlPath} renders without console or page errors", async ({ page }) => {
+test("GET ${route.urlPath} renders without console or page errors", async ({ page }) => {${skipLine}
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
@@ -239,7 +246,7 @@ test("GET ${route.urlPath} renders without console or page errors", async ({ pag
 ${
   clicks.length > 0
     ? `
-test("basic interactions from analysis stay error-free", async ({ page }) => {
+test("basic interactions from analysis stay error-free", async ({ page }) => {${skipLine}
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(ROUTE);
@@ -267,4 +274,99 @@ function collectClicks(tree: ComponentTree): HarvestedClick[] {
   };
   walk(tree);
   return out;
+}
+
+/**
+ * The shared id fixture, merged rather than overwritten.
+ *
+ * A value here was typed by a human against a seeded database and cannot be
+ * recovered from the tool's inputs, so `--force` regenerates the HELPER and
+ * never the DATA. Route keys whose page no longer exists are dropped, because a
+ * stale entry silently stops matching anything.
+ *
+ * Two levels because most params are global — one seeded building — but some
+ * routes need a consistent PAIR: a poll that actually belongs to that building.
+ * Per-route overrides express that without forcing it everywhere.
+ */
+async function writeParams(
+  file: string,
+  pages: Array<{ route: { urlPath: string; params: string[] } }>,
+): Promise<boolean> {
+  interface ParamsFile {
+    defaults: Record<string, string>;
+    routes: Record<string, Record<string, string>>;
+  }
+  let existing: ParamsFile = { defaults: {}, routes: {} };
+  if (existsSync(file)) {
+    try {
+      const parsed = JSON.parse(await readFile(file, "utf8")) as Partial<ParamsFile>;
+      existing = { defaults: parsed.defaults ?? {}, routes: parsed.routes ?? {} };
+    } catch {
+      // A hand-edited file with a syntax error must not be silently replaced.
+      throw new Error(`${file} is not valid JSON — fix or delete it and re-run`);
+    }
+  }
+
+  const next: ParamsFile = { defaults: {}, routes: {} };
+  const allParams = new Set<string>();
+  for (const p of pages) for (const name of p.route.params) allParams.add(name);
+  for (const name of [...allParams].sort()) next.defaults[name] = existing.defaults[name] ?? "";
+
+  for (const p of pages) {
+    if (p.route.params.length === 0) continue;
+    const prior = existing.routes[p.route.urlPath] ?? {};
+    const row: Record<string, string> = {};
+    for (const name of [...p.route.params].sort()) row[name] = prior[name] ?? "";
+    next.routes[p.route.urlPath] = row;
+  }
+
+  const body = `${JSON.stringify(next, null, 2)}\n`;
+  if (existsSync(file) && (await readFile(file, "utf8")) === body) return false;
+  await Bun.write(file, body);
+  return true;
+}
+
+function paramsHelper(): string {
+  return `import params from "./params.json" with { type: "json" };
+
+/**
+ * Ids for parameterised routes, resolved in this order:
+ *
+ *   1. FLAWLESS_E2E_<PARAM>              per-param environment override
+ *   2. params.json routes[<route>][<p>]  when this route needs a consistent set
+ *   3. params.json defaults[<p>]         the usual case: one seeded record
+ *   4. FLAWLESS_E2E_ID                   legacy single-id escape hatch
+ *
+ * undefined when nothing resolves — the spec skips with a reason rather than
+ * navigating to a URL that 404s and blaming the app for it.
+ */
+type ParamsFile = {
+  defaults: Record<string, string>;
+  routes: Record<string, Record<string, string>>;
+};
+
+const FIXTURE = params as ParamsFile;
+
+export function param(route: string, name: string): string | undefined {
+  const env = process.env[\`FLAWLESS_E2E_\${name.toUpperCase()}\`];
+  if (env) return env;
+  const perRoute = FIXTURE.routes[route]?.[name];
+  if (perRoute) return perRoute;
+  const fallback = FIXTURE.defaults[name];
+  if (fallback) return fallback;
+  return process.env.FLAWLESS_E2E_ID || undefined;
+}
+
+/** The template with every [param] / [...param] filled in, or undefined. */
+export function routeUrl(template: string): string | undefined {
+  let url = template;
+  for (const match of template.matchAll(/\\[(?:\\.\\.\\.)?([^\\]]+)\\]/g)) {
+    const name = match[1] as string;
+    const value = param(template, name);
+    if (!value) return undefined;
+    url = url.replace(match[0], encodeURIComponent(value));
+  }
+  return url;
+}
+`;
 }

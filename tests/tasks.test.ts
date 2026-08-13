@@ -204,9 +204,40 @@ describe("e2e task", () => {
 
     const spec = readFileSync(specPath, "utf8");
     expect(spec).toContain('from "@playwright/test"');
-    expect(spec).toContain("FLAWLESS_E2E_ID");
-    expect(spec).toContain(`const ROUTE = \`/things/\${ID}\``);
+    // Ids come from the shared fixture, not a const per spec. The old form
+    // defaulted to "REPLACE_WITH_SEEDED_ID", navigated to a URL that 404s, and
+    // reported the tool's missing fixture as an application bug.
+    expect(spec).toContain('import { routeUrl } from "./params";');
+    expect(spec).toContain("const ROUTE = routeUrl(ROUTE_TEMPLATE);");
+    expect(spec).toContain("test.skip(");
+    expect(spec).toContain("fill flawless/e2e/params.json");
     expect(spec).toContain("GET /things/[id] renders without console or page errors");
+
+    const paramsJson = path.join(outDir, "e2e", "params.json");
+    const paramsHelper = path.join(outDir, "e2e", "params.ts");
+    for (const p of [paramsJson, paramsHelper]) expect(existsSync(p)).toBe(true);
+    expect(JSON.parse(readFileSync(paramsJson, "utf8"))).toEqual({
+      defaults: { id: "" },
+      routes: { "/things/[id]": { id: "" } },
+    });
+    // The legacy single-id escape hatch moves into the helper.
+    expect(readFileSync(paramsHelper, "utf8")).toContain("FLAWLESS_E2E_ID");
+
+    // Hand-filled ids survive regeneration, including --force: a value typed
+    // against a seeded database cannot be recovered from the tool's inputs, so
+    // --force regenerates the HELPER and never the DATA.
+    writeFileSync(
+      paramsJson,
+      JSON.stringify({ defaults: { id: "seeded-uuid" }, routes: {} }, null, 2),
+    );
+    await task("e2e").run(ctxOf({ outDir, trees: [tree], nextjs, force: true }));
+    const after = JSON.parse(readFileSync(paramsJson, "utf8")) as {
+      defaults: Record<string, string>;
+      routes: Record<string, Record<string, string>>;
+    };
+    expect(after.defaults.id).toBe("seeded-uuid");
+    // …and the route key the previous write dropped is restored.
+    expect(after.routes["/things/[id]"]).toEqual({ id: "" });
 
     expect(readFileSync(setupPath, "utf8")).toContain(".auth.json");
     expect(readFileSync(readmePath, "utf8")).toContain("3123");

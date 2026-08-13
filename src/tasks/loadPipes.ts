@@ -43,6 +43,10 @@ export const loadPipes: Task = {
       keptPipes = true;
     }
 
+    const envPath = path.join(loadDir, "env.sh");
+    await Bun.write(envPath, loadEnvScript());
+    written.push(envPath);
+
     const readmePath = path.join(loadDir, "README.md");
     if (!existsSync(readmePath)) {
       await Bun.write(readmePath, loadReadme());
@@ -144,9 +148,17 @@ function renderPipes(targets: LoadTarget[], outDir: string, nextRoot: string): s
   });
   return `# flawless-react load pipes — generated from the analysed component tree.
 # Env contract (export before running, or provide a crust setup module):
-#   LOAD_BASE  — e.g. http://localhost:3001
-#   LOAD_AUTH  — e.g. "authorization: Bearer <token>" (use "accept: */*" if none needed)
-#   LOAD_<PARAM> — one per dynamic segment below (e.g. LOAD_ID, LOAD_BUILDINGID)
+#   LOAD_BASE  — e.g. http://localhost:3001. Point this at a PRODUCTION build
+#                (bun run build && bun run start), not at next dev: the dev
+#                server compiles routes on demand, so a load run against it
+#                measures the compiler rather than the app.
+#   LOAD_AUTH  — a header line, e.g. "cookie: session=<value>" for a cookie
+#                session, or "authorization: Bearer <token>" for a token one.
+#                Use "accept: */*" if the route needs no auth.
+#   LOAD_<PARAM> — one per dynamic segment below (e.g. LOAD_ID, LOAD_BUILDINGID).
+#                If you filled flawless/e2e/params.json for the e2e task, those
+#                are the same ids — source flawless/load/env.sh to reuse them
+#                instead of keeping a second copy that drifts.
 # Baseline gating: copy a good last-*.json to baseline-*.json; runs then fail
 # when p95 degrades beyond 2x baseline. One assert per threshold.
 # TODO(flawless): tune rate/duration to your app; add POST flows deliberately.
@@ -170,5 +182,36 @@ Subsequent runs fail when p95 exceeds 2x the baseline.
 
 This file and routes.pipes are yours after generation — flawless-react will
 not overwrite them (regenerate with --force).
+`;
+}
+
+/**
+ * Exports LOAD_<PARAM> from the ids already filled in for the e2e task.
+ *
+ * The load pipes and the e2e specs need the same seeded ids. Two hand-maintained
+ * copies of the same eight UUIDs drift on the first change, and the drift is
+ * silent — a load run against a stale id just reports a 404 rate.
+ */
+function loadEnvScript(): string {
+  return `#!/usr/bin/env bash
+# source flawless/load/env.sh
+#
+# Exports LOAD_<PARAM> for every id in flawless/e2e/params.json, so the load
+# pipes and the e2e specs cannot disagree about which records they target.
+# LOAD_BASE and LOAD_AUTH are yours to set; see README.md.
+set -a
+_params="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../e2e" && pwd)/params.json"
+if [ -f "$_params" ]; then
+  while IFS="=" read -r _k _v; do
+    [ -n "$_k" ] && [ -n "$_v" ] && export "LOAD_$(echo "$_k" | tr '[:lower:]' '[:upper:]')=$_v"
+  done < <(
+    # defaults first, then per-route overrides win
+    jq -r '(.defaults // {}) + (reduce (.routes // {} | to_entries[]) as $r ({}; . + $r.value))
+           | to_entries[] | select(.value != "") | "\\(.key)=\\(.value)"' "$_params"
+  )
+else
+  echo "flawless: no e2e/params.json — set LOAD_<PARAM> yourself" >&2
+fi
+set +a
 `;
 }
