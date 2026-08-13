@@ -6,7 +6,11 @@ import type { TaskId } from "./types.ts";
 interface ClackPrompts {
   intro: (msg: string) => void;
   outro: (msg: string) => void;
-  text: (opts: { message: string; placeholder?: string; initialValue?: string }) => Promise<string | symbol>;
+  text: (opts: {
+    message: string;
+    placeholder?: string;
+    initialValue?: string;
+  }) => Promise<string | symbol>;
   multiselect: (opts: {
     message: string;
     options: Array<{ value: string; label: string; hint?: string }>;

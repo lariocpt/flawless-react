@@ -57,7 +57,11 @@ export function emitPlaywrightClickTarget(info: InteractionInfo | undefined): st
 }
 
 /** Map an event attribute to the Testing-Library / user-event call for an element expression. */
-export function emitVitestDispatch(event: string, elementExpr: string, opts?: { typeValue?: string }): string {
+export function emitVitestDispatch(
+  event: string,
+  elementExpr: string,
+  opts?: { typeValue?: string },
+): string {
   switch (event) {
     case "onClick":
       return `await userEvent.click(${elementExpr})`;
@@ -81,7 +85,11 @@ export function emitVitestDispatch(event: string, elementExpr: string, opts?: { 
   }
 }
 
-export function emitPlaywrightDispatch(event: string, locatorExpr: string, opts?: { typeValue?: string }): string {
+export function emitPlaywrightDispatch(
+  event: string,
+  locatorExpr: string,
+  opts?: { typeValue?: string },
+): string {
   switch (event) {
     case "onClick":
     case "onSubmit":

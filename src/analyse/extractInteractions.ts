@@ -10,7 +10,8 @@ import type {
   PropsShape,
 } from "../types.ts";
 
-const EVENT_PATTERN = /^on(Click|MouseDown|PointerDown|Submit|Change|Input|Focus|Blur|KeyDown|KeyPress)$/;
+const EVENT_PATTERN =
+  /^on(Click|MouseDown|PointerDown|Submit|Change|Input|Focus|Blur|KeyDown|KeyPress)$/;
 const FORM_FIELD_TAGS = new Set(["input", "select", "textarea"]);
 
 export function extractInteractions(
@@ -257,8 +258,7 @@ function collectFields(parent: ts.JsxElement): FieldInfo[] {
       const tag = readTagName(n.tagName);
       if (FORM_FIELD_TAGS.has(tag)) {
         const hints = collectHints(n.attributes);
-        const label =
-          (hints.id && labelsByHtmlFor.get(hints.id)) ?? hints.placeholder ?? undefined;
+        const label = (hints.id && labelsByHtmlFor.get(hints.id)) ?? hints.placeholder ?? undefined;
         fields.push({
           tag: tag as FieldInfo["tag"],
           type: hints.type,
@@ -280,7 +280,11 @@ function jsxTextOf(el: ts.JsxElement): string | undefined {
     if (ts.isJsxText(child)) {
       const t = child.text.trim();
       if (t) return t;
-    } else if (ts.isJsxExpression(child) && child.expression && ts.isStringLiteral(child.expression)) {
+    } else if (
+      ts.isJsxExpression(child) &&
+      child.expression &&
+      ts.isStringLiteral(child.expression)
+    ) {
       return child.expression.text;
     }
   }

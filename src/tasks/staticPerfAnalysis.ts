@@ -1,6 +1,13 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import type { ComponentInfo, ComponentTree, Finding, RunContext, Task, TaskResult } from "../types.ts";
+import type {
+  ComponentInfo,
+  ComponentTree,
+  Finding,
+  RunContext,
+  Task,
+  TaskResult,
+} from "../types.ts";
 
 const MEMO_HOOKS = new Set(["useMemo", "useCallback", "memo", "useRef"]);
 const CHILD_RERENDER_THRESHOLD = 3;

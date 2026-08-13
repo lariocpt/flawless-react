@@ -3,8 +3,12 @@ import type { NextjsApiRoute } from "../types.ts";
 export function renderMswHandlers(routes: NextjsApiRoute[]): string {
   const lines: string[] = [];
   lines.push(`// MSW request handlers derived from your Next.js API routes.`);
-  lines.push(`// Bodies come from the live OpenAPI spec when available (examples > schema defaults);`);
-  lines.push(`// otherwise an empty object. Edit freely — flawless-react will not overwrite this file.`);
+  lines.push(
+    `// Bodies come from the live OpenAPI spec when available (examples > schema defaults);`,
+  );
+  lines.push(
+    `// otherwise an empty object. Edit freely — flawless-react will not overwrite this file.`,
+  );
   lines.push(``);
   lines.push(`import { http, HttpResponse } from "msw";`);
   lines.push(``);

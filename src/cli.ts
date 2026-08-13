@@ -1,18 +1,23 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { analyse } from "./analyse/index.ts";
-import { emitNextjsMocks } from "./nextjs/emit.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
   mergeIntoNextPackageJson,
   updateGitignore,
 } from "./nextjs/detect.ts";
+import { emitNextjsMocks } from "./nextjs/emit.ts";
 import { fetchLiveSwagger } from "./nextjs/liveSpec.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
-import { printFindings, printSummaryTable, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
+import {
+  printFindings,
+  printSummaryTable,
+  writeInlineSummaries,
+  writeSummaryJson,
+} from "./reporters/findings.ts";
 import { runGeneratedTests } from "./runner/runTests.ts";
-import { TASKS, findTask } from "./tasks/index.ts";
+import { findTask, TASKS } from "./tasks/index.ts";
 import type {
   CliArgs,
   ComponentTree,
@@ -279,7 +284,9 @@ export async function main(argv: string[]): Promise<void> {
       const detected = detectComponentsGlob(nextCtx.root);
       if (detected) {
         pattern = detected;
-        process.stdout.write(`nextjs: no entry passed — defaulting to ${path.relative(nextCtx.root, detected)}\n`);
+        process.stdout.write(
+          `nextjs: no entry passed — defaulting to ${path.relative(nextCtx.root, detected)}\n`,
+        );
       }
     }
     process.stdout.write(
@@ -307,7 +314,9 @@ export async function main(argv: string[]): Promise<void> {
           `nextjs: enriched routes from live OpenAPI at ${live.url} (paths=${live.routes.length})\n`,
         );
       } else if (args.swaggerUrl !== undefined) {
-        process.stderr.write(`nextjs: live spec at ${live.url} unavailable (${live.error}); using static AST output\n`);
+        process.stderr.write(
+          `nextjs: live spec at ${live.url} unavailable (${live.error}); using static AST output\n`,
+        );
       }
     }
   }
@@ -350,9 +359,7 @@ export async function main(argv: string[]): Promise<void> {
     firstTree.entry.propsShape = { ...firstTree.entry.propsShape, ...args.propsOverride };
   }
 
-  const selected = taskIds
-    .map((id) => findTask(id))
-    .filter((t): t is Task => Boolean(t));
+  const selected = taskIds.map((id) => findTask(id)).filter((t): t is Task => Boolean(t));
 
   const ctx: RunContext = {
     trees,
@@ -450,7 +457,10 @@ export async function main(argv: string[]): Promise<void> {
     (args.runTests || (wantInteractive && (await confirmRunTests())));
 
   if (wantToRunTests) {
-    await runGeneratedTests(outDir, selected.map((t) => t.id));
+    await runGeneratedTests(
+      outDir,
+      selected.map((t) => t.id),
+    );
   }
 
   if (wantInteractive) {

@@ -19,7 +19,10 @@ async function walkAppRouterApi(apiDir: string): Promise<NextjsApiRoute[]> {
   const glob = new Bun.Glob("**/route.{ts,tsx,js,jsx,mjs}");
   for await (const rel of glob.scan({ cwd: apiDir })) {
     const abs = path.join(apiDir, rel);
-    const segments = path.dirname(rel).split(path.sep).filter((s) => s !== ".");
+    const segments = path
+      .dirname(rel)
+      .split(path.sep)
+      .filter((s) => s !== ".");
     const urlPath = "/api/" + segments.map(appRouterSegment).join("/");
     const methods = extractAppRouterMethods(abs);
     if (methods.length === 0) continue;

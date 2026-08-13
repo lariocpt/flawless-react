@@ -43,7 +43,13 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     { relPath: "tests/_helpers.ts", content: helpers() },
     { relPath: "tests/_heap.ts", content: heapHelper() },
     { relPath: "budgets.json", content: budgets(flat, opts.variants) },
-    { relPath: "README.md", content: readme(suiteName, flat.map((c) => c.info.componentName)) },
+    {
+      relPath: "README.md",
+      content: readme(
+        suiteName,
+        flat.map((c) => c.info.componentName),
+      ),
+    },
   ];
   if (!opts.nextjsHost) {
     files.unshift({ relPath: "tsconfig.json", content: tsConfig() });

@@ -247,17 +247,17 @@ describe("renderUnitBrowser interaction-aware", () => {
     const unit = files.find((f) => f.relPath === "unit/Toolbar.test.tsx");
     expect(unit).toBeDefined();
     const src = unit?.content ?? "";
-    expect(src).toContain('type Props = React.ComponentProps<typeof Toolbar>');
-    expect(src).toContain('handlers: Record<string, ReturnType<typeof vi.fn>>');
-    expect(src).toContain('merged as unknown as Props');
+    expect(src).toContain("type Props = React.ComponentProps<typeof Toolbar>");
+    expect(src).toContain("handlers: Record<string, ReturnType<typeof vi.fn>>");
+    expect(src).toContain("merged as unknown as Props");
     expect(src).toContain('screen.getByRole("button", { name: "Save" })');
     expect(src).toContain('screen.getByRole("button", { name: "Cancel" })');
     expect(src).toContain('screen.getByRole("button", { name: "Delete" })');
-    expect(src).toContain('expect(handlers.onSave).toHaveBeenCalled()');
-    expect(src).toContain('expect(handlers.onCancel).not.toHaveBeenCalled()');
-    expect(src).toContain('expect(handlers.onDelete).not.toHaveBeenCalled()');
+    expect(src).toContain("expect(handlers.onSave).toHaveBeenCalled()");
+    expect(src).toContain("expect(handlers.onCancel).not.toHaveBeenCalled()");
+    expect(src).toContain("expect(handlers.onDelete).not.toHaveBeenCalled()");
     // No fireEvent import (not used).
-    expect(src).not.toContain('fireEvent');
+    expect(src).not.toContain("fireEvent");
     // No legacy first-button click fallback path.
     expect(src).not.toContain('container.querySelector("button")');
   });
@@ -278,7 +278,7 @@ describe("renderUnitBrowser interaction-aware", () => {
     expect(src).toContain('screen.getByLabelText("Name")');
     expect(src).toContain('screen.getByLabelText("Email")');
     expect(src).toContain('screen.getByLabelText("Password")');
-    expect(src).toContain('expect(handlers.onSubmit).toHaveBeenCalled()');
+    expect(src).toContain("expect(handlers.onSubmit).toHaveBeenCalled()");
   });
 
   test("IconButton unit spec uses aria-label locator + upgraded prop binding", async () => {
@@ -295,7 +295,7 @@ describe("renderUnitBrowser interaction-aware", () => {
     expect(unit).toBeDefined();
     const src = unit?.content ?? "";
     expect(src).toContain('screen.getByLabelText("close")');
-    expect(src).toContain('expect(handlers.onClose).toHaveBeenCalled()');
+    expect(src).toContain("expect(handlers.onClose).toHaveBeenCalled()");
   });
 
   test("Toolbar perf spec targets a named button (not .first())", async () => {

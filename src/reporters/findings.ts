@@ -87,7 +87,13 @@ export async function writeInlineSummaries(
     const top = [...findings]
       .sort((a, b) => severityWeight(b.severity) - severityWeight(a.severity))
       .slice(0, 3)
-      .map((f) => ({ rule: f.rule, severity: f.severity, line: f.line, column: f.column, message: f.message }));
+      .map((f) => ({
+        rule: f.rule,
+        severity: f.severity,
+        line: f.line,
+        column: f.column,
+        message: f.message,
+      }));
     const body = {
       component: name,
       file: tree.entry.filePath,

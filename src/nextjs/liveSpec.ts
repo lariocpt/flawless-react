@@ -1,5 +1,5 @@
-import type { NextjsApiRoute } from "../types.ts";
 import { extractRoutes } from "../scaffold/openapi.ts";
+import type { NextjsApiRoute } from "../types.ts";
 
 const DEFAULT_URL = "http://localhost:3000/api/docs";
 const FETCH_TIMEOUT_MS = 1500;
@@ -12,9 +12,7 @@ export interface LiveSpecResult {
   error?: string;
 }
 
-export async function fetchLiveSwagger(
-  explicitUrl: string | undefined,
-): Promise<LiveSpecResult> {
+export async function fetchLiveSwagger(explicitUrl: string | undefined): Promise<LiveSpecResult> {
   const url = explicitUrl ?? DEFAULT_URL;
   try {
     const ctl = new AbortController();
@@ -30,7 +28,13 @@ export async function fetchLiveSwagger(
     }
     const ct = res.headers.get("content-type") ?? "";
     if (!ct.includes("application/json")) {
-      return { ok: false, url, routes: undefined, rawSpec: undefined, error: `unexpected content-type: ${ct}` };
+      return {
+        ok: false,
+        url,
+        routes: undefined,
+        rawSpec: undefined,
+        error: `unexpected content-type: ${ct}`,
+      };
     }
     const spec = (await res.json()) as Parameters<typeof extractRoutes>[0];
     const mockRoutes = extractRoutes(spec);

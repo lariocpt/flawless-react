@@ -1,11 +1,5 @@
 import path from "node:path";
-import type {
-  ClickHandler,
-  ComponentInfo,
-  ComponentTree,
-  FormInfo,
-  PropsShape,
-} from "../types.ts";
+import type { ClickHandler, ComponentInfo, ComponentTree, FormInfo, PropsShape } from "../types.ts";
 import {
   emitPlaywrightDispatch,
   emitPlaywrightSelector,
@@ -112,9 +106,7 @@ function unitSpec(c: FlatComponent, variants: number): string {
 
   const allHandlers = collectPropHandlers(c.info);
   const handlerObjectLiteral =
-    allHandlers.length > 0
-      ? `{ ${allHandlers.map((h) => `${h}: vi.fn()`).join(", ")} }`
-      : `{}`;
+    allHandlers.length > 0 ? `{ ${allHandlers.map((h) => `${h}: vi.fn()`).join(", ")} }` : `{}`;
 
   const interactionTests = interactions
     ? emitInteractionTests(name, interactions, allHandlers)
@@ -243,12 +235,7 @@ function describeClickLabel(c: ClickHandler): string {
   return `the ${c.tag}`;
 }
 
-function emitFormTest(
-  name: string,
-  form: FormInfo,
-  allHandlers: string[],
-  idx: number,
-): string {
+function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: number): string {
   const fillSteps: string[] = [];
   for (const field of form.fields) {
     if (field.tag !== "input" && field.tag !== "textarea") continue;
@@ -270,7 +257,9 @@ function emitFormTest(
             ? `container.querySelector(${JSON.stringify(`[name=${field.name}]`)})!`
             : undefined;
     if (!lookup) continue;
-    fillSteps.push(`  await userEvent.type(${lookup} as HTMLElement, ${JSON.stringify(sampleValue)});`);
+    fillSteps.push(
+      `  await userEvent.type(${lookup} as HTMLElement, ${JSON.stringify(sampleValue)});`,
+    );
   }
   const submitClick = `await userEvent.click(screen.getByRole("button", { name: /submit|sign\\s*up|save/i }));`;
   if (form.submit?.kind === "prop") {
@@ -370,9 +359,7 @@ ${interactionTests}
 `;
 }
 
-function emitBrowserInteractionTests(
-  info: NonNullable<ComponentInfo["interactions"]>,
-): string {
+function emitBrowserInteractionTests(info: NonNullable<ComponentInfo["interactions"]>): string {
   const parts: string[] = [];
   for (let i = 0; i < info.clicks.length; i++) {
     const click = info.clicks[i];
@@ -464,4 +451,3 @@ export default defineConfig({
 });
 `;
 }
-
