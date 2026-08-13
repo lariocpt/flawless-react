@@ -208,8 +208,14 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
         : `      { find: /^${escapeRegex(a.find)}$/, replacement: ${JSON.stringify(a.replacement)} },`,
     )
     .join("\n");
-  const resolveBlock =
-    aliasLines.length > 0 ? `  resolve: {\n    alias: [\n${aliasLines}\n    ],\n  },\n` : "";
+  // dedupe is not optional in a workspace. When react resolves to the repo root
+  // and react-dom to the package, react-dom-server sets its hook dispatcher on a
+  // different React instance than the component reads from, and every hook call
+  // fails with "Cannot read properties of null (reading 'useEffect')" — a
+  // confusing error that looks like a generator bug and is not one.
+  const dedupeLine = `    dedupe: ["react", "react-dom"],\n`;
+  const aliasBlock = aliasLines.length > 0 ? `    alias: [\n${aliasLines}\n    ],\n` : "";
+  const resolveBlock = `  resolve: {\n${dedupeLine}${aliasBlock}  },\n`;
   if (opts.colocate) {
     // Colocate mode runs as `vitest run --config flawless/vitest.config.ts`.
     // Vite roots itself at the CONFIG file's directory, so without an explicit
@@ -710,6 +716,18 @@ function constrainedSpec(
     const invoke = info.isAsync
       ? `await ${name}(props as never)`
       : `<${name} {...(props as never)} />`;
+    // Only a component that actually renders {children} can be asserted to pass
+    // a slot through. A root error boundary takes {error, reset} and renders
+    // neither, so injecting a slot and demanding it appear is a test the
+    // component can never satisfy — and the failure reads as a real defect.
+    const slotBlock = info.acceptsChildren
+      ? {
+          const: `const SLOT = "flawless-slot";\n`,
+          prop: `\n    children: <div data-testid={SLOT} />,`,
+          title: " containing its children",
+          assert: `\n  expect(html).toContain(SLOT);`,
+        }
+      : { const: "", prop: "", title: "", assert: "" };
     return `import { test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type * as React from "react";
@@ -721,12 +739,10 @@ ${mockBlock}${emitComponentImport(info, importPath)}
 // nothing true. Its contract is checked as static markup instead.
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
-const SLOT = "flawless-slot";
-
-test("${name} returns a document root containing its children", async () => {
+${slotBlock.const}
+test("${name} returns a document root${slotBlock.title}", async () => {
   const props: Record<string, unknown> = {
-    ...DEFAULTS,
-    children: <div data-testid={SLOT} />,
+    ...DEFAULTS,${slotBlock.prop}
   };
   for (const k of PROMISE_PROPS) {
     if (k in props) props[k] = Promise.resolve(props[k]);
@@ -734,8 +750,7 @@ test("${name} returns a document root containing its children", async () => {
   const ui = ${invoke};
   const html = renderToStaticMarkup(ui as React.ReactElement);
   expect(html).toMatch(/^<html/);
-  expect(html).toContain("<body");
-  expect(html).toContain(SLOT);
+  expect(html).toContain("<body");${slotBlock.assert}
   void vi;
 });
 `;

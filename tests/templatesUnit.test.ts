@@ -436,6 +436,19 @@ describe("renderUnitBrowser document-root components", () => {
     // get its returned tree.
     expect(spec).toContain("const ui = await RootLayout(props as never);");
   });
+
+  test("the children slot is asserted only when the component renders children", () => {
+    const withChildren = contentOf(docRoot({ acceptsChildren: true }), "unit/RootLayout.test.tsx");
+    expect(withChildren).toContain('const SLOT = "flawless-slot";');
+    expect(withChildren).toContain("expect(html).toContain(SLOT);");
+
+    // A root error boundary takes {error, reset} and renders neither, so
+    // injecting a slot and demanding it appear is a test it can never satisfy.
+    const withoutChildren = contentOf(docRoot(), "unit/RootLayout.test.tsx");
+    expect(withoutChildren).not.toContain("flawless-slot");
+    expect(withoutChildren).toContain("expect(html).toMatch(/^<html/);");
+    expect(withoutChildren).toContain('expect(html).toContain("<body");');
+  });
 });
 
 describe("renderUnitBrowser resolveAliases", () => {
@@ -456,13 +469,17 @@ describe("renderUnitBrowser resolveAliases", () => {
     expect(cfg).toContain('{ find: /^react$/, replacement: "/proj/node_modules/react" },');
   });
 
-  test("no aliases → no resolve block", () => {
+  test("no aliases → no alias list, but dedupe is always emitted", () => {
     const cfg = contentOf(
       renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 }),
       "vitest.config.ts",
     );
-    expect(cfg).not.toContain("resolve: {");
     expect(cfg).not.toContain("alias: [");
+    // Without dedupe, a workspace where react resolves to the repo root and
+    // react-dom to the package gives every hook call "Cannot read properties of
+    // null (reading 'useEffect')" — react-dom-server sets its dispatcher on a
+    // different React instance than the component reads from.
+    expect(cfg).toContain('dedupe: ["react", "react-dom"],');
   });
 });
 

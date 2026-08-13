@@ -83,6 +83,13 @@ function computeResolveAliases(projectRoot: string): AliasEntry[] {
     pin("react/jsx-dev-runtime", "react/jsx-dev-runtime.js");
     pin("react-dom/client", "react-dom/client.js");
     pin("react-dom/test-utils", "react-dom/test-utils.js");
+    // The document-root specs render through react-dom/server. Pinning every
+    // other react-dom subpath but not this one is worse than pinning none: the
+    // spec's React is the aliased copy while its renderer is a second one, so
+    // the SSR hook dispatcher is set on an instance the component cannot see and
+    // every hook call fails with "Cannot read properties of null".
+    pin("react-dom/server", "react-dom/server.js");
+    pin("react-dom/server.browser", "react-dom/server.browser.js");
     pin("react-dom", "react-dom");
     pin("react", "react");
   }
