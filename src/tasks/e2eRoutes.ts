@@ -107,12 +107,15 @@ async function readDevScript(nextRoot: string): Promise<string | undefined> {
 }
 
 function e2eConfig(nextRoot: string, port: number): string {
-  return `import { defineConfig, devices } from "@playwright/test";
+  return `import path from "node:path";
+import { defineConfig, devices } from "@playwright/test";
 
 // Runs against the target app's real dev server (RSC pages hit the real DB —
 // seed it first). Override the base URL to point at a crust validation proxy
 // for contract-checked runs: FLAWLESS_E2E_BASEURL=http://localhost:4747.
 const baseURL = process.env.FLAWLESS_E2E_BASEURL ?? "http://localhost:${port}";
+// global-setup.ts always (re)writes this file — empty until you wire up login.
+const authState = path.join(__dirname, ".auth.json"); // playwright transpiles configs to CJS
 
 export default defineConfig({
   testDir: ".",
@@ -122,6 +125,7 @@ export default defineConfig({
   globalSetup: "./global-setup.ts",
   use: {
     baseURL,
+    storageState: authState,
     trace: "retain-on-failure",
   },
   webServer: process.env.FLAWLESS_E2E_BASEURL
@@ -139,11 +143,24 @@ export default defineConfig({
 }
 
 function globalSetupStub(): string {
-  return `// TODO(flawless): authenticate here if your routes need a session.
-// Typical shape: request the login endpoint, persist storageState to
-// e2e/.auth.json, then add \`storageState: "./.auth.json"\` to use{} in
-// playwright.config.ts. flawless-react never overwrites this file.
-export default async function globalSetup(): Promise<void> {}
+  return `import { writeFileSync } from "node:fs";
+import path from "node:path";
+
+// TODO(flawless): authenticate here if your routes need a session — request
+// your login endpoint with a playwright request context and persist its
+// storageState to .auth.json (the config already points at it). Example:
+//
+//   const ctx = await request.newContext({ baseURL });
+//   await ctx.post("/api/auth/login", { data: { email, password } });
+//   await ctx.storageState({ path: AUTH_STATE });
+//
+// flawless-react never overwrites this file.
+const AUTH_STATE = path.join(__dirname, ".auth.json"); // CJS under playwright
+
+export default async function globalSetup(): Promise<void> {
+  // Empty state so the config's storageState reference always resolves.
+  writeFileSync(AUTH_STATE, JSON.stringify({ cookies: [], origins: [] }));
+}
 `;
 }
 

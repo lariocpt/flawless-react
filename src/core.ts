@@ -237,7 +237,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           "react-scan": "^0.4.3",
         },
         {
-          "flawless:unit": `vitest run --root ${path.relative(nextCtx.root, outDir)}`,
+          "flawless:unit": opts.colocate
+            ? `vitest run --config ${path.relative(nextCtx.root, outDir)}/vitest.config.ts`
+            : `vitest run --root ${path.relative(nextCtx.root, outDir)}`,
           "flawless:perf": `playwright test --config ${path.relative(nextCtx.root, outDir)}/playwright.config.ts ${path.relative(nextCtx.root, outDir)}/tests`,
           "flawless:browser": `playwright test --config ${path.relative(nextCtx.root, outDir)}/browser/playwright.config.ts`,
           ...(taskIds.includes("e2e")
@@ -261,6 +263,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         "flawless/playwright-report/",
         "flawless/node_modules/",
         "flawless/test-results/",
+        "flawless/e2e/.auth.json",
         "*.flawless.json",
       ]);
       if (added.length > 0) {

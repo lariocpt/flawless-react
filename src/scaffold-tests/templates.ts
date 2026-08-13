@@ -63,14 +63,21 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
     { relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() },
   ];
 
+  const perFile = new Map<string, number>();
+  for (const c of flat) perFile.set(c.info.filePath, (perFile.get(c.info.filePath) ?? 0) + 1);
+
   for (const c of flat) {
     const specName = specNames.get(c) as string;
     if (opts.colocate) {
       const srcDir = path.dirname(c.info.filePath);
       const base = path.basename(c.info.filePath).replace(/\.(tsx|jsx|ts|js)$/, "");
+      // Multi-component files get one spec per component (card.CardHeader....)
+      // so they don't overwrite each other.
+      const stem =
+        (perFile.get(c.info.filePath) ?? 1) > 1 ? `${base}.${c.info.componentName}` : base;
       files.push({
         relPath: `unit/${specName}.test.tsx`,
-        absPath: path.join(srcDir, `${base}.flawless.test.tsx`),
+        absPath: path.join(srcDir, `${stem}.flawless.test.tsx`),
         skipIfExists: true,
         content: renderUnitFile(c, opts, srcDir, `./${base}`),
       });
@@ -164,20 +171,30 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
     .join("\n");
   const resolveBlock =
     aliasLines.length > 0 ? `  resolve: {\n    alias: [\n${aliasLines}\n    ],\n  },\n` : "";
-  const testDir = opts.colocate
-    ? `    dir: "..",
-    include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"],`
-    : `    include: ["unit/**/*.test.{ts,tsx}"],`;
-  const inlineBlock = "";
+  if (opts.colocate) {
+    // Colocate mode: run with `vitest run --config flawless/vitest.config.ts`
+    // from the project root — includes and setup are root-relative.
+    return `import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+${resolveBlock}  test: {
+    environment: "jsdom",
+    setupFiles: ["./flawless/setup.ts"],
+    include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"],
+    globals: true,
+  },
+});
+`;
+  }
   return `import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: ["./setup.ts"],
-${testDir}
+    include: ["unit/**/*.test.{ts,tsx}"],
     globals: true,
-${inlineBlock}  },
+  },
 });
 `;
 }
