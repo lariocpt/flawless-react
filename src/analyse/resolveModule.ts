@@ -9,7 +9,7 @@ import ts from "typescript";
  * undefined — node_modules is never walked into.
  */
 
-interface PathPattern {
+export interface PathPattern {
   /** Key split on its single `*`; exact keys have no star. */
   prefix: string;
   suffix: string;
@@ -52,6 +52,11 @@ export class ModuleResolver {
   private dirCache = new Map<string, ResolvedTsconfig | null>();
   /** configPath → parsed chain result. */
   private configCache = new Map<string, ResolvedTsconfig>();
+
+  /** The tsconfig path patterns in effect for files under `dir` (for alias re-emission). */
+  aliasPatternsFor(dir: string): PathPattern[] {
+    return this.nearestConfig(dir)?.patterns ?? [];
+  }
 
   /** Resolve `spec` as imported from `importerAbsPath`. Undefined for bare/unresolvable. */
   resolve(spec: string, importerAbsPath: string): string | undefined {
@@ -154,7 +159,9 @@ export class ModuleResolver {
     load(configPath);
 
     let baseUrlDir: string | undefined;
-    let pathsEntry: { dir: string; paths: Record<string, unknown>; baseUrlDir?: string } | undefined;
+    let pathsEntry:
+      | { dir: string; paths: Record<string, unknown>; baseUrlDir?: string }
+      | undefined;
     for (const { dir, options } of chain) {
       const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : undefined;
       if (baseUrl !== undefined) baseUrlDir = path.resolve(dir, baseUrl);

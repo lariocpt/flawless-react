@@ -49,7 +49,13 @@ export interface ParsedFile {
 
 export async function parseFile(entry: string): Promise<ParsedFile> {
   const src = await Bun.file(entry).text();
-  const sourceFile = ts.createSourceFile(entry, src, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  const sourceFile = ts.createSourceFile(
+    entry,
+    src,
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.TSX,
+  );
 
   const imports = collectImports(sourceFile);
   const components = findComponents(sourceFile);
@@ -215,9 +221,7 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
     }
 
     if (ts.isVariableStatement(stmt)) {
-      const hasExport = (stmt.modifiers ?? []).some(
-        (m) => m.kind === ts.SyntaxKind.ExportKeyword,
-      );
+      const hasExport = (stmt.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || !/^[A-Z]/.test(decl.name.text)) continue;
         if (!decl.initializer) continue;
@@ -302,9 +306,7 @@ function unitFromInitializer(
     const propsTypeRef =
       fcPropsArg && ts.isTypeReferenceNode(fcPropsArg) ? fcPropsArg : fromParams.propsTypeRef;
     const propsTypeLiteral =
-      fcPropsArg && ts.isTypeLiteralNode(fcPropsArg)
-        ? fcPropsArg
-        : fromParams.propsTypeLiteral;
+      fcPropsArg && ts.isTypeLiteralNode(fcPropsArg) ? fcPropsArg : fromParams.propsTypeLiteral;
     return {
       componentName: name,
       bodyNode: init,
@@ -369,9 +371,7 @@ function unwrapWrappers(expr: ts.Expression): {
   return { wrappers, inner: wrappers.length > 0 ? current : undefined };
 }
 
-function propsFromParams(fn: {
-  parameters: ts.NodeArray<ts.ParameterDeclaration>;
-}): {
+function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration> }): {
   propsTypeRef: ts.TypeReferenceNode | undefined;
   propsTypeLiteral: ts.TypeLiteralNode | undefined;
   paramName: string | undefined;
@@ -388,10 +388,8 @@ function propsFromParams(fn: {
   };
   if (!first) return empty;
 
-  const propsTypeRef =
-    first.type && ts.isTypeReferenceNode(first.type) ? first.type : undefined;
-  const propsTypeLiteral =
-    first.type && ts.isTypeLiteralNode(first.type) ? first.type : undefined;
+  const propsTypeRef = first.type && ts.isTypeReferenceNode(first.type) ? first.type : undefined;
+  const propsTypeLiteral = first.type && ts.isTypeLiteralNode(first.type) ? first.type : undefined;
 
   let paramName: string | undefined;
   const destructuredProps: string[] = [];

@@ -36,7 +36,9 @@ export function extractInteractions(
         const label = extractLabel(enclosing, hints, propNames);
 
         if (tag === "form") {
-          forms.push(buildForm(enclosing, n.attributes, propNames, posOf(n, sourceFile), sourceFile));
+          forms.push(
+            buildForm(enclosing, n.attributes, propNames, posOf(n, sourceFile), sourceFile),
+          );
         }
 
         for (const attr of n.attributes.properties) {
@@ -292,4 +294,3 @@ function jsxTextOf(el: ts.JsxElement): string | undefined {
   }
   return undefined;
 }
-

@@ -1,9 +1,14 @@
 import path from "node:path";
 import type { AnalyseOptions, ComponentInfo, ComponentTree } from "../types.ts";
-import { extractHooks } from "./extractHooks.ts";
+import { extractChildAttrs } from "./extractChildAttrs.ts";
+import { extractFetchCalls } from "./extractFetchCalls.ts";
+import { extractHookDetails, extractHooks } from "./extractHooks.ts";
 import { extractInteractions } from "./extractInteractions.ts";
 import { extractProps } from "./extractProps.ts";
+import { extractPropUsage } from "./extractPropUsage.ts";
+import { extractState } from "./extractState.ts";
 import { parseFile } from "./parseFile.ts";
+import { buildComponentScope } from "./refs.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { walkChildren } from "./walkChildren.ts";
 
@@ -48,6 +53,14 @@ async function analyseOne(
     unresolvedProps,
   );
 
+  const extracted = { propsShape, variants, unresolvedProps, propPositions, promiseProps };
+  const state = extractState(unit.bodyNode, parsed.sourceFile);
+  const scope = buildComponentScope(unit, extracted, state, unit.bodyNode);
+  const hookDetails = extractHookDetails(unit.bodyNode, parsed.sourceFile, scope);
+  const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
+  const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
+  const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
+
   const moduleImports = parsed.moduleImports.map((mi) => {
     const resolvedPath = resolver.resolve(mi.specifier, absPath);
     return resolvedPath ? { ...mi, resolvedPath } : mi;
@@ -69,6 +82,11 @@ async function analyseOne(
     wrappers: unit.wrappers,
     propPositions,
     promiseProps,
+    state,
+    hookDetails,
+    propUsage,
+    childAttrs,
+    fetchCalls,
     moduleImports,
   };
 
@@ -118,6 +136,6 @@ export { extractHooks } from "./extractHooks.ts";
 export { extractInteractions } from "./extractInteractions.ts";
 export { extractProps } from "./extractProps.ts";
 export { parseFile } from "./parseFile.ts";
-export { walkChildren } from "./walkChildren.ts";
-export { ModuleResolver, probeModuleFile } from "./resolveModule.ts";
 export { posOf } from "./pos.ts";
+export { ModuleResolver, probeModuleFile } from "./resolveModule.ts";
+export { walkChildren } from "./walkChildren.ts";

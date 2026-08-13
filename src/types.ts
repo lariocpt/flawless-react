@@ -181,6 +181,18 @@ export interface ChildAttrInfo {
   pos: SourcePosition;
 }
 
+/** A fetch() call site inside the component body. */
+export interface FetchCallInfo {
+  /** URL with interpolations replaced by :holes — "/api/buildings/:buildingId/ai/ask". */
+  urlTemplate: string;
+  /** Hole names in order: ["buildingId"]. */
+  holes: string[];
+  method: string;
+  pos: SourcePosition;
+  /** Call sits inside a useEffect/useLayoutEffect callback. */
+  inEffect: boolean;
+}
+
 /** A top-level import declaration of the analysed file, classified for scaffolding. */
 export interface ModuleImportInfo {
   specifier: string;
@@ -224,6 +236,7 @@ export interface ComponentInfo {
   hookDetails?: HookDetail[];
   childAttrs?: ChildAttrInfo[];
   moduleImports?: ModuleImportInfo[];
+  fetchCalls?: FetchCallInfo[];
 }
 
 export interface ComponentTree {

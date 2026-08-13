@@ -32,10 +32,7 @@ export function buildComponentScope(
   state: StateInfo[],
   bodyNode: ts.Node,
 ): ComponentScope {
-  const propNames = new Set<string>([
-    ...Object.keys(props.propsShape),
-    ...props.unresolvedProps,
-  ]);
+  const propNames = new Set<string>([...Object.keys(props.propsShape), ...props.unresolvedProps]);
   const propAliases = new Map<string, string>(unit.destructuredAliases);
 
   const stateVars = new Set<string>();
@@ -185,10 +182,7 @@ function isReferencePosition(id: ts.Identifier): boolean {
   if (ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent)) return false;
   if (ts.isImportClause(parent) || ts.isNamespaceImport(parent)) return false;
   // Type-position property/method signature names.
-  if (
-    (ts.isPropertySignature(parent) || ts.isMethodSignature(parent)) &&
-    parent.name === id
-  ) {
+  if ((ts.isPropertySignature(parent) || ts.isMethodSignature(parent)) && parent.name === id) {
     return false;
   }
   return true;
