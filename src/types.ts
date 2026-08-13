@@ -284,6 +284,8 @@ export interface ModuleImportInfo {
   resolvedPath?: string;
   /** Resolved target file begins with a "use server" directive. */
   isServerAction?: boolean;
+  /** Every top-level export of that module, for stubbing it wholesale. */
+  serverActionExports?: string[];
   pos: SourcePosition;
 }
 

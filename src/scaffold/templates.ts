@@ -39,13 +39,13 @@ export interface RenderOptions {
 
 export function renderSuite(opts: RenderOptions): RenderedFile[] {
   const trees: ComponentTree[] = [opts.tree, ...(opts.extraTrees ?? [])];
-  const { hosted: flat, excluded } = selectHostComponents(trees, opts.outDir);
+  const { hosted: flat, excluded, serverActionStubs } = selectHostComponents(trees, opts.outDir);
   const hasMock = Array.isArray(opts.mockRoutes);
   const useMsw = Boolean(opts.mswSetup);
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
   const files: RenderedFile[] = [
     { relPath: "playwright.config.ts", content: playwrightConfig(hasMock) },
-    { relPath: "host/server.ts", content: hostServer(hasMock) },
+    { relPath: "host/server.ts", content: hostServer(hasMock, serverActionStubs) },
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
     { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath, useMsw) },
@@ -102,13 +102,19 @@ export function toHostRelImport(outDir: string, absFile: string): string {
 function selectHostComponents(
   trees: ComponentTree[],
   outDir: string,
-): { hosted: FlatComponent[]; excluded: ExcludedComponent[] } {
+): {
+  hosted: FlatComponent[];
+  excluded: ExcludedComponent[];
+  /** Absolute path → the export names a hosted component imports from it. */
+  serverActionStubs: Map<string, string[]>;
+} {
   const hostDir = path.resolve(outDir, "host");
   const flat = flattenTrees(trees);
   const specNames = allocateSpecNames(flat);
 
   const hosted: FlatComponent[] = [];
   const excluded: ExcludedComponent[] = [];
+  const serverActionStubs = new Map<string, string[]>();
   for (const c of flat) {
     const verdict = hostEligibility(c.info);
     if (!verdict.eligible) {
@@ -119,6 +125,14 @@ function selectHostComponents(
       });
       continue;
     }
+    for (const mi of c.info.moduleImports ?? []) {
+      if (!mi.isServerAction || !mi.resolvedPath || mi.isTypeOnly) continue;
+      const names = new Set(serverActionStubs.get(mi.resolvedPath) ?? []);
+      for (const n of mi.serverActionExports ?? mi.names) names.add(n);
+      // Sorted, not Set order: the emitted file has to be byte-identical across
+      // runs or the idempotence gate churns.
+      serverActionStubs.set(mi.resolvedPath, [...names].sort());
+    }
     hosted.push({
       info: c.info,
       // No .tsx: the host is type-checked by the target project, which does not
@@ -127,7 +141,7 @@ function selectHostComponents(
       specName: specNames.get(c) as string,
     });
   }
-  return { hosted, excluded };
+  return { hosted, excluded, serverActionStubs };
 }
 
 function stripTsExt(spec: string): string {
@@ -244,7 +258,7 @@ export default defineConfig({
 `;
 }
 
-function hostServer(hasMock: boolean): string {
+function hostServer(hasMock: boolean, serverActionStubs = new Map<string, string[]>()): string {
   const mockProxyBlock = hasMock
     ? `
     // Proxy any other request to the mock server so the component's relative
@@ -260,6 +274,47 @@ function hostServer(hasMock: boolean): string {
     }`
     : "";
   const mockPortConst = hasMock ? `const MOCK_PORT = Number(process.env.MOCK_PORT ?? 5174);\n` : "";
+
+  // "use server" modules a hosted component imports. Bundling them for the
+  // browser pulls in the database driver, the mailer and Node builtins — the
+  // build fails outright, and since the host is ONE bundle that takes every
+  // profile test with it. They are intercepted by absolute path so no resolution
+  // guessing is involved, and each stub carries the real export names: ESM named
+  // imports have to bind, which a catch-all default export cannot satisfy.
+  const stubEntries = [...serverActionStubs.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+  const stubSources = stubEntries
+    .map(([abs, names]) => {
+      const body = names
+        .map((n) =>
+          n === "default"
+            ? `export default async () => ({});`
+            : `export const ${n} = async () => ({});`,
+        )
+        .join("\n");
+      return `  ${JSON.stringify(abs)}: ${JSON.stringify(body || "export {};")},`;
+    })
+    .join("\n");
+  const stubPlugin = `
+// Absolute path -> replacement source. See the comment where this was generated.
+const SERVER_STUBS: Record<string, string> = {
+${stubSources}
+};
+
+const stubServerModules: BunPlugin = {
+  name: "flawless-server-stubs",
+  setup(build) {
+    build.onLoad({ filter: /\\.(ts|tsx)$/ }, (args) => {
+      const src = SERVER_STUBS[args.path];
+      return src ? { contents: src, loader: "ts" } : undefined;
+    });
+  },
+};
+if (Object.keys(SERVER_STUBS).length > 0) {
+  console.log(
+    "[flawless] stubbed " + Object.keys(SERVER_STUBS).length + " server-action module(s) for the browser bundle",
+  );
+}
+`;
 
   return `import path from "node:path";
 import type { BunPlugin } from "bun";
@@ -287,6 +342,7 @@ const resolveFromSuite: BunPlugin = {
   },
 };
 
+${stubPlugin}
 const built = await Bun.build({
   entrypoints: [path.join(HOST_DIR, "main.tsx")],
   target: "browser",
@@ -294,7 +350,7 @@ const built = await Bun.build({
   splitting: false,
   sourcemap: "inline",
   minify: false,
-  plugins: [resolveFromSuite],
+  plugins: [stubServerModules, resolveFromSuite],
   // Replace bare \`global\` references at build time. The runtime polyfill
   // (host/_polyfill.ts, imported first from main.tsx) handles \`process\`.
   define: {

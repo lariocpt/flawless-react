@@ -18,7 +18,7 @@ import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
-import { SourceFileCache } from "./sourceCache.ts";
+import { exportedNames, SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
 
 export async function analyse(opts: AnalyseOptions): Promise<ComponentTree> {
@@ -173,9 +173,16 @@ async function analyseOne(
     // exports reach for the database, the mailer and next/cache. Flagging it here
     // — where the resolver and the cache are in scope — lets both the spec
     // emitter and the perf host stub it by name rather than by guesswork.
-    return cache.hasPrologueDirective(resolvedPath, "use server")
-      ? { ...mi, resolvedPath, isServerAction: true }
-      : { ...mi, resolvedPath };
+    if (!cache.hasPrologueDirective(resolvedPath, "use server")) return { ...mi, resolvedPath };
+    const target = cache.get(resolvedPath);
+    return {
+      ...mi,
+      resolvedPath,
+      isServerAction: true,
+      // Every export, not just the ones this component imports: a transitive
+      // importer needs the others, and a missing name fails the bundle.
+      serverActionExports: target ? exportedNames(target) : [...mi.names],
+    };
   });
 
   const info: ComponentInfo = {

@@ -24,6 +24,38 @@ export function readPrologueDirective(file: string): string | undefined {
   }
 }
 
+/**
+ * Top-level export names of a module.
+ *
+ * Needed to stub a "use server" module for the browser bundle: exporting only
+ * the names a component imports directly leaves a transitive importer — the
+ * zustand store importing logoutAction, say — with "No matching export", and the
+ * bundle fails just as hard as it did unstubbed.
+ */
+export function exportedNames(sf: ts.SourceFile): string[] {
+  const out = new Set<string>();
+  for (const stmt of sf.statements) {
+    const exported = ts.canHaveModifiers(stmt)
+      ? ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+      : false;
+    if (ts.isVariableStatement(stmt) && exported) {
+      for (const d of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) out.add(d.name.text);
+      }
+      continue;
+    }
+    if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && exported) {
+      if (stmt.name) out.add(stmt.name.text);
+      continue;
+    }
+    // `export { a, b as c }` — the exported name is what importers bind to.
+    if (ts.isExportDeclaration(stmt) && stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+      for (const el of stmt.exportClause.elements) out.add(el.name.text);
+    }
+  }
+  return [...out].sort();
+}
+
 export class SourceFileCache {
   private files = new Map<string, ts.SourceFile | null>();
   private directives = new Map<string, string | null>();
