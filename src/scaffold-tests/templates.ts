@@ -768,13 +768,14 @@ function rscSpec(c: FlatComponent, importPath: string, providerImport: string | 
     ? `render(<AppProvider>{ui}</AppProvider>)`
     : `render(<>{ui}</>)`;
 
+  const callArgs = rscCallArgs(info);
   const guards = info.guards ?? [];
   const guardSummary =
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
   const staticTextTests = emitStaticTextTests(name, info, "rsc");
   const guardTests = emitGuardTests(name, info);
 
-  return `import { test, expect, vi } from "vitest";
+  return `import { describe, test, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type * as React from "react";
 ${mocks.join("\n")}
@@ -798,7 +799,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
 test("${name} (RSC): resolves, or takes one of its declared guard paths", async () => {
   let ui: React.ReactNode;
   try {
-    ui = await ${name}(buildProps() as never);
+    ui = await ${name}(${callArgs});
   } catch (err) {
     // notFound()/redirect() are legitimate outcomes when the mocked data layer
     // returns nothing — this component declares ${guardSummary}. Assert that
@@ -814,6 +815,19 @@ ${staticTextTests}${guardTests}`;
 }
 
 /**
+ * A zero-parameter component must be invoked with no arguments, and one that
+ * declares a parameter must get one. `children` is tracked separately from
+ * propsShape, but a layout taking `{ children }` still has a required param.
+ */
+function rscCallArgs(info: ComponentInfo): string {
+  const takesProps =
+    Object.keys(info.propsShape).length > 0 ||
+    info.unresolvedProps.length > 0 ||
+    info.acceptsChildren === true;
+  return takesProps ? "buildProps() as never" : "";
+}
+
+/**
  * Literal copy the component renders unconditionally. `getByText` matches an
  * element's whole normalised text, which is why the analyser only keeps
  * sole-child text — anything else would assert a string that never appears.
@@ -821,6 +835,7 @@ ${staticTextTests}${guardTests}`;
 function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "rsc"): string {
   const texts = info.staticText ?? [];
   if (texts.length === 0) return "";
+  const callArgs = rscCallArgs(info);
   // An RSC may legitimately abort via notFound()/redirect() against empty
   // mocks. The main test asserts that outcome, so bail out here instead of
   // reporting a second failure for the same known behaviour.
@@ -828,7 +843,7 @@ function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "
     mode === "rsc"
       ? `let ui: React.ReactNode;
       try {
-        ui = await ${name}(buildProps() as never);
+        ui = await ${name}(${callArgs});
       } catch {
         return;
       }
@@ -853,6 +868,7 @@ describe("${name} static content", () => {
  */
 function emitGuardTests(name: string, info: ComponentInfo): string {
   const deps = info.dataDeps ?? [];
+  const callArgs = rscCallArgs(info);
   const parts: string[] = [];
   for (const g of info.guards ?? []) {
     if (g.triggerValue === undefined || g.depVars.length !== 1) continue;
@@ -868,7 +884,7 @@ function emitGuardTests(name: string, info: ComponentInfo): string {
     parts.push(`
 test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () => {
   vi.mocked(${dep.calleeRoot}).mockResolvedValueOnce(${value} as never);
-  await expect(${name}(buildProps() as never)).rejects.toThrow(${expected});
+  await expect(${name}(${callArgs})).rejects.toThrow(${expected});
 });`);
   }
   if (parts.length === 0) return "";
