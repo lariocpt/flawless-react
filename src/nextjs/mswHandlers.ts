@@ -36,7 +36,7 @@ function toMswPath(p: string): string {
 
 export function renderBrowserSetup(): string {
   return `import { setupWorker } from "msw/browser";
-import { handlers } from "./handlers.ts";
+import { handlers } from "./handlers";
 
 export const worker = setupWorker(...handlers);
 
@@ -48,7 +48,7 @@ export async function startMockWorker(): Promise<void> {
 
 export function renderNodeSetup(): string {
   return `import { setupServer } from "msw/node";
-import { handlers } from "./handlers.ts";
+import { handlers } from "./handlers";
 
 export const server = setupServer(...handlers);
 `;

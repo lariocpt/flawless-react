@@ -340,12 +340,12 @@ function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup =
     ? `import AppProvider from ${JSON.stringify(providerImportPath)};\n`
     : "";
   const wrapBody = providerImportPath ? "createElement(AppProvider as never, null, tree)" : "tree";
-  const mswImport = mswSetup ? `import { startMockWorker } from "../mocks/browser.ts";\n` : "";
+  const mswImport = mswSetup ? `import { startMockWorker } from "../mocks/browser";\n` : "";
   const mswBoot = mswSetup
     ? `\n// Boot MSW before any component mounts so fetch() in render-time effects is intercepted.\nawait startMockWorker();\n`
     : "";
 
-  return `import "./_polyfill.ts";
+  return `import "./_polyfill";
 import { createElement, Profiler, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { scan } from "react-scan";
