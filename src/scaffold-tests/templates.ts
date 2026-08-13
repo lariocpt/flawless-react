@@ -9,6 +9,7 @@ import type {
   PropsShape,
   StateInfo,
 } from "../types.ts";
+import { mockLiteral } from "./mockValues.ts";
 import {
   emitPlaywrightDispatch,
   emitPlaywrightSelector,
@@ -197,14 +198,20 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
   const resolveBlock =
     aliasLines.length > 0 ? `  resolve: {\n    alias: [\n${aliasLines}\n    ],\n  },\n` : "";
   if (opts.colocate) {
-    // Colocate mode: run with `vitest run --config flawless/vitest.config.ts`
-    // from the project root — includes and setup are root-relative.
-    return `import { defineConfig } from "vitest/config";
+    // Colocate mode runs as `vitest run --config flawless/vitest.config.ts`.
+    // Vite roots itself at the CONFIG file's directory, so without an explicit
+    // root the include globs resolve under flawless/ and match nothing.
+    return `import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vitest/config";
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export default defineConfig({
+  root: projectRoot,
 ${resolveBlock}  test: {
     environment: "jsdom",
-    setupFiles: ["./flawless/setup.ts"],
+    setupFiles: [path.join(projectRoot, "flawless/setup.ts")],
     include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"],
     globals: true,
   },
@@ -305,6 +312,7 @@ function unitSpec(
     : emitFallbackHandlerTests(name, info.propsShape, info.unresolvedProps);
 
   const stateTests = emitStateTests(name, info);
+  const staticTextTests = emitStaticTextTests(name, info, "unit");
   const effectFetches = (info.fetchCalls ?? []).filter((f) => f.inEffect);
   const fetchTests =
     mocksImport && effectFetches.length > 0
@@ -382,7 +390,7 @@ void VARIANTS;`
 }
 
 ${interactionTests}
-${stateTests}${fetchTests}`;
+${staticTextTests}${stateTests}${fetchTests}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -604,7 +612,10 @@ function rscSpec(c: FlatComponent, importPath: string, providerImport: string | 
     if (mi.specifier === "next/navigation") {
       mocks.push(`vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("notFound() called"); }),
-  redirect: vi.fn(),
+  // These abort rendering in Next; a plain vi.fn() would let a guarded
+  // component run straight past its own guard and crash on the data it guards.
+  redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   usePathname: vi.fn(() => "/"),
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
   useSearchParams: vi.fn(() => new URLSearchParams()),
@@ -623,10 +634,26 @@ function rscSpec(c: FlatComponent, importPath: string, providerImport: string | 
       continue;
     }
     const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
-    const entries = named.map((n) => `${n}: vi.fn()`);
+    const depsHere = (info.dataDeps ?? []).filter((d) => d.specifier === mi.specifier);
+    let uncertain = false;
+    const entries = named.map((n) => {
+      const dep = depsHere.find((d) => d.calleeRoot === n);
+      if (!dep || dep.uncertain || dep.shape.kind === "unknown") {
+        if (dep) uncertain = true;
+        return `${n}: vi.fn()`;
+      }
+      // Shape inferred from how the awaited value is actually used in the body.
+      const literal = mockLiteral(dep.shape, n);
+      return dep.awaited
+        ? `${n}: vi.fn(async () => (${literal}))`
+        : `${n}: vi.fn(() => (${literal}))`;
+    });
     if (mi.hasDefault) entries.unshift("default: vi.fn()");
+    const note = uncertain
+      ? "// TODO(flawless): some return shapes could not be inferred — give them fixtures.\n"
+      : "";
     mocks.push(
-      `// TODO(flawless): give these mocks realistic return values for meaningful assertions.\nvi.mock(${JSON.stringify(mi.specifier)}, () => ({ ${entries.join(", ")} }));`,
+      `${note}vi.mock(${JSON.stringify(mi.specifier)}, () => ({ ${entries.join(", ")} }));`,
     );
   }
 
@@ -635,8 +662,15 @@ function rscSpec(c: FlatComponent, importPath: string, providerImport: string | 
     ? `render(<AppProvider>{ui}</AppProvider>)`
     : `render(<>{ui}</>)`;
 
+  const guards = info.guards ?? [];
+  const guardSummary =
+    guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
+  const staticTextTests = emitStaticTextTests(name, info, "rsc");
+  const guardTests = emitGuardTests(name, info);
+
   return `import { test, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type * as React from "react";
 ${mocks.join("\n")}
 ${providerLine}${emitComponentImport(info, importPath)}
 
@@ -655,14 +689,82 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   return merged;
 }
 
-test("${name} (RSC): resolves and renders", async () => {
-  const ui = await ${name}(buildProps() as never);
+test("${name} (RSC): resolves, or takes one of its declared guard paths", async () => {
+  let ui: React.ReactNode;
+  try {
+    ui = await ${name}(buildProps() as never);
+  } catch (err) {
+    // notFound()/redirect() are legitimate outcomes when the mocked data layer
+    // returns nothing — this component declares ${guardSummary}. Assert that
+    // this is what happened rather than that nothing broke.
+    expect(String(err)).toMatch(/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/);
+    return;
+  }
   ${renderExpr};
   expect(document.body.innerHTML.length).toBeGreaterThan(0);
   void screen;
-  // TODO(flawless): assert real content once the mocked modules return fixtures.
+});
+${staticTextTests}${guardTests}`;
+}
+
+/**
+ * Literal copy the component renders unconditionally. `getByText` matches an
+ * element's whole normalised text, which is why the analyser only keeps
+ * sole-child text — anything else would assert a string that never appears.
+ */
+function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "rsc"): string {
+  const texts = info.staticText ?? [];
+  if (texts.length === 0) return "";
+  const render =
+    mode === "rsc"
+      ? `const ui = await ${name}(buildProps() as never);\n    ${"render(<>{ui}</>)"};`
+      : "renderTarget();";
+  return `
+describe("${name} static content", () => {
+  for (const t of ${JSON.stringify(texts)}) {
+    test(\`renders \${JSON.stringify(t)}\`, async () => {
+      ${render}
+      expect(screen.getByText(t)).toBeInTheDocument();
+    });
+  }
 });
 `;
+}
+
+/**
+ * A guard whose trigger value is known can be asserted directly: make the dep
+ * it guards return nothing, and the component must abort the way its own
+ * source says it will.
+ */
+function emitGuardTests(name: string, info: ComponentInfo): string {
+  const deps = info.dataDeps ?? [];
+  const parts: string[] = [];
+  for (const g of info.guards ?? []) {
+    if (g.triggerValue === undefined || g.depVars.length !== 1) continue;
+    const varName = g.depVars[0] as string;
+    const dep = deps.find((d) => d.varName === varName);
+    if (!dep?.specifier || dep.calleeRoot.length === 0) continue;
+    const value =
+      g.triggerValue === "empty-array" ? "[]" : g.triggerValue === "null" ? "null" : "undefined";
+    const expected = g.effect === "notFound" ? "/notFound\\\\(\\\\) called/" : "/NEXT_REDIRECT/";
+    parts.push(`
+test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () => {
+  vi.mocked(${dep.calleeRoot}).mockResolvedValueOnce(${value} as never);
+  await expect(${name}(buildProps() as never)).rejects.toThrow(${expected});
+});`);
+  }
+  if (parts.length === 0) return "";
+  const imports = [
+    ...new Set(
+      (info.guards ?? [])
+        .filter((g) => g.triggerValue !== undefined && g.depVars.length === 1)
+        .map((g) => deps.find((d) => d.varName === g.depVars[0]))
+        .filter((d): d is NonNullable<typeof d> => Boolean(d?.specifier))
+        .map((d) => `import { ${d.calleeRoot} } from ${JSON.stringify(d.specifier)};`),
+    ),
+  ];
+  // vi.mock is hoisted, so these resolve to the mocks declared above.
+  return `\n${imports.join("\n")}\n${parts.join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------

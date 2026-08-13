@@ -204,7 +204,11 @@ describe("renderUnitBrowser async server components", () => {
     expect(paths).toContain("browser/Chip.spec.ts");
 
     const src = contentOf(files, "unit/Page.test.tsx");
-    expect(src).toContain("const ui = await Page(buildProps() as never);");
+    expect(src).toContain("ui = await Page(buildProps() as never);");
+    // notFound()/redirect() abort rendering; the spec asserts that outcome
+    // instead of failing on it.
+    expect(src).toContain("notFound\\(\\) called|NEXT_REDIRECT");
+    expect(src).toContain('redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); })');
     expect(src).toContain('import Page from "../../src/Page";');
     expect(src).toContain('const PROMISE_PROPS: string[] = ["params"];');
     // value imports get mocks…
@@ -313,7 +317,11 @@ describe("renderUnitBrowser colocate", () => {
       colocate: true,
     });
     const cfg = contentOf(files, "vitest.config.ts");
-    expect(cfg).toContain('setupFiles: ["./flawless/setup.ts"]');
+    // Vite roots itself at the config file's directory, so the config must set
+    // root back to the project — otherwise "src/**" resolves under flawless/
+    // and the run reports "no tests" while looking perfectly correct.
+    expect(cfg).toContain("root: projectRoot");
+    expect(cfg).toContain('path.join(projectRoot, "flawless/setup.ts")');
     expect(cfg).toContain(
       'include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
     );

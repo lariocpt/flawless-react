@@ -1,12 +1,16 @@
 import path from "node:path";
 import type { AnalyseOptions, ComponentInfo, ComponentTree } from "../types.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
+import { extractDataDeps } from "./extractDataDeps.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
+import { extractGuards } from "./extractGuards.ts";
 import { extractHookDetails, extractHooks } from "./extractHooks.ts";
 import { extractInteractions } from "./extractInteractions.ts";
 import { extractProps } from "./extractProps.ts";
 import { extractPropUsage } from "./extractPropUsage.ts";
+import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
+import { extractStaticText } from "./extractStaticText.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { ModuleResolver } from "./resolveModule.ts";
@@ -111,6 +115,19 @@ async function analyseOne(
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
+  const rootTag = extractRootTag(unit.bodyNode);
+  const staticText = extractStaticText(unit.bodyNode);
+  // Data deps and guards only mean something for a server component that
+  // awaits its data; running them elsewhere would be noise.
+  const dataDeps = unit.isAsync
+    ? extractDataDeps(unit.bodyNode, parsed.sourceFile, parsed.imports)
+    : [];
+  const guards = extractGuards(
+    unit.bodyNode,
+    parsed.sourceFile,
+    parsed.imports,
+    new Set(dataDeps.map((d) => d.varName).filter((v): v is string => v !== undefined)),
+  );
 
   const moduleImports = parsed.moduleImports.map((mi) => {
     const resolvedPath = resolver.resolve(mi.specifier, absPath);
@@ -142,6 +159,10 @@ async function analyseOne(
     propUsage,
     childAttrs,
     fetchCalls,
+    staticText,
+    dataDeps,
+    guards,
+    ...(rootTag ? { rootTag } : {}),
     moduleImports,
   };
 
