@@ -205,8 +205,11 @@ if [ -f "$_params" ]; then
   while IFS="=" read -r _k _v; do
     [ -n "$_k" ] && [ -n "$_v" ] && export "LOAD_$(echo "$_k" | tr '[:lower:]' '[:upper:]')=$_v"
   done < <(
-    # defaults first, then per-route overrides win
-    jq -r '(.defaults // {}) + (reduce (.routes // {} | to_entries[]) as $r ({}; . + $r.value))
+    # Defaults first, then per-route overrides — but only the ones actually
+    # filled in. Every route entry starts as "", and an unfiltered merge would
+    # let those blanks overwrite a default that IS set.
+    jq -r '(.defaults // {}) + (reduce (.routes // {} | to_entries[]) as $r
+             ({}; . + ($r.value | with_entries(select(.value != "")))))
            | to_entries[] | select(.value != "") | "\\(.key)=\\(.value)"' "$_params"
   )
 else

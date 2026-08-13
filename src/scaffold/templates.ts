@@ -376,6 +376,21 @@ Bun.serve({
     if (url.pathname === "/" || url.pathname === "/index.html") {
       return new Response(indexHtml, { headers: { "content-type": "text/html" } });
     }
+    // MSW registers its worker from the page origin, so the host has to serve
+    // it. Without this the registration 404s on every boot.
+    if (url.pathname === "/mockServiceWorker.js") {
+      try {
+        const swPath = Bun.resolveSync("msw/mockServiceWorker.js", SUITE_DIR);
+        return new Response(Bun.file(swPath), {
+          headers: { "content-type": "text/javascript", "service-worker-allowed": "/" },
+        });
+      } catch {
+        return new Response("// msw not installed", {
+          status: 404,
+          headers: { "content-type": "text/javascript" },
+        });
+      }
+    }
     if (url.pathname === "/bundle.js") {
       return new Response(bundle, { headers: { "content-type": "application/javascript" } });
     }${mockProxyBlock}
@@ -449,7 +464,18 @@ function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup =
   const wrapBody = providerImportPath ? "createElement(AppProvider as never, null, tree)" : "tree";
   const mswImport = mswSetup ? `import { startMockWorker } from "../mocks/browser";\n` : "";
   const mswBoot = mswSetup
-    ? `\n// Boot MSW before any component mounts so fetch() in render-time effects is intercepted.\nawait startMockWorker();\n`
+    ? `
+// Boot MSW before any component mounts so fetch() in render-time effects is
+// intercepted. Failure is NOT fatal: this await sits at module top level, so a
+// rejection would abort the module and leave window.__profile undefined —
+// every profile test then times out waiting for a harness that never loaded,
+// which is a very confusing way to learn that a service worker 404'd.
+try {
+  await startMockWorker();
+} catch (err) {
+  console.warn("[flawless] MSW did not start; fetches will hit the network:", err);
+}
+`
     : "";
 
   return `import "./_polyfill";
@@ -693,7 +719,7 @@ export function summarize(samples: number[]): {
 function heapHelper(): string {
   return `import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Page, TestInfo } from "@playwright/test";
+import type { CDPSession, Page, TestInfo } from "@playwright/test";
 
 // Drives the browser's V8 heap profiler via CDP. Snapshots land in
 // <suite-root>/heaps/<spec>__<test>__<label>.heapsnapshot with predictable
@@ -705,8 +731,23 @@ import type { Page, TestInfo } from "@playwright/test";
 
 const HEAPS_DIR = "heaps";
 
+/**
+ * A heap snapshot, or an empty buffer.
+ *
+ * Snapshots are diagnostics, not the measurement. Opening a CDP session can fail
+ * for reasons that have nothing to do with the component under test — a page
+ * that has already navigated, a Playwright/Chromium pairing that disagrees about
+ * a target guid — and letting that throw means the profiling extra breaks the
+ * very tests it was added to observe. It warns and returns nothing instead.
+ */
 async function captureSnapshot(page: Page): Promise<Buffer> {
-  const session = await page.context().newCDPSession(page);
+  let session: CDPSession;
+  try {
+    session = await page.context().newCDPSession(page);
+  } catch (err) {
+    console.warn("[flawless] heap snapshot skipped:", (err as Error).message);
+    return Buffer.alloc(0);
+  }
   const chunks: string[] = [];
   const onChunk = (e: { chunk: string }): void => {
     chunks.push(e.chunk);
@@ -720,6 +761,9 @@ async function captureSnapshot(page: Page): Promise<Buffer> {
       reportProgress: false,
       captureNumericValue: true,
     });
+  } catch (err) {
+    console.warn("[flawless] heap snapshot failed:", (err as Error).message);
+    return Buffer.alloc(0);
   } finally {
     session.off("HeapProfiler.addHeapSnapshotChunk", onChunk);
     await session.detach().catch(() => undefined);
@@ -819,6 +863,14 @@ function spec(c: FlatComponent, variants: number): string {
   const hooksLiteral = JSON.stringify(c.info.hooks);
   const forcedIterations = Math.max(10, variants * 10);
   const targetedClick = emitPlaywrightClickTarget(c.info.interactions);
+  // Clicking a purely presentational component re-renders nothing, so waiting
+  // for the render count to rise times out after 30s and reports a stateless
+  // Button as broken. Only assert a rerender when the analyser saw something
+  // that could cause one: local state, or a handler the parent supplies.
+  const canRerender =
+    (c.info.state ?? []).some((st) => st.kind !== "useRef") ||
+    (c.info.interactions?.clicks ?? []).some((cl) => cl.binding.kind === "prop") ||
+    (c.info.hooks ?? []).some((h) => /^use(State|Reducer|SyncExternalStore|Context)$/.test(h));
   const clickButtonExpr = targetedClick ?? `page.locator("button").first()`;
 
   return `import { test, expect } from "@playwright/test";
@@ -887,6 +939,10 @@ test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
   const button = ${clickButtonExpr};
   const hasButton = (await button.count()) > 0;
   test.skip(!hasButton, "component does not render a clickable target");
+  test.skip(
+    ${canRerender ? "false" : "true"},
+    "no state or handler prop — a click cannot re-render this component",
+  );
   await bracketScenario(page, "click-rerender", testInfo, async () => {
     await clearScanEvents(page);
     const before = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
@@ -933,6 +989,10 @@ test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
   const button = ${clickButtonExpr};
   const hasButton = (await button.count()) > 0;
   test.skip(!hasButton, "component does not render a clickable target");
+  test.skip(
+    ${canRerender ? "false" : "true"},
+    "no state or handler prop — 50 clicks cannot re-render this component",
+  );
   await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
     const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
     for (let __i = 0; __i < 50; __i++) await button.click();
