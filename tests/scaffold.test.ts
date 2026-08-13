@@ -54,7 +54,10 @@ describe("renderSuite", () => {
     expect(sc).toContain("variant matrix");
     expect(sc).toContain("click rerender");
     expect(sc).toContain("forced rerender");
-    expect(sc).toContain('from "./_heap.ts"');
+    // No .ts extension: the target project type-checks the emitted suite and
+    // does not enable allowImportingTsExtensions.
+    expect(sc).toContain('from "./_heap"');
+    expect(sc).not.toContain('from "./_heap.ts"');
     expect(sc).toContain("bracketScenario");
     expect(sc).toContain("stress-click-rerender");
 

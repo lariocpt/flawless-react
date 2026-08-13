@@ -10,6 +10,7 @@ import type {
   StateInfo,
 } from "../types.ts";
 import { emitModuleMocks } from "./mocks.ts";
+import { allocateSpecNames, type FlatComponent, flattenTrees } from "./registry.ts";
 import {
   awaitSelector,
   emitPlaywrightDispatch,
@@ -18,12 +19,6 @@ import {
   emitVitestDispatch,
   emitVitestSelector,
 } from "./selectors.ts";
-
-export interface FlatComponent {
-  info: ComponentInfo;
-  /** Component name of the nearest parent in the tree (undefined for roots). */
-  parentName: string | undefined;
-}
 
 export interface RenderedFile {
   relPath: string;
@@ -64,7 +59,7 @@ export interface UnitBrowserRenderOptions {
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
-  const flat = flatten(opts.trees);
+  const flat = flattenTrees(opts.trees);
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
   const files: RenderedFile[] = [
@@ -117,7 +112,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       const specName = specNames.get(c) as string;
       files.push({
         relPath: `browser/${specName}.spec.ts`,
-        content: browserSpec(c),
+        content: browserSpec(c, specName),
       });
     }
   }
@@ -141,36 +136,6 @@ function renderUnitFile(
   return mode === "rsc"
     ? rscSpec(c, importPath, providerImport, specDir)
     : unitSpec(c, opts.variants, importPath, providerImport, mocksImport, opts.apiRoutes, specDir);
-}
-
-function flatten(trees: ComponentTree[]): FlatComponent[] {
-  const out: FlatComponent[] = [];
-  const seen = new Set<string>();
-  const walk = (t: ComponentTree, parentName: string | undefined): void => {
-    const key = `${t.entry.filePath}::${t.entry.componentName}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push({ info: t.entry, parentName });
-    }
-    for (const c of t.children) walk(c, t.entry.componentName);
-  };
-  for (const t of trees) walk(t, undefined);
-  return out;
-}
-
-/** First claimant keeps the bare name; same-named later components get Parent__Name, then __2. */
-function allocateSpecNames(flat: FlatComponent[]): Map<FlatComponent, string> {
-  const taken = new Set<string>();
-  const out = new Map<FlatComponent, string>();
-  for (const c of flat) {
-    let name = c.info.componentName;
-    if (taken.has(name) && c.parentName) name = `${c.parentName}__${c.info.componentName}`;
-    let i = 2;
-    while (taken.has(name)) name = `${c.info.componentName}__${i++}`;
-    taken.add(name);
-    out.set(c, name);
-  }
-  return out;
 }
 
 function toRel(fromDir: string, absFile: string): string {
@@ -1292,8 +1257,11 @@ test("${name} invokes ${p} when first button clicked (fallback)", async () => {
 // Browser specs
 // ---------------------------------------------------------------------------
 
-function browserSpec(c: FlatComponent): string {
-  const name = c.info.componentName;
+function browserSpec(c: FlatComponent, specName: string): string {
+  // The registry key, not the component name: two components called Card live
+  // under different keys in the perf host, and mounting by the bare name drove
+  // the wrong one.
+  const name = specName;
   const propsLiteral = JSON.stringify(c.info.propsShape);
   const interactions = c.info.interactions;
 

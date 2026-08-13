@@ -1,4 +1,5 @@
 import path from "node:path";
+import { allocateSpecNames, flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
 import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
 import type { ComponentInfo, ComponentTree, MockRoute, PropsShape } from "../types.ts";
 
@@ -7,6 +8,14 @@ const NL = "\n";
 interface FlatComponent {
   info: ComponentInfo;
   importPath: string;
+  /** Registry key. Differs from componentName when two components share a name. */
+  specName: string;
+}
+
+export interface ExcludedComponent {
+  name: string;
+  file: string;
+  reason: string;
 }
 
 export interface RenderedFile {
@@ -30,7 +39,7 @@ export interface RenderOptions {
 
 export function renderSuite(opts: RenderOptions): RenderedFile[] {
   const trees: ComponentTree[] = [opts.tree, ...(opts.extraTrees ?? [])];
-  const flat = flattenMany(trees, opts.outDir);
+  const { hosted: flat, excluded } = selectHostComponents(trees, opts.outDir);
   const hasMock = Array.isArray(opts.mockRoutes);
   const useMsw = Boolean(opts.mswSetup);
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
@@ -47,7 +56,8 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
       relPath: "README.md",
       content: readme(
         suiteName,
-        flat.map((c) => c.info.componentName),
+        flat.map((c) => c.specName),
+        excluded,
       ),
     },
   ];
@@ -57,7 +67,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
   }
   for (const c of flat) {
     files.push({
-      relPath: `tests/${c.info.componentName}.profile.spec.ts`,
+      relPath: `tests/${c.specName}.profile.spec.ts`,
       content: spec(c, opts.variants),
     });
   }
@@ -76,22 +86,62 @@ export function toHostRelImport(outDir: string, absFile: string): string {
   return toRel(hostDir, path.resolve(absFile));
 }
 
-function flatten(tree: ComponentTree, outDir: string): FlatComponent[] {
-  return flattenMany([tree], outDir);
+/**
+ * The components the host can actually mount, plus what was left out and why.
+ *
+ * The old implementation deduped on filePath alone, so a file exporting seven
+ * components contributed one — 84 of the dogfood app's 181 vanished without a
+ * word. It also keyed imports and the REGISTRY on the bare component name, which
+ * does not compile when two files both export a CommentForm, and it emitted
+ * `import { X }` for default exports and for components that are not exported at
+ * all.
+ *
+ * Names are allocated over the FULL list before filtering, so they match the
+ * unit scaffolder's — the browser specs look components up by these keys.
+ */
+function selectHostComponents(
+  trees: ComponentTree[],
+  outDir: string,
+): { hosted: FlatComponent[]; excluded: ExcludedComponent[] } {
+  const hostDir = path.resolve(outDir, "host");
+  const flat = flattenTrees(trees);
+  const specNames = allocateSpecNames(flat);
+
+  const hosted: FlatComponent[] = [];
+  const excluded: ExcludedComponent[] = [];
+  for (const c of flat) {
+    const verdict = hostEligibility(c.info);
+    if (!verdict.eligible) {
+      excluded.push({
+        name: c.info.componentName,
+        file: c.info.filePath,
+        reason: verdict.reason ?? "not eligible",
+      });
+      continue;
+    }
+    hosted.push({
+      info: c.info,
+      // No .tsx: the host is type-checked by the target project, which does not
+      // enable allowImportingTsExtensions.
+      importPath: stripTsExt(toRel(hostDir, c.info.filePath)),
+      specName: specNames.get(c) as string,
+    });
+  }
+  return { hosted, excluded };
 }
 
-function flattenMany(trees: ComponentTree[], outDir: string): FlatComponent[] {
-  const out: FlatComponent[] = [];
-  const seen = new Set<string>();
-  const hostDir = path.resolve(outDir, "host");
-  const walk = (t: ComponentTree): void => {
-    if (seen.has(t.entry.filePath)) return;
-    seen.add(t.entry.filePath);
-    out.push({ info: t.entry, importPath: toRel(hostDir, t.entry.filePath) });
-    for (const c of t.children) walk(c);
-  };
-  for (const t of trees) walk(t);
-  return out;
+function stripTsExt(spec: string): string {
+  return spec.replace(/\.(tsx|ts|jsx|js)$/, "");
+}
+
+/** Named vs default import, aliased when the registry key differs from the name. */
+function hostComponentImport(c: FlatComponent): string {
+  const { componentName, exportKind } = c.info;
+  if (exportKind === "default") return `import ${c.specName} from "${c.importPath}";`;
+  if (c.specName === componentName) {
+    return `import { ${componentName} } from "${c.importPath}";`;
+  }
+  return `import { ${componentName} as ${c.specName} } from "${c.importPath}";`;
 }
 
 function toRel(fromDir: string, absFile: string): string {
@@ -328,13 +378,9 @@ export {};
 }
 
 function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup = false): string {
-  const imports = flat
-    .map((c) => `import { ${componentImportSpec(c.info.componentName)} } from "${c.importPath}";`)
-    .join(NL);
+  const imports = flat.map(hostComponentImport).join(NL);
 
-  const registry = flat
-    .map((c) => `  ${JSON.stringify(c.info.componentName)}: ${c.info.componentName},`)
-    .join(NL);
+  const registry = flat.map((c) => `  ${JSON.stringify(c.specName)}: ${c.specName},`).join(NL);
 
   const providerImport = providerImportPath
     ? `import AppProvider from ${JSON.stringify(providerImportPath)};\n`
@@ -492,10 +538,6 @@ window.__profile = {
 // Suppress unused-name warning during isolated builds.
 void activeName;
 `;
-}
-
-function componentImportSpec(name: string): string {
-  return name;
 }
 
 function helpers(): string {
@@ -703,12 +745,14 @@ export async function repeatClick(page: Page, selector: string, n: number): Prom
 
 function budgets(flat: FlatComponent[], _variants: number): string {
   const obj: Record<string, { mountMs: number; updateMs: number }> = {};
-  for (const c of flat) obj[c.info.componentName] = { mountMs: 50, updateMs: 16 };
+  for (const c of flat) obj[c.specName] = { mountMs: 50, updateMs: 16 };
   return `${JSON.stringify(obj, null, 2)}\n`;
 }
 
 function spec(c: FlatComponent, variants: number): string {
-  const name = c.info.componentName;
+  // The registry key, so the mount call finds the right component when two share
+  // a name.
+  const name = c.specName;
   const propsLiteral = JSON.stringify(c.info.propsShape);
   const variantsLiteral = JSON.stringify(c.info.variants.slice(0, variants));
   const hooksLiteral = JSON.stringify(c.info.hooks);
@@ -726,8 +770,8 @@ import {
   getScanEvents,
   clearScanEvents,
   summarize,
-} from "./_helpers.ts";
-import { bracketScenario, repeatClick, takeHeapSnapshot } from "./_heap.ts";
+} from "./_helpers";
+import { bracketScenario, repeatClick, takeHeapSnapshot } from "./_heap";
 
 const NAME = ${JSON.stringify(name)};
 const DEFAULTS = ${propsLiteral} as Record<string, unknown>;
@@ -847,12 +891,24 @@ test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
 `;
 }
 
-function readme(suiteName: string, componentNames: string[]): string {
+function readme(
+  suiteName: string,
+  componentNames: string[],
+  excluded: ExcludedComponent[] = [],
+): string {
   const componentList =
     componentNames.length > 1
       ? `\n\nComponents in this suite: ${componentNames.map((n) => `\`${n}\``).join(", ")}.\n`
       : "";
-  return `# ${suiteName}.profile${componentList}
+  // Silence here would read as "everything is covered". Each line says what was
+  // left out of the browser host and why.
+  const excludedList =
+    excluded.length > 0
+      ? `\n## Not in this host (${excluded.length})\n\n${excluded
+          .map((e) => `- \`${e.name}\` — ${e.reason}`)
+          .join("\n")}\n`
+      : "";
+  return `# ${suiteName}.profile${componentList}${excludedList}
 
 Auto-generated by [flawless-react](https://github.com/larioborges-timbuk2/flawless-react). Edit freely — there is no regeneration step that overwrites you.
 
@@ -982,10 +1038,6 @@ export interface MockRoute {
 
 export const routes: MockRoute[] = ${literal};
 `;
-}
-
-export function flattenForTest(tree: ComponentTree, outDir: string): FlatComponent[] {
-  return flatten(tree, outDir);
 }
 
 export function _exportedPropsLiteral(p: PropsShape): string {
