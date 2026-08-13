@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { emptyEnv, initialRenderExpression, type RenderEnv } from "./renderPath.ts";
 
 /**
  * The JSX root a component renders on its happy path, as a tag name.
@@ -10,8 +11,11 @@ import ts from "typescript";
  * The tag is returned as written and may be uppercase (`ButtonPrimitive`); the
  * caller decides whether a component root is useful to it.
  */
-export function extractRootTag(bodyNode: ts.Node): string | undefined {
-  const root = happyPathReturnExpression(bodyNode);
+export function extractRootTag(bodyNode: ts.Node, env: RenderEnv = emptyEnv()): string | undefined {
+  // The INITIAL render, not the last return: a component that opens collapsed
+  // renders its guard branch, and describing it by the expanded branch below
+  // would name a tag the spec never produces.
+  const root = initialRenderExpression(bodyNode, env)?.expr;
   if (!root) return undefined;
   // A fragment renders no host element to assert against, and a conditional
   // root depends on props the spec picks independently of this analysis.

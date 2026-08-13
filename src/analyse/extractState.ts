@@ -1,7 +1,8 @@
 import ts from "typescript";
-import type { PropValue, SetterCallSite, StateInfo, StateJsxFlow, StateKind } from "../types.ts";
+import type { SetterCallSite, StateInfo, StateJsxFlow, StateKind } from "../types.ts";
 import { posOf } from "./pos.ts";
 import { collectRefs, hookCalleeName } from "./refs.ts";
+import { literalToValue } from "./renderPath.ts";
 
 const INITIAL_RAW_MAX = 120;
 
@@ -123,39 +124,6 @@ function isNegativeNumber(e: ts.Expression): e is ts.PrefixUnaryExpression {
     e.operator === ts.SyntaxKind.MinusToken &&
     ts.isNumericLiteral(e.operand)
   );
-}
-
-/** Literal-composable expression → PropValue; anything dynamic → undefined. */
-function literalToValue(expr: ts.Expression): PropValue | undefined {
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-  if (ts.isNumericLiteral(expr)) return Number(expr.text);
-  if (expr.kind === ts.SyntaxKind.TrueKeyword) return true;
-  if (expr.kind === ts.SyntaxKind.FalseKeyword) return false;
-  if (expr.kind === ts.SyntaxKind.NullKeyword) return null;
-  if (isNegativeNumber(expr)) return -Number((expr.operand as ts.NumericLiteral).text);
-  if (ts.isArrayLiteralExpression(expr)) {
-    const items: PropValue[] = [];
-    for (const el of expr.elements) {
-      const v = literalToValue(el);
-      if (v === undefined) return undefined;
-      items.push(v);
-    }
-    return items;
-  }
-  if (ts.isObjectLiteralExpression(expr)) {
-    const obj: { [k: string]: PropValue } = {};
-    for (const prop of expr.properties) {
-      if (!ts.isPropertyAssignment(prop)) return undefined;
-      const key =
-        ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : undefined;
-      if (key === undefined) return undefined;
-      const v = literalToValue(prop.initializer);
-      if (v === undefined) return undefined;
-      obj[key] = v;
-    }
-    return obj;
-  }
-  return undefined;
 }
 
 // ---------------------------------------------------------------------------

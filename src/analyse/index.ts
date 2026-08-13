@@ -14,6 +14,7 @@ import { extractState } from "./extractState.ts";
 import { extractStaticText } from "./extractStaticText.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
+import { makeEnv } from "./renderPath.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
@@ -116,9 +117,12 @@ async function analyseOne(
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
-  const rootTag = extractRootTag(unit.bodyNode);
-  const staticText = extractStaticText(unit.bodyNode);
-  const render = extractRenderMode(unit.bodyNode, parsed.imports, unit.isAsync);
+  // The values the generated spec will actually pass. Everything below describes
+  // the render those values produce, rather than the last return in the body.
+  const renderEnv = makeEnv(propsShape, unresolvedProps, state);
+  const rootTag = extractRootTag(unit.bodyNode, renderEnv);
+  const staticText = extractStaticText(unit.bodyNode, renderEnv);
+  const render = extractRenderMode(unit.bodyNode, parsed.imports, unit.isAsync, renderEnv);
   // Data deps and guards only mean something for a server component that
   // awaits its data; running them elsewhere would be noise.
   const dataDeps = unit.isAsync

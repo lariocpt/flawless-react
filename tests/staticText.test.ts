@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { extractRootTag } from "../src/analyse/extractRootTag.ts";
 import { extractStaticText } from "../src/analyse/extractStaticText.ts";
+import { analyse } from "../src/analyse/index.ts";
 import { type ParsedComponentUnit, parseFile } from "../src/analyse/parseFile.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures/text");
@@ -55,6 +56,51 @@ describe("extractStaticText", () => {
 
   test("reads a fragment root, which has no root tag of its own", async () => {
     expect(await textOf("AmbiguousRoot.tsx", "FragmentRoot")).toEqual(["Fragment heading"]);
+  });
+});
+
+/**
+ * These go through analyse() rather than the extractors directly, because the
+ * point is the RenderEnv it builds: the props and useState values the generated
+ * spec will actually pass.
+ */
+describe("initial-render analysis", () => {
+  async function entryOf(fixture: string) {
+    const t = await analyse({
+      entry: path.join(FIXTURES, fixture),
+      depth: 0,
+      includeChildren: false,
+    });
+    return t.entry;
+  }
+
+  test("a decidable useState guard describes the branch that actually mounts", async () => {
+    // useState(false) + `if (!open) return <button>` means the collapsed trigger
+    // is what renders. Reading the tail return instead produced eight assertions
+    // about markup the spec never creates — twelve red tests in the dogfood app.
+    const e = await entryOf("GatedBranch.tsx");
+    expect(e.staticText).toEqual(["Record payment"]);
+    expect(e.staticText).not.toContain("Amount due");
+  });
+
+  test("a local const folded from a prop decides a ternary below it", async () => {
+    const e = await entryOf("ConditionalField.tsx");
+    expect(e.staticText).toEqual(["Always here"]);
+    expect(e.rootTag).toBe("div");
+  });
+
+  test("an undecidable guard returning content yields no answer at all", async () => {
+    const e = await entryOf("UndecidableGuard.tsx");
+    expect(e.staticText).toEqual([]);
+    expect(e.rootTag).toBeUndefined();
+  });
+
+  test("an undecidable guard returning null still describes the tail", async () => {
+    // Bailing here would delete working assertions from every component that
+    // guards on a prop whose type could not be resolved.
+    const e = await entryOf("EarlyReturn.tsx");
+    expect(e.staticText).toEqual(["Hi there"]);
+    expect(e.rootTag).toBe("p");
   });
 });
 

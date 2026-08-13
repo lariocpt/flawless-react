@@ -1,7 +1,7 @@
 import ts from "typescript";
 import type { RenderMode } from "../types.ts";
-import { happyPathReturnExpression } from "./extractRootTag.ts";
 import type { ImportBinding } from "./parseFile.ts";
+import { emptyEnv, initialRenderExpression, type RenderEnv } from "./renderPath.ts";
 
 /**
  * How a component can be mounted in a test, and why.
@@ -31,8 +31,9 @@ export function extractRenderMode(
   bodyNode: ts.Node,
   imports: Map<string, ImportBinding>,
   isAsync: boolean,
+  env: RenderEnv = emptyEnv(),
 ): RenderModeResult {
-  const expr = happyPathReturnExpression(bodyNode);
+  const expr = initialRenderExpression(bodyNode, env)?.expr;
 
   if (expr && isNullLiteral(expr)) {
     return {
