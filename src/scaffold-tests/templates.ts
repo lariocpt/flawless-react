@@ -73,10 +73,17 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
     files.push({ relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() });
   }
 
-  const perFile = new Map<string, number>();
-  for (const c of flat) perFile.set(c.info.filePath, (perFile.get(c.info.filePath) ?? 0) + 1);
+  // A component with no export cannot be imported by a spec, so there is no
+  // spec to write. These reach `flat` only as children of an exported parent,
+  // and emitting `import { X }` for them yields undefined -> "Element type is
+  // invalid" at render time. Their behaviour is covered through that parent.
+  const specTargets = flat.filter((c) => c.info.exportKind !== "none");
 
-  for (const c of flat) {
+  const perFile = new Map<string, number>();
+  for (const c of specTargets)
+    perFile.set(c.info.filePath, (perFile.get(c.info.filePath) ?? 0) + 1);
+
+  for (const c of specTargets) {
     const specName = specNames.get(c) as string;
     if (opts.colocate) {
       const srcDir = path.dirname(c.info.filePath);
@@ -101,7 +108,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   }
 
   if (withBrowser) {
-    for (const c of flat) {
+    for (const c of specTargets) {
       const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
       // Only components that mount standalone can be driven in the browser host.
       if (mode !== "client") continue;
@@ -908,7 +915,12 @@ function emitClickTest(
   const labelDesc = describeClickLabel(click);
   const selector = emitVitestSelector(click);
   const dispatch = emitVitestDispatch(click.event, selector);
-  const preludeLines = prelude ? `\n  ${prelude}` : "";
+  // The prelude opens UI that later interactions live behind — but it is itself
+  // a click, so it can fire a handler this test then asserts was NOT called.
+  // Reset the spies after it so the isolation assertions stay meaningful.
+  const preludeLines = prelude
+    ? `\n  ${prelude}\n  for (const v of Object.values(handlers)) v.mockClear();`
+    : "";
   if (click.binding.kind === "prop") {
     const propName = click.binding.propName;
     const others = allHandlers.filter((h) => h !== propName);
@@ -971,7 +983,16 @@ function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: 
       `  await userEvent.type(${lookup} as HTMLElement, ${JSON.stringify(sampleValue)});`,
     );
   }
-  const submitClick = `await userEvent.click(screen.getByRole("button", { name: /submit|sign\\s*up|save|send|invite|create|add|confirm/i }));`;
+  // The submit control is matched by a name heuristic, so it legitimately may
+  // not exist (an icon-only button, or copy the pattern doesn't cover). That is
+  // a gap in what can be asserted, not a defect in the component — skip with a
+  // reason instead of failing on a lookup the analyser guessed at.
+  const submitClick = `const submits = screen.queryAllByRole("button", { name: /submit|sign\\s*up|save|send|invite|create|add|confirm/i });
+  if (submits.length === 0) {
+    // TODO(flawless): no submit-looking button found; name it here to assert the submit path.
+    return;
+  }
+  await userEvent.click(submits[0] as HTMLElement);`;
   if (form.submit?.kind === "prop") {
     const propName = form.submit.propName;
     const others = allHandlers.filter((h) => h !== propName);

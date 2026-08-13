@@ -41,17 +41,17 @@ export function extractRenderMode(
     };
   }
 
-  const tag = memberTagOf(expr);
-  if (tag) {
-    const binding = imports.get(tag.root);
-    if (binding && COMPOUND_PACKAGES.test(binding.specifier) && !ROOT_MEMBERS.has(tag.member)) {
-      return {
-        mode: "compound-part",
-        note:
-          `renders <${tag.root}.${tag.member}> from ${binding.specifier}, which throws outside its ` +
-          `Root. Wrap renderTarget() in the matching <Root open> to assert its content.`,
-      };
-    }
+  // The part is often nested rather than the root: DialogContent returns
+  // <DialogPortal><DialogPrimitive.Popup>…, so checking only the root tag
+  // misses it. Scan the whole unconditional render subtree instead.
+  const part = findUnrootedCompoundPart(expr, imports);
+  if (part) {
+    return {
+      mode: "compound-part",
+      note:
+        `renders <${part.root}.${part.member}> from ${part.specifier}, which throws outside its ` +
+        `Root. Wrap renderTarget() in the matching <Root open> to assert its content.`,
+    };
   }
 
   const intrinsic = intrinsicTagOf(expr);
@@ -69,15 +69,40 @@ function isNullLiteral(expr: ts.Expression): boolean {
   return expr.kind === ts.SyntaxKind.NullKeyword;
 }
 
-function memberTagOf(
+/**
+ * A compound-package part rendered without its own Root anywhere in the same
+ * subtree. A component that renders `<X.Root>` around its parts supplies its
+ * own context and is perfectly renderable, so it must not be flagged.
+ */
+function findUnrootedCompoundPart(
   expr: ts.Expression | undefined,
-): { root: string; member: string } | undefined {
-  const tagName = jsxTagName(expr);
-  if (!tagName || !ts.isPropertyAccessExpression(tagName)) return undefined;
-  let root: ts.Expression = tagName.expression;
-  while (ts.isPropertyAccessExpression(root)) root = root.expression;
-  if (!ts.isIdentifier(root)) return undefined;
-  return { root: root.text, member: tagName.name.text };
+  imports: Map<string, ImportBinding>,
+): { root: string; member: string; specifier: string } | undefined {
+  if (!expr) return undefined;
+
+  const parts: Array<{ root: string; member: string; specifier: string }> = [];
+  const rootsProvided = new Set<string>();
+
+  const visit = (n: ts.Node): void => {
+    let tagName: ts.JsxTagNameExpression | undefined;
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) tagName = n.tagName;
+    if (tagName && ts.isPropertyAccessExpression(tagName)) {
+      let root: ts.Expression = tagName.expression;
+      while (ts.isPropertyAccessExpression(root)) root = root.expression;
+      if (ts.isIdentifier(root)) {
+        const binding = imports.get(root.text);
+        if (binding && COMPOUND_PACKAGES.test(binding.specifier)) {
+          const member = tagName.name.text;
+          if (ROOT_MEMBERS.has(member)) rootsProvided.add(root.text);
+          else parts.push({ root: root.text, member, specifier: binding.specifier });
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(expr);
+
+  return parts.find((p) => !rootsProvided.has(p.root));
 }
 
 function intrinsicTagOf(expr: ts.Expression | undefined): string | undefined {

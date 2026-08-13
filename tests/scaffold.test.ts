@@ -250,9 +250,9 @@ describe("renderUnitBrowser interaction-aware", () => {
     expect(src).toContain("type Props = React.ComponentProps<typeof Toolbar>");
     expect(src).toContain("handlers: Record<string, ReturnType<typeof vi.fn>>");
     expect(src).toContain("merged as unknown as Props");
-    expect(src).toContain('screen.getByRole("button", { name: "Save" })');
-    expect(src).toContain('screen.getByRole("button", { name: "Cancel" })');
-    expect(src).toContain('screen.getByRole("button", { name: "Delete" })');
+    expect(src).toContain('screen.getAllByRole("button", { name: "Save" })[0]');
+    expect(src).toContain('screen.getAllByRole("button", { name: "Cancel" })[0]');
+    expect(src).toContain('screen.getAllByRole("button", { name: "Delete" })[0]');
     expect(src).toContain("expect(handlers.onSave).toHaveBeenCalled()");
     expect(src).toContain("expect(handlers.onCancel).not.toHaveBeenCalled()");
     expect(src).toContain("expect(handlers.onDelete).not.toHaveBeenCalled()");
@@ -294,7 +294,7 @@ describe("renderUnitBrowser interaction-aware", () => {
     const unit = files.find((f) => f.relPath === "unit/IconButton.test.tsx");
     expect(unit).toBeDefined();
     const src = unit?.content ?? "";
-    expect(src).toContain('screen.getByLabelText("close")');
+    expect(src).toContain('screen.getAllByLabelText("close")[0]');
     expect(src).toContain("expect(handlers.onClose).toHaveBeenCalled()");
   });
 

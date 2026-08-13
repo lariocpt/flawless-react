@@ -12,19 +12,20 @@ const TAG_TO_ROLE: Record<string, string> = {
 export function emitVitestSelector(h: ClickHandler): string {
   if (h.hints.testid) return `screen.getByTestId(${JSON.stringify(h.hints.testid)})`;
   if (h.hints.ariaLabel) {
-    return `screen.getByLabelText(${JSON.stringify(h.hints.ariaLabel)})`;
+    return `screen.getAllByLabelText(${JSON.stringify(h.hints.ariaLabel)})[0] as HTMLElement`;
   }
   const role = roleFor(h);
   if (role) {
     if (h.label.kind === "text") {
-      return `screen.getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)} })`;
+      return `screen.getAllByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)} })[0] as HTMLElement`;
     }
     if (h.label.kind === "prop") {
-      return `screen.getByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })`;
+      return `screen.getAllByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })[0] as HTMLElement`;
     }
   }
   if (h.hints.id) return `container.querySelector(${JSON.stringify(`#${h.hints.id}`)})!`;
-  if (h.label.kind === "text") return `screen.getByText(${JSON.stringify(h.label.value)})`;
+  if (h.label.kind === "text")
+    return `screen.getAllByText(${JSON.stringify(h.label.value)})[0] as HTMLElement`;
   return `container.querySelector(${JSON.stringify(h.tag)})!`;
 }
 
