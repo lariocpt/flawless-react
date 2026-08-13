@@ -37,26 +37,43 @@ export async function fetchLiveSwagger(explicitUrl: string | undefined): Promise
       };
     }
     const spec = (await res.json()) as Parameters<typeof extractRoutes>[0];
-    const mockRoutes = extractRoutes(spec);
-    const grouped = new Map<string, NextjsApiRoute>();
-    for (const r of mockRoutes) {
-      const key = r.path;
-      const existing = grouped.get(key);
-      if (existing) {
-        if (!existing.methods.includes(r.method)) existing.methods.push(r.method);
-        existing.responseBodies ??= {};
-        existing.responseBodies[r.method] = r.body;
-      } else {
-        grouped.set(key, {
-          path: key,
-          methods: [r.method],
-          file: "",
-          responseBodies: { [r.method]: r.body },
-        });
-      }
-    }
-    return { ok: true, url, routes: [...grouped.values()], rawSpec: spec };
+    return { ok: true, url, routes: parseSpecRoutes(spec), rawSpec: spec };
   } catch (err) {
     return { ok: false, url, routes: undefined, rawSpec: undefined, error: (err as Error).message };
+  }
+}
+
+/** Group an OpenAPI spec's operations into per-path NextjsApiRoutes with response bodies. */
+export function parseSpecRoutes(spec: Parameters<typeof extractRoutes>[0]): NextjsApiRoute[] {
+  const mockRoutes = extractRoutes(spec);
+  const grouped = new Map<string, NextjsApiRoute>();
+  for (const r of mockRoutes) {
+    const key = r.path;
+    const existing = grouped.get(key);
+    if (existing) {
+      if (!existing.methods.includes(r.method)) existing.methods.push(r.method);
+      existing.responseBodies ??= {};
+      existing.responseBodies[r.method] = r.body;
+    } else {
+      grouped.set(key, {
+        path: key,
+        methods: [r.method],
+        file: "",
+        responseBodies: { [r.method]: r.body },
+      });
+    }
+  }
+  return [...grouped.values()];
+}
+
+/** Load a local OpenAPI JSON file and group it like the live-spec path does. */
+export async function loadLocalSpec(
+  specPath: string,
+): Promise<{ routes: NextjsApiRoute[]; rawSpec: unknown } | undefined> {
+  try {
+    const raw = (await Bun.file(specPath).json()) as Parameters<typeof extractRoutes>[0];
+    return { routes: parseSpecRoutes(raw), rawSpec: raw };
+  } catch {
+    return undefined;
   }
 }

@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { stringifyLike } from "../scaffold/adoptStyle.ts";
 import type { NextjsApiRoute, NextjsContext, NextjsRouter } from "../types.ts";
 import { walkApiRoutes } from "./apiRoutes.ts";
 
@@ -146,10 +147,20 @@ export async function mergeIntoNextPackageJson(
     devDependencies?: Record<string, string>;
     scripts?: Record<string, string>;
   };
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as Pkg;
-  pkg.dependencies = { ...(pkg.dependencies ?? {}), ...deps };
-  pkg.devDependencies = { ...(pkg.devDependencies ?? {}), ...devDeps };
-  pkg.scripts = { ...(pkg.scripts ?? {}), ...scripts };
-  fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  const source = fs.readFileSync(pkgPath, "utf8");
+  const pkg = JSON.parse(source) as Pkg;
+  // Only touch sections that receive entries (or already exist) so the merge
+  // never invents empty keys, and preserve the file's own indentation — a
+  // tabs-indented package.json must not come back 2-space-reindented.
+  if (Object.keys(deps).length > 0 || pkg.dependencies) {
+    pkg.dependencies = { ...(pkg.dependencies ?? {}), ...deps };
+  }
+  if (Object.keys(devDeps).length > 0 || pkg.devDependencies) {
+    pkg.devDependencies = { ...(pkg.devDependencies ?? {}), ...devDeps };
+  }
+  if (Object.keys(scripts).length > 0 || pkg.scripts) {
+    pkg.scripts = { ...(pkg.scripts ?? {}), ...scripts };
+  }
+  fs.writeFileSync(pkgPath, stringifyLike(source, pkg));
   void readdir; // silence unused-import warning when running without explicit re-export
 }
