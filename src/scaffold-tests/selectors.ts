@@ -1,4 +1,4 @@
-import type { ClickHandler, InteractionInfo } from "../types.ts";
+import type { ClickHandler, InteractionInfo, LabelSource } from "../types.ts";
 
 const TAG_TO_ROLE: Record<string, string> = {
   button: "button",
@@ -130,6 +130,41 @@ export function emitPlaywrightDispatch(
     default:
       return `await ${locatorExpr}.click()`;
   }
+}
+
+/**
+ * The expression that finds a disclosure trigger so a spec can open it.
+ * undefined when the trigger has no handle worth clicking.
+ */
+export function emitTriggerSelector(label: LabelSource): string | undefined {
+  switch (label.kind) {
+    case "testid":
+      return `screen.getByTestId(${JSON.stringify(label.value)})`;
+    case "aria":
+      return `screen.getAllByLabelText(${JSON.stringify(label.value)})[0] as HTMLElement`;
+    case "text":
+      return `screen.getAllByText(${JSON.stringify(label.value)})[0] as HTMLElement`;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The awaiting form of a selector, for an element that only mounts after a
+ * trigger is clicked. Testing-Library's findBy* retries until it appears; getBy*
+ * asserts against the DOM as it stands the instant the click returns, which is
+ * before the menu has mounted its items.
+ */
+export function awaitSelector(selector: string): string {
+  if (/^screen\.getAllBy/.test(selector)) {
+    const inner = selector.replace(/^screen\.getAllBy/, "screen.findAllBy");
+    return `(await ${inner.replace(/\)\[0\] as HTMLElement$/, "))[0] as HTMLElement")}`;
+  }
+  if (/^screen\.getBy/.test(selector)) {
+    return `await ${selector.replace(/^screen\.getBy/, "screen.findBy")}`;
+  }
+  // A container.querySelector target is synchronous by nature; nothing to await.
+  return selector;
 }
 
 /**

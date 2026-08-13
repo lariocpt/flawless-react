@@ -9,6 +9,7 @@ import type {
   LabelSource,
   PropsShape,
 } from "../types.ts";
+import { findDisclosures } from "./extractDisclosures.ts";
 import { posOf } from "./pos.ts";
 import { emptyEnv, initialRenderExpression, type RenderEnv, reachability } from "./renderPath.ts";
 
@@ -36,6 +37,12 @@ export function extractInteractions(
   const initial = initialRenderExpression(bodyNode, env);
   const scope = initial?.scope ?? env;
 
+  // Elements that only exist after a trigger is clicked. Querying them straight
+  // after render finds nothing, and the failure reads as a wrong selector.
+  const disclosures = initial ? findDisclosures(initial.expr) : [];
+  const gateFor = (n: ts.Node): LabelSource | undefined =>
+    disclosures.find((d) => d.gated.has(n))?.trigger;
+
   const visit = (n: ts.Node): void => {
     // "no" means provably not rendered at these props; "unknown" is kept, since
     // dropping it would lose every .map row and render-prop target.
@@ -60,7 +67,16 @@ export function extractInteractions(
           if (!EVENT_PATTERN.test(event)) continue;
           if (tag === "form" && event === "onSubmit") continue;
           const binding = classifyBinding(attr.initializer, propNames);
-          clicks.push({ event, tag, label, hints, binding, pos: posOf(attr, sourceFile) });
+          const gatedBy = gateFor(n);
+          clicks.push({
+            event,
+            tag,
+            label,
+            hints,
+            binding,
+            ...(gatedBy ? { gatedBy } : {}),
+            pos: posOf(attr, sourceFile),
+          });
         }
       }
     }

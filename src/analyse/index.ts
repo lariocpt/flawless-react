@@ -14,7 +14,7 @@ import { extractState } from "./extractState.ts";
 import { extractStaticText } from "./extractStaticText.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
-import { makeEnv } from "./renderPath.ts";
+import { initialRenderExpression, makeEnv } from "./renderPath.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { SourceFileCache } from "./sourceCache.ts";
@@ -129,6 +129,7 @@ async function analyseOne(
     unresolvedProps,
     renderEnv,
   );
+  const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
   const rootTag = extractRootTag(unit.bodyNode, renderEnv);
   const staticText = extractStaticText(unit.bodyNode, renderEnv);
   // Sibling components' modes, so a wrapper around a part is recognised as one
@@ -203,6 +204,7 @@ async function analyseOne(
     dataDeps,
     guards,
     ...(rootTag ? { rootTag } : {}),
+    ...(initialRender?.guarded ? { renderGuarded: true } : {}),
     renderMode: render.mode,
     ...(render.note ? { renderNotes: [render.note] } : {}),
     moduleImports,

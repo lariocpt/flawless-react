@@ -45,6 +45,11 @@ export interface ClickHandler {
   label: LabelSource;
   hints: ElementHints;
   binding: HandlerBinding;
+  /**
+   * The element only mounts once this trigger is clicked (a menu item, a dialog
+   * body). A spec must open it first and then query asynchronously.
+   */
+  gatedBy?: LabelSource;
   pos?: SourcePosition;
 }
 
@@ -291,6 +296,12 @@ export interface ComponentInfo {
   hooks: string[];
   unresolvedProps: string[];
   interactions?: InteractionInfo;
+  /**
+   * An undecidable early return that renders nothing stands between the
+   * component's entry and the JSX described here — so at the props a spec can
+   * synthesise, it may well render nothing at all.
+   */
+  renderGuarded?: boolean;
   /** Position of the component declaration. */
   pos?: SourcePosition;
   /** How the component leaves its module. "none" = same-file secondary component. */

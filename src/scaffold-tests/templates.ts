@@ -11,8 +11,10 @@ import type {
 } from "../types.ts";
 import { emitModuleMocks } from "./mocks.ts";
 import {
+  awaitSelector,
   emitPlaywrightDispatch,
   emitPlaywrightSelector,
+  emitTriggerSelector,
   emitVitestDispatch,
   emitVitestSelector,
 } from "./selectors.ts";
@@ -389,7 +391,13 @@ function unitSpec(
     allHandlers.length > 0 ? `{ ${allHandlers.map((h) => `${h}: vi.fn()`).join(", ")} }` : `{}`;
 
   const interactionTests = interactions
-    ? emitInteractionTests(name, interactions, allHandlers, firstClickTrigger(info))
+    ? emitInteractionTests(
+        name,
+        interactions,
+        allHandlers,
+        firstClickTrigger(info),
+        info.renderGuarded === true,
+      )
     : emitFallbackHandlerTests(name, info.propsShape, info.unresolvedProps);
 
   const stateTests = emitStateTests(name, info);
@@ -977,7 +985,21 @@ function emitInteractionTests(
   info: NonNullable<ComponentInfo["interactions"]>,
   allHandlers: string[],
   trigger: string | undefined,
+  renderGuarded = false,
 ): string {
+  // `if (!user) return null` with an unresolvable `user` means the component may
+  // render nothing at all at the props a spec can synthesise. The JSX below the
+  // guard is still the best description of the component, but driving it needs a
+  // fixture the tool cannot build — so the interaction tests say that instead of
+  // failing on an element that was never going to mount.
+  if (renderGuarded) {
+    return `
+test.skip("${name}: interactions need a fixture — an early return may render nothing", () => {
+  // TODO(flawless): give the prop its guard tests (see the component's first
+  // \`if (!…) return\`) a real value in DEFAULTS, and these become live tests.
+});
+`;
+  }
   const firstClickIdx = info.clicks.findIndex((c) => c.event === "onClick");
   const parts: string[] = [];
   for (let i = 0; i < info.clicks.length; i++) {
@@ -1019,13 +1041,24 @@ test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — no way to select 
 });
 `;
   }
-  const dispatch = emitVitestDispatch(click.event, selector);
+  // A menu item, a dialog body: the element does not exist until its trigger is
+  // clicked, so the spec opens it first and then queries with findBy*, which
+  // retries. getBy* asserts against the DOM as it stands the instant the click
+  // returns — before the content has mounted.
+  const gateSelector = click.gatedBy ? emitTriggerSelector(click.gatedBy) : undefined;
+  const dispatch = emitVitestDispatch(
+    click.event,
+    gateSelector ? awaitSelector(selector) : selector,
+  );
+  const gateLines = gateSelector ? `\n  await userEvent.click(${gateSelector});` : "";
   // The prelude opens UI that later interactions live behind — but it is itself
   // a click, so it can fire a handler this test then asserts was NOT called.
   // Reset the spies after it so the isolation assertions stay meaningful.
-  const preludeLines = prelude
-    ? `\n  ${prelude}\n  for (const v of Object.values(handlers)) v.mockClear();`
-    : "";
+  const preludeLines = gateSelector
+    ? `${gateLines}\n  for (const v of Object.values(handlers)) v.mockClear();`
+    : prelude
+      ? `\n  ${prelude}\n  for (const v of Object.values(handlers)) v.mockClear();`
+      : "";
   if (click.binding.kind === "prop") {
     const propName = click.binding.propName;
     const others = allHandlers.filter((h) => h !== propName);
