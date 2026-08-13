@@ -168,6 +168,7 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
     ? `    dir: "..",
     include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"],`
     : `    include: ["unit/**/*.test.{ts,tsx}"],`;
+  const inlineBlock = "";
   return `import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -176,7 +177,7 @@ ${resolveBlock}  test: {
     setupFiles: ["./setup.ts"],
 ${testDir}
     globals: true,
-  },
+${inlineBlock}  },
 });
 `;
 }
@@ -186,14 +187,46 @@ function escapeRegex(s: string): string {
 }
 
 function setupTs(mswSetup: boolean): string {
+  const polyfills = `
+// jsdom gaps that real-world component stacks hit constantly (next-themes →
+// matchMedia, virtualisers → ResizeObserver, lazy mounts → IntersectionObserver).
+if (typeof window !== "undefined") {
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as typeof window.matchMedia;
+  window.ResizeObserver ??= class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+  window.IntersectionObserver ??= class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+    root = null;
+    rootMargin = "";
+    thresholds = [];
+  } as unknown as typeof IntersectionObserver;
+  Element.prototype.scrollIntoView ??= () => {};
+  Element.prototype.scrollTo ??= (() => {}) as typeof Element.prototype.scrollTo;
+}
+`;
   if (!mswSetup) {
     return `import "@testing-library/jest-dom/vitest";
-`;
+${polyfills}`;
   }
   return `import "@testing-library/jest-dom/vitest";
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { server } from "./mocks/node.ts";
-
+${polyfills}
 // MSW node server intercepts fetch() inside jsdom — same handlers your browser
 // suite uses, so unit and browser layers agree on what /api/* returns.
 beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
@@ -226,13 +259,15 @@ function unitSpec(
     allHandlers.length > 0 ? `{ ${allHandlers.map((h) => `${h}: vi.fn()`).join(", ")} }` : `{}`;
 
   const interactionTests = interactions
-    ? emitInteractionTests(name, interactions, allHandlers)
+    ? emitInteractionTests(name, interactions, allHandlers, firstClickTrigger(info))
     : emitFallbackHandlerTests(name, info.propsShape, info.unresolvedProps);
 
   const stateTests = emitStateTests(name, info);
   const effectFetches = (info.fetchCalls ?? []).filter((f) => f.inEffect);
   const fetchTests =
-    mocksImport && effectFetches.length > 0 ? emitFetchTests(name, effectFetches, apiRoutes) : "";
+    mocksImport && effectFetches.length > 0
+      ? emitFetchTests(name, info, effectFetches, apiRoutes, firstClickTrigger(info))
+      : "";
 
   const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
   const mswImports =
@@ -279,13 +314,18 @@ test("${name} renders at defaults without crashing", () => {
   void screen;
 });
 
-describe("${name} variants", () => {
+${
+  info.variants.slice(0, variants).length > 0
+    ? `describe("${name} variants", () => {
   for (const v of VARIANTS) {
     test(\`renders with \${JSON.stringify(v)}\`, () => {
       renderTarget(v);
     });
   }
-});
+});`
+    : `// no literal-union props — no variant matrix (VARIANTS kept for hand-written rows).
+void VARIANTS;`
+}
 
 ${interactionTests}
 ${stateTests}${fetchTests}`;
@@ -359,11 +399,31 @@ function escapeTestName(s: string): string {
 // Effect-driven fetch tests (MSW)
 // ---------------------------------------------------------------------------
 
+/**
+ * Data effects are often gated behind UI state (open a panel → fetch). The
+ * fetch specs fire the component's first detected click when it is present,
+ * which unlocks the common launcher-gated pattern; a mount-triggered fetch is
+ * unaffected (the click is skipped when the element is absent).
+ */
+function firstClickTrigger(info: ComponentInfo): string | undefined {
+  const click = info.interactions?.clicks.find((c) => c.event === "onClick");
+  if (!click) return undefined;
+  const query = emitVitestSelector(click).replace(".getBy", ".queryBy").replace(/\)!$/, ")");
+  return `const trigger = ${query};
+    if (trigger) await userEvent.click(trigger as HTMLElement);`;
+}
+
 function emitFetchTests(
   name: string,
+  info: ComponentInfo,
   fetches: FetchCallInfo[],
   apiRoutes: NextjsApiRoute[] | undefined,
+  trigger: string | undefined,
 ): string {
+  const triggerLines = trigger
+    ? `\n    // Effects can be gated behind UI state — fire the first detected click.\n    ${trigger}`
+    : "";
+  const propNames = new Set([...Object.keys(info.propsShape), ...info.unresolvedProps]);
   const parts: string[] = [];
   for (const f of fetches) {
     const mswPath = f.urlTemplate;
@@ -375,6 +435,12 @@ function emitFetchTests(
         ? "// Fixture from the project's OpenAPI spec examples."
         : "// TODO(flawless): no example found in the API spec — replace {} with a realistic fixture.";
 
+    // URL holes that are props default to "" and would collapse a path
+    // segment (/api/x//y never matches :param) — render with real values.
+    const holeOverrides = Object.fromEntries(
+      f.holes.filter((h) => propNames.has(h)).map((h) => [h, `test-${h}`]),
+    );
+    const renderArg = Object.keys(holeOverrides).length > 0 ? JSON.stringify(holeOverrides) : "";
     parts.push(`
 describe("${name} ${f.method} ${mswPath}", () => {
   const URL = ${JSON.stringify(mswPath)};
@@ -384,32 +450,36 @@ describe("${name} ${f.method} ${mswPath}", () => {
   test("mount fetches and renders with a successful response", async () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
-    renderTarget();
-    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    const { container } = renderTarget(${renderArg});
+    void container;${triggerLines}
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     // TODO(flawless): assert rendered content derived from FIXTURE.
   });
 
   test("stays stable while the response is delayed (loading state)", async () => {
     let calls = 0;
     server.use(http.${method}(URL, async () => { calls++; await delay(150); return HttpResponse.json(FIXTURE as never); }));
-    renderTarget();
-    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    const { container } = renderTarget(${renderArg});
+    void container;${triggerLines}
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     // TODO(flawless): assert the loading indicator while the response is pending.
   });
 
   test("survives a 500 without crashing (error state)", async () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return new HttpResponse(null, { status: 500 }); }));
-    renderTarget();
-    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    const { container } = renderTarget(${renderArg});
+    void container;${triggerLines}
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     // TODO(flawless): assert the error-state UI.
   });
 
   test("renders the empty state for an empty payload", async () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(${emptyPayloadFor(fixture)}); }));
-    renderTarget();
-    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    const { container } = renderTarget(${renderArg});
+    void container;${triggerLines}
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     // TODO(flawless): assert the empty-state copy.
   });
 });`);
@@ -560,12 +630,16 @@ function emitInteractionTests(
   name: string,
   info: NonNullable<ComponentInfo["interactions"]>,
   allHandlers: string[],
+  trigger: string | undefined,
 ): string {
+  const firstClickIdx = info.clicks.findIndex((c) => c.event === "onClick");
   const parts: string[] = [];
   for (let i = 0; i < info.clicks.length; i++) {
     const click = info.clicks[i];
     if (!click) continue;
-    parts.push(emitClickTest(name, click, allHandlers, i));
+    // Later interactions often live behind UI state the first click opens.
+    const prelude = i !== firstClickIdx && trigger ? trigger : undefined;
+    parts.push(emitClickTest(name, click, allHandlers, i, prelude));
   }
   for (let i = 0; i < info.forms.length; i++) {
     const form = info.forms[i];
@@ -583,10 +657,12 @@ function emitClickTest(
   click: ClickHandler,
   allHandlers: string[],
   idx: number,
+  prelude?: string,
 ): string {
   const labelDesc = describeClickLabel(click);
   const selector = emitVitestSelector(click);
   const dispatch = emitVitestDispatch(click.event, selector);
+  const preludeLines = prelude ? `\n  ${prelude}` : "";
   if (click.binding.kind === "prop") {
     const propName = click.binding.propName;
     const others = allHandlers.filter((h) => h !== propName);
@@ -595,7 +671,7 @@ function emitClickTest(
       .join("\n");
     return `test("${name} fires ${propName} when ${labelDesc} (${click.event})", async () => {
   const { container } = renderTarget();
-  void container;
+  void container;${preludeLines}
   ${dispatch};
   expect(handlers.${propName}).toHaveBeenCalled();
 ${isolationAsserts || "  // no other handlers to isolate"}
@@ -607,7 +683,7 @@ ${isolationAsserts || "  // no other handlers to isolate"}
     .join("\n");
   return `test("${name} ${click.event} on ${labelDesc} #${idx} is a smoke click", async () => {
   const { container } = renderTarget();
-  void container;
+  void container;${preludeLines}
   ${dispatch};
 ${isolationAsserts || "  // no prop handlers declared"}
 });`;
@@ -649,7 +725,7 @@ function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: 
       `  await userEvent.type(${lookup} as HTMLElement, ${JSON.stringify(sampleValue)});`,
     );
   }
-  const submitClick = `await userEvent.click(screen.getByRole("button", { name: /submit|sign\\s*up|save/i }));`;
+  const submitClick = `await userEvent.click(screen.getByRole("button", { name: /submit|sign\\s*up|save|send|invite|create|add|confirm/i }));`;
   if (form.submit?.kind === "prop") {
     const propName = form.submit.propName;
     const others = allHandlers.filter((h) => h !== propName);
@@ -807,7 +883,7 @@ test(\`\${NAME}: form #${i} fills + submits without error\`, async ({ page }) =>
     [NAME, DEFAULTS],
   );
 ${fillSteps.join("\n")}
-  await page.getByRole("button", { name: /submit|sign\\s*up|save/i }).click();
+  await page.getByRole("button", { name: /submit|sign\\s*up|save|send|invite|create|add|confirm/i }).click();
   await page.waitForTimeout(50);
   expect(errors).toEqual([]);
 });`);

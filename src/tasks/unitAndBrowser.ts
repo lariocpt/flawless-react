@@ -81,16 +81,24 @@ function computeResolveAliases(projectRoot: string): AliasEntry[] {
   return entries;
 }
 
-/** Nearest node_modules (walking up) that carries BOTH react and react-dom. */
+/**
+ * The node_modules whose react pair the whole suite should share. Prefer the
+ * dir that ALSO carries @testing-library/react: hoisted monorepos put the
+ * test stack at the workspace root, and its CJS require() will always find
+ * that root pair — so aliasing sources to any other copy guarantees the
+ * dual-React invalid-hook-call crash.
+ */
 function nearestReactNodeModules(fromDir: string): string | undefined {
+  let fallback: string | undefined;
   let dir = path.resolve(fromDir);
   for (;;) {
     const nm = path.join(dir, "node_modules");
     if (existsSync(path.join(nm, "react")) && existsSync(path.join(nm, "react-dom"))) {
-      return nm;
+      if (existsSync(path.join(nm, "@testing-library", "react"))) return nm;
+      fallback ??= nm;
     }
     const parent = path.dirname(dir);
-    if (parent === dir) return undefined;
+    if (parent === dir) return fallback;
     dir = parent;
   }
 }

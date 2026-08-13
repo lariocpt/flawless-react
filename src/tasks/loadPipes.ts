@@ -46,7 +46,7 @@ export const loadPipes: Task = {
       written.push(readmePath);
     }
 
-    const crustPresent = Bun.which("crust") !== null;
+    const crustPresent = Bun.which("crust") !== null || hasLocalCrust(ctx.nextjs.root);
     return {
       id: "load",
       ok: true,
@@ -63,6 +63,17 @@ interface LoadTarget {
   name: string;
   /** URL path with $VARS for dynamic segments. */
   urlPath: string;
+}
+
+/** crust installed as a project dependency (bun run resolves node_modules/.bin). */
+function hasLocalCrust(fromDir: string): boolean {
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    if (existsSync(path.join(dir, "node_modules", ".bin", "crust"))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
 }
 
 function findRouterRoot(nextRoot: string): string {
