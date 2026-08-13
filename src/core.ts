@@ -256,7 +256,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           "flawless:unit": opts.colocate
             ? `vitest run --config ${path.relative(nextCtx.root, outDir)}/vitest.config.ts`
             : `vitest run --root ${path.relative(nextCtx.root, outDir)}`,
-          "flawless:perf": `playwright test --config ${path.relative(nextCtx.root, outDir)}/playwright.config.ts ${path.relative(nextCtx.root, outDir)}/tests`,
+          "flawless:perf": `playwright test --config ${path.relative(nextCtx.root, outDir)}/playwright.config.ts ${path.relative(nextCtx.root, outDir)}/profile`,
           "flawless:browser": `playwright test --config ${path.relative(nextCtx.root, outDir)}/browser/playwright.config.ts`,
           ...(taskIds.includes("e2e")
             ? {

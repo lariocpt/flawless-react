@@ -49,8 +49,8 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
     { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath, useMsw) },
-    { relPath: "tests/_helpers.ts", content: helpers() },
-    { relPath: "tests/_heap.ts", content: heapHelper() },
+    { relPath: "profile/_helpers.ts", content: helpers() },
+    { relPath: "profile/_heap.ts", content: heapHelper() },
     { relPath: "budgets.json", content: budgets(flat, opts.variants) },
     {
       relPath: "README.md",
@@ -67,7 +67,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
   }
   for (const c of flat) {
     files.push({
-      relPath: `tests/${c.specName}.profile.spec.ts`,
+      relPath: `profile/${c.specName}.profile.spec.ts`,
       content: spec(c, opts.variants),
     });
   }
@@ -211,7 +211,7 @@ function tsConfig(): string {
         noEmit: true,
         resolveJsonModule: true,
       },
-      include: ["host/**/*", "tests/**/*", "playwright.config.ts"],
+      include: ["host/**/*", "profile/**/*", "playwright.config.ts"],
     },
     null,
     2,
@@ -240,7 +240,7 @@ function playwrightConfig(hasMock: boolean): string {
   return `import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./tests",
+  testDir: "./profile",
   fullyParallel: false,
   workers: 1,
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
@@ -990,7 +990,7 @@ bun run test:headed    # open Chromium
 ## Customise
 
 - \`budgets.json\` — tighten per-component mount/update budgets. Tests warn (not fail) on breach by default; switch the \`console.warn\` to \`expect(...).toBeLessThan(...)\` to make them hard.
-- \`tests/_helpers.ts\` — add scenarios; e.g. mock data sources before \`mountComponent\`.
+- \`profile/_helpers.ts\` — add scenarios; e.g. mock data sources before \`mountComponent\`.
 - \`host/main.tsx\` — register additional components by hand in \`REGISTRY\`.
 
 ## Notes

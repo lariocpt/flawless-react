@@ -116,7 +116,7 @@ describe("renderSuite host", () => {
     // took the whole bundle — and therefore every profile test — with it.
     expect(main).toContain("as JobPage__CommentForm");
     expect(main).toContain('"JobPage__CommentForm": JobPage__CommentForm as unknown as Component,');
-    expect(files.map((f) => f.relPath)).toContain("tests/JobPage__CommentForm.profile.spec.ts");
+    expect(files.map((f) => f.relPath)).toContain("profile/JobPage__CommentForm.profile.spec.ts");
   });
 
   test("siblings in one file each get a profile spec", () => {
@@ -128,8 +128,8 @@ describe("renderSuite host", () => {
       ]),
     ]);
     const paths = files.map((f) => f.relPath);
-    expect(paths).toContain("tests/CardHeader.profile.spec.ts");
-    expect(paths).toContain("tests/CardFooter.profile.spec.ts");
+    expect(paths).toContain("profile/CardHeader.profile.spec.ts");
+    expect(paths).toContain("profile/CardFooter.profile.spec.ts");
   });
 
   test("ineligible components are excluded and the README says why", () => {

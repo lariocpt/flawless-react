@@ -30,12 +30,14 @@ describe("renderSuite", () => {
     expect(paths).toContain("host/server.ts");
     expect(paths).toContain("host/index.html");
     expect(paths).toContain("host/main.tsx");
-    expect(paths).toContain("tests/_helpers.ts");
-    expect(paths).toContain("tests/_heap.ts");
+    expect(paths).toContain("profile/_helpers.ts");
+    expect(paths).toContain("profile/_heap.ts");
     expect(paths).toContain("budgets.json");
-    expect(paths).toContain("tests/Dashboard.profile.spec.ts");
-    expect(paths).toContain("tests/Hello.profile.spec.ts");
-    expect(paths).toContain("tests/Card.profile.spec.ts");
+    expect(paths).toContain("profile/Dashboard.profile.spec.ts");
+    // "profile", not "tests": a suite emitted under flawless/tests/ is collected by
+    // any project whose own test script filters on the substring "tests".
+    expect(paths).toContain("profile/Hello.profile.spec.ts");
+    expect(paths).toContain("profile/Card.profile.spec.ts");
 
     const main = files.find((f) => f.relPath === "host/main.tsx");
     expect(main).toBeDefined();
@@ -46,7 +48,7 @@ describe("renderSuite", () => {
     expect(content).toContain('"Hello": Hello');
     expect(content).toContain("window.__profile");
 
-    const dashSpec = files.find((f) => f.relPath === "tests/Dashboard.profile.spec.ts");
+    const dashSpec = files.find((f) => f.relPath === "profile/Dashboard.profile.spec.ts");
     expect(dashSpec).toBeDefined();
     const sc = dashSpec?.content ?? "";
     expect(sc).toContain('NAME = "Dashboard"');
@@ -61,7 +63,7 @@ describe("renderSuite", () => {
     expect(sc).toContain("bracketScenario");
     expect(sc).toContain("stress-click-rerender");
 
-    const heap = files.find((f) => f.relPath === "tests/_heap.ts");
+    const heap = files.find((f) => f.relPath === "profile/_heap.ts");
     expect(heap).toBeDefined();
     const hc = heap?.content ?? "";
     expect(hc).toContain("HeapProfiler.takeHeapSnapshot");
@@ -310,7 +312,7 @@ describe("renderUnitBrowser interaction-aware", () => {
     });
     const out = await tmpDir();
     const files = renderSuite({ tree, outDir: out, variants: 3, report: false });
-    const spec = files.find((f) => f.relPath === "tests/Toolbar.profile.spec.ts");
+    const spec = files.find((f) => f.relPath === "profile/Toolbar.profile.spec.ts");
     expect(spec).toBeDefined();
     const sc = spec?.content ?? "";
     expect(sc).toContain('page.getByRole("button", { name: "Save" })');
