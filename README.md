@@ -2,13 +2,15 @@
 
 A multi-task quality kit for React components. Point it at a `.tsx` file (or a glob), pick which checks to run, and get back a runnable Playwright + Vitest suite, an accessibility scan, and a Biome-driven correctness report — with file:line findings for every issue.
 
-Run it with no args for an interactive checkbox menu of five tasks:
+Run it with no args for an interactive checkbox menu of seven tasks:
 
 1. Generate the **performance testing harness** (Playwright + React `<Profiler>` + react-scan).
 2. Generate **extensive unit + browser tests** (Vitest + @testing-library/react + Playwright functional).
-3. **Static React perf analysis** (rerender storms, missing memoisation, unresolved props).
-4. **Accessibility / web standards scan** (ESLint + eslint-plugin-jsx-a11y, file:line findings).
+3. **Static React perf analysis** (rerender storms, missing memoisation, stale/extraneous hook deps, setState-in-render).
+4. **Accessibility / web standards scan** (Biome jsx-a11y rules, file:line findings).
 5. **Functionally important React rules** (Biome — useExhaustiveDependencies, useHookAtTopLevel, useJsxKeyInIterable, and friends).
+6. **Route-level Playwright e2e** for Next.js pages, against the app's real dev server.
+7. **crust load pipes** for those routes and the GET APIs their components fetch.
 
 Pass a single positional that resolves to a file or a glob (e.g. `src/**/*.tsx`) — each match becomes an entry component and runs against every selected task. A small `<Component>.flawless.json` is dropped next to every source file so issues surface where the code lives.
 
@@ -27,6 +29,7 @@ Once the suite is generated, it belongs to you — there is no regeneration step
 - [What gets generated](#what-gets-generated)
 - [Worked example](#worked-example)
 - [Working with stores and APIs](#working-with-stores-and-apis)
+- [Programmatic API](#programmatic-api)
 - [Limits & assumptions](#limits--assumptions)
 - [Troubleshooting](#troubleshooting)
 - [Further reading](#further-reading)
@@ -98,6 +101,12 @@ In this mode flawless:
 
 Override the auto-detected app resolver with `--app-resolver <file>` if you have a custom wrapper. The generated `flawless/mocks/handlers.ts` is yours to edit — flawless won't overwrite it once it exists, so swap the empty `HttpResponse.json({})` bodies for realistic fixtures.
 
+Three behaviours worth knowing before the first run:
+
+- **The layout is usually unusable as a test provider.** An app-router `layout.tsx` is typically an async server component importing `next/font` or `next/headers`, none of which run under jsdom. flawless detects that and derives `flawless/provider.tsx` from the JSX chain enclosing `{children}`, keeping only `"use client"` components and literal attributes (everything dropped becomes a `TODO(flawless)` comment). It's written once and never overwritten.
+- **Point `--api` at a real spec.** Walking `app/api/**/route.ts` finds nothing useful when the API is a catch-all (Hono, tRPC). `--api openapi.json` (or `--swagger-url <url>`) puts real example bodies into both the MSW handlers and each generated fetch spec.
+- **Generated files adopt your formatter.** Everything written is reformatted with the target project's own biome or prettier, and JSON merges preserve the file's existing indentation — generation produces an additive diff, not a reformat of your `package.json`.
+
 ## CLI reference
 
 ```text
@@ -114,7 +123,9 @@ flawless-react <entry.tsx> [options]
 | `--props '<json>'` | none | Override the synthesized default props. Merged on top of the static-parse result. |
 | `--provider <file>` | none | Path to a `.tsx` file that default-exports a wrapper component. The host renders every mounted component inside it — use this for Redux, React Query, theming, or any other context-based store. |
 | `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. |
-| `--force` | off | Overwrite an existing output directory. |
+| `--colocate` | off | Write unit specs beside their source as `<name>.flawless.test.tsx`. Existing colocated specs are kept unless `--force` — they're the ones you hand-harden. |
+| `--ci` | off | Shorthand for `--no-interactive --json`. |
+| `--force` | off | Overwrite an existing output directory (and regenerate colocated specs). |
 | `--report` | off | Emit `scripts/report.mjs` so `bun run report` aggregates run output into a markdown summary. |
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
@@ -246,16 +257,45 @@ bunx flawless-react ./src/Dashboard.tsx --api ./docs/api.yaml
 
 The scaffolder reads the spec at generation time, walks every `paths.<route>.<method>.responses` and emits static handlers in `mock/routes.ts` (priority: first `examples` → `example` → schema-synthesised default). The mock listens on port 5174; the host server (5173) transparently proxies every non-asset request to it, so `fetch('/api/users')` from your component hits the mock without any code changes. Edit `mock/routes.ts` freely after generation to add stateful logic or per-test overrides.
 
+## Programmatic API
+
+```ts
+import { runFlawless, analyse, analyseTree } from "flawless-react";
+
+const { results, trees, outDir } = await runFlawless({
+  entry: "src/components/Widget.tsx",
+  nextjs: ".",
+  tasks: ["unit-browser", "perf-static"],
+  apiSpec: "openapi.json",
+  colocate: true,
+});
+```
+
+It never calls `process.exit`; bad input throws `UsageError`. `analyse()` (entry → `ComponentTree`), `analyseTree()` (the static perf rules as a pure function), the scaffolders and `detectNextjs` are exported too, so custom reporting is a tree walk rather than CLI-output parsing. See [docs/e2e-and-api.md](docs/e2e-and-api.md).
+
+## What the generated unit specs actually assert
+
+Everything is derived from static analysis, so the specs only claim what can be proven from the source:
+
+- render at defaults, plus a variant matrix for literal-union props;
+- one test per detected interaction, each asserting the **other** handler props were *not* called;
+- initial-state witnesses and handler→setter tests from the `useState`/`useReducer` map;
+- one `describe` per `useEffect` fetch covering **success / loading / error / empty** through MSW overrides, with fixture bodies pulled from your OpenAPI spec;
+- async server components get `await Component(props)` plus `vi.mock` stubs for their data imports (and no browser spec — they can't mount).
+
+Anything that could not be derived is left as a `TODO(flawless)` marker rather than a silently-passing assertion. The workflow is: generate, run, fill the TODOs with real fixtures, rerun. With `--colocate`, regeneration won't touch specs you've hardened.
+
 ## Limits & assumptions
 
 The static analyser is deliberately narrow — it favours predictability over cleverness.
 
-- **Component shape**: a `const X: React.FC<Props> = (props) => …` declaration, or an `export default function X(props: Props) { … }`. Other forms (HOCs, decorators, dynamic component factories) are not detected.
-- **Props type**: only types declared *in the same file* are resolved. Imported types push the prop into `unresolvedProps`; you'll need to pass `--props '{…}'` or edit the generated spec's `DEFAULTS` constant.
-- **Type → default value**: primitives, arrays (always `[]`), inline object types (recursive), literals. **Unions of non-literals**, intersections, and generics fall into `unresolvedProps`.
+- **Component shape**: `const X: React.FC<Props> = …`, exported function declarations, JSX-returning arrows, anonymous `export default (…) => …` (named after the file), and `memo()` / `forwardRef()` wrappers. HOCs, decorators and dynamic component factories are still not detected.
+- **Props type**: same-file types resolve directly; an imported `Props` type is chased **one file deep**. Anything further, plus **unions of non-literals**, intersections and generics, lands in `unresolvedProps` — pass `--props '{…}'` or edit the spec's `DEFAULTS`.
+- **Type → default value**: primitives, arrays (always `[]`), inline object types (recursive), literals, and `Promise<T>` (synthesised unwrapped, re-wrapped at render time for Next.js `params`).
 - **Variant matrix**: only union-of-literal props produce variants. The matrix is "pairwise" — vary one prop at a time around the defaults, not the full cartesian product.
-- **Children**: only locally-imported components (relative paths) are walked. Anything from `node_modules` (or a TS path alias resolving to one) is skipped. Depth defaults to 3, cycle-guarded.
-- **Hooks**: detected by name pattern `/^use[A-Z]/`. Custom hooks show up too. Hook detection is informational — it appears in spec output but does not yet drive different rerender strategies.
+- **Children**: relative imports **and** tsconfig `paths` aliases (with `extends` chains), member tags like `<UI.Badge/>`, namespace imports, and same-file components. Anything in `node_modules` is skipped. Depth defaults to 3, cycle-guarded.
+- **Hooks**: matched by name pattern `/^use[A-Z]/`, with per-call-site detail — dependency arrays, callback reads, and effect features (fetch/timers/listeners/cleanup) — feeding the dependency findings and the generated fetch specs.
+- **Everything bails rather than guesses.** Dependency findings skip hooks whose deps contain member access or spreads, or whose callback isn't inline; memoisation findings skip children with spread props or identifiers the analyser can't resolve. There is no type checker, so a clean report means "nothing this analysis can prove", not "nothing wrong".
 
 ## Troubleshooting
 
@@ -291,12 +331,13 @@ Either upgrade Bun, or convert your spec to JSON: `bunx js-yaml api.yaml > api.j
 - [docs/architecture.md](docs/architecture.md) — how the analyser and scaffolder fit together.
 - [docs/generated-suite.md](docs/generated-suite.md) — anatomy of the emitted suite, file by file.
 - [docs/extending.md](docs/extending.md) — patterns for editing generated specs without regretting it.
+- [docs/e2e-and-api.md](docs/e2e-and-api.md) — route e2e, crust load pipes, and the programmatic API.
 
 ## Development
 
 ```bash
 bun install
-bun test           # 22 unit tests across analyse / scaffold / cli / openapi
+bun test           # 164 tests across analyse / scaffold / tasks / nextjs / core / cli
 bun run check      # biome lint + format check
 bunx tsc --noEmit  # type-check
 ```
@@ -305,18 +346,28 @@ The repo layout:
 
 ```text
 src/
-├── analyse/         # ts.createSourceFile-driven AST walk; props, hooks, children
-├── scaffold/
-│   ├── index.ts     # scaffold orchestration
-│   ├── templates.ts # all generated-file string templates
-│   └── openapi.ts   # OpenAPI/Swagger loader + route extractor (used by --api)
-├── cli.ts           # argparse + orchestration
+├── analyse/         # ts.createSourceFile AST walk — no type checker
+│   ├── parseFile.ts        # every component in a file; export kind, async, "use client"
+│   ├── resolveModule.ts    # tsconfig paths + extends chains
+│   ├── extractProps.ts     # defaults, variants, positions, promise props
+│   ├── extractState.ts     # useState/useReducer/useRef map + setter call sites
+│   ├── extractHooks.ts     # hook names + per-call-site detail (deps, effects)
+│   ├── extractPropUsage.ts # where each prop is used, classified
+│   ├── extractChildAttrs.ts# value shapes passed to component children
+│   ├── extractFetchCalls.ts# fetch URLs as :hole templates
+│   ├── extractInteractions.ts
+│   ├── refs.ts             # shared ComponentScope + reference collection
+│   └── walkChildren.ts     # recursive tree, alias- and member-tag aware
+├── scaffold/        # perf harness templates + host-style adoption
+├── scaffold-tests/  # unit + browser spec templates
+├── nextjs/          # detection, api routes, mocks, provider wrapper, routes
+├── tasks/           # one module per TaskId (7)
+├── reporters/, runner/
+├── core.ts          # runCore — the CLI's engine, no process.exit
+├── cli.ts           # argparse + interactive menu
+├── index.ts         # public programmatic API
 └── types.ts
-tests/
-├── fixtures/        # Hello.tsx, Card.tsx, Dashboard.tsx, _AppProvider.tsx, _api.json
-├── analyse.test.ts
-├── scaffold.test.ts
-└── cli.test.ts
+tests/               # 16 files; fixtures/ includes a static Next.js app
 ```
 
 ## Licence
