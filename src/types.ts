@@ -302,6 +302,10 @@ export interface ComponentInfo {
    * synthesise, it may well render nothing at all.
    */
   renderGuarded?: boolean;
+  /** A sentinel child passed to this component appears in the markup. */
+  childrenFlow?: boolean;
+  /** A className passed to this component lands on some rendered element. */
+  classNameFlow?: boolean;
   /** Position of the component declaration. */
   pos?: SourcePosition;
   /** How the component leaves its module. "none" = same-file secondary component. */

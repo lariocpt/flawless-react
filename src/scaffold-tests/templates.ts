@@ -469,17 +469,14 @@ function renderTarget(extra: Record<string, unknown> = {}) {
   return ${renderExpr};
 }
 
-test("${name} renders at defaults without crashing", () => {
-  renderTarget();
-  void screen;
-});
-
+${emitContractTests(name, info)}
 ${
   info.variants.slice(0, variants).length > 0
     ? `describe("${name} variants", () => {
   for (const v of VARIANTS) {
     test(\`renders with \${JSON.stringify(v)}\`, () => {
-      renderTarget(v);
+      const { container } = renderTarget(v);
+      expect(container.firstElementChild, \`\${JSON.stringify(v)} rendered nothing\`).not.toBeNull();
     });
   }
 });`
@@ -489,6 +486,73 @@ void VARIANTS;`
 
 ${interactionTests}
 ${staticTextTests}${stateTests}${fetchTests}`;
+}
+
+/**
+ * What a component's markup is contractually obliged to do, for components that
+ * render no literal copy of their own.
+ *
+ * The whole shadcn/ui layer is like this — CardFooter, TableRow, AlertDialogHeader
+ * — and before these rules every one of their specs was a bare `renderTarget()`
+ * with `void screen;` to satisfy lint: six tests that proved nothing. Each rule
+ * asserts something the SOURCE says is true, and is emitted only when the
+ * analyser saw the value actually reach the DOM.
+ *
+ * When none of them apply the spec says so and skips, rather than passing on a
+ * render that asserted nothing.
+ */
+function emitContractTests(name: string, info: ComponentInfo): string {
+  const parts: string[] = [];
+  // A guarded render may produce nothing at all at these props — `if
+  // (toasts.length === 0) return null` with a store-backed list is the shape —
+  // so the tag below it is a description, not a promise.
+  const rootTag =
+    info.rootTag && /^[a-z]/.test(info.rootTag) && !info.renderGuarded ? info.rootTag : undefined;
+
+  if (rootTag) {
+    parts.push(`
+test("${name} renders a <${rootTag}>", () => {
+  const { container } = renderTarget();
+  expect(container.querySelector(${JSON.stringify(rootTag)})).not.toBeNull();
+});`);
+  } else if (info.renderGuarded) {
+    parts.push(`
+test("${name} mounts at defaults without throwing", () => {
+  // An early return that this analysis could not decide means the component may
+  // legitimately render nothing here, so the assertion is that mounting is safe
+  // rather than that anything appeared.
+  expect(() => renderTarget()).not.toThrow();
+  void screen;
+});`);
+  } else {
+    parts.push(`
+test("${name} renders at defaults without crashing", () => {
+  const { container } = renderTarget();
+  expect(container.firstElementChild).not.toBeNull();
+  void screen;
+});`);
+  }
+
+  if (info.acceptsChildren && info.childrenFlow) {
+    parts.push(`
+test("${name} renders the children it is given", () => {
+  renderTarget();
+  expect(screen.getByText(CHILD_TEXT)).toBeInTheDocument();
+});`);
+  }
+
+  if (info.classNameFlow) {
+    // Queried across the whole container rather than on the root: <Table>
+    // renders <div><table className={cn(…, className)}/></div>, so a root-only
+    // assertion would be wrong about where the class lands.
+    parts.push(`
+test("${name} forwards className to the markup it renders", () => {
+  const { container } = renderTarget({ className: "flawless-cls" });
+  expect(container.querySelector(".flawless-cls")).not.toBeNull();
+});`);
+  }
+
+  return parts.join("\n");
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import type { AnalyseOptions, ComponentInfo, ComponentTree, RenderMode } from ".
 import { extractChildAttrs } from "./extractChildAttrs.ts";
 import { extractDataDeps } from "./extractDataDeps.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
+import { extractFlows } from "./extractFlows.ts";
 import { extractGuards } from "./extractGuards.ts";
 import { extractHookDetails, extractHooks } from "./extractHooks.ts";
 import { extractInteractions } from "./extractInteractions.ts";
@@ -130,6 +131,7 @@ async function analyseOne(
     renderEnv,
   );
   const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
+  const flows = extractFlows(unit.bodyNode, renderEnv);
   const rootTag = extractRootTag(unit.bodyNode, renderEnv);
   const staticText = extractStaticText(unit.bodyNode, renderEnv);
   // Sibling components' modes, so a wrapper around a part is recognised as one
@@ -205,6 +207,8 @@ async function analyseOne(
     guards,
     ...(rootTag ? { rootTag } : {}),
     ...(initialRender?.guarded ? { renderGuarded: true } : {}),
+    childrenFlow: flows.children,
+    classNameFlow: flows.className,
     renderMode: render.mode,
     ...(render.note ? { renderNotes: [render.note] } : {}),
     moduleImports,
