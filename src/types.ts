@@ -16,6 +16,14 @@ export type HandlerBinding =
 
 export type LabelSource =
   | { kind: "text"; value: string }
+  /**
+   * A literal fragment of the element's copy, where the rest is an
+   * interpolation or a sibling element — `<Button>Record payment ({due})</Button>`
+   * or `<MenuItem><Sun /> Light</MenuItem>`. Only this fragment is knowable, so
+   * consumers must match it as a SUBSTRING of the accessible name. Asserting it
+   * as the whole name is a test that can never pass.
+   */
+  | { kind: "text-partial"; value: string }
   | { kind: "prop"; propName: string }
   | { kind: "aria"; value: string }
   | { kind: "testid"; value: string }

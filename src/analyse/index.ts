@@ -104,13 +104,6 @@ async function analyseOne(
     acceptsChildren,
   } = props;
   const hooks = extractHooks(unit.bodyNode);
-  const interactions = extractInteractions(
-    unit.bodyNode,
-    parsed.sourceFile,
-    propsShape,
-    unresolvedProps,
-  );
-
   const state = extractState(unit.bodyNode, parsed.sourceFile);
   const scope = buildComponentScope(unit, props, state, unit.bodyNode);
   const hookDetails = extractHookDetails(unit.bodyNode, parsed.sourceFile, scope);
@@ -120,6 +113,13 @@ async function analyseOne(
   // The values the generated spec will actually pass. Everything below describes
   // the render those values produce, rather than the last return in the body.
   const renderEnv = makeEnv(propsShape, unresolvedProps, state);
+  const interactions = extractInteractions(
+    unit.bodyNode,
+    parsed.sourceFile,
+    propsShape,
+    unresolvedProps,
+    renderEnv,
+  );
   const rootTag = extractRootTag(unit.bodyNode, renderEnv);
   const staticText = extractStaticText(unit.bodyNode, renderEnv);
   const render = extractRenderMode(unit.bodyNode, parsed.imports, unit.isAsync, renderEnv);

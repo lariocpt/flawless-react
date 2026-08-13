@@ -10,6 +10,7 @@ import type {
   PropsShape,
 } from "../types.ts";
 import { posOf } from "./pos.ts";
+import { emptyEnv, initialRenderExpression, type RenderEnv, reachability } from "./renderPath.ts";
 
 const EVENT_PATTERN =
   /^on(Click|MouseDown|PointerDown|Submit|Change|Input|Focus|Blur|KeyDown|KeyPress)$/;
@@ -20,6 +21,7 @@ export function extractInteractions(
   sourceFile: ts.SourceFile,
   propsShape: PropsShape,
   unresolvedProps: string[] = [],
+  env: RenderEnv = emptyEnv(),
 ): InteractionInfo {
   // Handler props are function-typed, which extractProps cannot synthesise and
   // routes to unresolvedProps. Union both so the classifier sees them.
@@ -27,7 +29,17 @@ export function extractInteractions(
   const clicks: ClickHandler[] = [];
   const forms: FormInfo[] = [];
 
+  // Scope the harvest to the JSX that actually mounts. Scanning the whole body
+  // collected a "Cancel" button and a #notes field from a disclosure's expanded
+  // branch, then drove them against the collapsed render — three failures in one
+  // file, each looking like a missing element rather than a phantom one.
+  const initial = initialRenderExpression(bodyNode, env);
+  const scope = initial?.scope ?? env;
+
   const visit = (n: ts.Node): void => {
+    // "no" means provably not rendered at these props; "unknown" is kept, since
+    // dropping it would lose every .map row and render-prop target.
+    if (initial && n !== initial.expr && reachability(n, initial.expr, scope) === "no") return;
     if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
       const tag = readTagName(n.tagName);
       if (tag !== "<dynamic>") {
@@ -54,7 +66,10 @@ export function extractInteractions(
     }
     ts.forEachChild(n, visit);
   };
-  ts.forEachChild(bodyNode, visit);
+  // When no single render describes the component, fall back to the whole body
+  // rather than emitting nothing at all.
+  if (initial) visit(initial.expr);
+  else ts.forEachChild(bodyNode, visit);
 
   return { clicks, forms };
 }
@@ -127,25 +142,49 @@ function readStringInitializer(init: ts.JsxAttribute["initializer"]): string | u
   return undefined;
 }
 
+/** Below this a fragment identifies nothing — "(" or "—" would match half the page. */
+const MIN_LABEL_FRAGMENT = 3;
+
 function extractLabel(
   parent: ts.JsxElement | undefined,
   hints: ElementHints,
   propNames: Set<string>,
 ): LabelSource {
   if (parent) {
+    // Collect every literal fragment, and note whether anything non-literal sits
+    // among them. Taking the first fragment and calling it the whole accessible
+    // name turned `Record payment ({fmt(due)} outstanding)` into the exact name
+    // "Record payment (", which no rendered element can equal.
+    let literal = "";
+    let hasDynamic = false;
+    let propLabel: LabelSource | undefined;
+
     for (const child of parent.children) {
       if (ts.isJsxText(child)) {
-        const trimmed = child.text.trim();
-        if (trimmed) return { kind: "text", value: trimmed };
-      } else if (ts.isJsxExpression(child) && child.expression) {
+        literal += child.text;
+        continue;
+      }
+      if (ts.isJsxExpression(child) && child.expression) {
         if (ts.isStringLiteral(child.expression)) {
-          return { kind: "text", value: child.expression.text };
+          literal += child.expression.text;
+          continue;
         }
         if (ts.isIdentifier(child.expression) && propNames.has(child.expression.text)) {
-          return { kind: "prop", propName: child.expression.text };
+          propLabel ??= { kind: "prop", propName: child.expression.text };
         }
       }
+      // An icon element, an interpolation, a call: contributes text we cannot
+      // predict, so whatever literal we have is a fragment of the real name.
+      hasDynamic = true;
     }
+
+    const value = literal.replace(/\s+/g, " ").trim();
+    if (value) {
+      if (!hasDynamic) return { kind: "text", value };
+      // Too short to identify anything — "(" or "—" would match half the page.
+      if (value.length >= MIN_LABEL_FRAGMENT) return { kind: "text-partial", value };
+    }
+    if (propLabel) return propLabel;
   }
   if (hints.ariaLabel) return { kind: "aria", value: hints.ariaLabel };
   if (hints.testid) return { kind: "testid", value: hints.testid };

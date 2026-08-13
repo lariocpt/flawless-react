@@ -521,6 +521,9 @@ test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")
       );
       if (!click) continue;
       const selector = emitVitestSelector(click);
+      // Nothing in the source identifies the element; a query that resolves to
+      // null would click nothing and pass.
+      if (!selector) continue;
       const dispatch = emitVitestDispatch(click.event, selector);
       parts.push(`
 test("${name}: ${click.event} via ${call.enclosingName} → ${s.setterName ?? s.varName} updates", async () => {
@@ -567,7 +570,9 @@ function escapeComment(s: string): string {
 function firstClickTrigger(info: ComponentInfo): string | undefined {
   const click = info.interactions?.clicks.find((c) => c.event === "onClick");
   if (!click) return undefined;
-  const query = emitVitestSelector(click).replace(".getBy", ".queryBy").replace(/\)!$/, ")");
+  const selector = emitVitestSelector(click);
+  if (!selector) return undefined;
+  const query = selector.replace(".getBy", ".queryBy").replace(/\)!$/, ")");
   return `const trigger = ${query};
     if (trigger) await userEvent.click(trigger as HTMLElement);`;
 }
@@ -984,6 +989,18 @@ function emitClickTest(
 ): string {
   const labelDesc = describeClickLabel(click);
   const selector = emitVitestSelector(click);
+  if (!selector) {
+    // No test id, no aria-label, no role, no id, no literal copy, and the tag is
+    // a component rather than a host element — nothing in the source identifies
+    // this element. Say so; the previous fallback queried the component NAME as
+    // a CSS selector, matched nothing, clicked null and passed.
+    return `
+test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — no way to select it", () => {
+  // TODO(flawless): give <${click.tag}> a data-testid, an aria-label or literal
+  // text, and this becomes a real interaction test.
+});
+`;
+  }
   const dispatch = emitVitestDispatch(click.event, selector);
   // The prelude opens UI that later interactions live behind — but it is itself
   // a click, so it can fire a handler this test then asserts was NOT called.
@@ -1171,6 +1188,7 @@ function emitBrowserInteractionTests(info: NonNullable<ComponentInfo["interactio
     if (!click) continue;
     const labelDesc = describeClickLabel(click);
     const selector = emitPlaywrightSelector(click);
+    if (!selector) continue;
     const dispatch = emitPlaywrightDispatch(click.event, selector);
     parts.push(`
 test(\`\${NAME}: ${click.event} on ${labelDesc} fires without error\`, async ({ page }) => {

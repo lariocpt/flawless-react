@@ -8,8 +8,17 @@ const TAG_TO_ROLE: Record<string, string> = {
   select: "combobox",
 };
 
-/** Emit a Vitest/Testing-Library expression that resolves to the target element. */
-export function emitVitestSelector(h: ClickHandler): string {
+/**
+ * A Vitest/Testing-Library expression resolving to the target element, or
+ * undefined when nothing in the source identifies it.
+ *
+ * undefined is load-bearing. The old last resort was
+ * `container.querySelector("<TagName>")`, which for an uppercase component tag
+ * matches no element at all: userEvent.click(null) is a no-op, so the test
+ * PASSED while doing nothing. A skip that names the gap is worth more than a
+ * green test that never touched the DOM.
+ */
+export function emitVitestSelector(h: ClickHandler): string | undefined {
   if (h.hints.testid) return `screen.getByTestId(${JSON.stringify(h.hints.testid)})`;
   if (h.hints.ariaLabel) {
     return `screen.getAllByLabelText(${JSON.stringify(h.hints.ariaLabel)})[0] as HTMLElement`;
@@ -19,6 +28,9 @@ export function emitVitestSelector(h: ClickHandler): string {
     if (h.label.kind === "text") {
       return `screen.getAllByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)} })[0] as HTMLElement`;
     }
+    if (h.label.kind === "text-partial") {
+      return `screen.getAllByRole(${JSON.stringify(role)}, { name: ${partialRegex(h.label.value)} })[0] as HTMLElement`;
+    }
     if (h.label.kind === "prop") {
       return `screen.getAllByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })[0] as HTMLElement`;
     }
@@ -26,11 +38,16 @@ export function emitVitestSelector(h: ClickHandler): string {
   if (h.hints.id) return `container.querySelector(${JSON.stringify(`#${h.hints.id}`)})!`;
   if (h.label.kind === "text")
     return `screen.getAllByText(${JSON.stringify(h.label.value)})[0] as HTMLElement`;
-  return `container.querySelector(${JSON.stringify(h.tag)})!`;
+  if (h.label.kind === "text-partial")
+    return `screen.getAllByText(${partialRegex(h.label.value)})[0] as HTMLElement`;
+  // A lowercase host tag is a real CSS selector; an uppercase component name is
+  // not, and querying it silently yields null.
+  if (isHostTag(h.tag)) return `container.querySelector(${JSON.stringify(h.tag)})!`;
+  return undefined;
 }
 
 /** Emit a Playwright Locator expression for the target element. */
-export function emitPlaywrightSelector(h: ClickHandler): string {
+export function emitPlaywrightSelector(h: ClickHandler): string | undefined {
   if (h.hints.testid) return `page.getByTestId(${JSON.stringify(h.hints.testid)})`;
   if (h.hints.ariaLabel) {
     return `page.getByLabel(${JSON.stringify(h.hints.ariaLabel)})`;
@@ -40,13 +57,18 @@ export function emitPlaywrightSelector(h: ClickHandler): string {
     if (h.label.kind === "text") {
       return `page.getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)} })`;
     }
+    if (h.label.kind === "text-partial") {
+      return `page.getByRole(${JSON.stringify(role)}, { name: ${partialRegex(h.label.value)} })`;
+    }
     if (h.label.kind === "prop") {
       return `page.getByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })`;
     }
   }
   if (h.hints.id) return `page.locator(${JSON.stringify(`#${h.hints.id}`)})`;
   if (h.label.kind === "text") return `page.getByText(${JSON.stringify(h.label.value)})`;
-  return `page.locator(${JSON.stringify(h.tag)}).first()`;
+  if (h.label.kind === "text-partial") return `page.getByText(${partialRegex(h.label.value)})`;
+  if (isHostTag(h.tag)) return `page.locator(${JSON.stringify(h.tag)}).first()`;
+  return undefined;
 }
 
 /** Returns the first targetable click locator for the perf suite, or undefined to keep skip. */
@@ -110,6 +132,21 @@ export function emitPlaywrightDispatch(
   }
 }
 
+/**
+ * A regex literal for a label we only know a fragment of. Both
+ * Testing-Library's `name` and Playwright's `name` accept a RegExp and match it
+ * against the WHOLE accessible name, so the fragment is left unanchored: it is a
+ * substring claim, which is all the source supports.
+ */
+function partialRegex(value: string): string {
+  return `/${value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/`;
+}
+
+/** JSX lowercases host elements; anything capitalised is a component reference. */
+function isHostTag(tag: string): boolean {
+  return /^[a-z][a-z0-9-]*$/.test(tag);
+}
+
 function roleFor(h: ClickHandler): string | undefined {
   if (h.hints.role) return h.hints.role;
   if (h.tag === "input") {
@@ -119,7 +156,9 @@ function roleFor(h: ClickHandler): string | undefined {
     if (t === "submit" || t === "button") return "button";
     return "textbox";
   }
-  // Custom components (uppercase): assume they expose a button role.
-  if (/^[A-Z]/.test(h.tag)) return "button";
+  // A component tag says nothing about the role it renders: <DropdownMenuItem>
+  // is role="menuitem", <SelectTrigger> is "combobox". Assuming "button" made
+  // every such query fail with a confident, wrong name. Callers fall back to
+  // matching the element's text, which is true regardless of role.
   return TAG_TO_ROLE[h.tag];
 }

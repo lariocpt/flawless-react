@@ -203,6 +203,9 @@ function routeSpec(
   const interactionBody = clicks
     .map((c) => {
       const locator = emitPlaywrightSelector(c.click);
+      // Nothing in the source identifies the element — a locator built from a
+      // component name matches nothing and the step would silently no-op.
+      if (!locator) return "";
       const dispatch = emitPlaywrightDispatch(c.click.event, locator);
       return `  // from <${c.component}> analysis
   {
@@ -213,6 +216,7 @@ function routeSpec(
     }
   }`;
     })
+    .filter((s) => s !== "")
     .join("\n");
 
   return `import { test, expect } from "@playwright/test";
