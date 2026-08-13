@@ -377,14 +377,17 @@ function unitSpec(
     ? `render(<AppProvider>${element}</AppProvider>)`
     : `render(${element})`;
 
+  // `Props` exists only to type the props spread, and the React import exists
+  // only to declare it. A zero-prop component renders bare, so emitting either
+  // leaves dead code that fails a project's lint gate (noUnusedVariables).
+  const propsTypeBlock = hasProps ? `import type * as React from "react";\n` : "";
+  const propsAlias = hasProps ? `\ntype Props = React.ComponentProps<typeof ${name}>;\n` : "";
+
   return `import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type * as React from "react";
-${mswImports}${providerLine}${emitComponentImport(info, importPath)}
-
-type Props = React.ComponentProps<typeof ${name}>;
-${childTextConst}
+${propsTypeBlock}${mswImports}${providerLine}${emitComponentImport(info, importPath)}
+${propsAlias}${childTextConst}
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
 const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
@@ -769,6 +772,24 @@ function rscSpec(c: FlatComponent, importPath: string, providerImport: string | 
     : `render(<>{ui}</>)`;
 
   const callArgs = rscCallArgs(info);
+  // A zero-parameter component never calls buildProps, and an unused helper
+  // fails a project's lint gate (noUnusedVariables) just as a dead type alias
+  // does. Emit the props plumbing only when something uses it.
+  const propsBlock =
+    callArgs === ""
+      ? ""
+      : `
+const DEFAULTS: Record<string, unknown> = ${propsLiteral};
+const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
+
+function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...DEFAULTS, ...extra };
+  for (const k of PROMISE_PROPS) {
+    if (k in merged) merged[k] = Promise.resolve(merged[k]);
+  }
+  return merged;
+}
+`;
   const guards = info.guards ?? [];
   const guardSummary =
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
@@ -784,18 +805,7 @@ ${providerLine}${emitComponentImport(info, importPath)}
 // ${name} is an async server component: it is invoked as a function and its
 // resolved JSX is rendered directly. Module-level data dependencies above are
 // mocked — fill in fixtures to make the assertions meaningful.
-
-const DEFAULTS: Record<string, unknown> = ${propsLiteral};
-const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
-
-function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...DEFAULTS, ...extra };
-  for (const k of PROMISE_PROPS) {
-    if (k in merged) merged[k] = Promise.resolve(merged[k]);
-  }
-  return merged;
-}
-
+${propsBlock}
 test("${name} (RSC): resolves, or takes one of its declared guard paths", async () => {
   let ui: React.ReactNode;
   try {
