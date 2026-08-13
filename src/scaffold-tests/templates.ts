@@ -800,9 +800,11 @@ function constrainedSpec(
     // must NOT be: calling it directly runs its hooks with no React dispatcher
     // ("Cannot read properties of null (reading 'useEffect')"). Rendering it as
     // an element is safe either way — effects simply do not run during SSR.
+    // `{...(props as never)}` is a type error — never is not an object type — so
+    // the spread is cast to the component's own props instead.
     const invoke = info.isAsync
       ? `await ${name}(props as never)`
-      : `<${name} {...(props as never)} />`;
+      : `<${name} {...(props as React.ComponentProps<typeof ${name}>)} />`;
     // Only a component that actually renders {children} can be asserted to pass
     // a slot through. A root error boundary takes {error, reset} and renders
     // neither, so injecting a slot and demanding it appear is a test the
@@ -940,8 +942,11 @@ ${staticTextTests}${guardTests}`;
 function uncertainEscape(info: ComponentInfo): string {
   const uncertain = (info.dataDeps ?? []).some((d) => d.uncertain || d.shape.kind === "unknown");
   if (!uncertain) return "";
+  // t.skip() takes no argument in this vitest major, so the reason goes to the
+  // console — losing it entirely would leave a bare skip with no explanation.
   return `    // A data mock whose shape could not be inferred (see the TODO above).
-    t.skip(\`data fixture missing — \${String(err)}\`);
+    console.warn(\`[flawless] data fixture missing, skipping: \${String(err)}\`);
+    t.skip();
 `;
 }
 

@@ -115,7 +115,7 @@ describe("renderSuite host", () => {
     // Two identical import identifiers in one module is a compile error, and it
     // took the whole bundle — and therefore every profile test — with it.
     expect(main).toContain("as JobPage__CommentForm");
-    expect(main).toContain('"JobPage__CommentForm": JobPage__CommentForm,');
+    expect(main).toContain('"JobPage__CommentForm": JobPage__CommentForm as unknown as Component,');
     expect(files.map((f) => f.relPath)).toContain("tests/JobPage__CommentForm.profile.spec.ts");
   });
 
@@ -140,7 +140,7 @@ describe("renderSuite host", () => {
       tree(comp("Private", { exportKind: "none" })),
     ]);
     const main = contentOf(files, "host/main.tsx");
-    expect(main).toContain('"Widget": Widget,');
+    expect(main).toContain('"Widget": Widget as unknown as Component,');
     for (const absent of ["Page", "DialogContent", "Private"]) {
       expect(main).not.toContain(`"${absent}":`);
     }

@@ -428,7 +428,9 @@ describe("renderUnitBrowser document-root components", () => {
     const spec = contentOf(docRoot(), "unit/RootLayout.test.tsx");
     // Calling it directly runs its hooks with no React dispatcher, which fails
     // with "Cannot read properties of null (reading 'useEffect')".
-    expect(spec).toContain("const ui = <RootLayout {...(props as never)} />;");
+    expect(spec).toContain(
+      "const ui = <RootLayout {...(props as React.ComponentProps<typeof RootLayout>)} />;",
+    );
     expect(spec).not.toContain("RootLayout(props as never)");
     expect(spec).toContain("renderToStaticMarkup(ui as React.ReactElement)");
     expect(spec).toContain("expect(html).toMatch(/^<html/)");

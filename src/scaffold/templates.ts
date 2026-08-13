@@ -426,7 +426,7 @@ if (typeof g.setImmediate === "undefined") {
   // react-performance-testing schedules its task queue via setImmediate; falling
   // back to a microtask is good enough for our profiling needs.
   g.setImmediate = ((fn: (...args: unknown[]) => void, ...args: unknown[]) =>
-    setTimeout(fn, 0, ...args)) as typeof g.setImmediate;
+    setTimeout(fn, 0, ...args)) as unknown as typeof g.setImmediate;
 }
 
 export {};
@@ -436,10 +436,15 @@ export {};
 function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup = false): string {
   const imports = flat.map(hostComponentImport).join(NL);
 
-  const registry = flat.map((c) => `  ${JSON.stringify(c.specName)}: ${c.specName},`).join(NL);
+  // Cast per entry: a component declaring required props is not assignable to
+  // the host's loose (props: Record<string, unknown>) => unknown signature, and
+  // supplying those props is exactly what the profile spec does at runtime.
+  const registry = flat
+    .map((c) => `  ${JSON.stringify(c.specName)}: ${c.specName} as unknown as Component,`)
+    .join(NL);
 
   const providerImport = providerImportPath
-    ? `import AppProvider from ${JSON.stringify(providerImportPath)};\n`
+    ? `import AppProvider from ${JSON.stringify(stripTsExt(providerImportPath))};\n`
     : "";
   const wrapBody = providerImportPath ? "createElement(AppProvider as never, null, tree)" : "tree";
   const mswImport = mswSetup ? `import { startMockWorker } from "../mocks/browser";\n` : "";
@@ -1023,7 +1028,7 @@ console.log("wrote report.md");
 }
 
 function mockServer(): string {
-  return `import { routes } from "./routes.ts";
+  return `import { routes } from "./routes";
 
 const PORT = Number(process.env.MOCK_PORT ?? 5174);
 

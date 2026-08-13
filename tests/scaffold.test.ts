@@ -93,7 +93,8 @@ describe("renderSuite with --provider", () => {
     const main = files.find((f) => f.relPath === "host/main.tsx");
     expect(main).toBeDefined();
     const content = main?.content ?? "";
-    expect(content).toContain('import AppProvider from "../../tests/fixtures/_AppProvider.tsx"');
+    // No .tsx: the target project type-checks the emitted host.
+    expect(content).toContain('import AppProvider from "../../tests/fixtures/_AppProvider"');
     expect(content).toContain("createElement(AppProvider as never, null, tree)");
     expect(content).toContain("wrap(");
   });
