@@ -218,9 +218,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     }
   }
 
+  const nextjsWritten: string[] = [];
   if (nextCtx) {
     try {
       const nm = await emitNextjsMocks(nextCtx, outDir, { liveSpec });
+      nextjsWritten.push(...nm.written, nm.swaggerPath);
       log(
         `nextjs: wrote ${nm.written.length} mock file(s) under ${path.relative(process.cwd(), outDir)}/mocks/`,
       );
@@ -288,6 +290,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const styleRoot = nextCtx?.root ?? outDir;
   const writtenFiles = [
     ...results.flatMap((r) => r.outputs),
+    // swagger.json + mocks are rewritten on every run; if they are not written
+    // in the project's own style, its formatter (or a pre-commit hook) will
+    // reformat them and the next run will churn the diff straight back.
+    ...nextjsWritten,
     ...(providerOverride && isInside(outDir, providerOverride) ? [providerOverride] : []),
   ];
   try {
