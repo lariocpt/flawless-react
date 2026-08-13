@@ -102,6 +102,7 @@ async function analyseOne(
     propPositions,
     promiseProps,
     variantOptions,
+    variantClasses,
     hostElement,
     acceptsChildren,
   } = props;
@@ -195,6 +196,7 @@ async function analyseOne(
     promiseProps,
     unresolvedTypes,
     variantOptions,
+    variantClasses,
     acceptsChildren,
     ...(hostElement ? { hostElement } : {}),
     state,

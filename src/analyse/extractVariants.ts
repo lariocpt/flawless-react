@@ -11,7 +11,11 @@ import { posOf } from "./pos.ts";
  * without it, but the variant keys and their option names are sitting in a
  * plain object literal one declaration above.
  *
- * Option *values* are never read — they are Tailwind class strings.
+ * Option values ARE read, but only to compare them with each other. They are
+ * Tailwind class strings, and cn()/tailwind-merge drops base classes that a
+ * later variant conflicts with — verified against the real DOM — so asserting a
+ * specific token is a false-failure waiting to happen. What IS sound is that two
+ * options whose class strings differ must render differently.
  */
 
 export interface VariantDefinition {
@@ -23,6 +27,8 @@ export interface VariantDefinition {
   /** From defaultVariants. */
   defaults: Record<string, PropValue>;
   keyPositions: Record<string, SourcePosition>;
+  /** key → option → its class string, for distinctness checks only. */
+  classes: Record<string, Record<string, string>>;
   pos: SourcePosition;
 }
 
@@ -98,6 +104,7 @@ function readConfig(
 
   const options: Record<string, PropValue[]> = {};
   const keyPositions: Record<string, SourcePosition> = {};
+  const classes: Record<string, Record<string, string>> = {};
 
   for (const prop of variantsObj.properties) {
     if (Object.keys(options).length >= MAX_KEYS) break;
@@ -109,6 +116,7 @@ function readConfig(
     if (!ts.isObjectLiteralExpression(prop.initializer)) continue;
 
     const names: string[] = [];
+    const classFor: Record<string, string> = {};
     let poisoned = false;
     for (const opt of prop.initializer.properties) {
       if (!ts.isPropertyAssignment(opt) && !ts.isShorthandPropertyAssignment(opt)) {
@@ -121,12 +129,17 @@ function readConfig(
         break;
       }
       names.push(optName);
+      if (ts.isPropertyAssignment(opt)) {
+        const cls = literalValue(opt.initializer);
+        if (typeof cls === "string") classFor[optName] = cls.replace(/\s+/g, " ").trim();
+      }
     }
     if (poisoned || names.length === 0) continue;
     if (names.length > MAX_OPTIONS_PER_KEY) continue;
 
     options[key] = asOptionValues(names);
     keyPositions[key] = posOf(prop, sf);
+    classes[key] = classFor;
   }
 
   if (Object.keys(options).length === 0) return undefined;
@@ -140,7 +153,7 @@ function readConfig(
     if (v !== undefined) defaults[key] = v;
   }
 
-  return { name, factory, options, defaults, keyPositions, pos };
+  return { name, factory, options, defaults, keyPositions, classes, pos };
 }
 
 /** A key whose options are exactly true/false is a real boolean prop. */

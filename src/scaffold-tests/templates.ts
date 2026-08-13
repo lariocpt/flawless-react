@@ -541,6 +541,8 @@ test("${name} renders the children it is given", () => {
 });`);
   }
 
+  parts.push(emitVariantDistinctness(name, info));
+
   if (info.classNameFlow) {
     // Queried across the whole container rather than on the root: <Table>
     // renders <div><table className={cn(…, className)}/></div>, so a root-only
@@ -549,6 +551,49 @@ test("${name} renders the children it is given", () => {
 test("${name} forwards className to the markup it renders", () => {
   const { container } = renderTarget({ className: "flawless-cls" });
   expect(container.querySelector(".flawless-cls")).not.toBeNull();
+});`);
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Each cva option renders an observably different class list.
+ *
+ * Deliberately NOT an assertion about specific Tailwind tokens. `cn()` is
+ * usually tailwind-merge, which drops base classes a later variant conflicts
+ * with — verified against the real DOM, where `rounded-lg` is absent at
+ * size="sm" — and the tool cannot know whether a project's `cn` merges or just
+ * concatenates. What the cva table DOES support is that two options whose class
+ * strings differ must produce different markup. That proves the variant prop
+ * reaches the DOM and that every option is distinguishable, with no Tailwind
+ * knowledge at all.
+ *
+ * Bails when any two options share a class string (they legitimately render the
+ * same), when one is empty, or when there is only one option to compare.
+ */
+function emitVariantDistinctness(name: string, info: ComponentInfo): string {
+  const classes = info.variantClasses ?? {};
+  const parts: string[] = [];
+
+  for (const [key, byOption] of Object.entries(classes)) {
+    const options = Object.keys(byOption);
+    if (options.length < 2) continue;
+    const strings = options.map((o) => byOption[o] ?? "");
+    if (strings.some((v) => v === "")) continue;
+    if (new Set(strings).size !== strings.length) continue;
+
+    parts.push(`
+test("${name}: every \`${key}\` option renders a distinct class list", () => {
+  const seen = ${JSON.stringify(options)}.map((option) => {
+    const { container, unmount } = renderTarget({ ${JSON.stringify(key)}: option });
+    const el = container.querySelector("[class]");
+    expect(el, \`${key}=\${option} rendered no element carrying a class\`).not.toBeNull();
+    const cls = el?.getAttribute("class") ?? "";
+    unmount();
+    return cls;
+  });
+  expect(new Set(seen).size, "two options rendered identical markup").toBe(seen.length);
 });`);
   }
 

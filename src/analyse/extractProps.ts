@@ -20,6 +20,8 @@ export interface ExtractedProps {
   promiseProps: string[];
   /** prop → full literal option list. */
   variantOptions: Record<string, PropValue[]>;
+  /** prop → option → its cva class string, for distinctness checks. */
+  variantClasses: Record<string, Record<string, string>>;
   /** Host element the props type anchors to, when unambiguous. */
   hostElement?: string;
   acceptsChildren: boolean;
@@ -44,6 +46,7 @@ const ORIGIN_RANK: Record<MemberOrigin, number> = {
 interface PartialProps {
   shape: PropsShape;
   variantOptions: Record<string, PropValue[]>;
+  variantClasses: Record<string, Record<string, string>>;
   origin: Record<string, MemberOrigin>;
   propPositions: Record<string, SourcePosition>;
   promiseProps: string[];
@@ -76,6 +79,7 @@ function emptyPartial(): PartialProps {
   return {
     shape: {},
     variantOptions: {},
+    variantClasses: {},
     origin: {},
     propPositions: {},
     promiseProps: [],
@@ -93,6 +97,7 @@ const EMPTY: ExtractedProps = {
   propPositions: {},
   promiseProps: [],
   variantOptions: {},
+  variantClasses: {},
   acceptsChildren: false,
 };
 
@@ -139,6 +144,7 @@ function finalise(p: PartialProps): ExtractedProps {
     propPositions: p.propPositions,
     promiseProps: [...new Set(p.promiseProps)],
     variantOptions: p.variantOptions,
+    variantClasses: p.variantClasses,
     ...(p.hostElement ? { hostElement: p.hostElement } : {}),
     acceptsChildren,
   };
@@ -237,6 +243,9 @@ function mergePartials(parts: PartialProps[]): PartialProps {
       const opts = part.variantOptions[name];
       if (opts) acc.variantOptions[name] = opts;
       else delete acc.variantOptions[name];
+      const cls = part.variantClasses[name];
+      if (cls) acc.variantClasses[name] = cls;
+      else delete acc.variantClasses[name];
     }
     for (const [name, pos] of Object.entries(part.propPositions)) {
       acc.propPositions[name] ??= pos;
@@ -585,6 +594,8 @@ function resolveVariantProps(node: ts.TypeReferenceNode, ctx: PropsResolveCtx): 
     if (first === undefined) continue;
     p.shape[key] = def.defaults[key] ?? first;
     p.variantOptions[key] = options;
+    const cls = def.classes[key];
+    if (cls) p.variantClasses[key] = cls;
     p.origin[key] = "variant";
     const pos = def.keyPositions[key];
     if (pos) p.propPositions[key] = pos;

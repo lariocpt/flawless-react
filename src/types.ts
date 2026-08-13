@@ -330,6 +330,8 @@ export interface ComponentInfo {
   acceptsChildren?: boolean;
   /** prop → full literal option list, for grouped variant describes. */
   variantOptions?: Record<string, PropValue[]>;
+  /** prop → option → its cva class string. Compared, never asserted verbatim. */
+  variantClasses?: Record<string, Record<string, string>>;
   /** Lowercase host tag of the unconditionally-returned JSX root, when unambiguous. */
   rootTag?: string;
   /** How this component can be mounted; drives which spec template is used. */
