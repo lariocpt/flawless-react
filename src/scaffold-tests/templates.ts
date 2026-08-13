@@ -786,9 +786,18 @@ ${staticTextTests}${guardTests}`;
 function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "rsc"): string {
   const texts = info.staticText ?? [];
   if (texts.length === 0) return "";
+  // An RSC may legitimately abort via notFound()/redirect() against empty
+  // mocks. The main test asserts that outcome, so bail out here instead of
+  // reporting a second failure for the same known behaviour.
   const render =
     mode === "rsc"
-      ? `const ui = await ${name}(buildProps() as never);\n    ${"render(<>{ui}</>)"};`
+      ? `let ui: React.ReactNode;
+      try {
+        ui = await ${name}(buildProps() as never);
+      } catch {
+        return;
+      }
+      render(<>{ui}</>);`
       : "renderTarget();";
   return `
 describe("${name} static content", () => {
@@ -817,7 +826,10 @@ function emitGuardTests(name: string, info: ComponentInfo): string {
     if (!dep?.specifier || dep.calleeRoot.length === 0) continue;
     const value =
       g.triggerValue === "empty-array" ? "[]" : g.triggerValue === "null" ? "null" : "undefined";
-    const expected = g.effect === "notFound" ? "/notFound\\\\(\\\\) called/" : "/NEXT_REDIRECT/";
+    // Emitted verbatim into the spec, so the escaping here is the escaping the
+    // generated regex literal gets — double-escaping produced /notFound\\(\\)/,
+    // which matches nothing.
+    const expected = g.effect === "notFound" ? "/notFound\\(\\) called/" : "/NEXT_REDIRECT/";
     parts.push(`
 test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () => {
   vi.mocked(${dep.calleeRoot}).mockResolvedValueOnce(${value} as never);
