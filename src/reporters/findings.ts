@@ -81,6 +81,8 @@ export async function writeInlineSummaries(
       "perf-static": 0,
       a11y: 0,
       "react-rules": 0,
+      e2e: 0,
+      load: 0,
       total: findings.length,
     };
     for (const f of findings) counts[f.source] += 1;

@@ -9,6 +9,7 @@ import type {
   LabelSource,
   PropsShape,
 } from "../types.ts";
+import { posOf } from "./pos.ts";
 
 const EVENT_PATTERN =
   /^on(Click|MouseDown|PointerDown|Submit|Change|Input|Focus|Blur|KeyDown|KeyPress)$/;
@@ -16,6 +17,7 @@ const FORM_FIELD_TAGS = new Set(["input", "select", "textarea"]);
 
 export function extractInteractions(
   bodyNode: ts.Node,
+  sourceFile: ts.SourceFile,
   propsShape: PropsShape,
   unresolvedProps: string[] = [],
 ): InteractionInfo {
@@ -24,7 +26,6 @@ export function extractInteractions(
   const propNames = new Set([...Object.keys(propsShape), ...unresolvedProps]);
   const clicks: ClickHandler[] = [];
   const forms: FormInfo[] = [];
-  const propUsage: Array<{ propName: string; tag: string }> = [];
 
   const visit = (n: ts.Node): void => {
     if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
@@ -35,7 +36,7 @@ export function extractInteractions(
         const label = extractLabel(enclosing, hints, propNames);
 
         if (tag === "form") {
-          forms.push(buildForm(enclosing, n.attributes, propNames));
+          forms.push(buildForm(enclosing, n.attributes, propNames, posOf(n, sourceFile), sourceFile));
         }
 
         for (const attr of n.attributes.properties) {
@@ -45,17 +46,15 @@ export function extractInteractions(
           if (!EVENT_PATTERN.test(event)) continue;
           if (tag === "form" && event === "onSubmit") continue;
           const binding = classifyBinding(attr.initializer, propNames);
-          clicks.push({ event, tag, label, hints, binding });
+          clicks.push({ event, tag, label, hints, binding, pos: posOf(attr, sourceFile) });
         }
-
-        if (enclosing) recordPropUsage(enclosing, tag, propNames, propUsage);
       }
     }
     ts.forEachChild(n, visit);
   };
   ts.forEachChild(bodyNode, visit);
 
-  return { clicks, forms, propUsage };
+  return { clicks, forms };
 }
 
 function enclosingElement(
@@ -211,6 +210,8 @@ function buildForm(
   parent: ts.JsxElement | undefined,
   attrs: ts.JsxAttributes,
   propNames: Set<string>,
+  pos: FormInfo["pos"],
+  sourceFile: ts.SourceFile,
 ): FormInfo {
   let submit: HandlerBinding | undefined;
   const hints: { testid?: string; ariaLabel?: string; id?: string } = {};
@@ -222,11 +223,11 @@ function buildForm(
     if (name === "aria-label") hints.ariaLabel = readStringInitializer(a.initializer);
     if (name === "id") hints.id = readStringInitializer(a.initializer);
   }
-  const fields = parent ? collectFields(parent) : [];
-  return { submit, fields, hints };
+  const fields = parent ? collectFields(parent, sourceFile) : [];
+  return { submit, fields, hints, pos };
 }
 
-function collectFields(parent: ts.JsxElement): FieldInfo[] {
+function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldInfo[] {
   const fields: FieldInfo[] = [];
   const labelsByHtmlFor = new Map<string, string>();
 
@@ -266,6 +267,7 @@ function collectFields(parent: ts.JsxElement): FieldInfo[] {
           id: hints.id,
           placeholder: hints.placeholder,
           label,
+          pos: posOf(n, sourceFile),
         });
       }
     }
@@ -291,16 +293,3 @@ function jsxTextOf(el: ts.JsxElement): string | undefined {
   return undefined;
 }
 
-function recordPropUsage(
-  el: ts.JsxElement,
-  tag: string,
-  propNames: Set<string>,
-  out: Array<{ propName: string; tag: string }>,
-): void {
-  for (const child of el.children) {
-    if (ts.isJsxExpression(child) && child.expression && ts.isIdentifier(child.expression)) {
-      const name = child.expression.text;
-      if (propNames.has(name)) out.push({ propName: name, tag });
-    }
-  }
-}

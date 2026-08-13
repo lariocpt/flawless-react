@@ -12,9 +12,14 @@ const CARD = path.resolve(__dirname, "fixtures/Card.tsx");
 describe("parseFile", () => {
   test("locates React.FC component + props type ref", async () => {
     const r = await parseFile(HELLO);
-    expect(r.componentName).toBe("Hello");
-    expect(r.propsTypeRef).toBeDefined();
+    const primary = r.components[0];
+    expect(primary?.componentName).toBe("Hello");
+    expect(primary?.propsTypeRef).toBeDefined();
+    expect(primary?.exportKind).toBe("named");
+    expect(primary?.isAsync).toBe(false);
+    expect(r.isClientComponent).toBe(false);
     expect(r.imports.has("useState")).toBe(true);
+    expect(r.imports.get("useState")?.specifier).toBe("react");
   });
 
   test("throws helpfully on a non-component file", async () => {
@@ -32,7 +37,7 @@ describe("parseFile", () => {
 describe("extractProps", () => {
   test("Hello → string/number/boolean/union(literal) defaults + variants", async () => {
     const parsed = await parseFile(HELLO);
-    const r = extractProps(parsed.sourceFile, parsed.propsTypeRef);
+    const r = extractProps(parsed.sourceFile, parsed.components[0]?.propsTypeRef);
     expect(r.propsShape).toEqual({
       name: "",
       count: 0,
@@ -50,13 +55,13 @@ describe("extractProps", () => {
 describe("extractHooks", () => {
   test("Hello → useState", async () => {
     const parsed = await parseFile(HELLO);
-    const hooks = extractHooks(parsed.bodyNode);
+    const hooks = extractHooks(parsed.components[0]?.bodyNode as import("typescript").Node);
     expect(hooks).toEqual(["useState"]);
   });
 
   test("Card → useEffect + useState", async () => {
     const parsed = await parseFile(CARD);
-    const hooks = extractHooks(parsed.bodyNode);
+    const hooks = extractHooks(parsed.components[0]?.bodyNode as import("typescript").Node);
     expect(hooks).toEqual(["useEffect", "useState"]);
   });
 });

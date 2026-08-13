@@ -98,6 +98,8 @@ export function parseArgs(argv: string[]): CliArgs {
   let nextjs: string | undefined;
   let appResolver: string | undefined;
   let swaggerUrl: string | undefined;
+  let colocate = false;
+  let ci = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -166,6 +168,12 @@ export function parseArgs(argv: string[]): CliArgs {
       swaggerUrl = v;
     } else if (a.startsWith("--swagger-url=")) {
       swaggerUrl = a.slice("--swagger-url=".length);
+    } else if (a === "--colocate") {
+      colocate = true;
+    } else if (a === "--ci") {
+      ci = true;
+      noInteractive = true;
+      json = true;
     } else if (a === "--no-interactive") {
       noInteractive = true;
     } else if (a === "--run-tests") {
@@ -215,6 +223,8 @@ export function parseArgs(argv: string[]): CliArgs {
     nextjs,
     appResolver,
     swaggerUrl,
+    colocate,
+    ci,
   };
 }
 
