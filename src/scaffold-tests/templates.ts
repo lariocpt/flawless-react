@@ -311,7 +311,17 @@ function unitSpec(
 ): string {
   const info = c.info;
   const name = info.componentName;
-  const propsLiteral = JSON.stringify(info.propsShape);
+  // A prop whose type could not be resolved is absent from propsShape, so the
+  // component receives undefined — and any `prop.field` read then throws. When
+  // the analyser saw it used via member access, stand it up as {} so the read
+  // yields undefined (renders as nothing) instead of crashing the spec.
+  const objectish: PropsShape = {};
+  for (const u of info.propUsage ?? []) {
+    if (!u.member) continue;
+    if (!info.unresolvedProps.includes(u.propName)) continue;
+    objectish[u.propName] = {};
+  }
+  const propsLiteral = JSON.stringify({ ...objectish, ...info.propsShape });
   const variantsLiteral = JSON.stringify(info.variants.slice(0, variants));
   const promiseProps = info.promiseProps ?? [];
   const interactions = info.interactions;
@@ -716,9 +726,13 @@ function rscSpec(c: FlatComponent, importPath: string, providerImport: string | 
     let uncertain = false;
     const entries = named.map((n) => {
       const dep = depsHere.find((d) => d.calleeRoot === n);
-      if (!dep || dep.uncertain || dep.shape.kind === "unknown") {
-        if (dep) uncertain = true;
-        return `${n}: vi.fn()`;
+      if (!dep) return `${n}: vi.fn()`;
+      if (dep.uncertain || dep.shape.kind === "unknown") {
+        // No usable evidence — but returning undefined crashes on the first
+        // member access, while {} only crashes on .length/.map. Emit the
+        // empty-object stand-in and flag it rather than the harsher default.
+        uncertain = true;
+        return dep.awaited ? `${n}: vi.fn(async () => ({}))` : `${n}: vi.fn(() => ({}))`;
       }
       // Shape inferred from how the awaited value is actually used in the body.
       const literal = mockLiteral(dep.shape, n);
