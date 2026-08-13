@@ -872,10 +872,17 @@ function spec(c: FlatComponent, variants: number): string {
   // for the render count to rise times out after 30s and reports a stateless
   // Button as broken. Only assert a rerender when the analyser saw something
   // that could cause one: local state, or a handler the parent supplies.
+  const hasAnalysedClick = (c.info.interactions?.clicks ?? []).some((cl) => cl.event === "onClick");
+  const hasForm = (c.info.interactions?.forms ?? []).length > 0;
   const canRerender =
-    (c.info.state ?? []).some((st) => st.kind !== "useRef") ||
-    (c.info.interactions?.clicks ?? []).some((cl) => cl.binding.kind === "prop") ||
-    (c.info.hooks ?? []).some((h) => /^use(State|Reducer|SyncExternalStore|Context)$/.test(h));
+    ((c.info.state ?? []).some((st) => st.kind !== "useRef") ||
+      (c.info.interactions?.clicks ?? []).some((cl) => cl.binding.kind === "prop") ||
+      (c.info.hooks ?? []).some((h) => /^use(State|Reducer|SyncExternalStore|Context)$/.test(h))) &&
+    // With no analysed click handler the scenario falls back to "the first
+    // button on the page". In a form component that button is the SUBMIT
+    // control, and clicking it runs an action — against a stubbed server action
+    // in a host with no backend, which is not a render measurement.
+    !(hasForm && !hasAnalysedClick);
   const clickButtonExpr = targetedClick ?? `page.locator("button").first()`;
 
   return `import { test, expect } from "@playwright/test";
@@ -951,7 +958,7 @@ test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
   test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
   test.skip(
     ${canRerender ? "false" : "true"},
-    "no state or handler prop — a click cannot re-render this component",
+    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — a click cannot re-render this component"'},
   );
   await bracketScenario(page, "click-rerender", testInfo, async () => {
     await clearScanEvents(page);
@@ -1006,7 +1013,7 @@ test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
   test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
   test.skip(
     ${canRerender ? "false" : "true"},
-    "no state or handler prop — 50 clicks cannot re-render this component",
+    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — 50 clicks cannot re-render this component"'},
   );
   await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
     const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
