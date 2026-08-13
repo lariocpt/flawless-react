@@ -24,7 +24,8 @@ export const unitAndBrowser: Task = {
     const projectRoot = ctx.nextjs?.root;
     // Browser specs drive the perf-harness host; emitting them without it
     // would hand the user a suite that cannot start.
-    const browserSpecs = ctx.selectedTasks === undefined || ctx.selectedTasks.includes("perf-harness");
+    const browserSpecs =
+      ctx.selectedTasks === undefined || ctx.selectedTasks.includes("perf-harness");
     const { written, skipped } = await scaffoldUnitBrowser({
       browserSpecs,
       trees: ctx.trees,

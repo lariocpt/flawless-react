@@ -1,5 +1,4 @@
 import { existsSync, statSync } from "node:fs";
-import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { stringifyLike } from "../scaffold/adoptStyle.ts";
 import type { NextjsApiRoute, NextjsContext, NextjsRouter } from "../types.ts";
@@ -162,5 +161,4 @@ export async function mergeIntoNextPackageJson(
     pkg.scripts = { ...(pkg.scripts ?? {}), ...scripts };
   }
   fs.writeFileSync(pkgPath, stringifyLike(source, pkg));
-  void readdir; // silence unused-import warning when running without explicit re-export
 }

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import type { NextjsRouter } from "../types.ts";
 
@@ -67,4 +68,13 @@ export function devScriptPort(devScript: string | undefined): number {
   const m = devScript.match(/(?:-p|--port)[=\s]+(\d+)/);
   const port = m?.[1] ? Number(m[1]) : Number.NaN;
   return Number.isFinite(port) ? port : 3000;
+}
+
+/** The app/ or pages/ directory a Next.js project routes from. */
+export function findRouterRoot(nextRoot: string): string {
+  for (const rel of ["app", "src/app", "pages", "src/pages"]) {
+    const abs = path.join(nextRoot, rel);
+    if (existsSync(abs)) return abs;
+  }
+  return nextRoot;
 }

@@ -23,7 +23,8 @@ async function walkAppRouterApi(apiDir: string): Promise<NextjsApiRoute[]> {
       .dirname(rel)
       .split(path.sep)
       .filter((s) => s !== ".");
-    const urlPath = "/api/" + segments.map(appRouterSegment).join("/");
+    // Route groups map to an empty segment — drop them or the path grows a `//`.
+    const urlPath = `/api/${segments.map(appRouterSegment).filter(Boolean).join("/")}`;
     const methods = extractAppRouterMethods(abs);
     if (methods.length === 0) continue;
     out.push({
@@ -44,7 +45,7 @@ async function walkPagesRouterApi(apiDir: string): Promise<NextjsApiRoute[]> {
     const noExt = rel.replace(/\.(ts|tsx|js|jsx|mjs)$/, "");
     let segments = noExt.split(path.sep);
     if (segments[segments.length - 1] === "index") segments = segments.slice(0, -1);
-    const urlPath = "/api/" + segments.map(pagesRouterSegment).join("/");
+    const urlPath = `/api/${segments.map(pagesRouterSegment).filter(Boolean).join("/")}`;
     out.push({
       path: stripTrailingSlash(urlPath),
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],

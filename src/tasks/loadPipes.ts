@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { pageFileToRoute } from "../nextjs/routes.ts";
+import { findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
 
 /**
@@ -35,9 +35,12 @@ export const loadPipes: Task = {
     const targets = collectTargets(ctx.trees, ctx.nextjs.router, routerRoot);
 
     const pipesPath = path.join(loadDir, "routes.pipes");
+    let keptPipes = false;
     if (!existsSync(pipesPath) || ctx.force) {
       await Bun.write(pipesPath, renderPipes(targets, ctx.outDir, ctx.nextjs.root));
       written.push(pipesPath);
+    } else {
+      keptPipes = true;
     }
 
     const readmePath = path.join(loadDir, "README.md");
@@ -52,9 +55,11 @@ export const loadPipes: Task = {
       ok: true,
       outputs: written,
       findings: [],
-      summary: crustPresent
-        ? `load pipes for ${targets.length} target(s) — run with bun run flawless:load`
-        : `load pipes for ${targets.length} target(s) — crust not found on PATH; install it to run them`,
+      summary: keptPipes
+        ? `kept existing load/routes.pipes (--force to regenerate for ${targets.length} target(s))`
+        : crustPresent
+          ? `load pipes for ${targets.length} target(s) — run with bun run flawless:load`
+          : `load pipes for ${targets.length} target(s) — crust not found on PATH; install it to run them`,
     };
   },
 };
@@ -74,14 +79,6 @@ function hasLocalCrust(fromDir: string): boolean {
     if (parent === dir) return false;
     dir = parent;
   }
-}
-
-function findRouterRoot(nextRoot: string): string {
-  for (const rel of ["app", "src/app", "pages", "src/pages"]) {
-    const abs = path.join(nextRoot, rel);
-    if (existsSync(abs)) return abs;
-  }
-  return nextRoot;
 }
 
 function collectTargets(

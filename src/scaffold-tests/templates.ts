@@ -371,7 +371,7 @@ function emitStateTests(name: string, info: ComponentInfo): string {
   const summary = states
     .map(
       (s) =>
-        `//   ${s.varName}${s.setterName ? ` / ${s.setterName}` : ""} (${s.typeKind}) = ${s.initialRaw ?? "?"}`,
+        `//   ${s.varName}${s.setterName ? ` / ${s.setterName}` : ""} (${s.typeKind}) = ${escapeComment(s.initialRaw ?? "?")}`,
     )
     .join("\n");
   parts.push(`\n// Detected state:\n${summary}`);
@@ -400,7 +400,8 @@ test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")
       const dispatch = emitVitestDispatch(click.event, selector);
       parts.push(`
 test("${name}: ${click.event} via ${call.enclosingName} → ${s.setterName ?? s.varName} updates", async () => {
-  renderTarget();
+  const { container } = renderTarget();
+  void container;
   ${dispatch};
   // TODO(flawless): assert the observable change for ${s.setterName ?? s.varName}(...) —
   // the handler fires, but no text witness could be derived statically.
@@ -419,8 +420,14 @@ function initialWitness(s: StateInfo): string | undefined {
   return s.initialValue;
 }
 
+/** Safe inside a double-quoted test name: no quotes, no newlines, bounded. */
 function escapeTestName(s: string): string {
-  return s.replace(/"/g, "'").slice(0, 40);
+  return s.replace(/\s+/g, " ").replace(/"/g, "'").trim().slice(0, 40);
+}
+
+/** Safe inside a `//` comment: single line, bounded. */
+function escapeComment(s: string): string {
+  return s.replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
 // ---------------------------------------------------------------------------

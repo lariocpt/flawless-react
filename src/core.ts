@@ -288,7 +288,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const styleRoot = nextCtx?.root ?? outDir;
   const writtenFiles = [
     ...results.flatMap((r) => r.outputs),
-    ...(providerOverride && providerOverride.startsWith(outDir) ? [providerOverride] : []),
+    ...(providerOverride && isInside(outDir, providerOverride) ? [providerOverride] : []),
   ];
   try {
     const adopted = await adoptProjectStyle(styleRoot, writtenFiles);
@@ -324,6 +324,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   };
 }
 
+/** True when `file` lives under `dir` (not merely shares its path prefix). */
+function isInside(dir: string, file: string): boolean {
+  const rel = path.relative(dir, file);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
 function mergeRoutes(nextCtx: NextjsContext, routes: NextjsApiRoute[]): void {
   const byPath = new Map(routes.map((r) => [r.path, r] as const));
   for (const ar of nextCtx.apiRoutes) {
@@ -349,8 +355,14 @@ export async function expandGlob(pattern: string): Promise<string[]> {
   }
   const glob = new Bun.Glob(pattern);
   const out: string[] = [];
-  for await (const f of glob.scan({ cwd: process.cwd(), absolute: true })) {
-    out.push(f);
+  try {
+    for await (const f of glob.scan({ cwd: process.cwd(), absolute: true })) {
+      out.push(f);
+    }
+  } catch {
+    // A glob rooted at a directory that doesn't exist throws ENOENT rather
+    // than yielding nothing; "no files matched" is the useful message.
+    return [];
   }
   return out.sort();
 }

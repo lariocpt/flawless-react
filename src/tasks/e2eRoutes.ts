@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { devScriptPort, pageFileToRoute } from "../nextjs/routes.ts";
+import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
 
@@ -28,7 +28,7 @@ export const e2eRoutes: Task = {
         error: "not a Next.js run",
       };
     }
-    const routerRoot = await findRouterRoot(ctx.nextjs.root);
+    const routerRoot = findRouterRoot(ctx.nextjs.root);
     const pages: Array<{
       tree: ComponentTree;
       route: NonNullable<ReturnType<typeof pageFileToRoute>>;
@@ -86,14 +86,6 @@ export const e2eRoutes: Task = {
     };
   },
 };
-
-async function findRouterRoot(nextRoot: string): Promise<string> {
-  for (const rel of ["app", "src/app", "pages", "src/pages"]) {
-    const abs = path.join(nextRoot, rel);
-    if (existsSync(abs)) return abs;
-  }
-  return nextRoot;
-}
 
 async function readDevScript(nextRoot: string): Promise<string | undefined> {
   try {
@@ -193,9 +185,10 @@ function routeSpec(
   route: NonNullable<ReturnType<typeof pageFileToRoute>>,
 ): string {
   const paramLines = route.params
-    .map(
-      (p) =>
-        `const ${p.toUpperCase()} = process.env.FLAWLESS_E2E_${p.toUpperCase()} ?? process.env.FLAWLESS_E2E_ID ?? "REPLACE_WITH_SEEDED_${p.toUpperCase()}"; // TODO(flawless)`,
+    .map((p) =>
+      p.toUpperCase() === "ID"
+        ? `const ID = process.env.FLAWLESS_E2E_ID ?? "REPLACE_WITH_SEEDED_ID"; // TODO(flawless)`
+        : `const ${p.toUpperCase()} = process.env.FLAWLESS_E2E_${p.toUpperCase()} ?? process.env.FLAWLESS_E2E_ID ?? "REPLACE_WITH_SEEDED_${p.toUpperCase()}"; // TODO(flawless)`,
     )
     .join("\n");
   let urlExpr = `\`${route.urlPath}\``;
