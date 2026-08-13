@@ -279,6 +279,43 @@ if (typeof window !== "undefined") {
   } as unknown as typeof IntersectionObserver;
   Element.prototype.scrollIntoView ??= () => {};
   Element.prototype.scrollTo ??= (() => {}) as typeof Element.prototype.scrollTo;
+
+  // Node >= 22 defines a \`localStorage\` global that is inert unless the process
+  // was started with --localstorage-file. Under vitest's jsdom environment
+  // \`window.localStorage\` can resolve to that global rather than to jsdom's own
+  // implementation, so persistence middleware (zustand persist, redux-persist)
+  // is handed undefined and throws on its first write.
+  const memoryStorage = (): Storage => {
+    const m = new Map<string, string>();
+    return {
+      get length() {
+        return m.size;
+      },
+      clear: () => {
+        m.clear();
+      },
+      getItem: (k: string) => m.get(k) ?? null,
+      key: (i: number) => [...m.keys()][i] ?? null,
+      removeItem: (k: string) => {
+        m.delete(k);
+      },
+      setItem: (k: string, v: string) => {
+        m.set(k, String(v));
+      },
+    } as Storage;
+  };
+  if (typeof window.localStorage?.setItem !== "function") {
+    Object.defineProperty(window, "localStorage", {
+      value: memoryStorage(),
+      configurable: true,
+    });
+  }
+  if (typeof window.sessionStorage?.setItem !== "function") {
+    Object.defineProperty(window, "sessionStorage", {
+      value: memoryStorage(),
+      configurable: true,
+    });
+  }
 }
 `;
   if (!mswSetup) {
@@ -655,7 +692,13 @@ function constrainedSpec(
   if (mode === "document-root") {
     const propsLiteral = JSON.stringify(info.propsShape);
     const promiseProps = info.promiseProps ?? [];
-    const invoke = info.isAsync ? `await ${name}(props as never)` : `${name}(props as never)`;
+    // An async server component has to be invoked to get its element. A sync one
+    // must NOT be: calling it directly runs its hooks with no React dispatcher
+    // ("Cannot read properties of null (reading 'useEffect')"). Rendering it as
+    // an element is safe either way — effects simply do not run during SSR.
+    const invoke = info.isAsync
+      ? `await ${name}(props as never)`
+      : `<${name} {...(props as never)} />`;
     return `import { test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type * as React from "react";

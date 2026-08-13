@@ -1,5 +1,29 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { parseArgs } from "../src/cli.ts";
+import { VERSION } from "../src/version.ts";
+
+describe("VERSION", () => {
+  test("does not drift from package.json", () => {
+    const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf8")) as {
+      version: string;
+    };
+    expect(VERSION).toBe(pkg.version);
+  });
+
+  // parseArgs terminates the -V branch with process.exit(0), so a subprocess is
+  // the only way to cover it. src/bin.ts is the entry that actually calls main().
+  test("-V prints the package version", async () => {
+    const proc = Bun.spawn(["bun", path.resolve(__dirname, "../src/bin.ts"), "-V"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(out).toBe(`flawless-react ${VERSION}\n`);
+  });
+});
 
 describe("parseArgs", () => {
   test("entry only → defaults", () => {

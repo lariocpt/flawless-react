@@ -3,6 +3,7 @@ import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
 import { TASKS } from "./tasks/index.ts";
 import type { CliArgs, PropsShape, RootMode, TaskId } from "./types.ts";
+import { VERSION } from "./version.ts";
 
 const HELP = `flawless-react — multi-task quality kit for React components
 
@@ -194,7 +195,7 @@ export function parseArgs(argv: string[]): CliArgs {
       process.stdout.write(HELP);
       process.exit(0);
     } else if (a === "-V" || a === "--version") {
-      process.stdout.write("flawless-react 0.2.0-dev\n");
+      process.stdout.write(`flawless-react ${VERSION}\n`);
       process.exit(0);
     } else if (a.startsWith("--")) {
       throw new Error(`unknown flag: ${a}`);

@@ -136,6 +136,29 @@ describe("extractInteractions", () => {
     expect(emailField?.label).toBe("Email");
   });
 
+  test("LabelledForm: <Label htmlFor> labels a field, a placeholder does not", async () => {
+    const t = await analyse({
+      entry: path.resolve(__dirname, "fixtures/LabelledForm.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const form = t.entry.interactions?.forms[0];
+    expect(form).toBeDefined();
+    if (!form) return;
+
+    // An uppercase wrapper carrying htmlFor is evidence of a real <label>.
+    const title = form.fields.find((f) => f.name === "title");
+    expect(title?.label).toBe("Title");
+    // …and its placeholder stays available separately, it does not become the label.
+    expect(title?.placeholder).toBe("A short summary");
+
+    // A placeholder is not an accessible name. Reporting it as `label` made the
+    // emitted spec call getByLabelText(placeholder), which always throws.
+    const body = form.fields.find((f) => f.name === "body");
+    expect(body?.placeholder).toBe("Add an update — context or progress.");
+    expect(body?.label).toBeUndefined();
+  });
+
   test("IconButton: inline arrow wrapping a prop call upgrades to prop binding", async () => {
     const t = await analyse({
       entry: path.resolve(__dirname, "fixtures/IconButton.tsx"),

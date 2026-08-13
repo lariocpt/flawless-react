@@ -234,10 +234,15 @@ function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldI
   const labelsByHtmlFor = new Map<string, string>();
 
   // First pass: harvest <label htmlFor="x"> text-content keyed by htmlFor.
+  //
+  // Uppercase `*Label` tags count too, but only when they carry htmlFor: that is
+  // a React DOM prop, so its presence is evidence the component forwards to a
+  // real <label>. shadcn's <Label htmlFor> is the common case, and matching the
+  // lowercase tag alone left every one of those fields with no accessible label.
   const collectLabels = (n: ts.Node): void => {
     if (ts.isJsxElement(n)) {
       const opening = n.openingElement;
-      if (ts.isIdentifier(opening.tagName) && opening.tagName.text === "label") {
+      if (ts.isIdentifier(opening.tagName) && isLabelTag(opening.tagName.text)) {
         let htmlFor: string | undefined;
         for (const a of opening.attributes.properties) {
           if (!ts.isJsxAttribute(a)) continue;
@@ -261,7 +266,11 @@ function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldI
       const tag = readTagName(n.tagName);
       if (FORM_FIELD_TAGS.has(tag)) {
         const hints = collectHints(n.attributes);
-        const label = (hints.id && labelsByHtmlFor.get(hints.id)) ?? hints.placeholder ?? undefined;
+        // A placeholder is NOT an accessible label. Falling back to it here made
+        // every placeholder-only field emit getByLabelText(placeholder), which
+        // always throws — while emitFormTest's getByPlaceholderText branch, which
+        // is already correct, could never be reached because `label` was set.
+        const label = (hints.id && labelsByHtmlFor.get(hints.id)) ?? undefined;
         fields.push({
           tag: tag as FieldInfo["tag"],
           type: hints.type,
@@ -277,6 +286,11 @@ function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldI
   };
   ts.forEachChild(parent, visit);
   return fields;
+}
+
+/** The host tag, or a wrapper whose name ends in "Label" (shadcn's <Label>, <FormLabel>). */
+function isLabelTag(tag: string): boolean {
+  return tag === "label" || /Label$/.test(tag);
 }
 
 function jsxTextOf(el: ts.JsxElement): string | undefined {

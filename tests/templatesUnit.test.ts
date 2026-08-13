@@ -376,6 +376,55 @@ describe("renderUnitBrowser setup.ts", () => {
       expect(setup).toContain("window.IntersectionObserver ??=");
     }
   });
+
+  test("installs an in-memory Storage fallback for persistence middleware", () => {
+    const setup = contentOf(
+      renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 }),
+      "setup.ts",
+    );
+    // Node >= 22 exposes an inert `localStorage` global; under jsdom
+    // window.localStorage can resolve to it, handing zustand's persist
+    // middleware undefined and throwing on the first write.
+    expect(setup).toContain('typeof window.localStorage?.setItem !== "function"');
+    expect(setup).toContain('typeof window.sessionStorage?.setItem !== "function"');
+    expect(setup).toContain('Object.defineProperty(window, "localStorage"');
+  });
+});
+
+describe("renderUnitBrowser document-root components", () => {
+  function docRoot(extra: Partial<ComponentInfo> = {}) {
+    return renderUnitBrowser({
+      trees: [
+        tree(
+          comp("RootLayout", {
+            exportKind: "default",
+            renderMode: "document-root",
+            renderNotes: ["renders <html> at its root"],
+            ...extra,
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+  }
+
+  test("a sync component is rendered as an element, never called directly", () => {
+    const spec = contentOf(docRoot(), "unit/RootLayout.test.tsx");
+    // Calling it directly runs its hooks with no React dispatcher, which fails
+    // with "Cannot read properties of null (reading 'useEffect')".
+    expect(spec).toContain("const ui = <RootLayout {...(props as never)} />;");
+    expect(spec).not.toContain("RootLayout(props as never)");
+    expect(spec).toContain("renderToStaticMarkup(ui as React.ReactElement)");
+    expect(spec).toContain("expect(html).toMatch(/^<html/)");
+  });
+
+  test("an async server component is still invoked and awaited", () => {
+    const spec = contentOf(docRoot({ isAsync: true }), "unit/RootLayout.test.tsx");
+    // An async component cannot be created as an element — it must be called to
+    // get its returned tree.
+    expect(spec).toContain("const ui = await RootLayout(props as never);");
+  });
 });
 
 describe("renderUnitBrowser resolveAliases", () => {

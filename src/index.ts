@@ -84,3 +84,4 @@ export type {
   TaskId,
   TaskResult,
 } from "./types.ts";
+export { VERSION } from "./version.ts";
