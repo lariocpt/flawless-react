@@ -9,7 +9,7 @@ import type {
   PropsShape,
   StateInfo,
 } from "../types.ts";
-import { mockLiteral } from "./mockValues.ts";
+import { emitModuleMocks } from "./mocks.ts";
 import {
   emitPlaywrightDispatch,
   emitPlaywrightSelector,
@@ -134,11 +134,11 @@ function renderUnitFile(
     : undefined;
   const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
   if (mode === "compound-part" || mode === "document-root") {
-    return constrainedSpec(c, importPath, providerImport, mode);
+    return constrainedSpec(c, importPath, providerImport, mode, specDir);
   }
   return mode === "rsc"
-    ? rscSpec(c, importPath, providerImport)
-    : unitSpec(c, opts.variants, importPath, providerImport, mocksImport, opts.apiRoutes);
+    ? rscSpec(c, importPath, providerImport, specDir)
+    : unitSpec(c, opts.variants, importPath, providerImport, mocksImport, opts.apiRoutes, specDir);
 }
 
 function flatten(trees: ComponentTree[]): FlatComponent[] {
@@ -345,6 +345,7 @@ function unitSpec(
   providerImport: string | undefined,
   mocksImport: string | undefined,
   apiRoutes: NextjsApiRoute[] | undefined,
+  specDir?: string,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -420,10 +421,16 @@ function unitSpec(
   const propsTypeBlock = hasProps ? `import type * as React from "react";\n` : "";
   const propsAlias = hasProps ? `\ntype Props = React.ComponentProps<typeof ${name}>;\n` : "";
 
+  // Client specs emitted no mocks at all until now, so a component importing
+  // next/navigation or calling a server action through useActionState blew up on
+  // import. Allowlist only — see mocks.ts for why a blanket mock is wrong here.
+  const mocks = emitModuleMocks(info, "client", specDir).statements;
+  const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
+
   return `import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-${propsTypeBlock}${mswImports}${providerLine}${emitComponentImport(info, importPath)}
+${propsTypeBlock}${mswImports}${mockBlock}${providerLine}${emitComponentImport(info, importPath)}
 ${propsAlias}${childTextConst}
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
@@ -669,9 +676,6 @@ function emptyPayloadFor(fixture: unknown): string {
 // RSC spec (async server components)
 // ---------------------------------------------------------------------------
 
-const MOCK_SKIP =
-  /^(react($|\/)|next\/(?!navigation|headers|cache)|.*\.(css|scss|sass|less|svg|png|jpe?g|gif|woff2?)$)/;
-
 /**
  * A component that cannot be mounted standalone. Rather than emit a render
  * assertion that can only fail, assert what IS verifiable — that the module
@@ -683,11 +687,18 @@ function constrainedSpec(
   importPath: string,
   providerImport: string | undefined,
   mode: "compound-part" | "document-root",
+  specDir?: string,
 ): string {
   const info = c.info;
   const name = info.componentName;
   const note = (info.renderNotes ?? []).join(" ");
   void providerImport;
+
+  // Importing the module runs its module scope, so "server-only" and
+  // next/font/* throw at collection time even for a spec that only asserts the
+  // export exists. These specs emitted no mocks at all until now.
+  const mocks = emitModuleMocks(info, "rsc", specDir).statements;
+  const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
     const propsLiteral = JSON.stringify(info.propsShape);
@@ -702,7 +713,7 @@ function constrainedSpec(
     return `import { test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type * as React from "react";
-${emitComponentImport(info, importPath)}
+${mockBlock}${emitComponentImport(info, importPath)}
 
 // ${name} ${note}.
 // Mounting it with Testing Library would nest <html> inside a container div:
@@ -730,8 +741,8 @@ test("${name} returns a document root containing its children", async () => {
 `;
   }
 
-  return `import { test, expect } from "vitest";
-${emitComponentImport(info, importPath)}
+  return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
+${mockBlock}${emitComponentImport(info, importPath)}
 
 // ${name} ${note}
 // Rendering it on its own throws, so this spec asserts only what is true in
@@ -743,71 +754,18 @@ test("${name} is exported as a component", () => {
 `;
 }
 
-function rscSpec(c: FlatComponent, importPath: string, providerImport: string | undefined): string {
+function rscSpec(
+  c: FlatComponent,
+  importPath: string,
+  providerImport: string | undefined,
+  specDir?: string,
+): string {
   const info = c.info;
   const name = info.componentName;
   const propsLiteral = JSON.stringify(info.propsShape);
   const promiseProps = info.promiseProps ?? [];
 
-  const mocks: string[] = [];
-  for (const mi of info.moduleImports ?? []) {
-    if (mi.kind !== "value" || mi.isTypeOnly) continue;
-    if (MOCK_SKIP.test(mi.specifier)) continue;
-    if (mi.specifier === "server-only") {
-      mocks.push(`vi.mock("server-only", () => ({}));`);
-      continue;
-    }
-    if (mi.specifier === "next/navigation") {
-      mocks.push(`vi.mock("next/navigation", () => ({
-  notFound: vi.fn(() => { throw new Error("notFound() called"); }),
-  // These abort rendering in Next; a plain vi.fn() would let a guarded
-  // component run straight past its own guard and crash on the data it guards.
-  redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
-  permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
-  usePathname: vi.fn(() => "/"),
-  useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-}));`);
-      continue;
-    }
-    if (mi.specifier === "next/headers") {
-      mocks.push(`vi.mock("next/headers", () => ({
-  headers: vi.fn(async () => new Headers()),
-  cookies: vi.fn(async () => ({ get: vi.fn(), getAll: vi.fn(() => []) })),
-}));`);
-      continue;
-    }
-    if (mi.names.length === 0) {
-      mocks.push(`vi.mock(${JSON.stringify(mi.specifier)}, () => ({}));`);
-      continue;
-    }
-    const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
-    const depsHere = (info.dataDeps ?? []).filter((d) => d.specifier === mi.specifier);
-    let uncertain = false;
-    const entries = named.map((n) => {
-      const dep = depsHere.find((d) => d.calleeRoot === n);
-      if (!dep) return `${n}: vi.fn()`;
-      if (dep.uncertain || dep.shape.kind === "unknown") {
-        // No usable evidence — but returning undefined crashes on the first
-        // member access, while {} only crashes on .length/.map. Emit the
-        // empty-object stand-in and flag it rather than the harsher default.
-        uncertain = true;
-        return dep.awaited ? `${n}: vi.fn(async () => ({}))` : `${n}: vi.fn(() => ({}))`;
-      }
-      // Shape inferred from how the awaited value is actually used in the body.
-      const literal = mockLiteral(dep.shape, n);
-      return dep.awaited
-        ? `${n}: vi.fn(async () => (${literal}))`
-        : `${n}: vi.fn(() => (${literal}))`;
-    });
-    if (mi.hasDefault) entries.unshift("default: vi.fn()");
-    const note = uncertain
-      ? "// TODO(flawless): some return shapes could not be inferred — give them fixtures.\n"
-      : "";
-    mocks.push(
-      `${note}vi.mock(${JSON.stringify(mi.specifier)}, () => ({ ${entries.join(", ")} }));`,
-    );
-  }
+  const mocks = emitModuleMocks(info, "rsc", specDir).statements;
 
   const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
   const renderExpr = providerImport

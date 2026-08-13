@@ -1,0 +1,20 @@
+{
+  "component": "PostForm",
+  "file": "/home/lario/Projects/personal/flawless-react/tests/fixtures/actions/PostForm.tsx",
+  "counts": {
+    "perf-harness": 0,
+    "unit-browser": 0,
+    "perf-static": 0,
+    "a11y": 0,
+    "react-rules": 0,
+    "e2e": 0,
+    "load": 0,
+    "total": 0
+  },
+  "top": [],
+  "reports": {
+    "a11y": "/tmp/claude-1000/-home-lario-Projects-personal-flawless-react/e10e5120-257b-4a27-9da3-d1231afbd184/scratchpad/pf/reports/PostForm.a11y.json",
+    "reactRules": "/tmp/claude-1000/-home-lario-Projects-personal-flawless-react/e10e5120-257b-4a27-9da3-d1231afbd184/scratchpad/pf/reports/PostForm.react-rules.json",
+    "perfStatic": "/tmp/claude-1000/-home-lario-Projects-personal-flawless-react/e10e5120-257b-4a27-9da3-d1231afbd184/scratchpad/pf/reports/PostForm.perf-static.json"
+  }
+}

@@ -215,10 +215,21 @@ describe("renderUnitBrowser async server components", () => {
     expect(src).toContain('vi.mock("server-only", () => ({}));');
     expect(src).toContain('vi.mock("next/navigation", () => ({');
     expect(src).toContain('vi.mock("next/headers", () => ({');
-    expect(src).toContain('vi.mock("@/lib/db", () => ({ default: vi.fn(), getUser: vi.fn() }));');
-    // …while react, framework re-exports, assets, components and type-only imports do not.
+    // A called-but-unexplained data export resolves to {} rather than undefined:
+    // {} survives member access and only fails on .length/.map, which reads as a
+    // legible failure instead of a crash on the first property read.
+    expect(src).toContain(
+      'vi.mock("@/lib/db", () => ({ default: vi.fn(), getUser: vi.fn(async () => ({})) }));',
+    );
+    expect(src).toContain("TODO(flawless): some return shapes could not be inferred");
+    // next/link IS mocked, deliberately: the real <Link> reads Next's
+    // AppRouterContext, which jsdom cannot provide, so it throws on render. The
+    // passthrough keeps the anchor and its href queryable — the opposite of the
+    // blanket-mock problem, since it preserves what a test would assert on.
+    expect(src).toContain('vi.mock("next/link", async () => {');
+    expect(src).toContain('const { createElement } = await import("react");');
+    // …while react, assets and type-only imports stay real.
     expect(src).not.toContain('vi.mock("react"');
-    expect(src).not.toContain('vi.mock("next/link"');
     expect(src).not.toContain('vi.mock("./styles.css"');
     expect(src).not.toContain('vi.mock("@/lib/types"');
   });

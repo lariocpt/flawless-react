@@ -133,7 +133,14 @@ async function analyseOne(
 
   const moduleImports = parsed.moduleImports.map((mi) => {
     const resolvedPath = resolver.resolve(mi.specifier, absPath);
-    return resolvedPath ? { ...mi, resolvedPath } : mi;
+    if (!resolvedPath) return mi;
+    // A "use server" module cannot run under jsdom or in a browser bundle: its
+    // exports reach for the database, the mailer and next/cache. Flagging it here
+    // — where the resolver and the cache are in scope — lets both the spec
+    // emitter and the perf host stub it by name rather than by guesswork.
+    return cache.hasPrologueDirective(resolvedPath, "use server")
+      ? { ...mi, resolvedPath, isServerAction: true }
+      : { ...mi, resolvedPath };
   });
 
   const info: ComponentInfo = {

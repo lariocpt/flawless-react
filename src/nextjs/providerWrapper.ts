@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
+import { readPrologueDirective } from "../analyse/sourceCache.ts";
 import type { NextjsContext } from "../types.ts";
 
 /**
@@ -191,12 +192,7 @@ function collectImportLines(sf: ts.SourceFile): Map<string, { specifier: string;
 }
 
 function fileStartsWithUseClient(file: string): boolean {
-  try {
-    const head = readFileSync(file, "utf8").slice(0, 512);
-    return /^\s*(\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use client["']/.test(head);
-  } catch {
-    return false;
-  }
+  return readPrologueDirective(file) === "use client";
 }
 
 function literalAttrs(
