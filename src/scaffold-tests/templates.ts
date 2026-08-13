@@ -10,7 +10,12 @@ import type {
   StateInfo,
 } from "../types.ts";
 import { emitModuleMocks } from "./mocks.ts";
-import { allocateSpecNames, type FlatComponent, flattenTrees } from "./registry.ts";
+import {
+  allocateSpecNames,
+  type FlatComponent,
+  flattenTrees,
+  synthesiseDefaults,
+} from "./registry.ts";
 import {
   awaitSelector,
   emitPlaywrightDispatch,
@@ -326,27 +331,7 @@ function unitSpec(
   // component receives undefined — and any `prop.field` read then throws. When
   // the analyser saw it used via member access, stand it up as {} so the read
   // yields undefined (renders as nothing) instead of crashing the spec.
-  const ARRAY_MEMBERS = new Set([
-    "length",
-    "map",
-    "filter",
-    "forEach",
-    "find",
-    "slice",
-    "some",
-    "every",
-    "reduce",
-  ]);
-  const objectish: PropsShape = {};
-  for (const u of info.propUsage ?? []) {
-    if (!u.member) continue;
-    if (!info.unresolvedProps.includes(u.propName)) continue;
-    // How it is read tells us which empty value is safe: {} still throws on
-    // .length/.map, so anything used as a collection needs [].
-    if (ARRAY_MEMBERS.has(u.member)) objectish[u.propName] = [];
-    else objectish[u.propName] ??= {};
-  }
-  const propsLiteral = JSON.stringify({ ...objectish, ...info.propsShape });
+  const propsLiteral = JSON.stringify(synthesiseDefaults(info));
   const variantsLiteral = JSON.stringify(info.variants.slice(0, variants));
   const promiseProps = info.promiseProps ?? [];
   const interactions = info.interactions;

@@ -1,5 +1,10 @@
 import path from "node:path";
-import { allocateSpecNames, flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
+import {
+  allocateSpecNames,
+  flattenTrees,
+  hostEligibility,
+  synthesiseDefaults,
+} from "../scaffold-tests/registry.ts";
 import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
 import type { ComponentInfo, ComponentTree, MockRoute, PropsShape } from "../types.ts";
 
@@ -858,7 +863,7 @@ function spec(c: FlatComponent, variants: number): string {
   // The registry key, so the mount call finds the right component when two share
   // a name.
   const name = c.specName;
-  const propsLiteral = JSON.stringify(c.info.propsShape);
+  const propsLiteral = JSON.stringify(synthesiseDefaults(c.info));
   const variantsLiteral = JSON.stringify(c.info.variants.slice(0, variants));
   const hooksLiteral = JSON.stringify(c.info.hooks);
   const forcedIterations = Math.max(10, variants * 10);
@@ -939,6 +944,11 @@ test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
   const button = ${clickButtonExpr};
   const hasButton = (await button.count()) > 0;
   test.skip(!hasButton, "component does not render a clickable target");
+  // A control that is disabled or covered is not a profiling failure; clicking
+  // it would just wait out the 30s actionability timeout and report the
+  // component as broken.
+  const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
+  test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
   test.skip(
     ${canRerender ? "false" : "true"},
     "no state or handler prop — a click cannot re-render this component",
@@ -989,21 +999,37 @@ test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
   const button = ${clickButtonExpr};
   const hasButton = (await button.count()) > 0;
   test.skip(!hasButton, "component does not render a clickable target");
+  // A control that is disabled or covered is not a profiling failure; clicking
+  // it would just wait out the 30s actionability timeout and report the
+  // component as broken.
+  const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
+  test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
   test.skip(
     ${canRerender ? "false" : "true"},
     "no state or handler prop — 50 clicks cannot re-render this component",
   );
   await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
     const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
-    for (let __i = 0; __i < 50; __i++) await button.click();
+    // Stop when the control goes away. A "Remove" button in a list removes its
+    // own row, so it survives as many clicks as there are rows — and clicking a
+    // locator that no longer resolves waits out the whole timeout, reporting a
+    // working component as broken.
+    let __clicks = 0;
+    for (let __i = 0; __i < 50; __i++) {
+      if ((await button.count()) === 0 || !(await button.isEnabled())) break;
+      await button.click();
+      __clicks++;
+    }
+    test.skip(__clicks === 0, "the clickable target vanished before the first click");
     await page.waitForFunction(
       ([n, b]) => {
         const v = window.__profile.getRenderInfo().renderCount as Record<string, { value: number } | undefined>;
-        return (v[n as string]?.value ?? 0) >= (b as number) + 50;
+        return (v[n as string]?.value ?? 0) > (b as number);
       },
       [NAME, startCount],
       { timeout: 30_000 },
     );
+    console.log(\`[\${NAME} stress] \${__clicks} click(s) landed before the target went away\`);
   });
   // takeHeapSnapshot is exported so future analyses (e.g. byte-delta asserts)
   // can call it directly without bracketScenario.

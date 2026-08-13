@@ -71,12 +71,22 @@ export function emitPlaywrightSelector(h: ClickHandler): string | undefined {
   return undefined;
 }
 
-/** Returns the first targetable click locator for the perf suite, or undefined to keep skip. */
+/**
+ * The first targetable click locator for the perf suite, or undefined to keep
+ * the scenario skipped.
+ *
+ * Always `.first()`: Playwright locators are strict, and a `.map()`-rendered
+ * control resolves to as many elements as there are rows — "strict mode
+ * violation: getByText('Remove') resolved to 2 elements" is a property of the
+ * list, not a defect in the component being profiled.
+ */
 export function emitPlaywrightClickTarget(info: InteractionInfo | undefined): string | undefined {
   if (!info) return undefined;
   const target = info.clicks.find((c) => c.event === "onClick");
   if (!target) return undefined;
-  return emitPlaywrightSelector(target);
+  const locator = emitPlaywrightSelector(target);
+  if (!locator) return undefined;
+  return locator.endsWith(".first()") ? locator : `${locator}.first()`;
 }
 
 /** Map an event attribute to the Testing-Library / user-event call for an element expression. */

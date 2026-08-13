@@ -1,4 +1,4 @@
-import type { ComponentInfo, ComponentTree } from "../types.ts";
+import type { ComponentInfo, ComponentTree, PropsShape } from "../types.ts";
 
 /**
  * The one place that decides what a component is CALLED and whether it can be
@@ -106,4 +106,42 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
     };
   }
   return { eligible: true };
+}
+
+/** Members whose presence proves a value has to be a collection, not an object. */
+const ARRAY_MEMBERS = new Set([
+  "length",
+  "map",
+  "filter",
+  "forEach",
+  "find",
+  "slice",
+  "some",
+  "every",
+  "reduce",
+]);
+
+/**
+ * The props a generated test should pass, including stand-ins for the ones no
+ * type resolved.
+ *
+ * A prop that could not be resolved is absent from propsShape, so the component
+ * receives undefined and `prop.field` throws before anything renders. Where the
+ * analyser SAW a member access, the read itself says which empty value survives
+ * it: {} still throws on .length/.map, so anything used as a collection gets [].
+ *
+ * The unit scaffolder did this and the perf host did not, so a component like
+ * `ProfileForm({ user }: { user: User })` mounted fine under jsdom and failed in
+ * the browser host with "did not render within 5000ms" — the same defect wearing
+ * a different error message.
+ */
+export function synthesiseDefaults(info: ComponentInfo): PropsShape {
+  const objectish: PropsShape = {};
+  for (const u of info.propUsage ?? []) {
+    if (!u.member) continue;
+    if (!info.unresolvedProps.includes(u.propName)) continue;
+    if (ARRAY_MEMBERS.has(u.member)) objectish[u.propName] = [];
+    else objectish[u.propName] ??= {};
+  }
+  return { ...objectish, ...info.propsShape };
 }
