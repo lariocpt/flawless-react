@@ -139,7 +139,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           `provider: ${providerOverride} looks like a server component (async or server-only imports) — unit specs may fail under jsdom`,
         );
       } else {
-        const wrapped = ensureClientProviderWrapper(nextCtx, outDir as string, providerOverride);
+        const wrapped = ensureClientProviderWrapper(
+          nextCtx,
+          outDir as string,
+          providerOverride,
+          opts.force === true,
+        );
         if (wrapped) {
           providerOverride = wrapped.path;
           log(

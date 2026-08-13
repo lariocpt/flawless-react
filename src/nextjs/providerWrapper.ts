@@ -77,12 +77,16 @@ export function ensureClientProviderWrapper(
   ctx: NextjsContext,
   outDir: string,
   layoutFile?: string,
+  force = false,
 ): ProviderWrapperResult | undefined {
   const layout = layoutFile ?? ctx.appResolver;
   if (!layout || !existsSync(layout)) return undefined;
 
   const outPath = path.join(outDir, "provider.tsx");
-  if (existsSync(outPath)) {
+  // provider.tsx is derived from the layout, so --force may refresh it when the
+  // layout's provider chain changes. provider.fixtures.ts beside it is not
+  // regenerated under any flag — see renderFixtures.
+  if (existsSync(outPath) && !force) {
     return { path: outPath, created: false, included: [] };
   }
 
@@ -102,7 +106,7 @@ export function ensureClientProviderWrapper(
     name: string;
     importLine: string;
     attrs: string;
-    dropped: string[];
+    dropped: DroppedAttr[];
   }> = [];
 
   for (const el of chain) {
@@ -119,9 +123,21 @@ export function ensureClientProviderWrapper(
     included.push({ name: tagName, importLine: imp.line, attrs, dropped });
   }
 
-  const body = renderWrapper(layout, included);
+  const holes = included.flatMap((i) =>
+    i.dropped.filter((d) => d.name !== "...spread").map((d) => ({ owner: i.name, ...d })),
+  );
+
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(outPath, body);
+
+  // The asymmetry is the whole design. provider.tsx is DERIVED from the layout,
+  // so --force may refresh it. provider.fixtures.ts holds values a human typed
+  // and nothing can reconstruct, so --force must not touch it.
+  const fixturesPath = path.join(outDir, "provider.fixtures.ts");
+  if (holes.length > 0 && !existsSync(fixturesPath)) {
+    writeFileSync(fixturesPath, renderFixtures(layout, holes, imports));
+  }
+
+  writeFileSync(outPath, renderWrapper(layout, included, holes.length > 0));
   return { path: outPath, created: true, included: included.map((i) => i.name) };
 }
 
@@ -195,15 +211,27 @@ function fileStartsWithUseClient(file: string): boolean {
   return readPrologueDirective(file) === "use client";
 }
 
+/** A prop the layout passed that is not literal-composable, and its source text. */
+export interface DroppedAttr {
+  name: string;
+  exprText: string;
+  line: number;
+}
+
 function literalAttrs(
   attrs: ts.JsxAttributes,
   sf: ts.SourceFile,
-): { attrs: string; dropped: string[] } {
+): { attrs: string; dropped: DroppedAttr[] } {
   const kept: string[] = [];
-  const dropped: string[] = [];
+  const dropped: DroppedAttr[] = [];
+  const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   for (const a of attrs.properties) {
     if (ts.isJsxSpreadAttribute(a)) {
-      dropped.push(`{...${a.expression.getText(sf)}}`);
+      dropped.push({
+        name: "...spread",
+        exprText: `{...${a.expression.getText(sf)}}`,
+        line: lineOf(a),
+      });
       continue;
     }
     if (!ts.isJsxAttribute(a) || !ts.isIdentifier(a.name)) continue;
@@ -228,14 +256,15 @@ function literalAttrs(
         continue;
       }
     }
-    dropped.push(name);
+    dropped.push({ name, exprText: init ? init.getText(sf) : name, line: lineOf(a) });
   }
   return { attrs: kept.length > 0 ? ` ${kept.join(" ")}` : "", dropped };
 }
 
 function renderWrapper(
   layoutFile: string,
-  included: Array<{ name: string; importLine: string; attrs: string; dropped: string[] }>,
+  included: Array<{ name: string; importLine: string; attrs: string; dropped: DroppedAttr[] }>,
+  hasFixtures: boolean,
 ): string {
   const importLines = [...new Set(included.map((i) => i.importLine))].join("\n");
   const layoutRel = path.basename(layoutFile);
@@ -245,12 +274,19 @@ function renderWrapper(
   const todos: string[] = [];
   for (const [idx, el] of included.entries()) {
     const indent = "      " + "  ".repeat(idx);
-    for (const d of el.dropped) {
+    // A non-literal prop becomes a typed hole in provider.fixtures.ts rather
+    // than a comment: an editor red-squiggle naming the exact shape to supply is
+    // worth more than a TODO nobody sees.
+    const fixtureAttrs = el.dropped
+      .filter((d) => d.name !== "...spread")
+      .map((d) => ` ${d.name}={providerFixtures.${d.name}}`)
+      .join("");
+    for (const d of el.dropped.filter((x) => x.name === "...spread")) {
       todos.push(
-        `${indent}{/* TODO(flawless): layout passed ${d} to <${el.name}> (non-literal) — add a fixture here if specs need it */}`,
+        `${indent}{/* TODO(flawless): layout spread ${d.exprText} into <${el.name}> — not reconstructable */}`,
       );
     }
-    open += `${indent}<${el.name}${el.attrs}>\n`;
+    open += `${indent}<${el.name}${el.attrs}${fixtureAttrs}>\n`;
     close = `${indent}</${el.name}>\n${close}`;
   }
   const inner = "      " + "  ".repeat(included.length) + "{children}";
@@ -265,9 +301,10 @@ function renderWrapper(
 
   return `"use client";
 // flawless-react provider wrapper — auto-derived from ${layoutRel} (async server
-// layout, unusable under jsdom). Edit freely; flawless-react never overwrites it.
+// layout, unusable under jsdom). REGENERATED by --force: put values you want to
+// keep in provider.fixtures.ts, which is never rewritten.
 import type { ReactNode } from "react";
-${importLines}
+${importLines}${hasFixtures ? '\nimport { providerFixtures } from "./provider.fixtures";' : ""}
 
 export default function FlawlessProvider({ children }: { children: ReactNode }) {
   return (
@@ -276,5 +313,51 @@ ${tree}
     </>
   );
 }
+`;
+}
+
+/**
+ * Typed holes for the props the layout passed that could not be copied.
+ *
+ * Typing each against `ComponentProps<typeof Provider>[prop]` costs nothing —
+ * the import line was already captured — and turns "fill this in" into a red
+ * squiggle naming the exact shape. The alternative considered was synthesising a
+ * plausible session object; that is precisely the guessing this project refuses,
+ * and a wrong-shaped fixture is worse than an empty one because the specs go
+ * green against a fiction.
+ */
+function renderFixtures(
+  layoutFile: string,
+  holes: Array<{ owner: string; name: string; exprText: string; line: number }>,
+  imports: Map<string, { specifier: string; line: string }>,
+): string {
+  const layoutRel = path.basename(layoutFile);
+  const importLines = [
+    ...new Set(
+      holes
+        .map((h) => imports.get(h.owner.split(".")[0] as string)?.line)
+        .filter((l): l is string => l !== undefined),
+    ),
+  ].join("\n");
+
+  const entries = holes
+    .map(
+      (h) =>
+        `  /** ${layoutRel}:${h.line} passed ${h.name}={${h.exprText.replace(/^\{|\}$/g, "")}} to <${h.owner}>. */\n` +
+        `  ${h.name}: {} as ComponentProps<typeof ${h.owner.split(".")[0]}>[${JSON.stringify(h.name)}],`,
+    )
+    .join("\n\n");
+
+  return `// Fixtures for the props flawless-react could not copy out of ${layoutRel},
+// because they are computed rather than literal.
+//
+// Owned by you: flawless-react writes this file once and never again — not even
+// with --force. provider.tsx beside it IS regenerated, so keep values here.
+import type { ComponentProps } from "react";
+${importLines}
+
+export const providerFixtures = {
+${entries}
+};
 `;
 }

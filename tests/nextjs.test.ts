@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { walkApiRoutes } from "../src/nextjs/apiRoutes.ts";
@@ -155,14 +155,43 @@ describe("ensureClientProviderWrapper", () => {
     const src = readFileSync(path.join(outDir, "provider.tsx"), "utf8");
     expect(src.startsWith('"use client";')).toBe(true);
     expect(src).toContain('import Providers from "@/components/Providers";');
-    expect(src).toContain('<Providers theme="dark">');
+    expect(src).toContain('<Providers theme="dark"');
     expect(src).toContain("{children}");
     expect(src).toContain("export default function FlawlessProvider");
     // The sibling <Toast /> does not enclose {children} and must stay out.
     expect(src).not.toContain("Toast");
-    // Non-literal attributes are dropped with a TODO instead of being copied.
-    expect(src).not.toContain("fonts=");
-    expect(src).toContain("TODO(flawless): layout passed fonts to <Providers>");
+    // A non-literal attribute becomes a typed hole in a sibling module rather
+    // than a comment: an editor squiggle naming the exact shape beats a TODO.
+    expect(src).toContain("fonts={providerFixtures.fonts}");
+    expect(src).toContain('import { providerFixtures } from "./provider.fixtures";');
+
+    const fixtures = readFileSync(path.join(outDir, "provider.fixtures.ts"), "utf8");
+    expect(fixtures).toContain("export const providerFixtures");
+    expect(fixtures).toContain('ComponentProps<typeof Providers>["fonts"]');
+    // The comment cites where the layout passed it, so the hole is traceable.
+    expect(fixtures).toMatch(/layout\.tsx:\d+ passed fonts=/);
+  });
+
+  test("--force refreshes the derived provider but never the fixtures", () => {
+    // The asymmetry is the point: provider.tsx is derived from the layout and
+    // can be rebuilt; the fixtures hold values a human typed against a real app
+    // and nothing can reconstruct them.
+    const outDir = tmpDir();
+    const ctx = {
+      root: NEXTAPP,
+      router: "app" as const,
+      appResolver: path.join(NEXTAPP, "src/app/layout.tsx"),
+      apiRoutes: [],
+    };
+    ensureClientProviderWrapper(ctx, outDir);
+    const fixturesPath = path.join(outDir, "provider.fixtures.ts");
+    writeFileSync(fixturesPath, "export const providerFixtures = { fonts: MINE };\n");
+    writeFileSync(path.join(outDir, "provider.tsx"), "// clobbered\n");
+
+    const again = ensureClientProviderWrapper(ctx, outDir, undefined, true);
+    expect(again?.created).toBe(true);
+    expect(readFileSync(path.join(outDir, "provider.tsx"), "utf8")).toContain("FlawlessProvider");
+    expect(readFileSync(fixturesPath, "utf8")).toContain("MINE");
   });
 
   test("never overwrites an existing provider.tsx", async () => {
