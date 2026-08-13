@@ -102,7 +102,9 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
 
   if (withBrowser) {
     for (const c of flat) {
-      if (c.info.isAsync) continue; // async server components cannot mount client-side
+      const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
+      // Only components that mount standalone can be driven in the browser host.
+      if (mode !== "client") continue;
       const specName = specNames.get(c) as string;
       files.push({
         relPath: `browser/${specName}.spec.ts`,
@@ -123,7 +125,11 @@ function renderUnitFile(
   const mocksImport = opts.mswSetup
     ? toImportPath(specDir, path.join(path.resolve(opts.outDir), "mocks", "node.ts"))
     : undefined;
-  return c.info.isAsync
+  const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
+  if (mode === "compound-part" || mode === "document-root") {
+    return constrainedSpec(c, importPath, providerImport, mode);
+  }
+  return mode === "rsc"
     ? rscSpec(c, importPath, providerImport)
     : unitSpec(c, opts.variants, importPath, providerImport, mocksImport, opts.apiRoutes);
 }
@@ -594,6 +600,71 @@ function emptyPayloadFor(fixture: unknown): string {
 
 const MOCK_SKIP =
   /^(react($|\/)|next\/(?!navigation|headers|cache)|.*\.(css|scss|sass|less|svg|png|jpe?g|gif|woff2?)$)/;
+
+/**
+ * A component that cannot be mounted standalone. Rather than emit a render
+ * assertion that can only fail, assert what IS verifiable — that the module
+ * exports a component — and state the reason in the file so the gap is visible
+ * rather than silently missing.
+ */
+function constrainedSpec(
+  c: FlatComponent,
+  importPath: string,
+  providerImport: string | undefined,
+  mode: "compound-part" | "document-root",
+): string {
+  const info = c.info;
+  const name = info.componentName;
+  const note = (info.renderNotes ?? []).join(" ");
+  void providerImport;
+
+  if (mode === "document-root") {
+    const propsLiteral = JSON.stringify(info.propsShape);
+    const promiseProps = info.promiseProps ?? [];
+    const invoke = info.isAsync ? `await ${name}(props as never)` : `${name}(props as never)`;
+    return `import { test, expect, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import type * as React from "react";
+${emitComponentImport(info, importPath)}
+
+// ${name} ${note}.
+// Mounting it with Testing Library would nest <html> inside a container div:
+// jsdom tolerates that silently, so the test would pass while asserting
+// nothing true. Its contract is checked as static markup instead.
+const DEFAULTS: Record<string, unknown> = ${propsLiteral};
+const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
+const SLOT = "flawless-slot";
+
+test("${name} returns a document root containing its children", async () => {
+  const props: Record<string, unknown> = {
+    ...DEFAULTS,
+    children: <div data-testid={SLOT} />,
+  };
+  for (const k of PROMISE_PROPS) {
+    if (k in props) props[k] = Promise.resolve(props[k]);
+  }
+  const ui = ${invoke};
+  const html = renderToStaticMarkup(ui as React.ReactElement);
+  expect(html).toMatch(/^<html/);
+  expect(html).toContain("<body");
+  expect(html).toContain(SLOT);
+  void vi;
+});
+`;
+  }
+
+  return `import { test, expect } from "vitest";
+${emitComponentImport(info, importPath)}
+
+// ${name} ${note}
+// Rendering it on its own throws, so this spec asserts only what is true in
+// isolation. TODO(flawless): wrap renderTarget() in the matching Root with an
+// open state to assert its content.
+test("${name} is exported as a component", () => {
+  expect(typeof ${name}).toMatch(/function|object/);
+});
+`;
+}
 
 function rscSpec(c: FlatComponent, importPath: string, providerImport: string | undefined): string {
   const info = c.info;

@@ -8,6 +8,7 @@ import { extractHookDetails, extractHooks } from "./extractHooks.ts";
 import { extractInteractions } from "./extractInteractions.ts";
 import { extractProps } from "./extractProps.ts";
 import { extractPropUsage } from "./extractPropUsage.ts";
+import { extractRenderMode } from "./extractRenderMode.ts";
 import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
 import { extractStaticText } from "./extractStaticText.ts";
@@ -117,6 +118,7 @@ async function analyseOne(
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
   const rootTag = extractRootTag(unit.bodyNode);
   const staticText = extractStaticText(unit.bodyNode);
+  const render = extractRenderMode(unit.bodyNode, parsed.imports, unit.isAsync);
   // Data deps and guards only mean something for a server component that
   // awaits its data; running them elsewhere would be noise.
   const dataDeps = unit.isAsync
@@ -163,6 +165,8 @@ async function analyseOne(
     dataDeps,
     guards,
     ...(rootTag ? { rootTag } : {}),
+    renderMode: render.mode,
+    ...(render.note ? { renderNotes: [render.note] } : {}),
     moduleImports,
   };
 

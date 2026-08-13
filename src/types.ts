@@ -181,6 +181,13 @@ export interface ChildAttrInfo {
   pos: SourcePosition;
 }
 
+/**
+ * How a component can be mounted in a test. Anything other than client/rsc is
+ * a component that cannot be rendered standalone, and the spec says so instead
+ * of emitting an assertion that cannot pass.
+ */
+export type RenderMode = "client" | "rsc" | "document-root" | "compound-part" | "null";
+
 /** Inferred shape of a value an async server component awaits. */
 export type MockShape =
   | { kind: "array"; element?: MockShape }
@@ -302,6 +309,10 @@ export interface ComponentInfo {
   variantOptions?: Record<string, PropValue[]>;
   /** Lowercase host tag of the unconditionally-returned JSX root, when unambiguous. */
   rootTag?: string;
+  /** How this component can be mounted; drives which spec template is used. */
+  renderMode?: RenderMode;
+  /** Why, in words — emitted into the spec and the run report. */
+  renderNotes?: string[];
   /** Literal text rendered unconditionally by the happy-path return. */
   staticText?: string[];
   /** Awaited module-level data dependencies (async server components only). */
