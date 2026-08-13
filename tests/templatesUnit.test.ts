@@ -204,10 +204,14 @@ describe("renderUnitBrowser async server components", () => {
     expect(paths).toContain("browser/Chip.spec.ts");
 
     const src = contentOf(files, "unit/Page.test.tsx");
-    expect(src).toContain("ui = await Page(buildProps() as never);");
-    // notFound()/redirect() abort rendering; the spec asserts that outcome
-    // instead of failing on it.
+    expect(src).toContain("const ui: React.ReactNode = await Page(buildProps() as never);");
+    // render() sits INSIDE the try: the throw often happens there rather than in
+    // the component call, and a guard outside it would miss the case entirely.
+    expect(src).toMatch(/try \{[\s\S]*render\(<>\{ui\}<\/>\);[\s\S]*\} catch/);
+    // notFound()/redirect() abort rendering; anything else is rethrown as
+    // itself rather than asserted against the guard pattern.
     expect(src).toContain("notFound\\(\\) called|NEXT_REDIRECT");
+    expect(src).toContain("throw err;");
     expect(src).toContain('redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); })');
     expect(src).toContain('import Page from "../../src/Page";');
     expect(src).toContain('const PROMISE_PROPS: string[] = ["params"];');

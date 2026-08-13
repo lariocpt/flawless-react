@@ -827,22 +827,40 @@ ${providerLine}${emitComponentImport(info, importPath)}
 // resolved JSX is rendered directly. Module-level data dependencies above are
 // mocked — fill in fixtures to make the assertions meaningful.
 ${propsBlock}
-test("${name} (RSC): resolves, or takes one of its declared guard paths", async () => {
-  let ui: React.ReactNode;
+test("${name} (RSC): resolves, or takes one of its declared guard paths", async (t) => {
   try {
-    ui = await ${name}(${callArgs});
+    const ui: React.ReactNode = await ${name}(${callArgs});
+    ${renderExpr};
   } catch (err) {
     // notFound()/redirect() are legitimate outcomes when the mocked data layer
-    // returns nothing — this component declares ${guardSummary}. Assert that
-    // this is what happened rather than that nothing broke.
-    expect(String(err)).toMatch(/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/);
-    return;
+    // returns nothing — this component declares ${guardSummary}.
+    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;
+${uncertainEscape(info)}    // Not a guard and not an admitted gap: a real failure, reported as itself
+    // rather than as a confusing "expected TypeError to match /notFound/".
+    throw err;
   }
-  ${renderExpr};
   expect(document.body.innerHTML.length).toBeGreaterThan(0);
   void screen;
 });
 ${staticTextTests}${guardTests}`;
+}
+
+/**
+ * When the analyser could not infer a data dependency's return shape, it says so
+ * in the mock and stands the value up as `{}`. If the component — or a child it
+ * renders — then reads a field off that, the crash is the tool reporting its own
+ * admitted gap, not a defect in the code under test.
+ *
+ * Reporting it as skipped keeps that distinction visible. Passing would claim
+ * coverage that does not exist; failing would blame the application for a
+ * fixture the tool never had.
+ */
+function uncertainEscape(info: ComponentInfo): string {
+  const uncertain = (info.dataDeps ?? []).some((d) => d.uncertain || d.shape.kind === "unknown");
+  if (!uncertain) return "";
+  return `    // A data mock whose shape could not be inferred (see the TODO above).
+    t.skip(\`data fixture missing — \${String(err)}\`);
+`;
 }
 
 /**
