@@ -155,34 +155,47 @@ function extractLabel(
     // among them. Taking the first fragment and calling it the whole accessible
     // name turned `Record payment ({fmt(due)} outstanding)` into the exact name
     // "Record payment (", which no rendered element can equal.
-    let literal = "";
+    // Contiguous literal RUNS, not one concatenation. Joining across a dynamic
+    // child produced "Record payment ( outstanding)" for
+    // `Record payment ({fmt(due)} outstanding)` — a string that appears nowhere,
+    // because the amount sits between the two halves.
+    const runs: string[] = [];
+    let run = "";
     let hasDynamic = false;
     let propLabel: LabelSource | undefined;
 
+    const endRun = (): void => {
+      const text = run.replace(/\s+/g, " ").trim();
+      if (text) runs.push(text);
+      run = "";
+    };
+
     for (const child of parent.children) {
       if (ts.isJsxText(child)) {
-        literal += child.text;
+        run += child.text;
         continue;
       }
       if (ts.isJsxExpression(child) && child.expression) {
         if (ts.isStringLiteral(child.expression)) {
-          literal += child.expression.text;
+          run += child.expression.text;
           continue;
         }
         if (ts.isIdentifier(child.expression) && propNames.has(child.expression.text)) {
           propLabel ??= { kind: "prop", propName: child.expression.text };
         }
       }
-      // An icon element, an interpolation, a call: contributes text we cannot
-      // predict, so whatever literal we have is a fragment of the real name.
+      // An icon element, an interpolation, a call: text we cannot predict, so
+      // whatever ran up to here is a fragment of the real accessible name.
       hasDynamic = true;
+      endRun();
     }
+    endRun();
 
-    const value = literal.replace(/\s+/g, " ").trim();
-    if (value) {
-      if (!hasDynamic) return { kind: "text", value };
-      // Too short to identify anything — "(" or "—" would match half the page.
-      if (value.length >= MIN_LABEL_FRAGMENT) return { kind: "text-partial", value };
+    if (!hasDynamic && runs.length === 1) return { kind: "text", value: runs[0] as string };
+    // The longest run is the most identifying thing the source offers.
+    const longest = runs.sort((a, b) => b.length - a.length)[0];
+    if (longest && longest.length >= MIN_LABEL_FRAGMENT) {
+      return { kind: "text-partial", value: longest };
     }
     if (propLabel) return propLabel;
   }

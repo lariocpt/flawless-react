@@ -36,12 +36,33 @@ const SKIP_CALLEE_ROOTS = new Set([
 /** Members that prove a value is an array without naming a data field. */
 const ARRAY_METHODS = new Set(["map", "filter", "forEach", "find", "slice", "some", "every"]);
 
-/** Kinds a field can settle on — fields never nest into objects (see fieldKind). */
-type FieldKind = "string" | "number" | "date-string" | "array" | "unknown";
+/** String methods that prove the receiver is a string rather than an object. */
+const STRING_METHODS = new Set([
+  "toLowerCase",
+  "toUpperCase",
+  "trim",
+  "split",
+  "startsWith",
+  "endsWith",
+  "includes",
+  "replace",
+  "replaceAll",
+  "padStart",
+  "padEnd",
+  "charAt",
+  "substring",
+  "toLocaleDateString",
+  "toLocaleTimeString",
+  "toISOString",
+]);
+
+type FieldKind = "string" | "number" | "date-string" | "array" | "object" | "unknown";
 
 interface FieldNote {
   kinds: Set<FieldKind>;
   rendersAsText: boolean;
+  /** Fields read off this one, when it turned out to hold an object. */
+  nested?: FieldNotes;
 }
 
 type FieldNotes = Map<string, FieldNote>;
@@ -58,9 +79,71 @@ export function extractDataDeps(
   for (const stmt of bodyStatements(bodyNode)) {
     if (!ts.isVariableStatement(stmt)) continue;
     for (const decl of stmt.declarationList.declarations) {
+      const parallel = buildPromiseAllDeps(decl, bodyNode, sourceFile, imports);
+      if (parallel) {
+        out.push(...parallel);
+        continue;
+      }
       const dep = buildDep(decl, bodyNode, sourceFile, imports);
       if (dep) out.push(dep);
     }
+  }
+  return out;
+}
+
+/**
+ * `const [a, b] = await Promise.all([f(), g()])` — one dependency per element.
+ *
+ * buildDep bails on this twice over: "Promise" is a skipped callee root, and the
+ * binding is an array pattern rather than an identifier. So both f and g got a
+ * bare vi.fn() returning undefined, and the component crashed on `a.length` with
+ * an error that named neither call.
+ *
+ * Position i of the array literal pairs with binding i. Anything that breaks
+ * that correspondence — a spread, an omitted slot, a rest element, a non-call
+ * element — returns undefined so the caller falls back to the single-dep path.
+ */
+function buildPromiseAllDeps(
+  decl: ts.VariableDeclaration,
+  bodyNode: ts.Node,
+  sourceFile: ts.SourceFile,
+  imports: Map<string, ImportBinding>,
+): DataDepInfo[] | undefined {
+  if (!ts.isArrayBindingPattern(decl.name)) return undefined;
+  const init = decl.initializer;
+  if (!init || !ts.isAwaitExpression(init)) return undefined;
+  const call = init.expression;
+  if (!ts.isCallExpression(call)) return undefined;
+  const callee = dottedName(call.expression);
+  if (callee?.text !== "Promise.all") return undefined;
+
+  const arg = call.arguments[0];
+  if (!arg || !ts.isArrayLiteralExpression(arg)) return undefined;
+  const elements = decl.name.elements;
+  if (elements.length !== arg.elements.length) return undefined;
+
+  const out: DataDepInfo[] = [];
+  for (const [i, binding] of elements.entries()) {
+    if (!ts.isBindingElement(binding) || binding.dotDotDotToken) return undefined;
+    if (!ts.isIdentifier(binding.name)) return undefined;
+    const element = arg.elements[i];
+    if (!element || !ts.isCallExpression(element)) return undefined;
+    const elementCallee = dottedName(element.expression);
+    if (!elementCallee || SKIP_CALLEE_ROOTS.has(elementCallee.root)) return undefined;
+
+    const varName = binding.name.text;
+    const inferred = inferShape(varName, bodyNode, sourceFile);
+    const specifier = imports.get(elementCallee.root)?.specifier;
+    out.push({
+      varName,
+      callee: elementCallee.text,
+      calleeRoot: elementCallee.root,
+      ...(specifier !== undefined ? { specifier } : {}),
+      awaited: true,
+      pos: posOf(decl, sourceFile),
+      shape: inferred.shape,
+      uncertain: inferred.uncertain,
+    });
   }
   return out;
 }
@@ -171,7 +254,7 @@ function inferShape(
         collectElementFields(parent, sourceFile, elementFields);
         continue;
       }
-      noteField(objectFields, member, fieldKind(parent), isJsxTextChild(parent));
+      noteField(objectFields, member, fieldKind(parent), isJsxTextChild(parent), nestedOf(parent));
       continue;
     }
 
@@ -243,7 +326,7 @@ function collectElementFields(
     const member = parent.name.text;
     // Builtins name no data field, so mocking them would invent a key.
     if (member === "length" || ARRAY_METHODS.has(member)) continue;
-    noteField(notes, member, fieldKind(parent), isJsxTextChild(parent));
+    noteField(notes, member, fieldKind(parent), isJsxTextChild(parent), nestedOf(parent));
   }
 }
 
@@ -266,27 +349,52 @@ function fieldKind(access: ts.PropertyAccessExpression): FieldKind {
     if (!ts.isIdentifier(parent.name)) return "unknown";
     const inner = parent.name.text;
     if (inner === "toFixed") return "number";
-    if (inner === "map" || inner === "length") return "array";
-    return "unknown";
+    if (inner === "length" || ARRAY_METHODS.has(inner)) return "array";
+    // A string method proves the field is a string, which the default already
+    // covers — but saying so explicitly keeps it out of the "object" branch.
+    if (STRING_METHODS.has(inner)) return "string";
+    // `session.user.email` — a further property read means this field holds an
+    // object. Reporting "unknown" mocked it as the string "flawless-user", and
+    // then `.email` was undefined and `.toLowerCase()` threw.
+    return "object";
   }
   return "string";
 }
 
-function noteField(notes: FieldNotes, name: string, kind: FieldKind, rendersAsText: boolean): void {
+function noteField(
+  notes: FieldNotes,
+  name: string,
+  kind: FieldKind,
+  rendersAsText: boolean,
+  nestedAccess?: ts.PropertyAccessExpression,
+): void {
   const note = notes.get(name) ?? { kinds: new Set<FieldKind>(), rendersAsText: false };
   note.kinds.add(kind);
   note.rendersAsText = note.rendersAsText || rendersAsText;
+  // One level deeper, and only where the source actually read it. `session.user`
+  // followed by `.email` gives user: { email: … } rather than a bare {}, which
+  // would still be undefined at the read the component performs.
+  if (kind === "object" && nestedAccess && ts.isIdentifier(nestedAccess.name)) {
+    note.nested ??= new Map();
+    noteField(
+      note.nested,
+      nestedAccess.name.text,
+      fieldKind(nestedAccess),
+      isJsxTextChild(nestedAccess),
+    );
+  }
   notes.set(name, note);
 }
 
 function toFields(notes: FieldNotes): MockField[] {
   const out: MockField[] = [];
   for (const [name, note] of notes) {
-    out.push({
-      name,
-      shape: shapeOfFieldKind(settleKind(note.kinds)),
-      rendersAsText: note.rendersAsText,
-    });
+    const kind = settleKind(note.kinds);
+    const shape: MockShape =
+      kind === "object" && note.nested && note.nested.size > 0
+        ? { kind: "object", fields: toFields(note.nested) }
+        : shapeOfFieldKind(kind);
+    out.push({ name, shape, rendersAsText: note.rendersAsText });
   }
   return out;
 }
@@ -303,6 +411,14 @@ function settleKind(kinds: Set<FieldKind>): FieldKind {
   return specific.length === 1 ? first : "unknown";
 }
 
+/** The `x.y.z` access hanging off `x.y`, when there is one. */
+function nestedOf(access: ts.PropertyAccessExpression): ts.PropertyAccessExpression | undefined {
+  const parent = access.parent;
+  return parent && ts.isPropertyAccessExpression(parent) && parent.expression === access
+    ? parent
+    : undefined;
+}
+
 function shapeOfFieldKind(kind: FieldKind): MockShape {
   switch (kind) {
     case "number":
@@ -313,6 +429,10 @@ function shapeOfFieldKind(kind: FieldKind): MockShape {
       return { kind: "array" };
     case "unknown":
       return { kind: "unknown" };
+    case "object":
+      // An object with no observed fields: {} survives a property read, which is
+      // the most a bare `x.y` with no further use can honestly support.
+      return { kind: "truthy-object" };
     default:
       return { kind: "string" };
   }

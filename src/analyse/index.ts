@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { AnalyseOptions, ComponentInfo, ComponentTree } from "../types.ts";
+import type { AnalyseOptions, ComponentInfo, ComponentTree, RenderMode } from "../types.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
 import { extractDataDeps } from "./extractDataDeps.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
@@ -15,6 +15,7 @@ import { extractStaticText } from "./extractStaticText.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { makeEnv } from "./renderPath.ts";
+import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
@@ -93,9 +94,9 @@ async function analyseOne(
     cache,
   );
   const {
-    propsShape,
+    propsShape: typedProps,
     variants,
-    unresolvedProps,
+    unresolvedProps: unresolvedFromTypes,
     unresolvedTypes,
     propPositions,
     promiseProps,
@@ -103,6 +104,14 @@ async function analyseOne(
     hostElement,
     acceptsChildren,
   } = props;
+  // A prop the type layer could not resolve, but which the body uses as an index
+  // key into a same-file literal table, has its values written out in that
+  // table. Recovering them here means the rest of the analysis — the render env,
+  // the interaction harvest, the spec's DEFAULTS — all see a real value.
+  const indexKeys = resolveIndexKeyProps(unit.bodyNode, parsed.sourceFile, unresolvedFromTypes);
+  const propsShape = { ...typedProps, ...indexKeys.defaults };
+  const unresolvedProps = unresolvedFromTypes.filter((p) => !(p in indexKeys.defaults));
+
   const hooks = extractHooks(unit.bodyNode);
   const state = extractState(unit.bodyNode, parsed.sourceFile);
   const scope = buildComponentScope(unit, props, state, unit.bodyNode);
@@ -122,7 +131,25 @@ async function analyseOne(
   );
   const rootTag = extractRootTag(unit.bodyNode, renderEnv);
   const staticText = extractStaticText(unit.bodyNode, renderEnv);
-  const render = extractRenderMode(unit.bodyNode, parsed.imports, unit.isAsync, renderEnv);
+  // Sibling components' modes, so a wrapper around a part is recognised as one
+  // too. Computed without local modes of their own: one hop is enough for the
+  // shadcn shape (SubContent → Content → MenuPrimitive.Popup) and keeps this
+  // free of ordering and cycle concerns.
+  const localModes = new Map<string, RenderMode>();
+  for (const other of parsed.components) {
+    if (other.componentName === unit.componentName) continue;
+    localModes.set(
+      other.componentName,
+      extractRenderMode(other.bodyNode, parsed.imports, other.isAsync).mode,
+    );
+  }
+  const render = extractRenderMode(
+    unit.bodyNode,
+    parsed.imports,
+    unit.isAsync,
+    renderEnv,
+    localModes,
+  );
   // Data deps and guards only mean something for a server component that
   // awaits its data; running them elsewhere would be noise.
   const dataDeps = unit.isAsync

@@ -32,6 +32,8 @@ export function extractRenderMode(
   imports: Map<string, ImportBinding>,
   isAsync: boolean,
   env: RenderEnv = emptyEnv(),
+  /** Render modes of the other components declared in the same file. */
+  localModes?: Map<string, RenderMode>,
 ): RenderModeResult {
   const expr = initialRenderExpression(bodyNode, env)?.expr;
 
@@ -52,6 +54,20 @@ export function extractRenderMode(
       note:
         `renders <${part.root}.${part.member}> from ${part.specifier}, which throws outside its ` +
         `Root. Wrap renderTarget() in the matching <Root open> to assert its content.`,
+    };
+  }
+
+  // A part can also be reached one hop away: DropdownMenuSubContent returns
+  // <DropdownMenuContent>, which is itself a part declared in the same file. The
+  // scan above only sees `X.Member` tags, so without this the wrapper looks
+  // perfectly renderable and its spec fails with "MenuRootContext is missing".
+  const localPart = findLocalCompoundPart(expr, localModes);
+  if (localPart) {
+    return {
+      mode: "compound-part",
+      note:
+        `renders <${localPart}>, itself a compound part that throws outside its Root. ` +
+        `Wrap renderTarget() in the matching <Root open> to assert its content.`,
     };
   }
 
@@ -104,6 +120,33 @@ function findUnrootedCompoundPart(
   visit(expr);
 
   return parts.find((p) => !rootsProvided.has(p.root));
+}
+
+/**
+ * The first same-file component in this subtree that is itself a compound part.
+ *
+ * Resolution is one hop and same-file only: a cross-file wrapper would need the
+ * child tree, which is built later and not available here.
+ */
+function findLocalCompoundPart(
+  expr: ts.Expression | undefined,
+  localModes: Map<string, RenderMode> | undefined,
+): string | undefined {
+  if (!expr || !localModes || localModes.size === 0) return undefined;
+
+  let found: string | undefined;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    let tagName: ts.JsxTagNameExpression | undefined;
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) tagName = n.tagName;
+    if (tagName && ts.isIdentifier(tagName) && localModes.get(tagName.text) === "compound-part") {
+      found = tagName.text;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(expr);
+  return found;
 }
 
 function intrinsicTagOf(expr: ts.Expression | undefined): string | undefined {
