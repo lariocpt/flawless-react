@@ -311,6 +311,8 @@ export interface RunContext {
   nextjs: NextjsContext | undefined;
   /** Emit unit specs next to the analysed source files instead of <outDir>/unit. */
   colocate?: boolean;
+  /** Every task id selected for this run, so tasks can honour cross-task deps. */
+  selectedTasks?: TaskId[];
 }
 
 export interface Task {

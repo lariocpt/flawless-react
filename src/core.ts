@@ -194,6 +194,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     json: false,
     nextjs: nextCtx,
     colocate: opts.colocate ?? false,
+    selectedTasks: taskIds,
   };
 
   const results: TaskResult[] = [];
@@ -263,7 +264,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         "flawless/playwright-report/",
         "flawless/node_modules/",
         "flawless/test-results/",
+        "flawless/e2e/test-results/",
         "flawless/e2e/.auth.json",
+        "flawless/load/last-*.json",
         "*.flawless.json",
       ]);
       if (added.length > 0) {

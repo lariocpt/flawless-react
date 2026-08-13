@@ -17,6 +17,8 @@ export interface ScaffoldUnitBrowserOptions {
   /** Overwrite existing colocated specs (in-outDir files are always rewritten). */
   force?: boolean;
   apiRoutes?: NextjsApiRoute[];
+  /** Emit Playwright browser specs (they need the perf-harness host). */
+  browserSpecs?: boolean;
 }
 
 export interface ScaffoldUnitBrowserResult {

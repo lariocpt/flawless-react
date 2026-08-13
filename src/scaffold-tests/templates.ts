@@ -52,16 +52,25 @@ export interface UnitBrowserRenderOptions {
   colocate?: boolean;
   /** API routes with response bodies, for fetch-spec fixtures. */
   apiRoutes?: NextjsApiRoute[];
+  /**
+   * Emit the Playwright browser specs. They drive the perf-harness host
+   * (`host/server.ts`), so without that host in the same outDir they cannot
+   * run — the caller passes false when perf-harness isn't part of the run.
+   */
+  browserSpecs?: boolean;
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
   const flat = flatten(opts.trees);
   const specNames = allocateSpecNames(flat);
+  const withBrowser = opts.browserSpecs !== false;
   const files: RenderedFile[] = [
     { relPath: "vitest.config.ts", content: vitestConfig(opts) },
     { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) },
-    { relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() },
   ];
+  if (withBrowser) {
+    files.push({ relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() });
+  }
 
   const perFile = new Map<string, number>();
   for (const c of flat) perFile.set(c.info.filePath, (perFile.get(c.info.filePath) ?? 0) + 1);
@@ -90,13 +99,15 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
     }
   }
 
-  for (const c of flat) {
-    if (c.info.isAsync) continue; // async server components cannot mount client-side
-    const specName = specNames.get(c) as string;
-    files.push({
-      relPath: `browser/${specName}.spec.ts`,
-      content: browserSpec(c),
-    });
+  if (withBrowser) {
+    for (const c of flat) {
+      if (c.info.isAsync) continue; // async server components cannot mount client-side
+      const specName = specNames.get(c) as string;
+      files.push({
+        relPath: `browser/${specName}.spec.ts`,
+        content: browserSpec(c),
+      });
+    }
   }
   return files;
 }

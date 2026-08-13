@@ -1,0 +1,10 @@
+{
+  "name": "nextapp",
+  "scripts": {
+    "dev": "next dev -p 3123"
+  },
+  "dependencies": {
+    "next": "15.0.0",
+    "react": "^18.3.0"
+  }
+}

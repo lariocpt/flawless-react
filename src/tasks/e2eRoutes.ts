@@ -120,6 +120,8 @@ const authState = path.join(__dirname, ".auth.json"); // playwright transpiles c
 export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.ts",
+  // Keep traces/screenshots inside flawless/ instead of littering the project root.
+  outputDir: path.join(__dirname, "test-results"),
   workers: 1,
   reporter: [["list"]],
   globalSetup: "./global-setup.ts",

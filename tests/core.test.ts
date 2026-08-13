@@ -1,0 +1,156 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { runCore, UsageError } from "../src/core.ts";
+import { runFlawless } from "../src/index.ts";
+
+const FIXTURES = path.resolve(__dirname, "fixtures");
+const DASHBOARD = path.join(FIXTURES, "Dashboard.tsx");
+
+const tmpDirs: string[] = [];
+
+function tmpOutDir(): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-core-"));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+/** Inline summaries land next to the analysed sources — never leave them behind. */
+function sidecars(): string[] {
+  return readdirSync(FIXTURES).filter((f) => f.endsWith(".flawless.json"));
+}
+
+function removeSidecars(): void {
+  for (const f of sidecars()) unlinkSync(path.join(FIXTURES, f));
+}
+
+beforeAll(() => {
+  removeSidecars();
+});
+
+afterAll(() => {
+  removeSidecars();
+  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("runCore", () => {
+  test("unit-browser task on the Dashboard fixture resolves without exiting", async () => {
+    const outDir = tmpOutDir();
+    const result = await runCore({
+      pattern: DASHBOARD,
+      outDir,
+      taskIds: ["unit-browser"],
+      log: false,
+      inlineSummary: false,
+    });
+
+    // Reaching this line at all proves runCore never called process.exit.
+    expect(result.exitCode).toBe(0);
+    expect(result.outDir).toBe(path.resolve(outDir));
+    expect(result.results.length).toBeGreaterThan(0);
+
+    const unit = result.results.find((r) => r.id === "unit-browser");
+    expect(unit).toBeDefined();
+    expect(unit?.ok).toBe(true);
+    expect(unit?.error).toBeUndefined();
+    expect((unit?.outputs ?? []).length).toBeGreaterThan(0);
+
+    expect(result.trees).toHaveLength(1);
+    expect(result.trees[0]?.entry.componentName).toBe("Dashboard");
+    expect(result.nextjs).toBeUndefined();
+  });
+
+  test("a pattern matching nothing throws UsageError instead of exiting", async () => {
+    const outDir = tmpOutDir();
+    const patterns = [
+      // Plain path that does not exist (no glob characters).
+      path.join(outDir, "NoSuchComponent.tsx"),
+      // Glob inside a real directory that matches no file.
+      path.join(FIXTURES, "ZzNoSuchComponent-*.tsx"),
+    ];
+    for (const pattern of patterns) {
+      let caught: unknown;
+      try {
+        await runCore({
+          pattern,
+          outDir,
+          taskIds: ["perf-static"],
+          log: false,
+          inlineSummary: false,
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(UsageError);
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain("no files matched");
+    }
+  });
+
+  test("perf-static returns findings and writes reports/summary.json", async () => {
+    const outDir = tmpOutDir();
+    const result = await runCore({
+      pattern: DASHBOARD,
+      outDir,
+      taskIds: ["perf-static"],
+      log: false,
+      inlineSummary: false,
+    });
+
+    const perf = result.results.find((r) => r.id === "perf-static");
+    expect(perf).toBeDefined();
+    expect(perf?.ok).toBe(true);
+    expect((perf?.findings ?? []).length).toBeGreaterThan(0);
+    for (const finding of perf?.findings ?? []) {
+      expect(finding.source).toBe("perf-static");
+    }
+
+    const summaryPath = path.join(result.outDir, "reports", "summary.json");
+    expect(existsSync(summaryPath)).toBe(true);
+    const summary = (await Bun.file(summaryPath).json()) as {
+      ts: string;
+      results: Array<{ id: string; ok: boolean; findings: number }>;
+    };
+    expect(summary.results.map((r) => r.id)).toContain("perf-static");
+    expect(summary.results[0]?.findings).toBe(perf?.findings.length ?? -1);
+  });
+
+  test("inlineSummary:false leaves no <Component>.flawless.json beside the source", async () => {
+    expect(sidecars()).toEqual([]);
+    const outDir = tmpOutDir();
+    await runCore({
+      pattern: DASHBOARD,
+      outDir,
+      taskIds: ["perf-static"],
+      log: false,
+      inlineSummary: false,
+    });
+    expect(sidecars()).toEqual([]);
+    expect(existsSync(path.join(FIXTURES, "Dashboard.flawless.json"))).toBe(false);
+    expect(existsSync(path.join(FIXTURES, "Hello.flawless.json"))).toBe(false);
+    expect(existsSync(path.join(FIXTURES, "Card.flawless.json"))).toBe(false);
+  });
+});
+
+describe("runFlawless", () => {
+  test("returns the CoreResult shape and never exits", async () => {
+    const out = tmpOutDir();
+    const result = await runFlawless({
+      entry: DASHBOARD,
+      out,
+      tasks: ["unit-browser"],
+      inlineSummary: false,
+    });
+
+    expect(result.outDir).toBe(path.resolve(out));
+    expect(Array.isArray(result.results)).toBe(true);
+    expect(Array.isArray(result.trees)).toBe(true);
+    expect(result.trees[0]?.entry.componentName).toBe("Dashboard");
+    expect(result.exitCode).toBe(0);
+    expect(result.nextjs).toBeUndefined();
+    expect(result.provider).toBeUndefined();
+    // log defaults to false for the programmatic API.
+    expect(sidecars()).toEqual([]);
+  });
+});

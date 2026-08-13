@@ -1,0 +1,52 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "nextapp",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/items": {
+      "get": {
+        "summary": "List items",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "example": { "items": [{ "id": 1, "name": "Widget" }] }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an item",
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "example": { "id": 2, "name": "Gadget" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/items/{id}": {
+      "get": {
+        "summary": "Read one item",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "example": { "id": 1, "name": "Widget" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

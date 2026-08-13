@@ -22,7 +22,11 @@ export const unitAndBrowser: Task = {
       };
     }
     const projectRoot = ctx.nextjs?.root;
+    // Browser specs drive the perf-harness host; emitting them without it
+    // would hand the user a suite that cannot start.
+    const browserSpecs = ctx.selectedTasks === undefined || ctx.selectedTasks.includes("perf-harness");
     const { written, skipped } = await scaffoldUnitBrowser({
+      browserSpecs,
       trees: ctx.trees,
       outDir: ctx.outDir,
       variants: ctx.variants,
@@ -39,12 +43,15 @@ export const unitAndBrowser: Task = {
       skipped.length > 0
         ? ` (${skipped.length} colocated spec(s) kept — rerun with --force to regenerate)`
         : "";
+    const browserNote = browserSpecs
+      ? ""
+      : " (browser specs skipped — add perf-harness to the task list for the host they need)";
     return {
       id: "unit-browser",
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit + browser tests for ${names.length} component(s): ${names.join(", ")}${skippedNote}`,
+      summary: `unit tests for ${names.length} component(s): ${names.join(", ")}${skippedNote}${browserNote}`,
     };
   },
 };
