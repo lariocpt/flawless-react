@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ComponentTree } from "../types.ts";
-import { renderUnitBrowser } from "./templates.ts";
+import { stringifyLike } from "../scaffold/adoptStyle.ts";
+import type { ComponentTree, NextjsApiRoute } from "../types.ts";
+import { type AliasEntry, renderUnitBrowser } from "./templates.ts";
 
 export interface ScaffoldUnitBrowserOptions {
   trees: ComponentTree[];
@@ -10,16 +11,35 @@ export interface ScaffoldUnitBrowserOptions {
   variants: number;
   skipInnerPackageJson?: boolean;
   mswSetup?: boolean;
+  provider?: string;
+  resolveAliases?: AliasEntry[];
+  colocate?: boolean;
+  /** Overwrite existing colocated specs (in-outDir files are always rewritten). */
+  force?: boolean;
+  apiRoutes?: NextjsApiRoute[];
 }
 
-export async function scaffoldUnitBrowser(opts: ScaffoldUnitBrowserOptions): Promise<string[]> {
+export interface ScaffoldUnitBrowserResult {
+  written: string[];
+  /** Colocated spec targets left untouched because they already exist (no --force). */
+  skipped: string[];
+}
+
+export async function scaffoldUnitBrowser(
+  opts: ScaffoldUnitBrowserOptions,
+): Promise<ScaffoldUnitBrowserResult> {
   const outDir = path.resolve(opts.outDir);
   await mkdir(outDir, { recursive: true });
 
   const files = renderUnitBrowser(opts);
   const written: string[] = [];
+  const skipped: string[] = [];
   for (const f of files) {
-    const abs = path.join(outDir, f.relPath);
+    const abs = f.absPath ?? path.join(outDir, f.relPath);
+    if (f.skipIfExists && !opts.force && existsSync(abs)) {
+      skipped.push(abs);
+      continue;
+    }
     await mkdir(path.dirname(abs), { recursive: true });
     await Bun.write(abs, f.content);
     written.push(abs);
@@ -29,7 +49,7 @@ export async function scaffoldUnitBrowser(opts: ScaffoldUnitBrowserOptions): Pro
     await mergePackageJson(outDir);
     written.push(path.join(outDir, "package.json"));
   }
-  return written;
+  return { written, skipped };
 }
 
 async function mergePackageJson(outDir: string): Promise<void> {
@@ -44,9 +64,11 @@ async function mergePackageJson(outDir: string): Promise<void> {
     devDependencies?: Record<string, string>;
   };
   let pkg: Pkg = {};
+  let source = "";
   if (existsSync(pkgPath)) {
     try {
-      pkg = JSON.parse(await readFile(pkgPath, "utf8")) as Pkg;
+      source = await readFile(pkgPath, "utf8");
+      pkg = JSON.parse(source) as Pkg;
     } catch {
       pkg = {};
     }
@@ -88,5 +110,5 @@ async function mergePackageJson(outDir: string): Promise<void> {
     "@testing-library/jest-dom": pkg.devDependencies?.["@testing-library/jest-dom"] ?? "^6.5.0",
   };
 
-  await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  await writeFile(pkgPath, stringifyLike(source, pkg));
 }

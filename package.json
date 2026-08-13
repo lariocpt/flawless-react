@@ -8,6 +8,11 @@
   "bin": {
     "flawless-react": "./bin/flawless-react"
   },
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin",
     "src",

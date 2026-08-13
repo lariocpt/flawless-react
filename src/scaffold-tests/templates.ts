@@ -1,5 +1,14 @@
 import path from "node:path";
-import type { ClickHandler, ComponentInfo, ComponentTree, FormInfo, PropsShape } from "../types.ts";
+import type {
+  ClickHandler,
+  ComponentInfo,
+  ComponentTree,
+  FetchCallInfo,
+  FormInfo,
+  NextjsApiRoute,
+  PropsShape,
+  StateInfo,
+} from "../types.ts";
 import {
   emitPlaywrightDispatch,
   emitPlaywrightSelector,
@@ -9,12 +18,25 @@ import {
 
 export interface FlatComponent {
   info: ComponentInfo;
-  importPath: string;
+  /** Component name of the nearest parent in the tree (undefined for roots). */
+  parentName: string | undefined;
 }
 
 export interface RenderedFile {
   relPath: string;
   content: string;
+  /** When set, write here instead of <outDir>/<relPath> (colocated specs). */
+  absPath?: string;
+  /** Never overwrite an existing file at the target (unless --force). */
+  skipIfExists?: boolean;
+}
+
+export interface AliasEntry {
+  /** Import prefix ("@/") or exact specifier ("react"). */
+  find: string;
+  /** Absolute replacement path (dir for prefixes, module path for exact). */
+  replacement: string;
+  prefix: boolean;
 }
 
 export interface UnitBrowserRenderOptions {
@@ -22,42 +44,98 @@ export interface UnitBrowserRenderOptions {
   outDir: string;
   variants: number;
   mswSetup?: boolean;
+  /** Absolute path of a .tsx default-exporting a provider wrapper. */
+  provider?: string;
+  /** vitest resolve.alias entries (tsconfig paths + react dedupe). */
+  resolveAliases?: AliasEntry[];
+  /** Emit unit specs beside the analysed sources as <base>.flawless.test.tsx. */
+  colocate?: boolean;
+  /** API routes with response bodies, for fetch-spec fixtures. */
+  apiRoutes?: NextjsApiRoute[];
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
-  const unitFlat = flattenForDir(opts.trees, opts.outDir, "unit");
-  const browserFlat = flattenForDir(opts.trees, opts.outDir, "browser");
+  const flat = flatten(opts.trees);
+  const specNames = allocateSpecNames(flat);
   const files: RenderedFile[] = [
-    { relPath: "vitest.config.ts", content: vitestConfig() },
+    { relPath: "vitest.config.ts", content: vitestConfig(opts) },
     { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) },
     { relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() },
   ];
-  for (const c of unitFlat) {
-    files.push({
-      relPath: `unit/${c.info.componentName}.test.tsx`,
-      content: unitSpec(c, opts.variants),
-    });
+
+  for (const c of flat) {
+    const specName = specNames.get(c) as string;
+    if (opts.colocate) {
+      const srcDir = path.dirname(c.info.filePath);
+      const base = path.basename(c.info.filePath).replace(/\.(tsx|jsx|ts|js)$/, "");
+      files.push({
+        relPath: `unit/${specName}.test.tsx`,
+        absPath: path.join(srcDir, `${base}.flawless.test.tsx`),
+        skipIfExists: true,
+        content: renderUnitFile(c, opts, srcDir, `./${base}`),
+      });
+    } else {
+      const fromDir = path.resolve(opts.outDir, "unit");
+      files.push({
+        relPath: `unit/${specName}.test.tsx`,
+        content: renderUnitFile(c, opts, fromDir, toRel(fromDir, c.info.filePath)),
+      });
+    }
   }
-  for (const c of browserFlat) {
+
+  for (const c of flat) {
+    if (c.info.isAsync) continue; // async server components cannot mount client-side
+    const specName = specNames.get(c) as string;
     files.push({
-      relPath: `browser/${c.info.componentName}.spec.ts`,
+      relPath: `browser/${specName}.spec.ts`,
       content: browserSpec(c),
     });
   }
   return files;
 }
 
-function flattenForDir(trees: ComponentTree[], outDir: string, subdir: string): FlatComponent[] {
+function renderUnitFile(
+  c: FlatComponent,
+  opts: UnitBrowserRenderOptions,
+  specDir: string,
+  importPath: string,
+): string {
+  const providerImport = opts.provider ? toRel(specDir, opts.provider) : undefined;
+  const mocksImport = opts.mswSetup
+    ? toRel(specDir, path.join(path.resolve(opts.outDir), "mocks", "node.ts"))
+    : undefined;
+  return c.info.isAsync
+    ? rscSpec(c, importPath, providerImport)
+    : unitSpec(c, opts.variants, importPath, providerImport, mocksImport, opts.apiRoutes);
+}
+
+function flatten(trees: ComponentTree[]): FlatComponent[] {
   const out: FlatComponent[] = [];
   const seen = new Set<string>();
-  const fromDir = path.resolve(outDir, subdir);
-  const walk = (t: ComponentTree): void => {
-    if (seen.has(t.entry.filePath)) return;
-    seen.add(t.entry.filePath);
-    out.push({ info: t.entry, importPath: toRel(fromDir, t.entry.filePath) });
-    for (const c of t.children) walk(c);
+  const walk = (t: ComponentTree, parentName: string | undefined): void => {
+    const key = `${t.entry.filePath}::${t.entry.componentName}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push({ info: t.entry, parentName });
+    }
+    for (const c of t.children) walk(c, t.entry.componentName);
   };
-  for (const t of trees) walk(t);
+  for (const t of trees) walk(t, undefined);
+  return out;
+}
+
+/** First claimant keeps the bare name; same-named later components get Parent__Name, then __2. */
+function allocateSpecNames(flat: FlatComponent[]): Map<FlatComponent, string> {
+  const taken = new Set<string>();
+  const out = new Map<FlatComponent, string>();
+  for (const c of flat) {
+    let name = c.info.componentName;
+    if (taken.has(name) && c.parentName) name = `${c.parentName}__${c.info.componentName}`;
+    let i = 2;
+    while (taken.has(name)) name = `${c.info.componentName}__${i++}`;
+    taken.add(name);
+    out.set(c, name);
+  }
   return out;
 }
 
@@ -67,18 +145,44 @@ function toRel(fromDir: string, absFile: string): string {
   return rel.split(path.sep).join("/");
 }
 
-function vitestConfig(): string {
+/** Named vs default import, from the analyser's exportKind. */
+function emitComponentImport(info: ComponentInfo, importPath: string): string {
+  const stripped = importPath.replace(/\.(tsx|jsx)$/, "");
+  if (info.exportKind === "default") {
+    return `import ${info.componentName} from "${stripped}";`;
+  }
+  return `import { ${info.componentName} } from "${stripped}";`;
+}
+
+function vitestConfig(opts: UnitBrowserRenderOptions): string {
+  const aliasLines = (opts.resolveAliases ?? [])
+    .map((a) =>
+      a.prefix
+        ? `      { find: /^${escapeRegex(a.find)}/, replacement: ${JSON.stringify(`${a.replacement}/`)} },`
+        : `      { find: /^${escapeRegex(a.find)}$/, replacement: ${JSON.stringify(a.replacement)} },`,
+    )
+    .join("\n");
+  const resolveBlock =
+    aliasLines.length > 0 ? `  resolve: {\n    alias: [\n${aliasLines}\n    ],\n  },\n` : "";
+  const testDir = opts.colocate
+    ? `    dir: "..",
+    include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"],`
+    : `    include: ["unit/**/*.test.{ts,tsx}"],`;
   return `import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: {
+${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: ["./setup.ts"],
-    include: ["unit/**/*.test.{ts,tsx}"],
+${testDir}
     globals: true,
   },
 });
 `;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
 function setupTs(mswSetup: boolean): string {
@@ -98,29 +202,58 @@ afterAll(() => server.close());
 `;
 }
 
-function unitSpec(c: FlatComponent, variants: number): string {
-  const name = c.info.componentName;
-  const propsLiteral = JSON.stringify(c.info.propsShape);
-  const variantsLiteral = JSON.stringify(c.info.variants.slice(0, variants));
-  const interactions = c.info.interactions;
+// ---------------------------------------------------------------------------
+// Client-component unit spec
+// ---------------------------------------------------------------------------
 
-  const allHandlers = collectPropHandlers(c.info);
+function unitSpec(
+  c: FlatComponent,
+  variants: number,
+  importPath: string,
+  providerImport: string | undefined,
+  mocksImport: string | undefined,
+  apiRoutes: NextjsApiRoute[] | undefined,
+): string {
+  const info = c.info;
+  const name = info.componentName;
+  const propsLiteral = JSON.stringify(info.propsShape);
+  const variantsLiteral = JSON.stringify(info.variants.slice(0, variants));
+  const promiseProps = info.promiseProps ?? [];
+  const interactions = info.interactions;
+
+  const allHandlers = collectPropHandlers(info);
   const handlerObjectLiteral =
     allHandlers.length > 0 ? `{ ${allHandlers.map((h) => `${h}: vi.fn()`).join(", ")} }` : `{}`;
 
   const interactionTests = interactions
     ? emitInteractionTests(name, interactions, allHandlers)
-    : emitFallbackHandlerTests(name, c.info.propsShape, c.info.unresolvedProps);
+    : emitFallbackHandlerTests(name, info.propsShape, info.unresolvedProps);
+
+  const stateTests = emitStateTests(name, info);
+  const effectFetches = (info.fetchCalls ?? []).filter((f) => f.inEffect);
+  const fetchTests =
+    mocksImport && effectFetches.length > 0 ? emitFetchTests(name, effectFetches, apiRoutes) : "";
+
+  const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
+  const mswImports =
+    mocksImport && effectFetches.length > 0
+      ? `import { http, HttpResponse, delay } from "msw";\nimport { server } from "${mocksImport}";\n`
+      : "";
+
+  const renderExpr = providerImport
+    ? `render(<AppProvider><${name} {...(merged as unknown as Props)} /></AppProvider>)`
+    : `render(<${name} {...(merged as unknown as Props)} />)`;
 
   return `import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
-import { ${name} } from "${c.importPath}";
+${mswImports}${providerLine}${emitComponentImport(info, importPath)}
 
 type Props = React.ComponentProps<typeof ${name}>;
 
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
+const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
 const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
 const handlers: Record<string, ReturnType<typeof vi.fn>> = ${handlerObjectLiteral};
 
@@ -128,9 +261,17 @@ beforeEach(() => {
   for (const v of Object.values(handlers)) v.mockClear();
 });
 
-function renderTarget(extra: Record<string, unknown> = {}) {
+function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...DEFAULTS, ...handlers, ...extra };
-  return render(<${name} {...(merged as unknown as Props)} />);
+  for (const k of PROMISE_PROPS) {
+    if (k in merged) merged[k] = Promise.resolve(merged[k]);
+  }
+  return merged;
+}
+
+function renderTarget(extra: Record<string, unknown> = {}) {
+  const merged = buildProps(extra);
+  return ${renderExpr};
 }
 
 test("${name} renders at defaults without crashing", () => {
@@ -147,8 +288,255 @@ describe("${name} variants", () => {
 });
 
 ${interactionTests}
+${stateTests}${fetchTests}`;
+}
+
+// ---------------------------------------------------------------------------
+// State-derived tests
+// ---------------------------------------------------------------------------
+
+function emitStateTests(name: string, info: ComponentInfo): string {
+  const states = (info.state ?? []).filter((s) => s.kind !== "useRef");
+  if (states.length === 0) return "";
+
+  const parts: string[] = [];
+  const summary = states
+    .map(
+      (s) =>
+        `//   ${s.varName}${s.setterName ? ` / ${s.setterName}` : ""} (${s.typeKind}) = ${s.initialRaw ?? "?"}`,
+    )
+    .join("\n");
+  parts.push(`\n// Detected state:\n${summary}`);
+
+  for (const s of states) {
+    const witness = initialWitness(s);
+    if (witness) {
+      parts.push(`
+test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")} is rendered", () => {
+  renderTarget();
+  expect(screen.queryAllByText(${JSON.stringify(witness)}).length).toBeGreaterThan(0);
+});`);
+    }
+  }
+
+  // Interaction → state change: a click bound to a local handler that calls a setter.
+  const clicks = info.interactions?.clicks ?? [];
+  for (const s of states) {
+    for (const call of s.setterCalls) {
+      if (call.context !== "handler" || !call.enclosingName) continue;
+      const click = clicks.find(
+        (cl) => cl.binding.kind === "local" && cl.binding.localName === call.enclosingName,
+      );
+      if (!click) continue;
+      const selector = emitVitestSelector(click);
+      const dispatch = emitVitestDispatch(click.event, selector);
+      parts.push(`
+test("${name}: ${click.event} via ${call.enclosingName} → ${s.setterName ?? s.varName} updates", async () => {
+  renderTarget();
+  ${dispatch};
+  // TODO(flawless): assert the observable change for ${s.setterName ?? s.varName}(...) —
+  // the handler fires, but no text witness could be derived statically.
+  await waitFor(() => expect(document.body).toBeTruthy());
+});`);
+      break; // one interaction test per state var is enough scaffolding
+    }
+  }
+
+  return `${parts.join("\n")}\n`;
+}
+
+function initialWitness(s: StateInfo): string | undefined {
+  if (typeof s.initialValue !== "string" || s.initialValue.trim().length < 2) return undefined;
+  if (!s.flowsToJsx.some((f) => f.via === "child")) return undefined;
+  return s.initialValue;
+}
+
+function escapeTestName(s: string): string {
+  return s.replace(/"/g, "'").slice(0, 40);
+}
+
+// ---------------------------------------------------------------------------
+// Effect-driven fetch tests (MSW)
+// ---------------------------------------------------------------------------
+
+function emitFetchTests(
+  name: string,
+  fetches: FetchCallInfo[],
+  apiRoutes: NextjsApiRoute[] | undefined,
+): string {
+  const parts: string[] = [];
+  for (const f of fetches) {
+    const mswPath = f.urlTemplate;
+    const method = f.method.toLowerCase();
+    const fixture = fixtureFor(f, apiRoutes);
+    const fixtureLiteral = fixture !== undefined ? JSON.stringify(fixture) : "{}";
+    const fixtureComment =
+      fixture !== undefined
+        ? "// Fixture from the project's OpenAPI spec examples."
+        : "// TODO(flawless): no example found in the API spec — replace {} with a realistic fixture.";
+
+    parts.push(`
+describe("${name} ${f.method} ${mswPath}", () => {
+  const URL = ${JSON.stringify(mswPath)};
+  ${fixtureComment}
+  const FIXTURE: unknown = ${fixtureLiteral};
+
+  test("mount fetches and renders with a successful response", async () => {
+    let calls = 0;
+    server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
+    renderTarget();
+    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    // TODO(flawless): assert rendered content derived from FIXTURE.
+  });
+
+  test("stays stable while the response is delayed (loading state)", async () => {
+    let calls = 0;
+    server.use(http.${method}(URL, async () => { calls++; await delay(150); return HttpResponse.json(FIXTURE as never); }));
+    renderTarget();
+    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    // TODO(flawless): assert the loading indicator while the response is pending.
+  });
+
+  test("survives a 500 without crashing (error state)", async () => {
+    let calls = 0;
+    server.use(http.${method}(URL, () => { calls++; return new HttpResponse(null, { status: 500 }); }));
+    renderTarget();
+    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    // TODO(flawless): assert the error-state UI.
+  });
+
+  test("renders the empty state for an empty payload", async () => {
+    let calls = 0;
+    server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(${emptyPayloadFor(fixture)}); }));
+    renderTarget();
+    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    // TODO(flawless): assert the empty-state copy.
+  });
+});`);
+  }
+  return `\n${parts.join("\n")}\n`;
+}
+
+function fixtureFor(f: FetchCallInfo, apiRoutes: NextjsApiRoute[] | undefined): unknown {
+  if (!apiRoutes) return undefined;
+  const wanted = normalizeApiPath(f.urlTemplate);
+  for (const r of apiRoutes) {
+    if (normalizeApiPath(r.path) !== wanted) continue;
+    const body = r.responseBodies?.[f.method.toUpperCase()] ?? r.responseBodies?.GET;
+    if (body !== undefined) return body;
+  }
+  return undefined;
+}
+
+/** Compare /api/x/{id}/y, /api/x/:id/y and /api/x/:buildingId/y as the same shape. */
+function normalizeApiPath(p: string): string {
+  return p
+    .replace(/\{[^}]+\}/g, ":_")
+    .replace(/:[A-Za-z0-9_]+/g, ":_")
+    .replace(/\/+$/, "");
+}
+
+function emptyPayloadFor(fixture: unknown): string {
+  if (Array.isArray(fixture)) return "[]";
+  if (fixture && typeof fixture === "object") {
+    // Preserve the envelope but empty every array member: { items: [] }.
+    const emptied: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fixture as Record<string, unknown>)) {
+      emptied[k] = Array.isArray(v) ? [] : v;
+    }
+    return JSON.stringify(emptied);
+  }
+  return "{}";
+}
+
+// ---------------------------------------------------------------------------
+// RSC spec (async server components)
+// ---------------------------------------------------------------------------
+
+const MOCK_SKIP =
+  /^(react($|\/)|next\/(?!navigation|headers|cache)|.*\.(css|scss|sass|less|svg|png|jpe?g|gif|woff2?)$)/;
+
+function rscSpec(c: FlatComponent, importPath: string, providerImport: string | undefined): string {
+  const info = c.info;
+  const name = info.componentName;
+  const propsLiteral = JSON.stringify(info.propsShape);
+  const promiseProps = info.promiseProps ?? [];
+
+  const mocks: string[] = [];
+  for (const mi of info.moduleImports ?? []) {
+    if (mi.kind !== "value" || mi.isTypeOnly) continue;
+    if (MOCK_SKIP.test(mi.specifier)) continue;
+    if (mi.specifier === "server-only") {
+      mocks.push(`vi.mock("server-only", () => ({}));`);
+      continue;
+    }
+    if (mi.specifier === "next/navigation") {
+      mocks.push(`vi.mock("next/navigation", () => ({
+  notFound: vi.fn(() => { throw new Error("notFound() called"); }),
+  redirect: vi.fn(),
+  usePathname: vi.fn(() => "/"),
+  useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+}));`);
+      continue;
+    }
+    if (mi.specifier === "next/headers") {
+      mocks.push(`vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers()),
+  cookies: vi.fn(async () => ({ get: vi.fn(), getAll: vi.fn(() => []) })),
+}));`);
+      continue;
+    }
+    if (mi.names.length === 0) {
+      mocks.push(`vi.mock(${JSON.stringify(mi.specifier)}, () => ({}));`);
+      continue;
+    }
+    const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
+    const entries = named.map((n) => `${n}: vi.fn()`);
+    if (mi.hasDefault) entries.unshift("default: vi.fn()");
+    mocks.push(
+      `// TODO(flawless): give these mocks realistic return values for meaningful assertions.\nvi.mock(${JSON.stringify(mi.specifier)}, () => ({ ${entries.join(", ")} }));`,
+    );
+  }
+
+  const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
+  const renderExpr = providerImport
+    ? `render(<AppProvider>{ui}</AppProvider>)`
+    : `render(<>{ui}</>)`;
+
+  return `import { test, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+${mocks.join("\n")}
+${providerLine}${emitComponentImport(info, importPath)}
+
+// ${name} is an async server component: it is invoked as a function and its
+// resolved JSX is rendered directly. Module-level data dependencies above are
+// mocked — fill in fixtures to make the assertions meaningful.
+
+const DEFAULTS: Record<string, unknown> = ${propsLiteral};
+const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
+
+function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...DEFAULTS, ...extra };
+  for (const k of PROMISE_PROPS) {
+    if (k in merged) merged[k] = Promise.resolve(merged[k]);
+  }
+  return merged;
+}
+
+test("${name} (RSC): resolves and renders", async () => {
+  const ui = await ${name}(buildProps() as never);
+  ${renderExpr};
+  expect(document.body.innerHTML.length).toBeGreaterThan(0);
+  void screen;
+  // TODO(flawless): assert real content once the mocked modules return fixtures.
+});
 `;
 }
+
+// ---------------------------------------------------------------------------
+// Interaction tests
+// ---------------------------------------------------------------------------
 
 function collectPropHandlers(info: ComponentInfo): string[] {
   const out = new Set<string>();
@@ -309,6 +697,10 @@ test("${name} invokes ${p} when first button clicked (fallback)", async () => {
     )
     .join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Browser specs
+// ---------------------------------------------------------------------------
 
 function browserSpec(c: FlatComponent): string {
   const name = c.info.componentName;

@@ -1,33 +1,8 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { analyse } from "./analyse/index.ts";
-import {
-  detectComponentsGlob,
-  detectNextjs,
-  mergeIntoNextPackageJson,
-  updateGitignore,
-} from "./nextjs/detect.ts";
-import { emitNextjsMocks } from "./nextjs/emit.ts";
-import { fetchLiveSwagger } from "./nextjs/liveSpec.ts";
+import { runCore, UsageError } from "./core.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
-import {
-  printFindings,
-  printSummaryTable,
-  writeInlineSummaries,
-  writeSummaryJson,
-} from "./reporters/findings.ts";
-import { runGeneratedTests } from "./runner/runTests.ts";
-import { findTask, TASKS } from "./tasks/index.ts";
-import type {
-  CliArgs,
-  ComponentTree,
-  NextjsContext,
-  PropsShape,
-  RunContext,
-  Task,
-  TaskId,
-  TaskResult,
-} from "./types.ts";
+import { printSummaryTable } from "./reporters/findings.ts";
+import { TASKS } from "./tasks/index.ts";
+import type { CliArgs, PropsShape, TaskId } from "./types.ts";
 
 const HELP = `flawless-react — multi-task quality kit for React components
 
@@ -42,7 +17,12 @@ Positional:
 Options:
   --out <dir>            Output directory (default: ./.flawless)
   --tasks <csv>          Comma-separated task ids to run (skip the interactive menu).
-                         Available: perf-harness, unit-browser, perf-static, a11y, react-rules
+                         Available: perf-harness, unit-browser, perf-static, a11y,
+                         react-rules, e2e, load
+  --colocate             Emit unit specs beside the analysed sources as
+                         <name>.flawless.test.tsx (existing colocated specs are kept
+                         unless --force). The flawless/ dir keeps config + mocks.
+  --ci                   Shorthand for --no-interactive --json.
   --no-interactive       Never prompt; require a positional + --tasks.
   --run-tests            After generating, run the produced test suites.
   --no-inline-summary    Don't drop <Component>.flawless.json next to each source file.
@@ -77,6 +57,8 @@ const VALID_TASK_IDS: ReadonlySet<TaskId> = new Set<TaskId>([
   "perf-static",
   "a11y",
   "react-rules",
+  "e2e",
+  "load",
 ]);
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -243,10 +225,6 @@ function parseTaskList(s: string): TaskId[] {
   return ids;
 }
 
-function defaultOutDir(): string {
-  return path.join(process.cwd(), ".flawless");
-}
-
 export async function main(argv: string[]): Promise<void> {
   let args: CliArgs;
   try {
@@ -274,223 +252,46 @@ export async function main(argv: string[]): Promise<void> {
     taskIds = picked.tasks;
   }
 
-  if (taskIds === undefined || taskIds.length === 0) {
-    taskIds = ["perf-harness"];
-  }
-
-  let nextCtx: NextjsContext | undefined;
-  let liveSpec: unknown;
-  let providerOverride = args.provider ?? args.appResolver;
-  if (args.nextjs !== undefined) {
-    try {
-      nextCtx = await detectNextjs(args.nextjs);
-    } catch (err) {
-      process.stderr.write(`${(err as Error).message}\n`);
-      process.exit(2);
-    }
-    if (outDir === undefined) outDir = path.join(nextCtx.root, "flawless");
-    if (providerOverride === undefined) providerOverride = nextCtx.appResolver;
-    if (pattern === undefined) {
-      const detected = detectComponentsGlob(nextCtx.root);
-      if (detected) {
-        pattern = detected;
-        process.stdout.write(
-          `nextjs: no entry passed — defaulting to ${path.relative(nextCtx.root, detected)}\n`,
-        );
-      }
-    }
-    process.stdout.write(
-      `nextjs: ${nextCtx.root} (router=${nextCtx.router}, api-routes=${nextCtx.apiRoutes.length}, app-resolver=${nextCtx.appResolver ?? "<none>"})\n`,
-    );
-
-    if (args.swaggerUrl !== "off") {
-      const live = await fetchLiveSwagger(args.swaggerUrl);
-      if (live.ok && live.routes) {
-        const byPath = new Map(live.routes.map((r) => [r.path, r] as const));
-        for (const ar of nextCtx.apiRoutes) {
-          const match = byPath.get(ar.path);
-          if (match) {
-            ar.responseBodies = match.responseBodies;
-            for (const m of match.methods) {
-              if (!ar.methods.includes(m)) ar.methods.push(m);
-            }
-          }
-        }
-        for (const lr of live.routes) {
-          if (!nextCtx.apiRoutes.some((ar) => ar.path === lr.path)) nextCtx.apiRoutes.push(lr);
-        }
-        liveSpec = live.rawSpec;
-        process.stdout.write(
-          `nextjs: enriched routes from live OpenAPI at ${live.url} (paths=${live.routes.length})\n`,
-        );
-      } else if (args.swaggerUrl !== undefined) {
-        process.stderr.write(
-          `nextjs: live spec at ${live.url} unavailable (${live.error}); using static AST output\n`,
-        );
-      }
-    }
-  }
-
-  if (pattern === undefined) {
+  if (pattern === undefined && args.nextjs === undefined) {
     process.stderr.write(
       "missing entry path or glob. Pass a .tsx path, a glob, or run in a TTY for the interactive menu. See --help.\n",
     );
     process.exit(2);
   }
 
-  outDir = path.resolve(outDir ?? defaultOutDir());
-
-  const files = await expandGlob(pattern);
-  if (files.length === 0) {
-    process.stderr.write(`no files matched: ${pattern}\n`);
-    process.exit(2);
-  }
-
-  const trees: ComponentTree[] = [];
-  for (const file of files) {
-    try {
-      const tree = await analyse({
-        entry: file,
-        depth: args.depth,
-        includeChildren: args.includeChildren,
-      });
-      trees.push(tree);
-    } catch (err) {
-      process.stderr.write(`warning: skipping ${file}: ${(err as Error).message}\n`);
-    }
-  }
-  if (trees.length === 0) {
-    process.stderr.write("no analysable components found\n");
-    process.exit(2);
-  }
-
-  const firstTree = trees[0];
-  if (firstTree && args.propsOverride) {
-    firstTree.entry.propsShape = { ...firstTree.entry.propsShape, ...args.propsOverride };
-  }
-
-  const selected = taskIds.map((id) => findTask(id)).filter((t): t is Task => Boolean(t));
-
-  const ctx: RunContext = {
-    trees,
-    outDir,
-    variants: args.variants,
-    force: args.force,
-    report: args.report,
-    provider: providerOverride,
-    apiSpec: args.apiSpec,
-    inlineSummary: args.inlineSummary,
-    json: args.json,
-    nextjs: nextCtx,
-  };
-
-  const results: TaskResult[] = [];
-  let anyFailed = false;
-  for (const task of selected) {
-    try {
-      const r = await task.run(ctx);
-      results.push(r);
-      if (!r.ok) anyFailed = true;
-      printFindings(r.findings);
-    } catch (err) {
-      anyFailed = true;
-      results.push({
-        id: task.id,
-        ok: false,
-        outputs: [],
-        findings: [],
-        summary: "task threw",
-        error: (err as Error).message,
-      });
-    }
-  }
-
-  if (nextCtx) {
-    try {
-      const nm = await emitNextjsMocks(nextCtx, outDir, { liveSpec });
-      process.stdout.write(
-        `nextjs: wrote ${nm.written.length} mock file(s) under ${path.relative(process.cwd(), outDir)}/mocks/\n`,
-      );
-      await mergeIntoNextPackageJson(
-        nextCtx.root,
-        {},
-        {
-          msw: "^2.6.0",
-          vitest: "^2.1.0",
-          jsdom: "^25.0.0",
-          "@testing-library/react": "^16.0.0",
-          "@testing-library/user-event": "^14.5.0",
-          "@testing-library/jest-dom": "^6.5.0",
-          "@playwright/test": "^1.49.0",
-          "react-scan": "^0.4.3",
-        },
-        {
-          "flawless:unit": `vitest run --root ${path.relative(nextCtx.root, outDir)}`,
-          "flawless:perf": `playwright test --config ${path.relative(nextCtx.root, outDir)}/playwright.config.ts ${path.relative(nextCtx.root, outDir)}/tests`,
-          "flawless:browser": `playwright test --config ${path.relative(nextCtx.root, outDir)}/browser/playwright.config.ts`,
-        },
-      );
-      process.stdout.write(
-        `nextjs: merged dev deps + flawless:* scripts into ${path.join(nextCtx.root, "package.json")}\n`,
-      );
-      const added = updateGitignore(nextCtx.root, [
-        "flawless/reports/",
-        "flawless/heaps/",
-        "flawless/playwright-report/",
-        "flawless/node_modules/",
-        "*.flawless.json",
-      ]);
-      if (added.length > 0) {
-        process.stdout.write(
-          `nextjs: added ${added.length} entry(ies) to .gitignore (${added.join(", ")})\n`,
-        );
-      }
-    } catch (err) {
-      anyFailed = true;
-      process.stderr.write(`nextjs emit failed: ${(err as Error).message}\n`);
-    }
-  }
-
-  if (args.inlineSummary) {
-    await writeInlineSummaries(trees, results, outDir);
-  }
-  await writeSummaryJson(outDir, results);
-  printSummaryTable(results);
-
-  if (args.json) {
-    process.stdout.write(`${JSON.stringify({ outDir, results }, null, 2)}\n`);
-  }
-
-  const wantToRunTests =
-    !anyFailed &&
-    selected.some((t) => t.id === "perf-harness" || t.id === "unit-browser") &&
-    (args.runTests || (wantInteractive && (await confirmRunTests())));
-
-  if (wantToRunTests) {
-    await runGeneratedTests(
+  let result: Awaited<ReturnType<typeof runCore>>;
+  try {
+    result = await runCore({
+      pattern: pattern as string,
       outDir,
-      selected.map((t) => t.id),
+      taskIds,
+      depth: args.depth,
+      variants: args.variants,
+      includeChildren: args.includeChildren,
+      force: args.force,
+      report: args.report,
+      propsOverride: args.propsOverride,
+      provider: args.provider ?? args.appResolver,
+      apiSpec: args.apiSpec,
+      inlineSummary: args.inlineSummary,
+      nextjs: args.nextjs,
+      swaggerUrl: args.swaggerUrl,
+      colocate: args.colocate,
+      runTests: args.runTests || (wantInteractive && (await confirmRunTests())),
+    });
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.exit(err instanceof UsageError ? 2 : 1);
+  }
+
+  printSummaryTable(result.results);
+  if (args.json) {
+    process.stdout.write(
+      `${JSON.stringify({ outDir: result.outDir, results: result.results }, null, 2)}\n`,
     );
   }
-
   if (wantInteractive) {
-    await outro(anyFailed ? "done (with failures)" : "done");
+    await outro(result.exitCode !== 0 ? "done (with failures)" : "done");
   }
-
-  process.exit(anyFailed ? 1 : 0);
-}
-
-async function expandGlob(pattern: string): Promise<string[]> {
-  const abs = path.resolve(pattern);
-  if (existsSync(abs)) return [abs];
-  const hasGlobChar = /[*?[\]{}]/.test(pattern);
-  if (!hasGlobChar) {
-    return [];
-  }
-  const glob = new Bun.Glob(pattern);
-  const out: string[] = [];
-  for await (const f of glob.scan({ cwd: process.cwd(), absolute: true })) {
-    out.push(f);
-  }
-  return out.sort();
+  process.exit(result.exitCode);
 }
