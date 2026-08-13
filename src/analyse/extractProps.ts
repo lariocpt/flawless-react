@@ -177,7 +177,10 @@ function resolveTypeNode(node: ts.TypeNode, ctx: PropsResolveCtx): PartialProps 
 function flattenIntersection(node: ts.IntersectionTypeNode): ts.TypeNode[] {
   const out: ts.TypeNode[] = [];
   const walk = (n: ts.TypeNode): void => {
-    if (ts.isParenthesizedTypeNode(n)) return walk(n.type);
+    if (ts.isParenthesizedTypeNode(n)) {
+      walk(n.type);
+      return;
+    }
     if (ts.isIntersectionTypeNode(n)) {
       for (const t of n.types) walk(t);
       return;

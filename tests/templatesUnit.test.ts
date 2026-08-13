@@ -103,6 +103,39 @@ describe("renderUnitBrowser component import", () => {
   });
 });
 
+describe("emitted import paths", () => {
+  test("carry no .ts/.tsx extension — the target project type-checks these specs", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Widget", { exportKind: "default" }))],
+      outDir: OUT,
+      variants: 3,
+      provider: "/proj/test/AppProvider.tsx",
+      mswSetup: true,
+    });
+    // TS rejects .ts/.tsx import specifiers unless allowImportingTsExtensions
+    // is on. flawless's own source uses them (Bun); its output must not.
+    for (const f of files) {
+      const bad = [...f.content.matchAll(/from "([^"]+)"/g)]
+        .map((m) => m[1] as string)
+        .filter((spec) => /^\.{1,2}\//.test(spec) && /\.(tsx?|jsx?)$/.test(spec));
+      expect(bad).toEqual([]);
+    }
+  });
+
+  test("a component with no props is rendered without a props spread", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Bare"))],
+      outDir: OUT,
+      variants: 3,
+    });
+    const src = contentOf(files, "unit/Bare.test.tsx");
+    // ComponentProps<typeof Bare> is `unknown` for a zero-parameter component,
+    // and spreading that is a type error in the target project.
+    expect(src).toContain("render(<Bare />)");
+    expect(src).not.toContain("as unknown as Props");
+  });
+});
+
 describe("renderUnitBrowser provider option", () => {
   test("unit spec imports the provider and wraps the render", () => {
     const files = renderUnitBrowser({
@@ -112,10 +145,8 @@ describe("renderUnitBrowser provider option", () => {
       provider: "/proj/test/AppProvider.tsx",
     });
     const src = contentOf(files, "unit/Widget.test.tsx");
-    expect(src).toContain('import AppProvider from "../../test/AppProvider.tsx";');
-    expect(src).toContain(
-      "render(<AppProvider><Widget {...(merged as unknown as Props)} /></AppProvider>)",
-    );
+    expect(src).toContain('import AppProvider from "../../test/AppProvider";');
+    expect(src).toContain("render(<AppProvider><Widget /></AppProvider>)");
   });
 
   test("without a provider the render is unwrapped", () => {
@@ -126,7 +157,7 @@ describe("renderUnitBrowser provider option", () => {
     });
     const src = contentOf(files, "unit/Widget.test.tsx");
     expect(src).not.toContain("AppProvider");
-    expect(src).toContain("render(<Widget {...(merged as unknown as Props)} />)");
+    expect(src).toContain("render(<Widget />)");
   });
 });
 
@@ -196,7 +227,7 @@ describe("renderUnitBrowser async server components", () => {
       provider: "/proj/test/AppProvider.tsx",
     });
     const src = contentOf(files, "unit/Page.test.tsx");
-    expect(src).toContain('import AppProvider from "../../test/AppProvider.tsx";');
+    expect(src).toContain('import AppProvider from "../../test/AppProvider";');
     expect(src).toContain("render(<AppProvider>{ui}</AppProvider>)");
   });
 });
@@ -308,7 +339,7 @@ describe("renderUnitBrowser setup.ts", () => {
       mswSetup: true,
     });
     const setup = contentOf(files, "setup.ts");
-    expect(setup).toContain('import { server } from "./mocks/node.ts";');
+    expect(setup).toContain('import { server } from "./mocks/node";');
     expect(setup).toContain('beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));');
     expect(setup).toContain("afterEach(() => server.resetHandlers());");
     expect(setup).toContain("afterAll(() => server.close());");
@@ -329,7 +360,7 @@ describe("renderUnitBrowser setup.ts", () => {
       "setup.ts",
     );
     expect(off).not.toContain("server.listen");
-    expect(off).not.toContain("./mocks/node.ts");
+    expect(off).not.toContain("./mocks/node");
     for (const setup of [off, on]) {
       expect(setup).toContain('import "@testing-library/jest-dom/vitest";');
       expect(setup).toContain("window.matchMedia ??=");
@@ -434,7 +465,7 @@ describe("renderUnitBrowser effect fetch specs", () => {
       "unit/Feed.test.tsx",
     );
     expect(src).toContain('import { http, HttpResponse, delay } from "msw";');
-    expect(src).toContain('import { server } from "../mocks/node.ts";');
+    expect(src).toContain('import { server } from "../mocks/node";');
     expect(src).toContain('describe("Feed GET /api/feed/:id", () => {');
     expect(src).toContain('const URL = "/api/feed/:id";');
     expect(src).toContain("http.get(URL");

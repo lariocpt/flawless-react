@@ -118,9 +118,9 @@ function renderUnitFile(
   specDir: string,
   importPath: string,
 ): string {
-  const providerImport = opts.provider ? toRel(specDir, opts.provider) : undefined;
+  const providerImport = opts.provider ? toImportPath(specDir, opts.provider) : undefined;
   const mocksImport = opts.mswSetup
-    ? toRel(specDir, path.join(path.resolve(opts.outDir), "mocks", "node.ts"))
+    ? toImportPath(specDir, path.join(path.resolve(opts.outDir), "mocks", "node.ts"))
     : undefined;
   return c.info.isAsync
     ? rscSpec(c, importPath, providerImport)
@@ -163,9 +163,23 @@ function toRel(fromDir: string, absFile: string): string {
   return rel.split(path.sep).join("/");
 }
 
+/**
+ * Emitted import paths must not carry a .ts/.tsx extension: the target project
+ * type-checks the generated specs, and TS rejects those unless it opts into
+ * allowImportingTsExtensions. flawless's own source uses them (Bun), the code
+ * it writes into someone else's repo must not.
+ */
+function toImportPath(fromDir: string, absFile: string): string {
+  return stripTsExt(toRel(fromDir, absFile));
+}
+
+function stripTsExt(spec: string): string {
+  return spec.replace(/\.(tsx|ts|jsx|js)$/, "");
+}
+
 /** Named vs default import, from the analyser's exportKind. */
 function emitComponentImport(info: ComponentInfo, importPath: string): string {
-  const stripped = importPath.replace(/\.(tsx|jsx)$/, "");
+  const stripped = stripTsExt(importPath);
   if (info.exportKind === "default") {
     return `import ${info.componentName} from "${stripped}";`;
   }
@@ -253,7 +267,7 @@ ${polyfills}`;
   }
   return `import "@testing-library/jest-dom/vitest";
 import { afterAll, afterEach, beforeAll } from "vitest";
-import { server } from "./mocks/node.ts";
+import { server } from "./mocks/node";
 ${polyfills}
 // MSW node server intercepts fetch() inside jsdom — same handlers your browser
 // suite uses, so unit and browser layers agree on what /api/* returns.
@@ -303,9 +317,20 @@ function unitSpec(
       ? `import { http, HttpResponse, delay } from "msw";\nimport { server } from "${mocksImport}";\n`
       : "";
 
+  // A component with no discoverable props has `ComponentProps<typeof X>` of
+  // `unknown`, and spreading that is a type error in the target project.
+  const hasProps =
+    Object.keys(info.propsShape).length > 0 ||
+    info.unresolvedProps.length > 0 ||
+    allHandlers.length > 0;
+  const spread = hasProps ? ` {...(merged as unknown as Props)}` : "";
+  const childTextConst = info.acceptsChildren ? `const CHILD_TEXT = "flawless child";\n` : "";
+  const element = info.acceptsChildren
+    ? `<${name}${spread}>{CHILD_TEXT}</${name}>`
+    : `<${name}${spread} />`;
   const renderExpr = providerImport
-    ? `render(<AppProvider><${name} {...(merged as unknown as Props)} /></AppProvider>)`
-    : `render(<${name} {...(merged as unknown as Props)} />)`;
+    ? `render(<AppProvider>${element}</AppProvider>)`
+    : `render(${element})`;
 
   return `import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -314,7 +339,7 @@ import type * as React from "react";
 ${mswImports}${providerLine}${emitComponentImport(info, importPath)}
 
 type Props = React.ComponentProps<typeof ${name}>;
-
+${childTextConst}
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
 const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
@@ -334,6 +359,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
 
 function renderTarget(extra: Record<string, unknown> = {}) {
   const merged = buildProps(extra);
+  void merged;
   return ${renderExpr};
 }
 
