@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { analyseFile } from "./analyse/index.ts";
 import {
@@ -273,6 +273,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       log(
         `nextjs: merged dev deps + flawless:* scripts into ${path.join(nextCtx.root, "package.json")}`,
       );
+      // Colocated specs sit in src/ next to their components, where an
+      // unscoped test runner will collect them and run them under the wrong
+      // runner. Silently creating that collision is not acceptable — it turns
+      // a green project suite red for a reason that looks nothing like the
+      // cause.
+      for (const collision of detectTestScriptCollisions(nextCtx.root, ctx.colocate ?? false)) {
+        warn(`warning: ${collision}`);
+      }
       const added = updateGitignore(nextCtx.root, [
         "flawless/reports/",
         "flawless/heaps/",
@@ -341,6 +349,41 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     nextjs: nextCtx,
     provider: providerOverride,
   };
+}
+
+/**
+ * Test scripts that would collect colocated `*.flawless.test.tsx` files and run
+ * them under a runner they were not written for. Bun's and Jest's default globs
+ * both match `*.test.tsx` anywhere, so an unscoped script silently absorbs
+ * every generated spec.
+ */
+export function detectTestScriptCollisions(nextRoot: string, colocate: boolean): string[] {
+  if (!colocate) return [];
+  const pkgPath = path.join(nextRoot, "package.json");
+  if (!existsSync(pkgPath)) return [];
+  let scripts: Record<string, string> = {};
+  try {
+    scripts =
+      (JSON.parse(readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> }).scripts ??
+      {};
+  } catch {
+    return [];
+  }
+
+  const out: string[] = [];
+  for (const [name, cmd] of Object.entries(scripts)) {
+    if (name.startsWith("flawless:")) continue;
+    const trimmed = cmd.trim();
+    // A bare runner with no path/pattern argument globs the whole project.
+    if (/^(bun test|jest|vitest run|vitest)$/.test(trimmed)) {
+      out.push(
+        `"${name}": "${trimmed}" has no path filter, so it will also collect the colocated ` +
+          `*.flawless.test.tsx specs and run them under the wrong runner. Scope it ` +
+          `(e.g. "bun test tests") or run flawless without --colocate.`,
+      );
+    }
+  }
+  return out;
 }
 
 /** True when `file` lives under `dir` (not merely shares its path prefix). */

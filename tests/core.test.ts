@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runCore, UsageError } from "../src/core.ts";
+import { detectTestScriptCollisions, runCore, UsageError } from "../src/core.ts";
 import { runFlawless } from "../src/index.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
@@ -152,5 +152,42 @@ describe("runFlawless", () => {
     expect(result.provider).toBeUndefined();
     // log defaults to false for the programmatic API.
     expect(sidecars()).toEqual([]);
+  });
+});
+
+describe("test-script collision detection", () => {
+  function pkg(dir: string, scripts: Record<string, string>): void {
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "t", scripts }, null, 2));
+  }
+
+  test("flags an unscoped bun test when specs are colocated", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-collide-"));
+    tmpDirs.push(dir);
+    pkg(dir, { test: "bun test" });
+    const warnings = detectTestScriptCollisions(dir, true);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("bun test");
+    expect(warnings[0]).toContain("flawless.test.tsx");
+  });
+
+  test("a path-scoped script is fine", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-collide-"));
+    tmpDirs.push(dir);
+    pkg(dir, { test: "bun test tests" });
+    expect(detectTestScriptCollisions(dir, true)).toEqual([]);
+  });
+
+  test("nothing is flagged without --colocate", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-collide-"));
+    tmpDirs.push(dir);
+    pkg(dir, { test: "bun test" });
+    expect(detectTestScriptCollisions(dir, false)).toEqual([]);
+  });
+
+  test("the flawless:* scripts it wrote are never flagged", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-collide-"));
+    tmpDirs.push(dir);
+    pkg(dir, { "flawless:unit": "vitest run", test: "bun test tests" });
+    expect(detectTestScriptCollisions(dir, true)).toEqual([]);
   });
 });
