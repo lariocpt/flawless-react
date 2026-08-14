@@ -140,6 +140,34 @@ aliases, state vars, setters, refs, memo results, derived locals) and resolves
 identifier references while excluding non-reference positions. It is purely
 syntactic: shadowing inside nested closures is a known, documented limit.
 
+### extractLogging.ts
+
+Whether the component reports errors itself — `console.error` / `console.warn`,
+or `.error()` / `.warn()` on an **imported** binding. That qualification is what
+keeps it from becoming a name guess: an imported `logger` is a module pulled in
+for the purpose, while a local's `.error()` may reach no console at all.
+
+It exists because a Next.js `error.tsx` boundary logs what it caught, and the
+browser spec asserted "mounts without console errors" — failing the component
+for honouring its contract. Where this fires, the spec drops that one assertion,
+names the call it saw, and keeps the uncaught-exception and rendered-output
+assertions, which are still true claims.
+
+### htmlContentModel.ts
+
+Three lookups that are facts about HTML rather than inferences about the app:
+
+- **Required ancestors** — `<tbody>` belongs in a `<table>`, `<td>` in
+  `table > tbody > tr`, `<option>` in a `<select>`. The browser host nests a
+  component's mount through that chain; without it React logs a nesting warning
+  the harness itself provoked, and seven table primitives failed for it.
+- **Fillable tags** — only `input`, `textarea` and `select` hold a value. A
+  change handler on a `<form>` is React's event delegation, and driving it
+  literally emitted `locator("form").fill("x")`, which Playwright rejects.
+- **Fill kind** — from `tag` + `type`: text, toggle (checkbox/radio), select, or
+  skip (hidden, file, range, colour, image, submit…). Typing into a checkbox
+  does nothing; typing into sixteen that share a name cannot even be addressed.
+
 ### walkChildren.ts
 
 Walks the JSX in the component body and collects uppercase tags that resolve to

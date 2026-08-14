@@ -331,9 +331,12 @@ function fieldLocator(field: FieldInfo, flavour: "playwright" | "vitest"): strin
       : `container.querySelector(${JSON.stringify(`#${field.id}`)})!`;
   }
   if (field.name) {
+    // Single-quoted inside the CSS so the emitted JS string needs no escaping —
+    // "[name=\"x\"]" is correct but unreadable in a spec someone has to review.
+    const css = `[name='${field.name.replace(/'/g, "\\'")}']`;
     return pw
-      ? `page.locator(${JSON.stringify(`[name=${JSON.stringify(field.name)}]`)})`
-      : `container.querySelector(${JSON.stringify(`[name=${JSON.stringify(field.name)}]`)})!`;
+      ? `page.locator(${JSON.stringify(css)})`
+      : `container.querySelector(${JSON.stringify(css)})!`;
   }
   return undefined;
 }

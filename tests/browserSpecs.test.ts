@@ -80,6 +80,14 @@ describe("form fills respect the field type", () => {
     expect(browser).not.toContain("sign\\s*up|save|send");
   });
 
+  test("a disabled submit control is reported as disabled, not as absent", async () => {
+    const specs = await specsFor("DisabledSubmitForm.tsx");
+    const browser = specs.get("browser/DisabledSubmitForm.spec.ts") ?? "";
+    expect(browser).toContain("its submit control is disabled at these props");
+    // "No submit control in the markup" would be false — it is right there.
+    expect(browser).not.toContain("no submit control in the markup");
+  });
+
   test("a form with no submit control is skipped with the reason", async () => {
     const specs = await specsFor("NoSubmitForm.tsx");
     const browser = specs.get("browser/NoSubmitForm.spec.ts") ?? "";
@@ -114,6 +122,15 @@ describe("disabled controls never become a 30-second wait", () => {
     expect(browser).toContain('page.getByRole("button", { name: "Pick A" }).first().click()');
   });
 
+  test("an unknown operand does not make || or && unknown", async () => {
+    const specs = await specsFor("PendingSubmit.tsx");
+    const browser = specs.get("browser/PendingSubmit.spec.ts") ?? "";
+    // disabled={pending || rows.length === 0} with rows starting empty: the
+    // right side settles it whatever `pending` is, so this is decided, not
+    // deferred to a runtime check.
+    expect(browser).toContain("is disabled at these props");
+  });
+
   test("an undecidable guard asks at runtime rather than waiting it out", async () => {
     const specs = await specsFor("StatefulPanel.tsx");
     const browser = specs.get("browser/StatefulPanel.spec.ts") ?? "";
@@ -146,6 +163,47 @@ describe("a bare host tag only names the element when it is the only one", () =>
     // Both GatedSubmit buttons carry literal text, so they are named by it and
     // never need the tag fallback in the first place.
     expect(unit).toContain('"Pick A"');
+  });
+});
+
+describe("a name that picks out no single control", () => {
+  test("two branches claiming one name are both dropped", async () => {
+    const specs = await specsFor("BranchedField.tsx");
+    const browser = specs.get("browser/BranchedField.spec.ts") ?? "";
+    // At runtime the element under [name="visibleTo"] was a hidden input, and
+    // the spec waited for a <select> that never appears.
+    expect(browser).not.toContain("visibleTo");
+    // The unambiguous field beside it is still driven.
+    expect(browser).toContain('getByLabel("Body")');
+  });
+
+  test("a checkbox group sharing one name is kept — it is one control", async () => {
+    const specs = await specsFor("CheckboxForm.tsx");
+    const browser = specs.get("browser/CheckboxForm.spec.ts") ?? "";
+    expect(browser).toContain("[name='trades']");
+    // Once, not once per option.
+    expect(browser.match(/name='trades'/g)?.length).toBe(1);
+  });
+});
+
+describe("a component whose guard the analyser cannot decide", () => {
+  test("its interactions check they are on screen first", async () => {
+    const tree = await treeFor("GuardedMenu.tsx");
+    expect(tree.entry.renderGuarded).toBe(true);
+
+    const specs = await specsFor("GuardedMenu.tsx");
+    const browser = specs.get("browser/GuardedMenu.spec.ts") ?? "";
+    expect(browser).toContain("count()) === 0");
+    expect(browser).toContain("left nothing to drive");
+    // And the mount test stops claiming markup it cannot promise.
+    expect(browser).not.toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+  });
+
+  test("an unguarded component still asserts it rendered something", async () => {
+    const specs = await specsFor("CheckboxForm.tsx");
+    const browser = specs.get("browser/CheckboxForm.spec.ts") ?? "";
+    expect(browser).toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+    expect(browser).not.toContain("count()) === 0");
   });
 });
 

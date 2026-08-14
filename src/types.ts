@@ -65,6 +65,13 @@ export interface SubmitControl {
   label: LabelSource;
   /** A host <button type=submit> vs a component tag that declares type="submit". */
   host: boolean;
+  /**
+   * Disabled at the props the spec passes — `disabled={pending || picked.length
+   * === 0}` with `picked` starting empty. Reported rather than hidden: "no
+   * submit control in the markup" would send someone hunting for a button that
+   * is plainly there.
+   */
+  disabled?: boolean;
 }
 
 export interface ClickHandler {

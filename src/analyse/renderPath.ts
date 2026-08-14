@@ -137,15 +137,25 @@ function evaluateBinary(node: ts.BinaryExpression, env: RenderEnv): PropValue | 
   const op = node.operatorToken.kind;
 
   // Short-circuit operators can resolve from the left operand alone.
+  // An unknown operand does not always make the result unknown: `x || true` is
+  // true whatever x is, and `x && false` is false. Bailing on the left operand
+  // alone left `disabled={pending || picked.length === 0}` undecidable — with
+  // `picked` starting as [] the control is disabled at mount, and clicking it
+  // cost a full 30-second Playwright timeout.
   if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
     const left = evaluate(node.left, env);
-    if (left === undefined) return undefined;
-    return truthy(left) ? evaluate(node.right, env) : left;
+    if (left !== undefined && !truthy(left)) return left;
+    const right = evaluate(node.right, env);
+    if (left !== undefined) return right;
+    // Left unknown: only a falsy right settles it, and && yields that operand.
+    return right !== undefined && !truthy(right) ? right : undefined;
   }
   if (op === ts.SyntaxKind.BarBarToken) {
     const left = evaluate(node.left, env);
-    if (left === undefined) return undefined;
-    return truthy(left) ? left : evaluate(node.right, env);
+    if (left !== undefined && truthy(left)) return left;
+    const right = evaluate(node.right, env);
+    if (left !== undefined) return right;
+    return right !== undefined && truthy(right) ? right : undefined;
   }
   if (op === ts.SyntaxKind.QuestionQuestionToken) {
     const left = evaluate(node.left, env);

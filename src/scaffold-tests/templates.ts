@@ -1201,6 +1201,12 @@ function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: 
   // control) and this becomes a real submit test.
 });`;
   }
+  if (form.submitControl?.disabled) {
+    return `test.skip("${name} form #${idx} — its submit control is disabled at these props", () => {
+  // TODO(flawless): the button's \`disabled\` expression is true at DEFAULTS.
+  // Supply props that enable it and this becomes a real submit test.
+});`;
+  }
   const submitClick = `await userEvent.click(${submitTarget});`;
   if (form.submit?.kind === "prop") {
     const propName = form.submit.propName;
@@ -1267,8 +1273,15 @@ function browserSpec(c: FlatComponent, specName: string): string {
   const propsLiteral = JSON.stringify(synthesiseDefaults(c.info));
   const interactions = c.info.interactions;
 
+  // An undecidable guard — `if (!user) return null` where `user` comes from a
+  // store hook — means the component may legitimately render nothing here. Its
+  // interactions were harvested from the tail return, so every one of them has
+  // to check that it is on screen before driving it. UserMenu is this shape:
+  // the host has no session, the component returns null, and the spec waited
+  // 30 seconds for a trigger that was never going to exist.
+  const guarded = c.info.renderGuarded === true;
   const interactionTests = interactions
-    ? emitBrowserInteractionTests(interactions)
+    ? emitBrowserInteractionTests(interactions, guarded)
     : `
 test(\`\${NAME}: click first button without errors (fallback)\`, async ({ page }) => {
   const errors: string[] = [];
@@ -1315,15 +1328,32 @@ test(\`\${NAME}: mounts in the browser without console errors\`, async ({ page }
   await mount(page);
   await page.waitForTimeout(100);
 ${consoleAssertion}
-  const rootHtml = await page.locator("#root").innerHTML();
-  expect(rootHtml.length).toBeGreaterThan(0);
+${
+  guarded
+    ? `  // No markup assertion: this component's first statement is a guard the
+  // analyser could not decide, so returning null here may be correct. That the
+  // mount produced no errors is the claim the source supports.`
+    : `  const rootHtml = await page.locator("#root").innerHTML();
+  expect(rootHtml.length).toBeGreaterThan(0);`
+}
 });
 ${interactionTests}
 `;
 }
 
-function emitBrowserInteractionTests(info: NonNullable<ComponentInfo["interactions"]>): string {
+function emitBrowserInteractionTests(
+  info: NonNullable<ComponentInfo["interactions"]>,
+  guarded = false,
+): string {
   const parts: string[] = [];
+  /** For a guarded component, nothing on screen is a legitimate outcome. */
+  const presenceCheck = (locator: string): string =>
+    guarded
+      ? `
+  if ((await ${locator}.count()) === 0) {
+    test.skip(true, "an early return the analyser could not decide left nothing to drive");
+  }`
+      : "";
   for (let i = 0; i < info.clicks.length; i++) {
     const click = info.clicks[i];
     if (!click) continue;
@@ -1351,7 +1381,7 @@ test.skip(\`\${NAME}: ${click.event} on ${labelDesc} #${i} — ${why}\`, () => {
     if (click.hints.disabled === "always") {
       parts.push(`
 test(\`\${NAME}: ${labelDesc} #${i} is disabled at these props\`, async ({ page }) => {
-  await mount(page);
+  await mount(page);${presenceCheck(selector)}
   await expect(${selector}).toBeDisabled();
 });`);
       continue;
@@ -1371,7 +1401,9 @@ test.skip(\`\${NAME}: ${click.event} on ${labelDesc} #${i} — <${click.tag}> ho
     // The unit emitter learned to click the trigger first; this one did not, and
     // waited 30s for a menu that was never going to appear.
     const trigger = click.gatedBy ? emitPlaywrightTrigger(click.gatedBy) : undefined;
-    const openLines = trigger ? `\n  await ${firstOf(trigger)}.click();` : "";
+    const openLines = trigger
+      ? `${presenceCheck(firstOf(trigger))}\n  await ${firstOf(trigger)}.click();`
+      : presenceCheck(selector);
     // The source guards this control with an expression that did not reduce —
     // `disabled={pending || !picked}` where `picked` starts from an unresolved
     // prop. Playwright's actionability wait runs to the test timeout before
@@ -1411,13 +1443,33 @@ test.skip(\`\${NAME}: form #${i} — no submit control in the markup\`, () => {
 });`);
       continue;
     }
+    // There IS a submit control and it is disabled at these props — every one of
+    // them, or findSubmitControl would have preferred an enabled one. Saying
+    // "no submit control" here would send someone looking for a button that is
+    // plainly in the file.
+    if (form.submitControl?.disabled) {
+      parts.push(`
+test.skip(\`\${NAME}: form #${i} — its submit control is disabled at these props\`, () => {
+  // TODO(flawless): the button's \`disabled\` expression is true at the props
+  // DEFAULTS passes. Supply props (or drive the UI) that enable it, and this
+  // becomes a real submit test.
+});`);
+      continue;
+    }
+    // The same guard the click tests carry. A submit button is very often
+    // `disabled={pending || nothingChosen}`, and when the expression does not
+    // reduce the only way to find out is to look.
     parts.push(`
 test(\`\${NAME}: form #${i} fills + submits without error\`, async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(err.message));
-  await mount(page);
+  await mount(page);${presenceCheck(`page.locator("form").first()`)}
 ${fillSteps.join("\n") || "  // no field carried a type a blind fill could supply"}
-  await ${submitTarget}.click();
+  const submit = ${submitTarget};
+  if (await submit.isDisabled()) {
+    test.skip(true, "the submit control is disabled at these props — nothing here can enable it");
+  }
+  await submit.click();
   await page.waitForTimeout(50);
   expect(errors).toEqual([]);
 });`);

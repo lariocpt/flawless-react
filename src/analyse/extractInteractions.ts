@@ -8,6 +8,7 @@ import type {
   InteractionInfo,
   LabelSource,
   PropsShape,
+  SubmitControl,
 } from "../types.ts";
 import { findDisclosures } from "./extractDisclosures.ts";
 import { posOf } from "./pos.ts";
@@ -390,38 +391,39 @@ function buildForm(
  *   failing run show it — so on a `<Button>` the ABSENCE of a type attribute is
  *   not evidence of anything.
  *
- * A disabled control is not returned: submitting through it cannot work, and the
- * caller has no better claim to make than the one it already skips with.
+ * An enabled control wins; a disabled one is still returned, flagged, so the
+ * spec can say "the only way to submit this form is disabled at these props"
+ * rather than "there is no submit control", which would be false.
  */
 function findSubmitControl(
   parent: ts.JsxElement,
   propNames: Set<string>,
   env: RenderEnv,
 ): FormInfo["submitControl"] {
-  let found: FormInfo["submitControl"];
+  const found: SubmitControl[] = [];
   const visit = (n: ts.Node): void => {
-    if (found) return;
     if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
       const tag = readTagName(n.tagName);
       const isHostButton = tag === "button";
-      const looksLikeButton = isHostButton || /Button$/.test(tag);
-      if (looksLikeButton) {
+      if (isHostButton || /Button$/.test(tag)) {
         const hints = collectHints(n.attributes, env);
         const declared = hints.type;
         const submits = isHostButton
           ? declared === undefined || declared === "submit"
           : declared === "submit";
-        if (submits && hints.disabled !== "always") {
-          const enclosing = enclosingElement(n);
-          found = { label: extractLabel(enclosing, hints, propNames), host: isHostButton };
-          return;
+        if (submits) {
+          found.push({
+            label: extractLabel(enclosingElement(n), hints, propNames),
+            host: isHostButton,
+            ...(hints.disabled === "always" ? { disabled: true } : {}),
+          });
         }
       }
     }
     ts.forEachChild(n, visit);
   };
   ts.forEachChild(parent, visit);
-  return found;
+  return found.find((c) => !c.disabled) ?? found[0];
 }
 
 function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldInfo[] {
@@ -480,7 +482,44 @@ function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldI
     ts.forEachChild(n, visit);
   };
   ts.forEachChild(parent, visit);
-  return fields;
+  return disambiguateByName(fields);
+}
+
+/**
+ * Drop fields whose `name` does not pick out one control.
+ *
+ * `canPostInternal ? <select name="visibleTo"> : <input type="hidden"
+ * name="visibleTo">` collects both branches — the condition is a prop nothing
+ * resolves, so neither is provably rendered. The generated fill then called
+ * selectOption on a name that at runtime was the hidden input, and waited for a
+ * `<select>` that never appears.
+ *
+ * A group that agrees on tag and type is a different thing: sixteen checkboxes
+ * called "trades" are one control, and `.first().check()` drives it correctly.
+ * So the rule is disagreement, not multiplicity.
+ */
+function disambiguateByName(fields: FieldInfo[]): FieldInfo[] {
+  const byName = new Map<string, FieldInfo[]>();
+  for (const f of fields) {
+    if (!f.name) continue;
+    const group = byName.get(f.name);
+    if (group) group.push(f);
+    else byName.set(f.name, [f]);
+  }
+  const seen = new Set<string>();
+  const out: FieldInfo[] = [];
+  for (const f of fields) {
+    if (!f.name) {
+      out.push(f);
+      continue;
+    }
+    const group = byName.get(f.name) as FieldInfo[];
+    const agrees = group.every((g) => g.tag === f.tag && g.type === f.type);
+    if (!agrees || seen.has(f.name)) continue;
+    seen.add(f.name);
+    out.push(f);
+  }
+  return out;
 }
 
 /** The host tag, or a wrapper whose name ends in "Label" (shadcn's <Label>, <FormLabel>). */
