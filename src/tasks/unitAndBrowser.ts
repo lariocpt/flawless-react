@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
+import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { AliasEntry } from "../scaffold-tests/templates.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
 
@@ -39,7 +40,10 @@ export const unitAndBrowser: Task = {
       force: ctx.force,
       apiRoutes: ctx.nextjs?.apiRoutes,
     });
-    const names = ctx.trees.flatMap((t) => collectNames(t));
+    // flattenTrees, not a raw walk: the same component appears in as many trees
+    // as there are pages rendering it, and counting the walk reported "unit
+    // tests for 606 component(s)" against an app the report itself says has 181.
+    const names = flattenTrees(ctx.trees).map((c) => c.info.componentName);
     const skippedNote =
       skipped.length > 0
         ? ` (${skipped.length} colocated spec(s) kept — rerun with --force to regenerate)`
@@ -116,10 +120,4 @@ function nearestReactNodeModules(fromDir: string): string | undefined {
     if (parent === dir) return fallback;
     dir = parent;
   }
-}
-
-function collectNames(tree: { entry: { componentName: string }; children: unknown[] }): string[] {
-  const names: string[] = [tree.entry.componentName];
-  for (const c of tree.children as Array<typeof tree>) names.push(...collectNames(c));
-  return names;
 }

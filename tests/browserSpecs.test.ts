@@ -1,0 +1,189 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fillKind, requiredAncestors } from "../src/analyse/htmlContentModel.ts";
+import { analyse } from "../src/analyse/index.ts";
+import { functionProps } from "../src/scaffold-tests/registry.ts";
+import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
+import type { ComponentTree } from "../src/types.ts";
+
+const tmpDir = (): Promise<string> => mkdtemp(path.join(tmpdir(), "flawless-browser-"));
+
+async function treeFor(fixture: string): Promise<ComponentTree> {
+  return analyse({
+    entry: path.resolve(__dirname, "fixtures", fixture),
+    depth: 0,
+    includeChildren: false,
+    roots: "exported",
+  });
+}
+
+async function specsFor(fixture: string): Promise<Map<string, string>> {
+  const trees = [await treeFor(fixture)];
+  const files = renderUnitBrowser({
+    trees,
+    outDir: await tmpDir(),
+    variants: 3,
+    browserSpecs: true,
+  });
+  return new Map(files.map((f) => [f.relPath, f.content]));
+}
+
+describe("html content model", () => {
+  test("a tag HTML confines to a parent reports its chain", () => {
+    expect(requiredAncestors("tbody")).toEqual(["table"]);
+    expect(requiredAncestors("td")).toEqual(["table", "tbody", "tr"]);
+  });
+
+  test("an ordinary tag needs no wrapper — the map is a lookup, not a guess", () => {
+    expect(requiredAncestors("div")).toEqual([]);
+    expect(requiredAncestors("section")).toEqual([]);
+    expect(requiredAncestors(undefined)).toEqual([]);
+  });
+
+  test("fields are classified by what a user can actually do to them", () => {
+    expect(fillKind("input", "text")).toBe("text");
+    expect(fillKind("input", undefined)).toBe("text");
+    expect(fillKind("textarea", undefined)).toBe("text");
+    expect(fillKind("input", "checkbox")).toBe("toggle");
+    expect(fillKind("input", "radio")).toBe("toggle");
+    expect(fillKind("select", undefined)).toBe("select");
+    // The three that produced "Input of type X cannot be filled" at runtime.
+    expect(fillKind("input", "hidden")).toBe("skip");
+    expect(fillKind("input", "file")).toBe("skip");
+    expect(fillKind("input", "range")).toBe("skip");
+  });
+});
+
+describe("form fills respect the field type", () => {
+  test("checkboxes are checked, hidden inputs skipped, selects selected", async () => {
+    const specs = await specsFor("CheckboxForm.tsx");
+    const browser = specs.get("browser/CheckboxForm.spec.ts") ?? "";
+    expect(browser).toContain(".check()");
+    expect(browser).toContain(".selectOption(");
+    expect(browser).toContain('page.getByLabel("Note").first().fill(');
+    // A hidden input holds a value the component chose. Filling it asserts
+    // nothing, and with several sharing a name it cannot even be addressed.
+    expect(browser).not.toContain("csrf");
+    // Every field locator is resolved to one element: a checkbox group renders
+    // as many as there are options, and Playwright's strict mode rejects that.
+    expect(browser).not.toMatch(/page\.locator\([^)]*\)\.(fill|check)\(/);
+  });
+
+  test("the submit control is read from the markup, never from likely wording", async () => {
+    const specs = await specsFor("CheckboxForm.tsx");
+    const browser = specs.get("browser/CheckboxForm.spec.ts") ?? "";
+    // "Update details" matches none of submit|save|send|create|add|confirm —
+    // the old regex waited the full 30s here.
+    expect(browser).toContain('name: "Update details", exact: true');
+    expect(browser).not.toContain("sign\\s*up|save|send");
+  });
+
+  test("a form with no submit control is skipped with the reason", async () => {
+    const specs = await specsFor("NoSubmitForm.tsx");
+    const browser = specs.get("browser/NoSubmitForm.spec.ts") ?? "";
+    expect(browser).toContain("no submit control in the markup");
+    expect(browser).not.toContain('"Go"');
+    expect(browser).not.toContain('"Clear"');
+  });
+
+  test("a change handler on a <form> is not driven as a text box", async () => {
+    const specs = await specsFor("NoSubmitForm.tsx");
+    const browser = specs.get("browser/NoSubmitForm.spec.ts") ?? "";
+    const unit = specs.get("unit/NoSubmitForm.test.tsx") ?? "";
+    expect(browser).not.toContain('page.locator("form").first().fill(');
+    expect(browser).toContain("holds no value to change");
+    expect(unit).toContain("holds no value to change");
+  });
+});
+
+describe("disabled controls never become a 30-second wait", () => {
+  test("a control disabled at the initial render is asserted, not clicked", async () => {
+    const specs = await specsFor("GatedSubmit.tsx");
+    const browser = specs.get("browser/GatedSubmit.spec.ts") ?? "";
+    expect(browser).toContain("toBeDisabled()");
+    expect(browser).toContain("is disabled at these props");
+  });
+
+  test("a control with no disabled attribute is still clicked", async () => {
+    const specs = await specsFor("GatedSubmit.tsx");
+    const browser = specs.get("browser/GatedSubmit.spec.ts") ?? "";
+    expect(browser).toContain("'Pick A' #0 fires without error");
+    // Not everything is a skip: the enabled button gets a real click.
+    expect(browser).toContain('page.getByRole("button", { name: "Pick A" }).first().click()');
+  });
+
+  test("an undecidable guard asks at runtime rather than waiting it out", async () => {
+    const specs = await specsFor("StatefulPanel.tsx");
+    const browser = specs.get("browser/StatefulPanel.spec.ts") ?? "";
+    // Nothing in this fixture is disabled, so no guard should appear — the
+    // runtime check is emitted only where the source shows a `disabled` prop.
+    expect(browser).not.toContain("isDisabled()");
+  });
+});
+
+describe("a bare host tag only names the element when it is the only one", () => {
+  test("two buttons means the tag identifies neither", async () => {
+    const tree = await treeFor("AmbiguousTags.tsx");
+    const click = tree.entry.interactions?.clicks[0];
+    expect(click?.ambiguousTag).toBe(true);
+
+    const specs = await specsFor("AmbiguousTags.tsx");
+    const browser = specs.get("browser/AmbiguousTags.spec.ts") ?? "";
+    // page.locator("button").first() would resolve to "Done", not the row
+    // button carrying the handler.
+    expect(browser).not.toContain('page.locator("button")');
+    // And the skip says which fact stopped it. "No interactions detected" would
+    // be false — one was detected and could not be addressed.
+    expect(browser).toContain("more than one <button> renders here");
+    expect(browser).not.toContain("no interactions detected");
+  });
+
+  test("a single button of its kind still gets the fallback", async () => {
+    const specs = await specsFor("GatedSubmit.tsx");
+    const unit = specs.get("unit/GatedSubmit.test.tsx") ?? "";
+    // Both GatedSubmit buttons carry literal text, so they are named by it and
+    // never need the tag fallback in the first place.
+    expect(unit).toContain('"Pick A"');
+  });
+});
+
+describe("a component that logs errors itself", () => {
+  test("keeps its uncaught-error assertion and drops the console one", async () => {
+    const tree = await treeFor("GatedSubmit.tsx");
+    expect(tree.entry.logsErrors).toBe("logger.error()");
+
+    const specs = await specsFor("GatedSubmit.tsx");
+    const browser = specs.get("browser/GatedSubmit.spec.ts") ?? "";
+    expect(browser).toContain('errors.filter((e) => !e.startsWith("[console]"))');
+    expect(browser).toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+  });
+
+  test("a component that logs nothing keeps the strict assertion", async () => {
+    const specs = await specsFor("CheckboxForm.tsx");
+    const browser = specs.get("browser/CheckboxForm.spec.ts") ?? "";
+    expect(browser).toContain("expect(errors).toEqual([]);");
+    expect(browser).not.toContain("errors.filter(");
+  });
+});
+
+describe("function props the host has to supply", () => {
+  test("handlers and called props are named", async () => {
+    const tree = await treeFor("NoSubmitForm.tsx");
+    expect(functionProps(tree.entry)).toContain("onChange");
+  });
+
+  test("a prop bound to an event attribute counts however it is named", async () => {
+    const tree = await treeFor("ResetButton.tsx");
+    // `reset` matches no naming convention; being the value of onClick is the
+    // evidence. AuthError({ error, reset }) is this shape, and the browser spec
+    // called undefined the moment the click landed.
+    expect(functionProps(tree.entry)).toContain("reset");
+  });
+
+  test("a component with no callable props names none", async () => {
+    const tree = await treeFor("TableParts.tsx");
+    expect(functionProps(tree.entry)).toEqual([]);
+  });
+});

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { scaffold } from "../scaffold/index.ts";
+import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
 
 export const perfHarness: Task = {
@@ -32,13 +33,19 @@ export const perfHarness: Task = {
       nextjsHost: ctx.nextjs !== undefined,
       mswSetup: ctx.nextjs !== undefined,
     });
-    const components = [first, ...rest].map((t) => t.entry.componentName);
+    // The number of components the host can actually mount, not the number of
+    // entry trees. Those differ by more than half in a real app — most of what
+    // the sweep finds is a server component or a compound part — and reporting
+    // the tree count claimed a coverage the suite never had.
+    const flat = flattenTrees([first, ...rest]);
+    const hosted = flat.filter((c) => hostEligibility(c.info).eligible);
+    const names = hosted.map((c) => c.info.componentName);
     return {
       id: "perf-harness",
       ok: true,
       outputs: written,
       findings: [],
-      summary: `scaffolded perf suite for ${components.length} component(s): ${components.join(", ")}`,
+      summary: `scaffolded perf suite for ${names.length} of ${flat.length} component(s): ${names.join(", ")}`,
     };
   },
 };

@@ -37,6 +37,34 @@ export interface ElementHints {
   name?: string;
   type?: string;
   placeholder?: string;
+  /**
+   * Whether the element is disabled at the initial render, decided by evaluating
+   * the `disabled` attribute — "conditional" means the expression did not reduce.
+   *
+   * Playwright waits for a target to become enabled and fails on the timeout, so
+   * clicking a statically-disabled control costs the full 30s and then reports
+   * nothing useful. Knowing it is disabled turns that into the assertion the
+   * source actually supports.
+   */
+  disabled?: "always" | "conditional";
+}
+
+/**
+ * The control that submits a form, located structurally rather than by guessing
+ * at its wording.
+ *
+ * The generator used to look for a button whose accessible name matched
+ * /submit|save|send|create|.../ — a verb list. Against copy like "Update
+ * password" or "Move to review" it matched nothing and the spec hung until the
+ * suite timed out: 18 of the dogfood app's 40 browser failures, and about nine
+ * minutes of every run. What a form's submit control IS, however, is written
+ * down in the markup.
+ */
+export interface SubmitControl {
+  /** Its accessible name, when the source spells it out. */
+  label: LabelSource;
+  /** A host <button type=submit> vs a component tag that declares type="submit". */
+  host: boolean;
 }
 
 export interface ClickHandler {
@@ -50,6 +78,17 @@ export interface ClickHandler {
    * body). A spec must open it first and then query asynchronously.
    */
   gatedBy?: LabelSource;
+  /**
+   * More than one element of this tag renders here, so "the <button>" does not
+   * name this one.
+   *
+   * The last-resort locator is the bare host tag. `page.locator("button")
+   * .first()` claims the first button is the one carrying this handler — true
+   * only when there is a single button. In VoteCard it resolved to the disabled
+   * "Cast vote" control while the handler belonged to a vote option, and the
+   * click waited for it to become enabled until the test timed out.
+   */
+  ambiguousTag?: boolean;
   pos?: SourcePosition;
 }
 
@@ -66,6 +105,8 @@ export interface FieldInfo {
 export interface FormInfo {
   submit: HandlerBinding | undefined;
   fields: FieldInfo[];
+  /** The button that submits it, when the markup identifies one. */
+  submitControl?: SubmitControl;
   hints: { testid?: string; ariaLabel?: string; id?: string };
   pos?: SourcePosition;
 }
@@ -355,6 +396,17 @@ export interface ComponentInfo {
   childAttrs?: ChildAttrInfo[];
   moduleImports?: ModuleImportInfo[];
   fetchCalls?: FetchCallInfo[];
+  /**
+   * The component reports errors itself — `console.error(...)`, or `.error(...)`
+   * on an imported binding such as a logger.
+   *
+   * An error boundary whose whole job is to log what it caught cannot also
+   * satisfy "mounts without console errors". Asserting that against
+   * `app/(auth)/error.tsx` failed the component for honouring its contract, so
+   * the mount spec drops that one assertion — and says why — while keeping the
+   * uncaught-exception and rendered-output assertions, which stay meaningful.
+   */
+  logsErrors?: string;
 }
 
 export interface ComponentTree {

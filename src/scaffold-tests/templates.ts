@@ -5,6 +5,7 @@ import type {
   ComponentTree,
   FetchCallInfo,
   FormInfo,
+  LabelSource,
   NextjsApiRoute,
   PropsShape,
   StateInfo,
@@ -18,11 +19,18 @@ import {
 } from "./registry.ts";
 import {
   awaitSelector,
+  describeUnlocatable,
   emitPlaywrightDispatch,
+  emitPlaywrightFill,
   emitPlaywrightSelector,
+  emitPlaywrightSubmit,
   emitTriggerSelector,
   emitVitestDispatch,
+  emitVitestFill,
+  emitVitestFillAssertion,
   emitVitestSelector,
+  emitVitestSubmit,
+  firstOf,
 } from "./selectors.ts";
 
 export interface RenderedFile {
@@ -591,7 +599,8 @@ test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")
       // Nothing in the source identifies the element; a query that resolves to
       // null would click nothing and pass.
       if (!selector) continue;
-      const dispatch = emitVitestDispatch(click.event, selector);
+      const dispatch = emitVitestDispatch(click.event, selector, { tag: click.tag });
+      if (!dispatch) continue;
       parts.push(`
 test("${name}: ${click.event} via ${call.enclosingName} → ${s.setterName ?? s.varName} updates", async () => {
   const { container } = renderTarget();
@@ -1094,12 +1103,13 @@ function emitClickTest(
   const labelDesc = describeClickLabel(click);
   const selector = emitVitestSelector(click);
   if (!selector) {
-    // No test id, no aria-label, no role, no id, no literal copy, and the tag is
-    // a component rather than a host element — nothing in the source identifies
-    // this element. Say so; the previous fallback queried the component NAME as
-    // a CSS selector, matched nothing, clicked null and passed.
+    // No test id, no aria-label, no role, no id, no literal copy, and either a
+    // component tag or a host tag with siblings of its kind — nothing in the
+    // source identifies this element. Say which; the previous fallback queried
+    // the component NAME as a CSS selector, matched nothing, clicked null and
+    // passed.
     return `
-test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — no way to select it", () => {
+test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — ${describeUnlocatable(click)}", () => {
   // TODO(flawless): give <${click.tag}> a data-testid, an aria-label or literal
   // text, and this becomes a real interaction test.
 });
@@ -1113,7 +1123,18 @@ test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — no way to select 
   const dispatch = emitVitestDispatch(
     click.event,
     gateSelector ? awaitSelector(selector) : selector,
+    { tag: click.tag },
   );
+  if (!dispatch) {
+    // A change/input handler on something that holds no text — React's onChange
+    // bubbles, so `<form onChange>` is idiomatic delegation. Typing into the form
+    // element itself is not a thing; its fields are covered by the form test.
+    return `
+test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — <${click.tag}> holds no value to change", () => {
+  // The handler is delegation from a field inside it; the form test drives those.
+});
+`;
+  }
   const gateLines = gateSelector ? `\n  await userEvent.click(${gateSelector});` : "";
   // The prelude opens UI that later interactions live behind — but it is itself
   // a click, so it can fire a handler this test then asserts was NOT called.
@@ -1161,40 +1182,26 @@ function describeClickLabel(c: ClickHandler): string {
 
 function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: number): string {
   const fillSteps: string[] = [];
+  const valueAsserts: string[] = [];
   for (const field of form.fields) {
-    if (field.tag !== "input" && field.tag !== "textarea") continue;
-    const sampleValue =
-      field.type === "email"
-        ? "user@example.com"
-        : field.type === "password"
-          ? "pa55word!"
-          : field.type === "number"
-            ? "42"
-            : (field.label ?? field.name ?? "value");
-    const lookup = field.label
-      ? `screen.getByLabelText(${JSON.stringify(field.label)})`
-      : field.placeholder
-        ? `screen.getByPlaceholderText(${JSON.stringify(field.placeholder)})`
-        : field.id
-          ? `container.querySelector(${JSON.stringify(`#${field.id}`)})!`
-          : field.name
-            ? `container.querySelector(${JSON.stringify(`[name=${field.name}]`)})!`
-            : undefined;
-    if (!lookup) continue;
-    fillSteps.push(
-      `  await userEvent.type(${lookup} as HTMLElement, ${JSON.stringify(sampleValue)});`,
-    );
+    const step = emitVitestFill(field);
+    if (!step) continue;
+    fillSteps.push(`  ${step}`);
+    const assertion = emitVitestFillAssertion(field);
+    if (assertion) valueAsserts.push(`  ${assertion}`);
   }
-  // The submit control is matched by a name heuristic, so it legitimately may
-  // not exist (an icon-only button, or copy the pattern doesn't cover). That is
-  // a gap in what can be asserted, not a defect in the component — skip with a
-  // reason instead of failing on a lookup the analyser guessed at.
-  const submitClick = `const submits = screen.queryAllByRole("button", { name: /submit|sign\\s*up|save|send|invite|create|add|confirm/i });
-  if (submits.length === 0) {
-    // TODO(flawless): no submit-looking button found; name it here to assert the submit path.
-    return;
+  // The submit control is read out of the markup — a <button> whose type says it
+  // submits. When the source has none, there is no submit path to drive; say so
+  // rather than hunting for a button whose wording matches a list of verbs.
+  const submitTarget = emitVitestSubmit(form);
+  if (!submitTarget) {
+    return `test.skip("${name} form #${idx} — no submit control in the markup", () => {
+  // TODO(flawless): the form declares no <button type="submit">, so nothing here
+  // identifies how it is submitted. Add one (or an onSubmit handler on a named
+  // control) and this becomes a real submit test.
+});`;
   }
-  await userEvent.click(submits[0] as HTMLElement);`;
+  const submitClick = `await userEvent.click(${submitTarget});`;
   if (form.submit?.kind === "prop") {
     const propName = form.submit.propName;
     const others = allHandlers.filter((h) => h !== propName);
@@ -1210,10 +1217,11 @@ ${fillSteps.join("\n")}
 ${isolation || "  // no other handlers to isolate"}
 });`;
   }
-  return `test("${name} form #${idx} fills + submits without error (smoke)", async () => {
+  return `test("${name} form #${idx} accepts input and submits", async () => {
   const { container } = renderTarget();
   void container;
 ${fillSteps.join("\n")}
+${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   ${submitClick}
 });`;
 }
@@ -1252,7 +1260,11 @@ function browserSpec(c: FlatComponent, specName: string): string {
   // under different keys in the perf host, and mounting by the bare name drove
   // the wrong one.
   const name = specName;
-  const propsLiteral = JSON.stringify(c.info.propsShape);
+  // synthesiseDefaults, not the raw propsShape. The perf scaffolder has always
+  // called it; the browser one passed `{}` for a component whose props are only
+  // known through their member reads, and ProfileForm — green in its profile
+  // spec — died in its browser spec with "did not render within 5000ms".
+  const propsLiteral = JSON.stringify(synthesiseDefaults(c.info));
   const interactions = c.info.interactions;
 
   const interactionTests = interactions
@@ -1261,19 +1273,33 @@ function browserSpec(c: FlatComponent, specName: string): string {
 test(\`\${NAME}: click first button without errors (fallback)\`, async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(err.message));
-  await page.evaluate(
-    ([n, p]) => window.__profile.mount(n as string, p as Record<string, unknown>),
-    [NAME, DEFAULTS],
-  );
-  const btn = page.locator("button").first();
+  await mount(page);
+  const btn = page.locator("button:not([disabled])").first();
   if (await btn.count() > 0) await btn.click();
   expect(errors).toEqual([]);
 });`;
 
-  return `import { test, expect } from "@playwright/test";
+  // An error boundary logs what it caught, by design. Failing it for that is the
+  // harness marking a component wrong for meeting its contract — so the console
+  // assertion goes and the reason is written into the spec. The uncaught-error
+  // and rendered-output assertions stay: those are still real claims.
+  const consoleAssertion = c.info.logsErrors
+    ? `  // ${name} calls ${c.info.logsErrors} itself, so "no console errors" is not a
+  // claim its source supports. Uncaught exceptions are still asserted below.
+  expect(errors.filter((e) => !e.startsWith("[console]"))).toEqual([]);`
+    : `  expect(errors).toEqual([]);`;
+
+  return `import { test, expect, type Page } from "@playwright/test";
 
 const NAME = ${JSON.stringify(name)};
 const DEFAULTS = ${propsLiteral} as Record<string, unknown>;
+
+async function mount(page: Page): Promise<void> {
+  await page.evaluate(
+    ([n, p]) => window.__profile.mount(n as string, p as Record<string, unknown>),
+    [NAME, DEFAULTS],
+  );
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -1283,15 +1309,12 @@ test.beforeEach(async ({ page }) => {
 test(\`\${NAME}: mounts in the browser without console errors\`, async ({ page }) => {
   const errors: string[] = [];
   page.on("console", (msg) => {
-    if (msg.type() === "error") errors.push(msg.text());
+    if (msg.type() === "error") errors.push("[console] " + msg.text());
   });
   page.on("pageerror", (err) => errors.push(err.message));
-  await page.evaluate(
-    ([n, p]) => window.__profile.mount(n as string, p as Record<string, unknown>),
-    [NAME, DEFAULTS],
-  );
+  await mount(page);
   await page.waitForTimeout(100);
-  expect(errors).toEqual([]);
+${consoleAssertion}
   const rootHtml = await page.locator("#root").innerHTML();
   expect(rootHtml.length).toBeGreaterThan(0);
 });
@@ -1305,17 +1328,66 @@ function emitBrowserInteractionTests(info: NonNullable<ComponentInfo["interactio
     const click = info.clicks[i];
     if (!click) continue;
     const labelDesc = describeClickLabel(click);
-    const selector = emitPlaywrightSelector(click);
-    if (!selector) continue;
-    const dispatch = emitPlaywrightDispatch(click.event, selector);
+    const rawSelector = emitPlaywrightSelector(click);
+    if (!rawSelector) {
+      // Saying "no interactions detected" here would be false — one was
+      // detected and could not be addressed, which is a different fact and the
+      // one worth reporting.
+      const why = describeUnlocatable(click);
+      parts.push(`
+test.skip(\`\${NAME}: ${click.event} on ${labelDesc} #${i} — ${why}\`, () => {
+  // TODO(flawless): give it a data-testid, an aria-label or literal text.
+});`);
+      continue;
+    }
+    // .first() on every target. A control inside .map() resolves to one locator
+    // per row, and Playwright's strict mode makes that an error rather than a
+    // choice — "getByText('Remove') resolved to 2 elements" is the list working.
+    const selector = firstOf(rawSelector);
+
+    // Disabled at the props this spec mounts with. Clicking it would wait for it
+    // to become enabled until the test times out; that it is disabled is the
+    // thing the source actually says, so assert that instead.
+    if (click.hints.disabled === "always") {
+      parts.push(`
+test(\`\${NAME}: ${labelDesc} #${i} is disabled at these props\`, async ({ page }) => {
+  await mount(page);
+  await expect(${selector}).toBeDisabled();
+});`);
+      continue;
+    }
+
+    const dispatch = emitPlaywrightDispatch(click.event, selector, { tag: click.tag });
+    if (!dispatch) {
+      parts.push(`
+test.skip(\`\${NAME}: ${click.event} on ${labelDesc} #${i} — <${click.tag}> holds no value to change\`, () => {
+  // React's change events bubble, so this is delegation from a field inside it.
+  // The form test drives those fields directly.
+});`);
+      continue;
+    }
+
+    // A menu item inside a portal does not exist until its trigger opens it.
+    // The unit emitter learned to click the trigger first; this one did not, and
+    // waited 30s for a menu that was never going to appear.
+    const trigger = click.gatedBy ? emitPlaywrightTrigger(click.gatedBy) : undefined;
+    const openLines = trigger ? `\n  await ${firstOf(trigger)}.click();` : "";
+    // The source guards this control with an expression that did not reduce —
+    // `disabled={pending || !picked}` where `picked` starts from an unresolved
+    // prop. Playwright's actionability wait runs to the test timeout before
+    // reporting it, so ask first and skip with the reason instead.
+    const disabledGuard =
+      click.hints.disabled === "conditional"
+        ? `
+  if (await ${selector}.isDisabled()) {
+    test.skip(true, "disabled at these props; the source's guard could not be decided statically");
+  }`
+        : "";
     parts.push(`
-test(\`\${NAME}: ${click.event} on ${labelDesc} fires without error\`, async ({ page }) => {
+test(\`\${NAME}: ${click.event} on ${labelDesc} #${i} fires without error\`, async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(err.message));
-  await page.evaluate(
-    ([n, p]) => window.__profile.mount(n as string, p as Record<string, unknown>),
-    [NAME, DEFAULTS],
-  );
+  await mount(page);${openLines}${disabledGuard}
   ${dispatch};
   await page.waitForTimeout(50);
   expect(errors).toEqual([]);
@@ -1326,37 +1398,26 @@ test(\`\${NAME}: ${click.event} on ${labelDesc} fires without error\`, async ({ 
     if (!form) continue;
     const fillSteps: string[] = [];
     for (const field of form.fields) {
-      if (field.tag !== "input" && field.tag !== "textarea") continue;
-      const sampleValue =
-        field.type === "email"
-          ? "user@example.com"
-          : field.type === "password"
-            ? "pa55word!"
-            : field.type === "number"
-              ? "42"
-              : (field.label ?? field.name ?? "value");
-      const locator = field.label
-        ? `page.getByLabel(${JSON.stringify(field.label)})`
-        : field.placeholder
-          ? `page.getByPlaceholder(${JSON.stringify(field.placeholder)})`
-          : field.id
-            ? `page.locator(${JSON.stringify(`#${field.id}`)})`
-            : field.name
-              ? `page.locator(${JSON.stringify(`[name=${field.name}]`)})`
-              : undefined;
-      if (!locator) continue;
-      fillSteps.push(`  await ${locator}.fill(${JSON.stringify(sampleValue)});`);
+      const step = emitPlaywrightFill(field);
+      if (step) fillSteps.push(`  ${step}`);
+    }
+    const submitTarget = emitPlaywrightSubmit(form);
+    if (!submitTarget) {
+      parts.push(`
+test.skip(\`\${NAME}: form #${i} — no submit control in the markup\`, () => {
+  // TODO(flawless): nothing in the form's JSX declares how it submits. The old
+  // emitter guessed at button copy (/submit|save|send|.../) and waited out the
+  // 30s timeout whenever the wording differed.
+});`);
+      continue;
     }
     parts.push(`
 test(\`\${NAME}: form #${i} fills + submits without error\`, async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(err.message));
-  await page.evaluate(
-    ([n, p]) => window.__profile.mount(n as string, p as Record<string, unknown>),
-    [NAME, DEFAULTS],
-  );
-${fillSteps.join("\n")}
-  await page.getByRole("button", { name: /submit|sign\\s*up|save|send|invite|create|add|confirm/i }).click();
+  await mount(page);
+${fillSteps.join("\n") || "  // no field carried a type a blind fill could supply"}
+  await ${submitTarget}.click();
   await page.waitForTimeout(50);
   expect(errors).toEqual([]);
 });`);
@@ -1366,6 +1427,20 @@ ${fillSteps.join("\n")}
 test(\`\${NAME}: no interactions detected — mount-only smoke above is sufficient\`, () => {});`);
   }
   return parts.join("\n");
+}
+
+/** The Playwright form of a disclosure trigger, so a browser spec can open it. */
+function emitPlaywrightTrigger(label: LabelSource): string | undefined {
+  switch (label.kind) {
+    case "testid":
+      return `page.getByTestId(${JSON.stringify(label.value)})`;
+    case "aria":
+      return `page.getByLabel(${JSON.stringify(label.value)})`;
+    case "text":
+      return `page.getByText(${JSON.stringify(label.value)}, { exact: true })`;
+    default:
+      return undefined;
+  }
 }
 
 function browserPlaywrightConfig(): string {

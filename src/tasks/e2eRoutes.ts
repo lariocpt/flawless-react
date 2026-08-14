@@ -215,7 +215,10 @@ function routeSpec(
       // Nothing in the source identifies the element — a locator built from a
       // component name matches nothing and the step would silently no-op.
       if (!locator) return "";
-      const dispatch = emitPlaywrightDispatch(c.click.event, locator);
+      // A change event on something that holds no text (a delegating <form>)
+      // has no drivable target here either.
+      const dispatch = emitPlaywrightDispatch(c.click.event, locator, { tag: c.click.tag });
+      if (!dispatch) return "";
       return `  // from <${c.component}> analysis
   {
     const target = ${locator};

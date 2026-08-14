@@ -281,10 +281,16 @@ describe("renderUnitBrowser interaction-aware", () => {
     const unit = files.find((f) => f.relPath === "unit/SignupForm.test.tsx");
     expect(unit).toBeDefined();
     const src = unit?.content ?? "";
-    expect(src).toContain('screen.getByLabelText("Name")');
-    expect(src).toContain('screen.getByLabelText("Email")');
-    expect(src).toContain('screen.getByLabelText("Password")');
+    // getAllBy*[0], not getBy*: a labelled field rendered inside .map() resolves
+    // to one element per row, and getBy* throws on that rather than picking one.
+    expect(src).toContain('screen.getAllByLabelText("Name")[0]');
+    expect(src).toContain('screen.getAllByLabelText("Email")[0]');
+    expect(src).toContain('screen.getAllByLabelText("Password")[0]');
     expect(src).toContain("expect(handlers.onSubmit).toHaveBeenCalled()");
+    // The submit control comes from the markup — <button type="submit">Sign up</button>
+    // — not from matching its copy against a list of likely verbs.
+    expect(src).toContain('screen.getAllByRole("button", { name: "Sign up" })[0]');
+    expect(src).not.toContain("sign\\s*up|save|send");
   });
 
   test("IconButton unit spec uses aria-label locator + upgraded prop binding", async () => {

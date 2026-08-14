@@ -1,7 +1,9 @@
 import path from "node:path";
+import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import {
   allocateSpecNames,
   flattenTrees,
+  functionProps,
   hostEligibility,
   synthesiseDefaults,
 } from "../scaffold-tests/registry.ts";
@@ -463,6 +465,26 @@ function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup =
     .map((c) => `  ${JSON.stringify(c.specName)}: ${c.specName} as unknown as Component,`)
     .join(NL);
 
+  // Function props cannot cross page.evaluate's structured clone, so a spec's
+  // DEFAULTS can never carry one. The component then calls undefined: AuthError
+  // renders <Button onClick={reset}> and threw the moment the click landed. The
+  // host holds the names and supplies no-ops on this side of the boundary.
+  const fnProps = flat
+    .map((c) => ({ name: c.specName, props: functionProps(c.info) }))
+    .filter((e) => e.props.length > 0)
+    .map((e) => `  ${JSON.stringify(e.name)}: ${JSON.stringify(e.props)},`)
+    .join(NL);
+
+  // Components whose root tag HTML only permits inside a particular parent.
+  // Rendering <tbody> into the host's #root div made React log "In HTML, <tbody>
+  // cannot be a child of <div>", which failed seven table primitives for a
+  // warning the harness itself caused.
+  const wrapIn = flat
+    .map((c) => ({ name: c.specName, chain: requiredAncestors(c.info.rootTag) }))
+    .filter((e) => e.chain.length > 0)
+    .map((e) => `  ${JSON.stringify(e.name)}: ${JSON.stringify(e.chain)},`)
+    .join(NL);
+
   const providerImport = providerImportPath
     ? `import AppProvider from ${JSON.stringify(stripTsExt(providerImportPath))};\n`
     : "";
@@ -501,6 +523,32 @@ const REGISTRY: Record<string, Component> = {
 ${registry}
 };
 
+/** Props the component calls, which a serialised props object cannot carry. */
+const FN_PROPS: Record<string, string[]> = {
+${fnProps}
+};
+
+/** Ancestors HTML requires around a component's root tag, outermost first. */
+const WRAP_IN: Record<string, string[]> = {
+${wrapIn}
+};
+
+function withFnProps(name: string, props: Record<string, unknown>): Record<string, unknown> {
+  const names = FN_PROPS[name];
+  if (!names) return props;
+  const out = { ...props };
+  for (const p of names) if (out[p] === undefined) out[p] = () => {};
+  return out;
+}
+
+function nest(name: string, tree: ReactNode): ReactNode {
+  const chain = WRAP_IN[name];
+  if (!chain) return tree;
+  let out = tree;
+  for (let i = chain.length - 1; i >= 0; i--) out = createElement(chain[i] as string, null, out);
+  return out;
+}
+
 interface RenderCountField { value: number }
 interface RenderTimeField { mount?: number; updates?: number[] }
 
@@ -529,11 +577,20 @@ scan({
   },
 });
 
+// The last exception React swallowed on our behalf. Without it every render
+// failure looked identical — "did not render within 5000ms" — no matter whether
+// the component threw on a missing prop, a missing provider or a bad import.
+let lastRenderError: unknown;
+
 function ensureRoot(): Root {
   if (activeRoot) return activeRoot;
   const el = document.getElementById("root");
   if (!el) throw new Error("#root not found");
-  activeRoot = createRoot(el);
+  activeRoot = createRoot(el, {
+    onUncaughtError: (err: unknown) => {
+      lastRenderError = err;
+    },
+  });
   return activeRoot;
 }
 
@@ -575,21 +632,26 @@ window.__profile = {
     const Comp = REGISTRY[name];
     if (!Comp) throw new Error("unknown component: " + name);
     activeName = name;
+    lastRenderError = undefined;
     ensureRoot().render(
       wrap(
         createElement(
           Profiler,
           { id: name, onRender: onProfile },
-          createElement(Comp as never, props),
+          nest(name, createElement(Comp as never, withFnProps(name, props))),
         ),
       ),
     );
     const deadline = performance.now() + 5000;
     while (performance.now() < deadline) {
       if ((renderCount[name]?.value ?? 0) >= 1) return;
+      if (lastRenderError) break;
       await new Promise<void>((res) => requestAnimationFrame(() => res()));
     }
-    throw new Error("mount: " + name + " did not render within 5000ms");
+    const cause = lastRenderError
+      ? ": " + (lastRenderError instanceof Error ? lastRenderError.message : String(lastRenderError))
+      : " within 5000ms";
+    throw new Error("mount: " + name + " did not render" + cause);
   },
   async rerender(name, props) {
     if (!activeRoot) throw new Error("mount first");
@@ -600,7 +662,7 @@ window.__profile = {
         createElement(
           Profiler,
           { id: name, onRender: onProfile },
-          createElement(Comp as never, props),
+          nest(name, createElement(Comp as never, withFnProps(name, props))),
         ),
       ),
     );

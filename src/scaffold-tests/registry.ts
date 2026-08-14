@@ -108,6 +108,46 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
   return { eligible: true };
 }
 
+/**
+ * Props the component invokes, which a spec has to supply as functions.
+ *
+ * Three independent pieces of evidence, any one of which is enough: the prop is
+ * called (`propUsage` kind "call"), it is bound to an event attribute, or it is
+ * named `onSomething` — React's own convention, and the only signal available
+ * for a handler passed straight through to a child.
+ *
+ * The unit specs cover this with vi.fn() spies. The browser host cannot: props
+ * reach it through page.evaluate's structured clone, which drops functions
+ * silently, so the component receives undefined and throws on the first call.
+ */
+export function functionProps(info: ComponentInfo): string[] {
+  const declared = new Set([...Object.keys(info.propsShape), ...info.unresolvedProps]);
+  const names = new Set<string>();
+  for (const u of info.propUsage ?? []) {
+    if (u.kind === "call") names.add(u.propName);
+  }
+  for (const c of info.interactions?.clicks ?? []) {
+    if (c.binding.kind === "prop") names.add(c.binding.propName);
+    // `onClick={reset}` where reset is a prop. classifyBinding calls that a
+    // "local" because the binding classifier only promotes names matching
+    // /^on[A-Z]/ — but being bound to an event attribute is itself proof the
+    // value has to be callable, whatever it is named. AuthError's `reset` is
+    // this exact shape, and it threw the moment the click landed.
+    if (c.binding.kind === "local" && declared.has(c.binding.localName)) {
+      names.add(c.binding.localName);
+    }
+  }
+  for (const f of info.interactions?.forms ?? []) {
+    if (f.submit?.kind === "prop") names.add(f.submit.propName);
+  }
+  for (const p of declared) {
+    if (/^on[A-Z]/.test(p)) names.add(p);
+  }
+  // Sorted: the host file has to be byte-identical across runs or the
+  // idempotence gate churns on Set insertion order.
+  return [...names].sort();
+}
+
 /** Members whose presence proves a value has to be a collection, not an object. */
 const ARRAY_MEMBERS = new Set([
   "length",

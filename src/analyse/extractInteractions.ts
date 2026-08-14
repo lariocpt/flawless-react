@@ -11,7 +11,14 @@ import type {
 } from "../types.ts";
 import { findDisclosures } from "./extractDisclosures.ts";
 import { posOf } from "./pos.ts";
-import { emptyEnv, initialRenderExpression, type RenderEnv, reachability } from "./renderPath.ts";
+import {
+  emptyEnv,
+  evaluate,
+  initialRenderExpression,
+  type RenderEnv,
+  reachability,
+  truthy,
+} from "./renderPath.ts";
 
 const EVENT_PATTERN =
   /^on(Click|MouseDown|PointerDown|Submit|Change|Input|Focus|Blur|KeyDown|KeyPress)$/;
@@ -43,6 +50,10 @@ export function extractInteractions(
   const gateFor = (n: ts.Node): LabelSource | undefined =>
     disclosures.find((d) => d.gated.has(n))?.trigger;
 
+  // How many elements of each host tag this render contains. A bare-tag locator
+  // is only a name for the element when it is the only one of its kind.
+  const tagCounts = countHostTags(initial ? initial.expr : bodyNode);
+
   const visit = (n: ts.Node): void => {
     // "no" means provably not rendered at these props; "unknown" is kept, since
     // dropping it would lose every .map row and render-prop target.
@@ -51,12 +62,12 @@ export function extractInteractions(
       const tag = readTagName(n.tagName);
       if (tag !== "<dynamic>") {
         const enclosing = enclosingElement(n);
-        const hints = collectHints(n.attributes);
+        const hints = collectHints(n.attributes, scope);
         const label = extractLabel(enclosing, hints, propNames);
 
         if (tag === "form") {
           forms.push(
-            buildForm(enclosing, n.attributes, propNames, posOf(n, sourceFile), sourceFile),
+            buildForm(enclosing, n.attributes, propNames, posOf(n, sourceFile), sourceFile, scope),
           );
         }
 
@@ -75,6 +86,7 @@ export function extractInteractions(
             hints,
             binding,
             ...(gatedBy ? { gatedBy } : {}),
+            ...((tagCounts.get(tag) ?? 0) > 1 ? { ambiguousTag: true } : {}),
             pos: posOf(attr, sourceFile),
           });
         }
@@ -88,6 +100,46 @@ export function extractInteractions(
   else ts.forEachChild(bodyNode, visit);
 
   return { clicks, forms };
+}
+
+/**
+ * How many elements in this render could answer to a bare host-tag locator.
+ *
+ * Two things count towards `button`: a `<button>`, and a component tag whose
+ * name ends in Button. The second is a naming convention rather than proof —
+ * but it is only ever used to make the generator MORE cautious, downgrading a
+ * fallback locator to a skip, so a false positive costs a test and a false
+ * negative costs a wrong element. VoteCard is exactly that shape: one mapped
+ * `<button>` carrying the handler and one `<Button>` rendering "Cast vote",
+ * which `page.locator("button").first()` resolved to instead.
+ *
+ * An element inside `.map()` is counted once — the source shows one, the DOM may
+ * show none or twenty. That is enough to answer the only question being asked:
+ * does this locator have competition.
+ */
+function countHostTags(root: ts.Node): Map<string, number> {
+  const counts = new Map<string, number>();
+  const bump = (tag: string): void => {
+    counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+      const tag = readTagName(n.tagName);
+      bump(tag);
+      if (/^[A-Z]/.test(tag)) {
+        const lower = tag.toLowerCase();
+        // No `lower !== host` guard: <Button> lowercases to exactly "button",
+        // which is the single most common case this rule exists for. The
+        // component tag was already counted under its own name above.
+        for (const host of ["button", "input", "textarea", "select", "form"]) {
+          if (lower.endsWith(host)) bump(host);
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(root);
+  return counts;
 }
 
 function enclosingElement(
@@ -114,12 +166,17 @@ function readPropertyAccess(p: ts.PropertyAccessExpression): string {
   return `${head}.${p.name.text}`;
 }
 
-function collectHints(attrs: ts.JsxAttributes): ElementHints {
+function collectHints(attrs: ts.JsxAttributes, env: RenderEnv = emptyEnv()): ElementHints {
   const hints: ElementHints = {};
   for (const a of attrs.properties) {
     if (!ts.isJsxAttribute(a)) continue;
     const name = ts.isIdentifier(a.name) ? a.name.text : undefined;
     if (!name) continue;
+    if (name === "disabled") {
+      const state = disabledAtInitialRender(a.initializer, env);
+      if (state) hints.disabled = state;
+      continue;
+    }
     const value = readStringInitializer(a.initializer);
     if (value === undefined) continue;
     switch (name) {
@@ -147,6 +204,28 @@ function collectHints(attrs: ts.JsxAttributes): ElementHints {
     }
   }
   return hints;
+}
+
+/**
+ * Whether `disabled={...}` holds at the props and initial state a spec renders.
+ *
+ * `<Button disabled={!selected || pending}>` with `useState(null)` is disabled
+ * the moment it mounts, which the same evaluator that picks the initial render
+ * branch can decide. Clicking it anyway cost a 30-second Playwright timeout per
+ * occurrence; asserting it is disabled is both faster and true. Anything that
+ * does not reduce stays "conditional" and is driven as before.
+ */
+function disabledAtInitialRender(
+  init: ts.JsxAttribute["initializer"],
+  env: RenderEnv,
+): ElementHints["disabled"] {
+  // Bare `disabled` with no value is the HTML shorthand for disabled={true}.
+  if (!init) return "always";
+  if (init.kind === ts.SyntaxKind.StringLiteral) return "always";
+  if (!ts.isJsxExpression(init) || !init.expression) return undefined;
+  const value = evaluate(init.expression, env);
+  if (value === undefined) return "conditional";
+  return truthy(value) ? "always" : undefined;
 }
 
 function readStringInitializer(init: ts.JsxAttribute["initializer"]): string | undefined {
@@ -282,6 +361,7 @@ function buildForm(
   propNames: Set<string>,
   pos: FormInfo["pos"],
   sourceFile: ts.SourceFile,
+  env: RenderEnv,
 ): FormInfo {
   let submit: HandlerBinding | undefined;
   const hints: { testid?: string; ariaLabel?: string; id?: string } = {};
@@ -294,7 +374,54 @@ function buildForm(
     if (name === "id") hints.id = readStringInitializer(a.initializer);
   }
   const fields = parent ? collectFields(parent, sourceFile) : [];
-  return { submit, fields, hints, pos };
+  const submitControl = parent ? findSubmitControl(parent, propNames, env) : undefined;
+  return { submit, fields, ...(submitControl ? { submitControl } : {}), hints, pos };
+}
+
+/**
+ * The button that submits this form, read out of the markup.
+ *
+ * Two rules, and the asymmetry between them is the point:
+ *
+ * - A host `<button>` inside a form submits it unless it says otherwise, because
+ *   that is HTML's default `type`.
+ * - A component tag counts only when it declares `type="submit"`. shadcn and
+ *   base-ui both render `type="button"` by default — the DOM dumps from the
+ *   failing run show it — so on a `<Button>` the ABSENCE of a type attribute is
+ *   not evidence of anything.
+ *
+ * A disabled control is not returned: submitting through it cannot work, and the
+ * caller has no better claim to make than the one it already skips with.
+ */
+function findSubmitControl(
+  parent: ts.JsxElement,
+  propNames: Set<string>,
+  env: RenderEnv,
+): FormInfo["submitControl"] {
+  let found: FormInfo["submitControl"];
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+      const tag = readTagName(n.tagName);
+      const isHostButton = tag === "button";
+      const looksLikeButton = isHostButton || /Button$/.test(tag);
+      if (looksLikeButton) {
+        const hints = collectHints(n.attributes, env);
+        const declared = hints.type;
+        const submits = isHostButton
+          ? declared === undefined || declared === "submit"
+          : declared === "submit";
+        if (submits && hints.disabled !== "always") {
+          const enclosing = enclosingElement(n);
+          found = { label: extractLabel(enclosing, hints, propNames), host: isHostButton };
+          return;
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(parent, visit);
+  return found;
 }
 
 function collectFields(parent: ts.JsxElement, sourceFile: ts.SourceFile): FieldInfo[] {

@@ -7,6 +7,7 @@ import { extractFlows } from "./extractFlows.ts";
 import { extractGuards } from "./extractGuards.ts";
 import { extractHookDetails, extractHooks } from "./extractHooks.ts";
 import { extractInteractions } from "./extractInteractions.ts";
+import { detectSelfLogging } from "./extractLogging.ts";
 import { extractProps } from "./extractProps.ts";
 import { extractPropUsage } from "./extractPropUsage.ts";
 import { extractRenderMode } from "./extractRenderMode.ts";
@@ -121,6 +122,10 @@ async function analyseOne(
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
+  const logsErrors = detectSelfLogging(
+    unit.bodyNode,
+    new Set(parsed.moduleImports.flatMap((mi) => mi.names)),
+  );
   // The values the generated spec will actually pass. Everything below describes
   // the render those values produce, rather than the last return in the body.
   const renderEnv = makeEnv(propsShape, unresolvedProps, state);
@@ -220,6 +225,7 @@ async function analyseOne(
     classNameFlow: flows.className,
     renderMode: render.mode,
     ...(render.note ? { renderNotes: [render.note] } : {}),
+    ...(logsErrors ? { logsErrors } : {}),
     moduleImports,
   };
 
