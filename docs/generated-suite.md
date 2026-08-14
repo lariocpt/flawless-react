@@ -98,6 +98,13 @@ window.__profile = {
 
 `mount` wraps the user's component in React's built-in `<Profiler id={name} onRender={...}>` and renders it via `activeRoot.render(...)`. Each render fires `onRender`, which appends to the `renderCount[name]` / `renderTime[name]` dictionaries. `rerender` re-issues the render and waits one `requestAnimationFrame` for React to commit.
 
+Two lookup tables sit beside `REGISTRY`, both populated at scaffold time:
+
+- **`FN_PROPS`** — props the component calls. A spec's props reach the page through `page.evaluate`'s structured clone, which drops functions silently, so `mount` supplies a no-op for each named prop the incoming object does not define. Without it a component like `error.tsx`'s `<Button onClick={reset}>` throws the instant the click lands.
+- **`WRAP_IN`** — the ancestors HTML requires around a component's root tag. `<TableBody>` renders `<tbody>`, which is only valid inside a `<table>`; mounting it straight into `#root` makes React log *"In HTML, `tbody` cannot be a child of `div`"*, and the browser spec then fails the component for a warning the harness caused. `mount` nests the element through the chain.
+
+`mount` also carries the error React swallowed. `createRoot` is given an `onUncaughtError` handler, so a component that throws during render reports *what* it threw rather than the generic "did not render within 5000ms".
+
 **Edit when**: you want to wrap components in a provider (React Router, theme, query client, store) — prefer the `--provider <file>` flag at scaffold time, which threads your wrapper through `mount` / `rerender` for you. You can also expose additional helpers on `window.__profile` if your tests need them.
 
 ## `profile/_helpers.ts`
@@ -308,6 +315,32 @@ A short user-facing README for the *generated* suite, separate from this repo's 
 Playwright specs that drive the perf host rather than jsdom, for the same
 interactions. Emitted only for components that mount standalone, and only when
 `perf-harness` is in the same run — they need its host.
+
+They share the unit suite's selectors, defaults and skip reasons, plus the
+things only a real browser forces you to be exact about:
+
+- **Locators resolve to one element.** Playwright's strict mode makes a locator
+  matching two elements an error rather than a choice, so every locator ends in
+  `.first()`, and a `text` label asks for `{ exact: true }` (the default text
+  match is a case-insensitive *substring*, which matched "Please try again."
+  when it wanted a "Try again" button).
+- **A bare host tag is a last resort with a precondition.** It is used only when
+  the render contains exactly one element of that kind, counting `<Button>`
+  towards `button`. Otherwise the test is a skip that says so.
+- **Nothing waits on a control that cannot become actionable.** A `disabled`
+  expression the analyser can decide becomes `await expect(...).toBeDisabled()`;
+  one it cannot becomes a runtime check that skips with the reason. Both replace
+  a 30-second Playwright timeout with a fact.
+- **A form is submitted through the control its markup declares** — a host
+  `<button>` unless its `type` says otherwise, a component tag only with an
+  explicit `type="submit"` — and its fields are driven by their type: checkboxes
+  checked, `<select>`s selected, hidden/file/range inputs left alone.
+- **A component whose guard the analyser could not decide** checks that its
+  target is on screen before driving it, and its mount test drops the "rendered
+  something" assertion. `if (!user) return null` behind a store hook may
+  legitimately produce nothing.
+- **A component that logs errors itself** keeps its uncaught-exception and
+  rendered-output assertions and drops the console one, naming the call.
 
 ### `--api` → `mocks/`
 
