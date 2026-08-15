@@ -64,7 +64,7 @@ describe("every emitted file parses", () => {
       });
       const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: true });
       for (const f of files) {
-        if (!/\.tsx?$/.test(f.relPath)) continue;
+        if (!/\.(m?tsx?)$/.test(f.relPath)) continue;
         errors.push(...parseErrorsIn(`${fixture} → ${f.relPath}`, f.content));
       }
     }
@@ -86,7 +86,7 @@ describe("every emitted file parses", () => {
         browserSpecs: true,
       });
       for (const f of files) {
-        if (!/\.tsx?$/.test(f.relPath)) continue;
+        if (!/\.(m?tsx?)$/.test(f.relPath)) continue;
         errors.push(...parseErrorsIn(`${fixture} → ${f.relPath}`, f.content));
       }
     }
@@ -124,7 +124,7 @@ describe("every emitted file parses", () => {
     const errors: string[] = [];
     for (const rel of readdirSync(outDir, { recursive: true }) as string[]) {
       const relPath = rel.split(path.sep).join("/");
-      if (!/\.tsx?$/.test(relPath)) continue;
+      if (!/\.(m?tsx?)$/.test(relPath)) continue;
       seen.push(relPath);
       errors.push(...parseErrorsIn(relPath, readFileSync(path.join(outDir, relPath), "utf8")));
     }
@@ -174,7 +174,7 @@ describe("every emitted file parses", () => {
 
     const errors: string[] = [];
     for (const f of files) {
-      if (!/\.tsx?$/.test(f.relPath)) continue;
+      if (!/\.(m?tsx?)$/.test(f.relPath)) continue;
       errors.push(...parseErrorsIn(f.relPath, f.content));
     }
     expect(errors).toEqual([]);

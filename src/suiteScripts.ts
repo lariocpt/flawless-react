@@ -44,6 +44,22 @@ export const NEXT_SCRIPT = {
   report: "flawless:report",
 } as const;
 
+/**
+ * The vitest config's filename — `.mts`, not `.ts`.
+ *
+ * Vite decides whether a config is ESM or CJS from the nearest package.json,
+ * and in Next.js mode the nearest one is the TARGET APP's, which typically has
+ * no `"type": "module"`. The emitted config is ESM, so Vite loaded it as
+ * CommonJS and warned that its own strict loader — "planned to become the
+ * default in a future major version" — will reject it. Standalone was fine only
+ * by accident, because the suite's own package.json sets `"type": "module"`.
+ *
+ * `.mts` is unambiguous wherever it sits, so the same name works in both modes
+ * and nothing has to reason about whose package.json is nearest. Auto-discovery
+ * (`vitest run --root <out>`) finds it, and so does an explicit `--config`.
+ */
+export const VITEST_CONFIG = "vitest.config.mts";
+
 export const SUITE_COMMAND = {
   unit: "vitest run",
   /**

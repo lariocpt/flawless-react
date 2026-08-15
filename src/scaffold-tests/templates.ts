@@ -1,5 +1,6 @@
 import path from "node:path";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type {
   ClickHandler,
   ComponentInfo,
@@ -77,7 +78,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
   const files: RenderedFile[] = [
-    { relPath: "vitest.config.ts", content: vitestConfig(opts) },
+    { relPath: VITEST_CONFIG, content: vitestConfig(opts) },
     { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) },
   ];
   if (withBrowser) {
@@ -206,7 +207,7 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
   const aliasBlock = aliasLines.length > 0 ? `    alias: [\n${aliasLines}\n    ],\n` : "";
   const resolveBlock = `  resolve: {\n${dedupeLine}${aliasBlock}  },\n`;
   if (opts.colocate) {
-    // Colocate mode runs as `vitest run --config <out>/vitest.config.ts`.
+    // Colocate mode runs as `vitest run --config <out>/vitest.config.mts`.
     // Vite roots itself at the CONFIG file's directory, so without an explicit
     // root the include globs resolve under <out>/ and match nothing.
     //

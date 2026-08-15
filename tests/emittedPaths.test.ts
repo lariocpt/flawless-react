@@ -77,7 +77,7 @@ describe("no emitted file names the machine that generated it", () => {
       ],
     });
     expect(leaks(files)).toEqual([]);
-    const cfg = files.find((f) => f.relPath === "vitest.config.ts")?.content ?? "";
+    const cfg = files.find((f) => f.relPath === "vitest.config.mts")?.content ?? "";
     // Still absolute at RUNTIME — that is what Vite needs; only the bytes change.
     expect(cfg).toContain("path.resolve(configDir,");
   });

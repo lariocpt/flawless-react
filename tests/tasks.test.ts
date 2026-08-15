@@ -123,7 +123,7 @@ describe("task registry", () => {
 });
 
 describe("unit-browser task", () => {
-  test("emits vitest.config.ts + setup.ts + one unit spec per analysed component", async () => {
+  test("emits vitest.config.mts + setup.ts + one unit spec per analysed component", async () => {
     const outDir = tmp("unit-out");
     const tree = await analyse({
       entry: path.join(FIXTURES, "Dashboard.tsx"),
@@ -137,14 +137,14 @@ describe("unit-browser task", () => {
     expect(result.error).toBeUndefined();
     expect(result.findings).toEqual([]);
 
-    expect(result.outputs).toContain(path.join(outDir, "vitest.config.ts"));
+    expect(result.outputs).toContain(path.join(outDir, "vitest.config.mts"));
     expect(result.outputs).toContain(path.join(outDir, "setup.ts"));
     for (const name of ["Dashboard", "Hello", "Card"]) {
       const spec = path.join(outDir, "unit", `${name}.test.tsx`);
       expect(result.outputs).toContain(spec);
       expect(existsSync(spec)).toBe(true);
     }
-    expect(existsSync(path.join(outDir, "vitest.config.ts"))).toBe(true);
+    expect(existsSync(path.join(outDir, "vitest.config.mts"))).toBe(true);
 
     expect(result.summary).toContain("3 component(s)");
     for (const name of ["Dashboard", "Hello", "Card"]) {

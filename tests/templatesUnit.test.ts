@@ -331,7 +331,7 @@ describe("renderUnitBrowser colocate", () => {
       variants: 3,
       colocate: true,
     });
-    const cfg = contentOf(files, "vitest.config.ts");
+    const cfg = contentOf(files, "vitest.config.mts");
     // Vite roots itself at the config file's directory, so the config must set
     // root back to the project — otherwise "src/**" resolves under flawless/
     // and the run reports "no tests" while looking perfectly correct.
@@ -353,7 +353,7 @@ describe("renderUnitBrowser colocate", () => {
       variants: 3,
       colocate: true,
     });
-    const cfg = contentOf(files, "vitest.config.ts");
+    const cfg = contentOf(files, "vitest.config.mts");
     expect(cfg).toContain('".flawless/unit/**/*.test.{ts,tsx}"');
     // Anchored to the config's own directory, so the name cannot drift again.
     expect(cfg).toContain('path.join(configDir, "setup.ts")');
@@ -365,7 +365,7 @@ describe("renderUnitBrowser colocate", () => {
     const spec = files.find((f) => f.relPath === "unit/Card.test.tsx");
     expect(spec?.absPath).toBeUndefined();
     expect(spec?.skipIfExists).toBeUndefined();
-    const cfg = contentOf(files, "vitest.config.ts");
+    const cfg = contentOf(files, "vitest.config.mts");
     expect(cfg).toContain('setupFiles: ["./setup.ts"]');
     expect(cfg).toContain('include: ["unit/**/*.test.{ts,tsx}"]');
   });
@@ -486,7 +486,7 @@ describe("renderUnitBrowser resolveAliases", () => {
         { find: "react", replacement: "/proj/node_modules/react", prefix: false },
       ],
     });
-    const cfg = contentOf(files, "vitest.config.ts");
+    const cfg = contentOf(files, "vitest.config.mts");
     expect(cfg).toContain("resolve: {");
     expect(cfg).toContain("alias: [");
     // Resolved against the config's own directory, not baked in absolute: this
@@ -505,7 +505,7 @@ describe("renderUnitBrowser resolveAliases", () => {
   test("no aliases → no alias list, but dedupe is always emitted", () => {
     const cfg = contentOf(
       renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 }),
-      "vitest.config.ts",
+      "vitest.config.mts",
     );
     expect(cfg).not.toContain("alias: [");
     // Without dedupe, a workspace where react resolves to the repo root and
@@ -666,12 +666,12 @@ describe("renderUnitBrowser always-emitted files", () => {
   test("config + setup + playwright config ship with every render", () => {
     const files = renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 });
     const paths = relPaths(files);
-    expect(paths).toContain("vitest.config.ts");
+    expect(paths).toContain("vitest.config.mts");
     expect(paths).toContain("setup.ts");
     expect(paths).toContain("browser/playwright.config.ts");
     const pw = contentOf(files, "browser/playwright.config.ts");
     expect(pw).toContain('testMatch: "*.spec.ts"');
     expect(pw).toContain('command: "bun ../host/server.ts"');
-    expect(contentOf(files, "vitest.config.ts")).toContain('environment: "jsdom"');
+    expect(contentOf(files, "vitest.config.mts")).toContain('environment: "jsdom"');
   });
 });

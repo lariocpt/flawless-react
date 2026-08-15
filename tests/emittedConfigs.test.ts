@@ -121,7 +121,7 @@ describe("the emitted vitest config resolves to files that exist", () => {
     const trees = [await toolbarInside(root)];
     await run("unit-browser" as TaskId, ctxOf({ outDir, trees, colocate: true }));
 
-    const cfg = await load(path.join(outDir, "vitest.config.ts"));
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
     const test = cfg.test as { setupFiles: string[]; include: string[] };
 
     expect(path.isAbsolute(test.setupFiles[0] as string)).toBe(true);
@@ -138,7 +138,7 @@ describe("the emitted vitest config resolves to files that exist", () => {
     const trees = [await toolbarInside(root)];
     await run("unit-browser" as TaskId, ctxOf({ outDir, trees, colocate: true }));
 
-    const cfg = await load(path.join(outDir, "vitest.config.ts"));
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
     const test = cfg.test as { setupFiles: string[] };
     expect(existsSync(test.setupFiles[0] as string)).toBe(true);
     expect(cfg.root).toBe(root);
@@ -152,7 +152,7 @@ describe("the emitted vitest config resolves to files that exist", () => {
     const nextjs: NextjsContext = await detectNextjs(NEXTAPP);
     await run("unit-browser" as TaskId, ctxOf({ outDir, trees: [await toolbar()], nextjs }));
 
-    const cfg = await load(path.join(outDir, "vitest.config.ts"));
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
     const resolve = cfg.resolve as { alias?: Array<{ replacement: string }> };
     const aliases = resolve.alias ?? [];
     expect(aliases.length, "the fixture produced aliases to check").toBeGreaterThan(0);

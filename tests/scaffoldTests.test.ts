@@ -56,7 +56,7 @@ describe("scaffoldUnitBrowser (file writes)", () => {
     });
 
     const expected = [
-      path.join(outDir, "vitest.config.ts"),
+      path.join(outDir, "vitest.config.mts"),
       path.join(outDir, "setup.ts"),
       path.join(outDir, "browser", "playwright.config.ts"),
       path.join(outDir, "unit", "Widget.test.tsx"),
@@ -213,7 +213,7 @@ describe("scaffoldUnitBrowser colocate", () => {
     expect(written).toContain(chipSpec);
     expect(readFileSync(chipSpec, "utf8")).toContain("Chip renders at defaults without crashing");
     // Shared config still lands in outDir.
-    expect(existsSync(path.join(outDir, "vitest.config.ts"))).toBe(true);
+    expect(existsSync(path.join(outDir, "vitest.config.mts"))).toBe(true);
     expect(existsSync(path.join(outDir, "browser", "Card.spec.ts"))).toBe(true);
   });
 

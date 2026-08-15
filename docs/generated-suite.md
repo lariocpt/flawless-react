@@ -271,7 +271,7 @@ A short user-facing README for the *generated* suite, separate from this repo's 
 
 ### `unit-browser` → `unit/` (or beside the source with `--colocate`)
 
-- **`vitest.config.ts`** — jsdom environment, the project's tsconfig `paths` as
+- **`vitest.config.mts`** — jsdom environment, the project's tsconfig `paths` as
   `resolve.alias`, and `resolve.dedupe: ["react", "react-dom"]`. The dedupe is
   not cosmetic: in a workspace where `react` resolves to the repo root and
   `react-dom` to the package, `react-dom/server` sets its hook dispatcher on a

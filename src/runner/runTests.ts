@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AffectedSpecs } from "../changed.ts";
 import { grepFor } from "../changed.ts";
+import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type { TaskId } from "../types.ts";
 
 /**
@@ -152,7 +153,7 @@ export async function runAffectedTests(
     // way to reach it, and it is worth reaching: it walks the module graph, so
     // it finds every spec that transitively imports a changed file without this
     // tool having to reproduce its own spec-naming rules.
-    const configPath = path.join(path.resolve(outDir), "vitest.config.ts");
+    const configPath = path.join(path.resolve(outDir), VITEST_CONFIG);
     runs.push({
       id: "unit",
       cmd: ["bunx", "vitest", "related", ...affected.changedFiles, "--run", "--config", configPath],

@@ -16,7 +16,7 @@ import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporte
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
-import { NEXT_SCRIPT } from "./suiteScripts.ts";
+import { NEXT_SCRIPT, VITEST_CONFIG } from "./suiteScripts.ts";
 import { findTask, TASKS } from "./tasks/index.ts";
 import type {
   ComponentTree,
@@ -355,7 +355,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           ...(taskIds.includes("unit-browser")
             ? {
                 "flawless:unit": opts.colocate
-                  ? `vitest run --config ${outRel}/vitest.config.ts`
+                  ? `vitest run --config ${outRel}/${VITEST_CONFIG}`
                   : `vitest run --root ${outRel}`,
               }
             : {}),

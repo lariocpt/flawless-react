@@ -307,7 +307,7 @@ async function emitSuites(
       const abs = path.join(outDir, f.relPath);
       mkdirSync(path.dirname(abs), { recursive: true });
       writeFileSync(abs, f.content);
-      if (/\.tsx?$/.test(f.relPath)) {
+      if (/\.(m?tsx?)$/.test(f.relPath)) {
         roots.push(abs);
         sources.set(`suite-${name}/${f.relPath}`, f.content);
       }
@@ -346,7 +346,7 @@ describe("the emitted suite type-checks, not just parses", () => {
       "suite-Toolbar/playwright.config.ts",
       "suite-Toolbar/mock/server.ts", // --api only
       "suite-Toolbar/mock/routes.ts", // --api only
-      "suite-Toolbar/vitest.config.ts",
+      "suite-Toolbar/vitest.config.mts",
       "suite-Toolbar/setup.ts",
       "suite-Toolbar/browser/playwright.config.ts",
       "suite-Toolbar/browser/Toolbar.spec.ts",
@@ -357,7 +357,7 @@ describe("the emitted suite type-checks, not just parses", () => {
     // `checked` runs slightly longer because resolveJsonModule pulls each
     // suite's budgets.json in as a source file too.
     const relRoots = roots.map((r) => path.relative(root, r).split(path.sep).join("/")).sort();
-    expect(checked.filter((f) => /\.tsx?$/.test(f))).toEqual(relRoots);
+    expect(checked.filter((f) => /\.(m?tsx?)$/.test(f))).toEqual(relRoots);
 
     // The component sources have to be IN the program. If the relative import
     // path the emitters compute were wrong, TS2307 would fire above — but if it
@@ -401,7 +401,7 @@ describe("the emitted suite type-checks, not just parses", () => {
     ensureClientProviderWrapper(nextjs, outDir);
 
     const roots = (readdirSync(outDir, { recursive: true }) as string[])
-      .filter((rel) => /\.tsx?$/.test(rel))
+      .filter((rel) => /\.(m?tsx?)$/.test(rel))
       .map((rel) => path.join(outDir, rel));
 
     // provider.tsx and provider.fixtures.ts import through the target app's own

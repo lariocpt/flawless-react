@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { mergePackageJson } from "../packageJson.ts";
-import { SUITE_COMMAND, SUITE_SCRIPT } from "../suiteScripts.ts";
+import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute } from "../types.ts";
 import { type AliasEntry, renderUnitBrowser } from "./templates.ts";
 
@@ -46,6 +46,21 @@ export async function scaffoldUnitBrowser(
     await mkdir(path.dirname(abs), { recursive: true });
     await Bun.write(abs, f.content);
     written.push(abs);
+  }
+
+  // The config used to be emitted as vitest.config.ts and is now .mts, so a
+  // suite generated before this leaves the old one sitting beside the new one.
+  // Two configs in one directory is worse than either: vitest picks by its own
+  // precedence, so the file a reader edits and the file that runs can differ
+  // silently. This name has only ever been ours, and it has never been
+  // writeOnce, so removing the stale one is safe.
+  // Compared as paths rather than against the literal, so that if VITEST_CONFIG
+  // ever goes back to ".ts" this deletes nothing instead of deleting the file
+  // the loop above just wrote.
+  const stale = path.join(outDir, "vitest.config.ts");
+  if (stale !== path.join(outDir, VITEST_CONFIG) && existsSync(stale)) {
+    await rm(stale);
+    written.push(stale);
   }
 
   if (!opts.skipInnerPackageJson) {
