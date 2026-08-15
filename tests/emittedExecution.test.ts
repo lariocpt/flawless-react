@@ -438,8 +438,16 @@ function extractAssert(pipesText: string): string {
  *
  * What this does and does not prove: the baseline file is written by this test,
  * so it establishes that the assert is self-consistent, not that crust really
- * produces that shape. The other half was checked by reading crust's source
- * rather than running it — src/transforms.ts, where `stats --out` writes
+ * produces that shape. The other half has been confirmed against a live crust
+ * run rather than left as a reading — an emitted pipe pointed at a local server,
+ * where `stats --out` wrote `{crustStats, startedAt, urls, summary}` with
+ * `summary.p95`, the object handed to `assert` carried a TOP-LEVEL `p95`, and
+ * the gate passed with no baseline, passed against a baseline at the observed
+ * p95, and failed against one forced below half of it. That run is not
+ * automated here: it needs crust on PATH and a server to hit, and a test that
+ * silently skipped when either was missing would be worth less than this
+ * comment. The reading it confirms is src/transforms.ts, where `stats --out`
+ * writes
  * `{crustStats, startedAt, urls, summary}` (hence `.summary.p95` on the
  * baseline) while the value passed downstream is the bare summary (hence
  * `s.p95` on the live stats), and `summarize()` keys it `p95` even though its
