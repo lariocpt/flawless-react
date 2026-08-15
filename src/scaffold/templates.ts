@@ -93,7 +93,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
   ];
   if (!opts.nextjsHost) {
     files.unshift({ relPath: "tsconfig.json", content: tsConfig() });
-    files.unshift({ relPath: "package.json", content: pkgJson(suiteName) });
+    files.unshift({ relPath: "package.json", content: pkgJson(suiteName, opts.report) });
   }
   for (const c of flat) {
     files.push({
@@ -205,7 +205,7 @@ function toRel(fromDir: string, absFile: string): string {
   return rel.split(path.sep).join("/");
 }
 
-function pkgJson(name: string): string {
+function pkgJson(name: string, report: boolean): string {
   const dashed = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
   return `${JSON.stringify(
     {
@@ -221,7 +221,11 @@ function pkgJson(name: string): string {
         // exist — the key is only added when unit-browser also ran.
         "test:perf": "playwright test",
         "test:headed": "playwright test --project=interactive",
-        report: "node ./scripts/report.mjs",
+        // Only when scripts/report.mjs is emitted beside it. Declared
+        // unconditionally, `bun run report` on a suite generated without
+        // --report failed with a module-not-found naming a file the user never
+        // asked for and cannot restore without regenerating.
+        ...(report ? { report: "node ./scripts/report.mjs" } : {}),
       },
       dependencies: {
         react: "^18.3.0",
@@ -302,7 +306,16 @@ export default defineConfig({
     : process.env.CI
       ? 1
       : undefined,
-  reporter: [["list"], ["html", { open: "never", outputFolder: path.join(__dirname, "playwright-report") }]],
+  // The JSON entry is what scripts/report.mjs reads. It goes under outputDir,
+  // which is already gitignored and which Playwright clears at the START of a
+  // run — the reporter writes at the end, so the file survives the run that
+  // produced it. The HTML report cannot serve this purpose: it stores stdout
+  // inside a base64 zip blob.
+  reporter: [
+    ["list"],
+    ["json", { outputFile: path.join(__dirname, "test-results", "results.json") }],
+    ["html", { open: "never", outputFolder: path.join(__dirname, "playwright-report") }],
+  ],
   preserveOutput: "always",
   use: {
     baseURL: "http://127.0.0.1:5173",
@@ -1289,22 +1302,60 @@ bun run test:headed    # open Chromium
 `;
 }
 
+/**
+ * A .mjs file, so it is plain JavaScript — no type annotations.
+ *
+ * It carried `const sections: string[] = […]` for as long as it existed, which
+ * node refuses outright ("Missing initializer in const declaration"), so
+ * `bun run report` had never once worked. Nothing noticed because
+ * tests/emittedSyntax.test.ts filters on /\.tsx?$/ and this file is neither.
+ * tests/emittedExecution.test.ts now runs it under node.
+ */
 function reportScript(): string {
   return `#!/usr/bin/env node
 // Aggregates the latest Playwright run's stdout into a markdown summary at ./report.md.
 // Re-run with: bun run report
 import { readFileSync, writeFileSync } from "node:fs";
 
-let raw = "";
+// The JSON reporter's output, not playwright-report/index.html. The HTML report
+// keeps every stdout line inside a base64 zip blob under
+// window.playwrightReportBase64, so the regex below matched nothing there and
+// this script wrote a report with no sections in it.
+const RESULTS = "test-results/results.json";
+
+let report;
 try {
-  raw = readFileSync("playwright-report/index.html", "utf8");
+  report = JSON.parse(readFileSync(RESULTS, "utf8"));
 } catch {
-  console.error("no playwright-report/ found — run \`bun run test\` first");
+  console.error("no " + RESULTS + " — run \`bun run test\` first");
   process.exit(1);
 }
 
-const sections: string[] = ["# Profile report", ""];
-const stats = [...raw.matchAll(/\\[(.+?) (variants|forced)\\] (\\{.+?\\})/g)];
+// Suites nest arbitrarily deep (file, describe, project), and the lines we want
+// are on the individual test results.
+function collectStdout(suites) {
+  let text = "";
+  for (const suite of suites ?? []) {
+    for (const spec of suite.specs ?? []) {
+      for (const t of spec.tests ?? []) {
+        for (const r of t.results ?? []) {
+          for (const chunk of r.stdout ?? []) {
+            if (typeof chunk === "string") text += chunk;
+            else if (chunk.text !== undefined) text += chunk.text;
+            else if (chunk.buffer !== undefined) {
+              text += Buffer.from(chunk.buffer, "base64").toString("utf8");
+            }
+          }
+        }
+      }
+    }
+    text += collectStdout(suite.suites);
+  }
+  return text;
+}
+
+const sections = ["# Profile report", ""];
+const stats = [...collectStdout(report.suites).matchAll(/\\[(.+?) (variants|forced)\\] (\\{.+?\\})/g)];
 for (const m of stats) {
   sections.push(\`## \${m[1]} (\${m[2]})\`);
   sections.push("\\n\`\`\`json");

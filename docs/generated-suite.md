@@ -252,7 +252,9 @@ The numbers are referenced from every spec file but only generate **warnings** b
 
 ## `scripts/report.mjs` (optional, `--report` only)
 
-Reads `playwright-report/index.html` from the last run and writes a `report.md` summarising the per-component variant and forced-rerender stats. Plain Node script — no Playwright runtime needed.
+Reads `test-results/results.json` — written by the `json` reporter in `playwright.config.ts` — and writes a `report.md` summarising the per-component variant and forced-rerender stats. Plain Node script — no Playwright runtime needed.
+
+It reads the JSON reporter's output rather than `playwright-report/index.html` because the HTML report stores stdout inside a base64 zip blob, where the stat lines the specs print cannot be found by reading the file. The `report` script in the suite's `package.json` is only declared when this file is emitted.
 
 **Edit when**: you want HTML output, or to push the summary to a metrics endpoint, or to diff against a baseline JSON.
 

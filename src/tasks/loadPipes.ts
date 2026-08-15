@@ -545,7 +545,12 @@ else
   # --out flawless/load/last-*.json paths are relative to the project root.
   _params="$PWD/flawless/e2e/params.json"
 fi
-if [ -f "$_params" ]; then
+if ! command -v jq >/dev/null 2>&1; then
+  # Without this the only signal is the shell's own "jq: command not found",
+  # which does not say what it costs: the pipes still run, requesting URLs with
+  # empty path segments, and report the 404 handler's numbers as the app's.
+  echo "flawless: jq not found — no LOAD_<PARAM> exported. The pipes would request URLs with empty path segments and measure your 404 handler. Install jq, or export the ids yourself." >&2
+elif [ -f "$_params" ]; then
   while IFS="=" read -r _k _v; do
     [ -n "$_k" ] && [ -n "$_v" ] && export "LOAD_$(echo "$_k" | tr '[:lower:]' '[:upper:]')=$_v"
   done < <(

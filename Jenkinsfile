@@ -63,9 +63,28 @@ pipeline {
                     # No -v "$PWD:/w" anywhere in this file: the workspace is in the
                     # jenkins_home NAMED VOLUME, so that host path does not exist as the daemon
                     # resolves it. docker cp goes through the client and does see it.
+                    # tests/emittedExecution.test.ts SOURCES and RUNS what the tool emits, so
+                    # the interpreters a user would use have to be in here. The image has bash
+                    # but neither zsh nor jq, and its `node` is a symlink to bun — which strips
+                    # type annotations, so the emitted .mjs has to meet a REAL node or the
+                    # check proves nothing (that is the exact bug it was written to catch).
+                    # /usr/local/bun-node-fallback-bin is last in PATH, so the apt node wins.
+                    # Those tests fail rather than skip when an interpreter is missing: a
+                    # skipped zsh case in CI is how the env.sh bug survived the first time.
                     CID=$(docker create -w /w oven/bun:1 sh -c '
                         set -eu
                         cd /w
+                        apt-get update >/dev/null
+                        apt-get install -y --no-install-recommends jq zsh nodejs >/dev/null
+                        for c in bash zsh jq node; do
+                            command -v "$c" >/dev/null || { echo "$c missing after apt install"; exit 1; }
+                        done
+                        # Fails in a second here rather than 400 tests later, and says why.
+                        node -p "typeof Bun" | grep -qx undefined || {
+                            echo "node on PATH is the bun shim, which strips type annotations"
+                            echo "the emitted .mjs would not really be checked — install a real node"
+                            exit 1
+                        }
                         bun install --frozen-lockfile
                         bun test
                         bunx tsc --noEmit

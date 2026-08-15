@@ -383,7 +383,7 @@ src/
 ├── cli.ts           # argparse + interactive menu
 ├── index.ts         # public programmatic API
 └── types.ts
-tests/               # 34 files; fixtures/ includes a static Next.js app
+tests/               # 35 files; fixtures/ includes a static Next.js app
 ```
 
 ## Licence

@@ -299,6 +299,7 @@ The split lets us:
 
 - **Test analysis without producing files.** Most unit tests live in [tests/analyse.test.ts](../tests/analyse.test.ts) and operate on the `ComponentTree` directly.
 - **Test rendering without touching disk.** `renderSuite` returns an array; [tests/scaffold.test.ts](../tests/scaffold.test.ts) asserts on the in-memory result before the integration tests round-trip through `Bun.write`.
+- **Run what we emit, where parsing is not enough.** [tests/emittedSyntax.test.ts](../tests/emittedSyntax.test.ts) parses the emitted TypeScript, but its filter is `/\.tsx?$/` — the shell script, the node script, the crust pipes and the JSON are invisible to it. [tests/emittedExecution.test.ts](../tests/emittedExecution.test.ts) executes those instead: `load/env.sh` is sourced under bash *and* zsh from a cwd that cannot rescue it, `scripts/report.mjs` runs under a real node, and the baseline `assert` in `routes.pipes` is evaluated as the JavaScript crust treats it as. The `env.sh` bug that motivated this rendered, parsed, and ran under bash; only a different shell exposed it.
 - **Swap either side independently.** A future SWC-based analyser only has to produce a `ComponentTree`; the scaffolder is unchanged. A future scaffolder that emits a Vitest suite instead of Playwright only consumes the tree.
 
 ## What's intentionally absent
