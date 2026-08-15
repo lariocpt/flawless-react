@@ -23,6 +23,13 @@ export function extractRootTag(bodyNode: ts.Node, env: RenderEnv = emptyEnv()): 
 
   const tag = plainTagName(root);
   if (tag === undefined) return undefined;
+  // Host elements only, as the field's own contract says. A component root is
+  // not an answer to "what element does this render" — shadcn's Button returns
+  // <ButtonPrimitive>, and reporting that let a caller conclude the render
+  // contained an element called "ButtonPrimitive" and no button at all. Every
+  // consumer wants a real tag: the spec's querySelector, the content-model
+  // wrapper, the ambiguity census.
+  if (!/^[a-z][a-z0-9-]*$/.test(tag)) return undefined;
 
   return everyReturnAgrees(bodyNode, root, tag) ? tag : undefined;
 }

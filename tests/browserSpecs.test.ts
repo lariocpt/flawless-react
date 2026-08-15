@@ -309,3 +309,19 @@ describe("ambiguity is decided by what a tag renders, not what it is called", ()
     expect(tree.entry.interactions?.clicks[0]?.ambiguousTag).toBe(true);
   });
 });
+
+describe("rootTag is a host element or nothing", () => {
+  test("a component whose root is another component reports no root tag", async () => {
+    const tree = await treeFor("resolved/WrapsAComponent.tsx");
+    // shadcn's Button returns <ButtonPrimitive>. Reporting that as the root tag
+    // let a caller conclude the render held an element called
+    // "ButtonPrimitive" and no button at all — which is how VoteCard's click
+    // target went back to being whichever button came first.
+    expect(tree.entry.rootTag).toBeUndefined();
+  });
+
+  test("a component whose root is a host element reports it", async () => {
+    const tree = await treeFor("resolved/RealButton.tsx");
+    expect(tree.entry.rootTag).toBe("button");
+  });
+});
