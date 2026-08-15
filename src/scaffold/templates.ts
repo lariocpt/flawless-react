@@ -38,6 +38,14 @@ export interface RenderedFile {
    * same criterion `provider.fixtures.ts` and `e2e/global-setup.ts` are held to.
    * Everything else in the suite is derived and must stay regenerable, or an
    * existing suite never receives a later version's improvements.
+   *
+   * **The set is smaller than it looks: in renderSuite only `host/main.tsx` and
+   * `budgets.json` carry this.** `profile/_helpers.ts` reads like somewhere to
+   * keep your own scenarios and is rebuilt on every `--force`. Check this flag
+   * before telling a user, in emitted prose or in docs, that their edits to a
+   * file will survive — the emitted README claimed exactly that about
+   * `_helpers.ts` in a draft of the commit that fixed the README for claiming
+   * it about itself. Rendering the file and reading it caught that; no test did.
    */
   writeOnce?: boolean;
 }
