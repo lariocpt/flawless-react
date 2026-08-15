@@ -4,6 +4,7 @@ import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runCore } from "../src/core.ts";
+import { suitePackageJson } from "../src/scaffold-tests/index.ts";
 
 /**
  * What the real runners SELECT when handed the configs this tool emits.
@@ -34,6 +35,24 @@ const CASE_TIMEOUT_MS = 120_000;
 
 const fixture = (rel: string): string => path.resolve(__dirname, "fixtures", rel);
 
+/**
+ * The runner versions to install, read out of the emitted package.json itself.
+ *
+ * Not a second list: the question this file asks is what the runners the SUITE
+ * declares do with the configs the suite emits, so a hardcoded copy here could
+ * drift from the suite and quietly start answering a different question.
+ */
+const SUITE_PINS: string[] = (() => {
+  const { devDependencies } = JSON.parse(suitePackageJson("/x/flawless", true)) as {
+    devDependencies: Record<string, string>;
+  };
+  return ["@playwright/test", "vitest", "jsdom"].map((name) => {
+    const range = devDependencies[name];
+    if (range === undefined) throw new Error(`the emitted suite no longer pins ${name}`);
+    return `${name}@${range}`;
+  });
+})();
+
 interface Suite {
   app: string;
   outDir: string;
@@ -62,11 +81,20 @@ function emittedSuite(): Promise<Suite> {
       inlineSummary: false,
     });
 
-    // The real packages, not stubs. @playwright/test and vitest are ~2s each;
-    // jsdom is the slow one and is needed because the emitted vitest config
-    // names it as the environment. No browser binary is downloaded — `--list`
-    // resolves the config and enumerates specs without launching anything.
-    const install = Bun.spawn(["bun", "add", "-d", "@playwright/test", "vitest", "jsdom"], {
+    // The real packages, not stubs, AT THE RANGES THE EMITTED package.json
+    // PINS. @playwright/test and vitest are ~2s each; jsdom is the slow one and
+    // is needed because the emitted vitest config names it as the environment.
+    // No browser binary is downloaded — `--list` resolves the config and
+    // enumerates specs without launching anything.
+    //
+    // Unpinned, this installed whatever the registry served that morning, which
+    // is both non-hermetic and the wrong question: the suite declares ^2.1.0, so
+    // that is the vitest whose selection behaviour matters. It also broke CI —
+    // unpinned resolved vitest 4, which dies during collection under the node
+    // the Jenkinsfile installs (Debian trixie ships node 20.19, and vitest 4
+    // hits `webidl.util.markAsUncloneable is not a function` there). Locally,
+    // on node 26, it passed.
+    const install = Bun.spawn(["bun", "add", "-d", ...SUITE_PINS], {
       cwd: app,
       stdout: "pipe",
       stderr: "pipe",
@@ -140,6 +168,25 @@ async function vitestSelects(app: string, root: string): Promise<string[]> {
     proc.exited,
   ]);
   if (code !== 0) throw new Error(`vitest list failed for root ${root}:\n${stderr}\n${out}`);
+  // Exit 0 is not enough. A vitest that dies inside its worker while collecting
+  // prints "There were unhandled errors during test collection", writes nothing
+  // to stdout, and STILL exits 0 — so the empty list below would be reported as
+  // "the config selected nothing". That is indistinguishable from the answer
+  // this file exists to detect, and it is worse in the other direction: the
+  // guard-the-guard case expects an empty selection, so a crashed vitest makes
+  // the one case written to prove the check can fail pass without checking
+  // anything. Seen for real in CI, where an unpinned vitest 4 hit
+  // `webidl.util.markAsUncloneable is not a function` under node 20.
+  if (/unhandled errors during test collection/i.test(stderr)) {
+    throw new Error(`vitest crashed while collecting for root ${root}:\n${stderr}`);
+  }
+  // Deliberately the opposite convention to playwrightSelects above, which
+  // treats "No tests found" as a legitimate empty selection rather than an
+  // error. The difference is in the runners, not in the intent: playwright
+  // reports an empty selection by exiting NON-zero, so it has to be rescued to
+  // be reported; vitest reports a CRASH by exiting zero, so it has to be caught
+  // to not be mistaken for one. Making the two look alike would break one of
+  // them.
 
   // `unit/HomePage.test.tsx > HomePage renders a <main>` — the path is the
   // token before the first " > ".
