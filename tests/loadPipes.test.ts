@@ -424,9 +424,18 @@ load 5s 1/s | POST $LOAD_BASE/api/things -H "$LOAD_AUTH" | expect 201
 });
 
 describe("env.sh finds params.json whatever shell sources it", () => {
-  async function envScript(): Promise<string> {
+  /**
+   * Emit env.sh into `<root>/<outName>`, the way a real run lays it out.
+   *
+   * The out dir is a CHILD of the project root here rather than the root
+   * itself, because every path this script emits is written relative to the
+   * root — collapsing the two made the interesting part of the string empty
+   * and the assertions below unable to tell "flawless" from anything else.
+   */
+  async function envScript(outName = "flawless"): Promise<string> {
     const { loadPipes } = await import("../src/tasks/loadPipes.ts");
-    const outDir = await tmpDir();
+    const root = await tmpDir();
+    const outDir = path.join(root, outName);
     await Bun.write(
       path.join(outDir, "e2e", "params.json"),
       JSON.stringify({ defaults: { id: "seeded-1", token: "" }, routes: {} }),
@@ -443,7 +452,7 @@ describe("env.sh finds params.json whatever shell sources it", () => {
       inlineSummary: false,
       json: false,
       changed: undefined,
-      nextjs: { root: outDir, router: "app", apiRoutes: [], appResolver: undefined },
+      nextjs: { root, router: "app", apiRoutes: [], appResolver: undefined },
     } as never);
     return Bun.file(path.join(outDir, "load", "env.sh")).text();
   }
@@ -467,5 +476,18 @@ describe("env.sh finds params.json whatever shell sources it", () => {
   test("falls back to the directory the pipes' own paths assume", async () => {
     const env = await envScript();
     expect(env).toContain("$PWD/flawless/e2e/params.json");
+  });
+
+  test("--out names the real out dir, not the literal flawless", async () => {
+    // The fallback exists for the one case where self-location fails, so
+    // hardcoding "flawless" broke it in exactly that case: under --out qa it
+    // resolved to a directory the run never created and silently exported
+    // nothing, which is the LOAD_<PARAM>-unset failure wearing a new hat.
+    const env = await envScript("qa");
+    expect(env).toContain("$PWD/qa/e2e/params.json");
+    expect(env).not.toContain("flawless/e2e/params.json");
+    // The header tells you what to source; naming a path that does not exist
+    // is the same defect one line higher up.
+    expect(env).toContain("# source qa/load/env.sh");
   });
 });

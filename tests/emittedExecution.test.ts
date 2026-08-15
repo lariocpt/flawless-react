@@ -832,9 +832,21 @@ describe("the flawless:* scripts point only at what the run emitted", () => {
     expect(Object.keys(scripts).sort()).toEqual(["flawless:e2e"]);
   });
 
+  test("--tasks unit-browser declares no browser script without perf-harness", async () => {
+    // The gate this file's first pass missed. browser/ is rendered only when
+    // perf-harness is in the run too (unitAndBrowser.ts derives browserSpecs
+    // from exactly that), so unit-browser alone declared a script for a config
+    // that was never written — and runGeneratedTests invoked it and printed
+    // `failed suites: browser` for a run that was fine.
+    const { scripts, present } = await nextjsRun(["unit-browser"]);
+
+    expect(danglingIn(scripts, present)).toEqual([]);
+    expect(Object.keys(scripts).sort()).toEqual(["flawless:unit"]);
+  });
+
   test("with every task selected, all four resolve into the emitted tree", async () => {
     // Guards the guard from the other side: if the gates were simply always
-    // false the two cases above would pass while the tool emitted no scripts
+    // false the cases above would pass while the tool emitted no scripts
     // at all. Here every script must be present AND resolve.
     const { scripts, present } = await nextjsRun(["perf-harness", "unit-browser", "e2e", "load"]);
 

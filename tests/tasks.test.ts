@@ -178,8 +178,11 @@ describe("e2e task", () => {
   });
 
   test("emits a port-aware config, global setup, README and one spec per page", async () => {
-    const outDir = tmp("e2e-out");
     const nextjs = nextProject("next dev -p 3123");
+    // Under the project root, like a real run. Pointed at an unrelated tmpdir
+    // the emitted prose says "../flawless-e2e-out-XXXX/e2e/params.json", which
+    // is accurate but tests a layout no user has.
+    const outDir = path.join(nextjs.root, "flawless");
     const pageFile = writePage(nextjs, path.join("things", "[id]"));
     const tree = withFilePath(await toolbarTree(), pageFile);
 

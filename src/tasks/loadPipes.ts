@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { outDirRel, underOutDir } from "../emitPaths.ts";
 import { findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
 import { ensureParamDefaults } from "./e2eRoutes.ts";
@@ -76,7 +77,7 @@ export const loadPipes: Task = {
     }
 
     const envPath = path.join(loadDir, "env.sh");
-    await Bun.write(envPath, loadEnvScript());
+    await Bun.write(envPath, loadEnvScript(outDirRel(ctx.outDir, ctx.nextjs.root)));
     written.push(envPath);
 
     // Regenerated under --force, unlike routes.pipes beside it: this README is
@@ -261,10 +262,6 @@ const HEADER_MARKER = "# flawless-react load pipes — generated from the analys
 /** Prefix of the gate comment, which identifies a pipe as commented out BY the tool. */
 const GATE_MARKER = "# TODO(flawless): no value for ";
 
-function relOut(outDir: string, nextRoot: string): string {
-  return path.relative(nextRoot, outDir).split(path.sep).join("/");
-}
-
 /**
  * The ids a target needs that nothing has supplied.
  *
@@ -293,7 +290,7 @@ function gateComment(missing: string[], rel: string): string {
   );
 }
 
-function pipesHeader(): string[] {
+function pipesHeader(rel: string): string[] {
   return [
     HEADER_MARKER,
     "# Env contract (export before running, or provide a crust setup module):",
@@ -305,8 +302,8 @@ function pipesHeader(): string[] {
     '#                session, or "authorization: Bearer <token>" for a token one.',
     '#                Use "accept: */*" if the route needs no auth.',
     "#   LOAD_<PARAM> — one per dynamic segment below (e.g. LOAD_ID, LOAD_BUILDINGID).",
-    "#                If you filled flawless/e2e/params.json for the e2e task, those",
-    "#                are the same ids — source flawless/load/env.sh to reuse them",
+    `#                If you filled ${underOutDir(rel, "e2e/params.json")} for the e2e task, those`,
+    `#                are the same ids — source ${underOutDir(rel, "load/env.sh")} to reuse them`,
     "#                instead of keeping a second copy that drifts.",
     "# Baseline gating: copy a good last-*.json to baseline-*.json; runs then fail",
     "# when p95 degrades beyond 2x baseline. One assert per threshold.",
@@ -323,7 +320,7 @@ export function renderPipes(
   nextRoot: string,
   filled: Set<string>,
 ): string {
-  const rel = relOut(outDir, nextRoot);
+  const rel = outDirRel(outDir, nextRoot);
   const entries = targets.map((t) => {
     const body = renderPipeBody(t, rel);
     const missing = missingParams(t, filled);
@@ -332,7 +329,7 @@ export function renderPipes(
     // the id in e2e/params.json plus a --force regeneration turns it back on.
     return `${gateComment(missing, rel)}\n# ${body}`;
   });
-  return `${pipesHeader().join("\n")}\n\n${entries.join("\n\n")}\n`;
+  return `${pipesHeader(rel).join("\n")}\n\n${entries.join("\n\n")}\n`;
 }
 
 type PipeState = "live" | "gated" | "userCommented";
@@ -422,7 +419,7 @@ export function mergePipes(
   nextRoot: string,
   filled: Set<string>,
 ): string {
-  const rel = relOut(outDir, nextRoot);
+  const rel = outDirRel(outDir, nextRoot);
   const parsed = parsePipes(existing);
 
   const byName = new Map<string, Extract<BodyItem, { kind: "pipe" }>>();
@@ -461,7 +458,7 @@ export function mergePipes(
 
   // The header is generated prose, so a run that recognises its own marker
   // refreshes it. Notes belong below it, where they are preserved.
-  if (parsed.header[0] === HEADER_MARKER) parsed.header = pipesHeader();
+  if (parsed.header[0] === HEADER_MARKER) parsed.header = pipesHeader(rel);
 
   // Normalise the trailing blank run before appending, so repeated --force runs
   // do not accumulate empty lines at the end of the file.
@@ -517,11 +514,11 @@ was generated. Put your own notes in \`routes.pipes\`, below its header.
  * copies of the same eight UUIDs drift on the first change, and the drift is
  * silent — a load run against a stale id just reports a 404 rate.
  */
-function loadEnvScript(): string {
+function loadEnvScript(rel: string): string {
   return `#!/usr/bin/env bash
-# source flawless/load/env.sh
+# source ${underOutDir(rel, "load/env.sh")}
 #
-# Exports LOAD_<PARAM> for every id in flawless/e2e/params.json, so the load
+# Exports LOAD_<PARAM> for every id in ${underOutDir(rel, "e2e/params.json")}, so the load
 # pipes and the e2e specs cannot disagree about which records they target.
 # Do not edit: this file is regenerated on every run. Set LOAD_BASE and
 # LOAD_AUTH in your shell (or a .env you source alongside this); see README.md.
@@ -542,8 +539,11 @@ if [ -n "$_self" ] && [ -d "$(dirname "$_self")/../e2e" ]; then
   _params="$(cd "$(dirname "$_self")/../e2e" && pwd)/params.json"
 else
   # Fall back to the working directory the pipes themselves assume: their
-  # --out flawless/load/last-*.json paths are relative to the project root.
-  _params="$PWD/flawless/e2e/params.json"
+  # --out ${underOutDir(rel, "load/last-*.json")} paths are relative to the project root.
+  # This has to track the real out dir — hardcoded "flawless", a run with
+  # --out qa left the one fallback that exists for this case resolving to a
+  # directory that was never created, so it silently exported nothing.
+  _params="$PWD/${underOutDir(rel, "e2e/params.json")}"
 fi
 if ! command -v jq >/dev/null 2>&1; then
   # Without this the only signal is the shell's own "jq: command not found",

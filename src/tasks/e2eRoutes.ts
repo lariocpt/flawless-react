@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { relativeToEmitted } from "../emitPaths.ts";
+import { outDirRel, relativeToEmitted, underOutDir } from "../emitPaths.ts";
 import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
@@ -80,7 +80,7 @@ export const e2eRoutes: Task = {
         skipped.push(specPath);
         continue;
       }
-      await Bun.write(specPath, routeSpec(tree, route));
+      await Bun.write(specPath, routeSpec(tree, route, outDirRel(ctx.outDir, ctx.nextjs.root)));
       written.push(specPath);
     }
 
@@ -202,6 +202,7 @@ crust -c 'GET :4747/__crust/violations | (v => v.violations.filter(x => x.direct
 function routeSpec(
   tree: ComponentTree,
   route: NonNullable<ReturnType<typeof pageFileToRoute>>,
+  rel: string,
 ): string {
   // A parameterised route reads its ids from the shared fixture rather than from
   // a const per spec. The old form defaulted to "REPLACE_WITH_SEEDED_ID", which
@@ -215,7 +216,7 @@ function routeSpec(
   // TypeScript cannot see that, and every navigation would otherwise be an error.
   const urlExpr = dynamic ? `routeUrl(ROUTE_TEMPLATE) as string` : JSON.stringify(route.urlPath);
   const skipLine = dynamic
-    ? `\n  test.skip(\n    ROUTE === undefined,\n    \`no id fixture for ${route.urlPath} — fill flawless/e2e/params.json\`,\n  );`
+    ? `\n  test.skip(\n    ROUTE === undefined,\n    \`no id fixture for ${route.urlPath} — fill ${underOutDir(rel, "e2e/params.json")}\`,\n  );`
     : "";
 
   // Up to 3 interactions harvested from the page's component tree.

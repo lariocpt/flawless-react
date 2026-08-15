@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { analyseFile } from "./analyse/index.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
+import { outDirRel, underOutDir } from "./emitPaths.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
@@ -326,7 +327,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // POSIX separators, like every other emitted path (loadPipes.ts,
       // scaffold/templates.ts, scaffold-tests/mocks.ts). These land in a file;
       // the rest of path.relative's uses in this file are log lines.
-      const outRel = path.relative(nextCtx.root, outDir).split(path.sep).join("/");
+      const outRel = outDirRel(outDir, nextCtx.root);
       await mergeIntoNextPackageJson(
         nextCtx.root,
         {},
@@ -355,6 +356,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
                 "flawless:unit": opts.colocate
                   ? `vitest run --config ${outRel}/vitest.config.ts`
                   : `vitest run --root ${outRel}`,
+              }
+            : {}),
+          // browser/ is rendered only when perf-harness is also in the run —
+          // the browser specs drive its host (unitAndBrowser.ts sets
+          // browserSpecs from exactly this condition). Gated on unit-browser
+          // alone, `--nextjs --tasks unit-browser` declared this script for a
+          // config that was never written, and --run-tests then invoked it and
+          // reported `failed suites: browser` for a correct run.
+          ...(taskIds.includes("unit-browser") && taskIds.includes("perf-harness")
+            ? {
                 "flawless:browser": `playwright test --config ${outRel}/browser/playwright.config.ts`,
               }
             : {}),
@@ -389,16 +400,24 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       for (const collision of detectTestScriptCollisions(nextCtx.root, ctx.colocate ?? false)) {
         warn(`warning: ${collision}`);
       }
+      // outRel, not a literal "flawless": every script twelve lines above is
+      // already written relative to the real out dir, and these were not. Under
+      // `--out qa` the run wrote qa/ and ignored flawless/, so the heaps (566MB
+      // of them), the Playwright output and — worst — qa/e2e/.auth.json were
+      // left untracked and unignored. That file is where global-setup.ts tells
+      // you to persist a logged-in storageState, i.e. session cookies staged
+      // for commit. `*.flawless.json` stays literal: it is the inline-summary
+      // sidecar pattern, written beside the analysed sources, not under outDir.
       const added = updateGitignore(nextCtx.root, [
-        "flawless/reports/",
-        "flawless/heaps/",
-        "flawless/playwright-report/",
-        "flawless/node_modules/",
-        "flawless/test-results/",
-        "flawless/browser/test-results/",
-        "flawless/e2e/test-results/",
-        "flawless/e2e/.auth.json",
-        "flawless/load/last-*.json",
+        underOutDir(outRel, "reports/"),
+        underOutDir(outRel, "heaps/"),
+        underOutDir(outRel, "playwright-report/"),
+        underOutDir(outRel, "node_modules/"),
+        underOutDir(outRel, "test-results/"),
+        underOutDir(outRel, "browser/test-results/"),
+        underOutDir(outRel, "e2e/test-results/"),
+        underOutDir(outRel, "e2e/.auth.json"),
+        underOutDir(outRel, "load/last-*.json"),
         "*.flawless.json",
       ]);
       if (added.length > 0) {

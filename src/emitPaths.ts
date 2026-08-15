@@ -26,3 +26,26 @@ export function relativeToEmitted(fromDir: string, target: string): string {
   if (rel === "") return ".";
   return rel.split(path.sep).join("/");
 }
+
+/**
+ * The out dir as the project root sees it — `flawless`, or whatever `--out` said.
+ *
+ * Emitted prose and emitted shell both name this path, and both used to spell it
+ * as the literal "flawless". Under `--out qa` that produced files telling the
+ * user to edit a directory the run never created, and an env.sh whose $PWD
+ * fallback resolved to nothing. Shared rather than redefined per task: two
+ * copies of a path rule drifting apart is its own class of bug here.
+ */
+export function outDirRel(outDir: string, projectRoot: string): string {
+  const rel = path.relative(path.resolve(projectRoot), path.resolve(outDir));
+  // "" means the out dir IS the project root. Left empty it composes into
+  // "/load/env.sh", which reads as an absolute path and points at the
+  // filesystem root — so "." here, and underOutDir drops it again.
+  if (rel === "") return ".";
+  return rel.split(path.sep).join("/");
+}
+
+/** Compose a path under the out dir, without a "./" nobody wants to read. */
+export function underOutDir(rel: string, sub: string): string {
+  return rel === "." || rel === "" ? sub : `${rel}/${sub}`;
+}
