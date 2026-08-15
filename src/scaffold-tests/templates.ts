@@ -1218,6 +1218,7 @@ function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: 
   const { container } = renderTarget();
   void container;
 ${fillSteps.join("\n")}
+${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   ${submitClick}
   expect(handlers.${propName}).toHaveBeenCalled();
 ${isolation || "  // no other handlers to isolate"}
@@ -1328,14 +1329,7 @@ test(\`\${NAME}: mounts in the browser without console errors\`, async ({ page }
   await mount(page);
   await page.waitForTimeout(100);
 ${consoleAssertion}
-${
-  guarded
-    ? `  // No markup assertion: this component's first statement is a guard the
-  // analyser could not decide, so returning null here may be correct. That the
-  // mount produced no errors is the claim the source supports.`
-    : `  const rootHtml = await page.locator("#root").innerHTML();
-  expect(rootHtml.length).toBeGreaterThan(0);`
-}
+${guardedMountAssertion(guarded, c.info)}
 });
 ${interactionTests}
 `;
@@ -1479,6 +1473,40 @@ ${fillSteps.join("\n") || "  // no field carried a type a blind fill could suppl
 test(\`\${NAME}: no interactions detected — mount-only smoke above is sufficient\`, () => {});`);
   }
   return parts.join("\n");
+}
+
+/**
+ * What a mount test may claim about the markup.
+ *
+ * An unguarded component must render something. A guarded one may legitimately
+ * render nothing — `if (!user) return null` behind a store hook — so "it
+ * produced markup" is not a claim its source supports. Dropping the assertion
+ * entirely was too much, though: when the guard DOES pass, the component's
+ * literal copy has to be there, and that is still checkable. The conditional is
+ * the honest shape.
+ */
+function guardedMountAssertion(guarded: boolean, info: ComponentInfo): string {
+  if (!guarded) {
+    return `  const rootHtml = await page.locator("#root").innerHTML();
+  expect(rootHtml.length).toBeGreaterThan(0);`;
+  }
+  // The longest literal is the most identifying thing the source offers.
+  const witness = [...(info.staticText ?? [])]
+    .filter((t) => t.trim().length >= 3)
+    .sort((a, b) => b.length - a.length)[0];
+  if (!witness) {
+    return `  // No markup assertion: this component's first statement is a guard the
+  // analyser could not decide, and it renders no literal copy that a passing
+  // guard would put on the page. That the mount produced no errors is the only
+  // claim the source supports.`;
+  }
+  return `  // An undecidable guard may legitimately render nothing here. When it does
+  // render, this copy is unconditional in that branch — so the claim is
+  // conditional, not absent.
+  const rootHtml = await page.locator("#root").innerHTML();
+  if (rootHtml.trim().length > 0) {
+    expect(await page.getByText(${JSON.stringify(witness)}).count()).toBeGreaterThan(0);
+  }`;
 }
 
 /** The Playwright form of a disclosure trigger, so a browser spec can open it. */

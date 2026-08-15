@@ -197,8 +197,12 @@ describe("a component whose guard the analyser cannot decide", () => {
     const browser = specs.get("browser/GuardedMenu.spec.ts") ?? "";
     expect(browser).toContain("count()) === 0");
     expect(browser).toContain("left nothing to drive");
-    // And the mount test stops claiming markup it cannot promise.
+    // The mount test stops claiming markup it cannot promise — but it does not
+    // give up entirely: when the guard passes, the component's literal copy has
+    // to be there, so the claim becomes conditional rather than absent.
     expect(browser).not.toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+    expect(browser).toContain("if (rootHtml.trim().length > 0)");
+    expect(browser).toContain('page.getByText("Open account menu").count()');
   });
 
   test("an unguarded component still asserts it rendered something", async () => {
@@ -269,5 +273,39 @@ describe("the profile suite no longer clicks whichever button is first", () => {
       files.find((f) => f.relPath.endsWith("GatedSubmit.profile.spec.ts"))?.content ?? "";
     expect(spec).toContain('name: "Pick A", exact: true');
     expect(spec).not.toContain('page.locator("button").first()');
+  });
+});
+
+describe("ambiguity is decided by what a tag renders, not what it is called", () => {
+  test("a component named like a button that renders an anchor does not count", async () => {
+    const tree = await analyse({
+      entry: path.resolve(__dirname, "fixtures/resolved/OneRealButton.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    // <LinkButton> resolves to <a>, so the one <button> is unambiguous. The old
+    // `endsWith("button")` convention counted it and skipped the test.
+    expect(tree.entry.interactions?.clicks[0]?.ambiguousTag).toBeUndefined();
+  });
+
+  test("a component that really renders a button still counts", async () => {
+    const tree = await analyse({
+      entry: path.resolve(__dirname, "fixtures/resolved/TwoRealButtons.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    expect(tree.entry.interactions?.clicks[0]?.ambiguousTag).toBe(true);
+  });
+
+  test("an unresolvable tag falls back to the cautious convention", async () => {
+    // The mapped <button> and the fixed one are both host tags here, so the
+    // count is direct — and a tag that could NOT be resolved would fall back to
+    // the convention, which over-counts rather than under-counts.
+    const tree = await analyse({
+      entry: path.resolve(__dirname, "fixtures/AmbiguousTags.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    expect(tree.entry.interactions?.clicks[0]?.ambiguousTag).toBe(true);
   });
 });

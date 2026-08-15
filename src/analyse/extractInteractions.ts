@@ -31,6 +31,8 @@ export function extractInteractions(
   propsShape: PropsShape,
   unresolvedProps: string[] = [],
   env: RenderEnv = emptyEnv(),
+  /** Component tag → the host element it actually renders, where resolvable. */
+  tagRootTags: Map<string, string> = new Map(),
 ): InteractionInfo {
   // Handler props are function-typed, which extractProps cannot synthesise and
   // routes to unresolvedProps. Union both so the classifier sees them.
@@ -53,7 +55,7 @@ export function extractInteractions(
 
   // How many elements of each host tag this render contains. A bare-tag locator
   // is only a name for the element when it is the only one of its kind.
-  const tagCounts = countHostTags(initial ? initial.expr : bodyNode);
+  const tagCounts = countHostTags(initial ? initial.expr : bodyNode, tagRootTags);
 
   const visit = (n: ts.Node): void => {
     // "no" means provably not rendered at these props; "unknown" is kept, since
@@ -106,19 +108,21 @@ export function extractInteractions(
 /**
  * How many elements in this render could answer to a bare host-tag locator.
  *
- * Two things count towards `button`: a `<button>`, and a component tag whose
- * name ends in Button. The second is a naming convention rather than proof —
- * but it is only ever used to make the generator MORE cautious, downgrading a
- * fallback locator to a skip, so a false positive costs a test and a false
- * negative costs a wrong element. VoteCard is exactly that shape: one mapped
- * `<button>` carrying the handler and one `<Button>` rendering "Cast vote",
- * which `page.locator("button").first()` resolved to instead.
+ * A `<button>` counts towards `button`, and so does a component tag whose OWN
+ * root element is a button — read from that component's source, one hop away.
+ * Where the tag cannot be resolved (a third-party component, a dynamic tag) the
+ * old naming convention stands in; it can only over-count, and over-counting
+ * costs a test rather than a wrong click.
+ *
+ * VoteCard is why any of this exists: one mapped `<button>` carrying the
+ * handler and one `<Button>` rendering "Cast vote", which
+ * `page.locator("button").first()` resolved to instead.
  *
  * An element inside `.map()` is counted once — the source shows one, the DOM may
  * show none or twenty. That is enough to answer the only question being asked:
  * does this locator have competition.
  */
-function countHostTags(root: ts.Node): Map<string, number> {
+function countHostTags(root: ts.Node, tagRootTags: Map<string, string>): Map<string, number> {
   const counts = new Map<string, number>();
   const bump = (tag: string): void => {
     counts.set(tag, (counts.get(tag) ?? 0) + 1);
@@ -128,12 +132,18 @@ function countHostTags(root: ts.Node): Map<string, number> {
       const tag = readTagName(n.tagName);
       bump(tag);
       if (/^[A-Z]/.test(tag)) {
-        const lower = tag.toLowerCase();
-        // No `lower !== host` guard: <Button> lowercases to exactly "button",
-        // which is the single most common case this rule exists for. The
-        // component tag was already counted under its own name above.
-        for (const host of ["button", "input", "textarea", "select", "form"]) {
-          if (lower.endsWith(host)) bump(host);
+        const resolved = tagRootTags.get(tag);
+        if (resolved) {
+          // Evidence: this tag's own root element, read from its source.
+          bump(resolved);
+        } else {
+          // Unresolvable — a third-party component, a dynamic tag. Fall back to
+          // the naming convention, which can only over-count and so can only
+          // turn a locator into a skip.
+          const lower = tag.toLowerCase();
+          for (const host of ["button", "input", "textarea", "select", "form"]) {
+            if (lower.endsWith(host)) bump(host);
+          }
         }
       }
     }

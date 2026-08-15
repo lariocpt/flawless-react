@@ -19,6 +19,7 @@ import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
+import { resolveTagRootTags } from "./resolveTagRootTags.ts";
 import { exportedNames, SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
 
@@ -129,12 +130,23 @@ async function analyseOne(
   // The values the generated spec will actually pass. Everything below describes
   // the render those values produce, rather than the last return in the body.
   const renderEnv = makeEnv(propsShape, unresolvedProps, state);
+  // What each component tag in this render actually produces, so "is <button>
+  // ambiguous here" is answered with evidence rather than with a guess about
+  // what a name ending in Button probably renders.
+  const tagRootTags = await resolveTagRootTags(
+    unit.bodyNode,
+    parsed.sourceFile,
+    parsed.imports,
+    absPath,
+    resolver,
+  );
   const interactions = extractInteractions(
     unit.bodyNode,
     parsed.sourceFile,
     propsShape,
     unresolvedProps,
     renderEnv,
+    tagRootTags,
   );
   const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
   const flows = extractFlows(unit.bodyNode, renderEnv);
