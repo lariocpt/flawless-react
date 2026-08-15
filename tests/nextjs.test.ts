@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { walkApiRoutes } from "../src/nextjs/apiRoutes.ts";
-import { detectNextjs } from "../src/nextjs/detect.ts";
+import { detectNextjs, mergeIntoNextPackageJson } from "../src/nextjs/detect.ts";
 import { fetchLiveSwagger, loadLocalSpec, parseSpecRoutes } from "../src/nextjs/liveSpec.ts";
 import {
   renderBrowserSetup,
@@ -296,5 +296,65 @@ describe("buildSwagger", () => {
     expect(spec.info.title).toContain("nextapp");
     expect(Object.keys(spec.paths["/api/items"] ?? {})).toEqual(["get", "post"]);
     expect(spec.paths["/api/items"]?.get?.summary).toBe("GET /api/items");
+  });
+});
+
+describe("merging into the target project's package.json", () => {
+  const pkgDir = (body: unknown, indent = "\t"): string => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-merge-"));
+    const json = JSON.stringify(body, null, indent === "\t" ? "\t" : Number(indent));
+    writeFileSync(path.join(dir, "package.json"), `${json}\n`);
+    return dir;
+  };
+  const read = (dir: string) =>
+    JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as Record<
+      string,
+      Record<string, string>
+    >;
+
+  // The tool's own pins, as core.ts passes them.
+  const DEV = { vitest: "^2.1.0", jsdom: "^25.0.0", "@testing-library/react": "^16.0.0" };
+
+  test("a version the project already pinned is NOT downgraded", async () => {
+    // The defect: devDeps were spread LAST, so a project on vitest 3 was
+    // silently rewritten to the tool's ^2.1.0 and the next `bun install`
+    // acted on it. README calls this an "additive diff".
+    const dir = pkgDir({ devDependencies: { vitest: "^3.2.0" } });
+    await mergeIntoNextPackageJson(dir, {}, DEV, {});
+    expect(read(dir).devDependencies?.vitest).toBe("^3.2.0");
+  });
+
+  test("but a package the project lacks is still added at the tool's version", async () => {
+    const dir = pkgDir({ devDependencies: { vitest: "^3.2.0" } });
+    await mergeIntoNextPackageJson(dir, {}, DEV, {});
+    const after = read(dir).devDependencies as Record<string, string>;
+    expect(after.jsdom).toBe("^25.0.0");
+    expect(after["@testing-library/react"]).toBe("^16.0.0");
+  });
+
+  test("runtime dependencies are protected the same way", async () => {
+    const dir = pkgDir({ dependencies: { react: "^19.0.0" } });
+    await mergeIntoNextPackageJson(dir, { react: "^18.3.0", msw: "^2.6.0" }, {}, {});
+    const after = read(dir).dependencies as Record<string, string>;
+    expect(after.react).toBe("^19.0.0");
+    expect(after.msw).toBe("^2.6.0");
+  });
+
+  test("the tool still owns its own script namespace", async () => {
+    // Deliberately the other way round from dependencies: a flawless:* script is
+    // generated, so an improvement to it has to reach an existing project — the
+    // same argument that un-froze load/README.md. Pinned here so the asymmetry
+    // is a decision rather than an accident.
+    const dir = pkgDir({ scripts: { dev: "next dev", "flawless:load": "my own version" } });
+    await mergeIntoNextPackageJson(dir, {}, {}, { "flawless:load": "crust -c '…'" });
+    const after = read(dir).scripts as Record<string, string>;
+    expect(after["flawless:load"]).toBe("crust -c '…'");
+    expect(after.dev).toBe("next dev");
+  });
+
+  test("the file's own indentation survives", async () => {
+    const dir = pkgDir({ devDependencies: { vitest: "^3.2.0" } });
+    await mergeIntoNextPackageJson(dir, {}, DEV, {});
+    expect(readFileSync(path.join(dir, "package.json"), "utf8")).toContain('\n\t"devDependencies"');
   });
 });

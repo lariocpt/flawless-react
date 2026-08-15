@@ -27,7 +27,7 @@ export const perfHarness: Task = {
       suiteName,
       variants: ctx.variants,
       heaps: ctx.heaps,
-      force: true,
+      force: ctx.force,
       report: ctx.report,
       provider: ctx.provider,
       apiSpec: ctx.apiSpec,

@@ -30,6 +30,15 @@ export interface RenderedFile {
   relPath: string;
   content: string;
   executable?: boolean;
+  /**
+   * Never overwrite an existing file here, `--force` included.
+   *
+   * For the files whose contents cannot be recovered from the analysis — the
+   * same criterion `provider.fixtures.ts` and `e2e/global-setup.ts` are held to.
+   * Everything else in the suite is derived and must stay regenerable, or an
+   * existing suite never receives a later version's improvements.
+   */
+  writeOnce?: boolean;
 }
 
 export interface RenderOptions {
@@ -61,10 +70,18 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     },
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
-    { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath, useMsw) },
+    // writeOnce: docs/extending.md tells you to edit this to add providers and
+    // MSW, and nothing can rebuild that wiring from the analysis.
+    {
+      relPath: "host/main.tsx",
+      content: hostMain(flat, opts.providerImportPath, useMsw),
+      writeOnce: true,
+    },
     { relPath: "profile/_helpers.ts", content: helpers() },
     { relPath: "profile/_heap.ts", content: heapHelper(opts.heaps ?? "stress") },
-    { relPath: "budgets.json", content: budgets(flat, opts.variants) },
+    // writeOnce: docs/generated-suite.md tells you to tighten these to your
+    // observed p95. A regenerated default silently un-tightens the gate.
+    { relPath: "budgets.json", content: budgets(flat, opts.variants), writeOnce: true },
     {
       relPath: "README.md",
       content: readme(

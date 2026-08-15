@@ -7,9 +7,16 @@ import { renderSuite, toHostRelImport } from "./templates.ts";
 
 export async function scaffold(tree: ComponentTree, opts: ScaffoldOptions): Promise<string[]> {
   const outDir = path.resolve(opts.outDir);
-  if (existsSync(outDir) && !opts.force) {
+  // Keyed on a suite already being here, not on the directory existing. The
+  // directory is not a usable proxy: ensureClientProviderWrapper mkdirs outDir
+  // at core.ts:215, before the task loop at :298, so on any --nextjs run outDir
+  // exists by the time this is reached and a bare existsSync would refuse every
+  // FIRST run. That is why this guard was bypassed with a hardcoded force:true,
+  // which cost it the re-run it was actually written to catch.
+  const marker = path.join(outDir, "playwright.config.ts");
+  if (existsSync(marker) && !opts.force) {
     throw new Error(
-      `scaffold: ${outDir} already exists. Pass --force to overwrite (existing files will be replaced).`,
+      `scaffold: a generated suite already exists at ${outDir}. Pass --force to regenerate (budgets.json and host/main.tsx are kept either way).`,
     );
   }
   await mkdir(outDir, { recursive: true });
@@ -34,6 +41,10 @@ export async function scaffold(tree: ComponentTree, opts: ScaffoldOptions): Prom
   const written: string[] = [];
   for (const f of files) {
     const abs = path.join(outDir, f.relPath);
+    // Not gated on --force, unlike the colocated specs: the point of these two
+    // is that no flag rebuilds a tuned budget or hand-wired provider. Delete the
+    // file to get a fresh one, same as provider.fixtures.ts.
+    if (f.writeOnce && existsSync(abs)) continue;
     await mkdir(path.dirname(abs), { recursive: true });
     await Bun.write(abs, f.content);
     if (f.executable) await chmod(abs, 0o755);

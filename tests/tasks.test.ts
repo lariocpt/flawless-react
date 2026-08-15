@@ -395,3 +395,58 @@ describe("perf-static task", () => {
     expect(report.findings).toHaveLength(result.findings.length);
   });
 });
+
+describe("the perf harness respects --force and protects what it cannot rebuild", () => {
+  const tree = async (): Promise<ComponentTree> =>
+    analyse({ entry: path.join(FIXTURES, "Toolbar.tsx"), depth: 0, includeChildren: false });
+
+  test("a bare re-run over an existing outDir is refused", async () => {
+    // perfHarness hardcoded `force: true`, so the guard in scaffold/index.ts was
+    // unreachable from the CLI — while docs/extending.md:3 and cli.ts:62 both
+    // promised a re-run is "rejected unless you pass --force".
+    const outDir = tmp("perf-force");
+    const trees = [await tree()];
+    const first = await task("perf-harness").run(ctxOf({ outDir, trees }));
+    expect(first.ok).toBe(true);
+
+    // The task throws; core.ts:305-316 catches it into { ok: false, error }, so
+    // the CLI reports the refusal rather than crashing.
+    expect(task("perf-harness").run(ctxOf({ outDir, trees }))).rejects.toThrow(
+      /a generated suite already exists/,
+    );
+  });
+
+  test("--force keeps the two files a user tunes, and still refreshes the specs", async () => {
+    const outDir = tmp("perf-keep");
+    const trees = [await tree()];
+    await task("perf-harness").run(ctxOf({ outDir, trees }));
+
+    // Both are files the docs tell you to edit: budgets.json holds thresholds
+    // tightened to an observed p95, host/main.tsx holds hand-wired providers.
+    // Nothing can rebuild either from the analysis.
+    const budgets = path.join(outDir, "budgets.json");
+    const main = path.join(outDir, "host/main.tsx");
+    writeFileSync(budgets, '{"mine":true}\n');
+    writeFileSync(main, "// my provider wiring\n");
+
+    const spec = path.join(outDir, "profile/Toolbar.profile.spec.ts");
+    writeFileSync(spec, "// stale\n");
+
+    const again = await task("perf-harness").run(ctxOf({ outDir, trees, force: true }));
+    expect(again.ok).toBe(true);
+
+    expect(readFileSync(budgets, "utf8")).toBe('{"mine":true}\n');
+    expect(readFileSync(main, "utf8")).toBe("// my provider wiring\n");
+    // Specs are derived from the analysis: freezing them is what stranded
+    // load/README.md behind its own improvements. --colocate is the supported
+    // way to keep a hand-hardened spec.
+    expect(readFileSync(spec, "utf8")).not.toBe("// stale\n");
+  });
+
+  test("a first run still writes both protected files", async () => {
+    const outDir = tmp("perf-first");
+    await task("perf-harness").run(ctxOf({ outDir, trees: [await tree()] }));
+    expect(existsSync(path.join(outDir, "budgets.json"))).toBe(true);
+    expect(existsSync(path.join(outDir, "host/main.tsx"))).toBe(true);
+  });
+});

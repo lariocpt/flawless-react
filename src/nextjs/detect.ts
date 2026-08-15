@@ -130,6 +130,26 @@ export function detectComponentsGlob(nextRoot: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Add the entries the suite needs, without touching a version already pinned.
+ *
+ * These were spread last, so the tool's own pins overwrote the project's: a repo
+ * on `vitest ^3.x` came back on `^2.1.0`, and the next `bun install` acted on it.
+ * Nothing said so, and README calls generation "an additive diff". The
+ * standalone path has always done it this way (scaffold-tests/index.ts) — this
+ * only brings the Next.js path in line.
+ */
+function addMissing(
+  existing: Record<string, string> | undefined,
+  incoming: Record<string, string>,
+): Record<string, string> {
+  const out = { ...(existing ?? {}) };
+  for (const [name, range] of Object.entries(incoming)) {
+    if (!(name in out)) out[name] = range;
+  }
+  return out;
+}
+
 export async function mergeIntoNextPackageJson(
   nextRoot: string,
   deps: Record<string, string>,
@@ -152,11 +172,15 @@ export async function mergeIntoNextPackageJson(
   // never invents empty keys, and preserve the file's own indentation — a
   // tabs-indented package.json must not come back 2-space-reindented.
   if (Object.keys(deps).length > 0 || pkg.dependencies) {
-    pkg.dependencies = { ...(pkg.dependencies ?? {}), ...deps };
+    pkg.dependencies = addMissing(pkg.dependencies, deps);
   }
   if (Object.keys(devDeps).length > 0 || pkg.devDependencies) {
-    pkg.devDependencies = { ...(pkg.devDependencies ?? {}), ...devDeps };
+    pkg.devDependencies = addMissing(pkg.devDependencies, devDeps);
   }
+  // Scripts go the other way on purpose: the tool spreads last and wins its own
+  // `flawless:*` namespace, so an improvement to a generated command reaches a
+  // project that was scaffolded by an older version. A version range is the
+  // project's decision; the command that runs the generated suite is not.
   if (Object.keys(scripts).length > 0 || pkg.scripts) {
     pkg.scripts = { ...(pkg.scripts ?? {}), ...scripts };
   }
