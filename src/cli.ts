@@ -25,13 +25,15 @@ Options:
                          whole-app sweep needs (a shadcn card.tsx exports 7 of them).
   --exclude <glob>       Skip matching files (repeatable). Appended to the defaults,
                          which already skip *.flawless.test.*, *.test.*, *.spec.*,
-                         *.d.ts, node_modules, .next, dist, build, coverage, flawless/.
+                         *.stories.*, *.d.ts, node_modules, .next, dist, build,
+                         coverage, flawless/. A non-default --out is NOT excluded.
   --no-default-excludes  Drop those defaults (then a glob can match generated specs).
   --colocate             Emit unit specs beside the analysed sources as
                          <name>.flawless.test.tsx (existing colocated specs are kept
                          unless --force). The flawless/ dir keeps config + mocks.
   --ci                   Shorthand for --no-interactive --json.
-  --no-interactive       Never prompt; require a positional + --tasks.
+  --no-interactive       Never prompt; require a positional (or --nextjs). Without
+                         --tasks the run does perf-harness alone.
   --run-tests            After generating, run the produced test suites.
   --no-inline-summary    Don't drop <Component>.flawless.json next to each source file.
   --json                 Print machine-readable JSON summary to stdout.

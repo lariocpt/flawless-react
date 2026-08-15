@@ -36,7 +36,7 @@ Declares the suite as its own private package with three runtime deps:
 
 Render timing comes from React's built-in `<Profiler>` — no separate measurement library required.
 
-Scripts: `test`, `test:headed`, and (if you used `--report`) `report`. The suite's package name is `<component-name>-profile`.
+Scripts: `test`, `test:perf` (the name `--run-tests` looks for), `test:headed`, and (if you used `--report`) `report`. The suite's package name is derived from the out dir's basename — `<out-dir-name>-profile`.
 
 **Edit when**: your parent project uses a different React major (17 / 19); pin the suite's `react` and `react-dom` to match before `bun install`.
 
@@ -58,7 +58,7 @@ webServer: {
 }
 ```
 
-Workers are pinned to 1 because the host serves one component at a time and we don't want parallel mounts fighting over the singleton `activeRoot`.
+Workers are pinned to 1 under CI, because the host serves one component at a time and parallel mounts fight over the singleton `activeRoot`. Locally the run is parallel (Playwright's default); set `FLAWLESS_WORKERS` to pin it yourself.
 
 **Edit when**: you need a different port, you want to add a `firefox` or `webkit` project, or you want to run tests in parallel (which requires reworking the host to scope state per-page).
 
@@ -192,7 +192,7 @@ Persisted snapshots land in `<suite-root>/heaps/<spec>__<test>__<label>.heapsnap
 
 One spec per analysed component. Each spec is **fully self-contained** — its `DEFAULTS`, `VARIANTS`, and `HOOKS` are baked in as literals at the top. There is no shared fixture file, no implicit dependency between specs.
 
-The four tests:
+The five tests:
 
 ### `mounts at defaults`
 
@@ -258,7 +258,7 @@ Reads `playwright-report/index.html` from the last run and writes a `report.md` 
 
 ## `README.md`
 
-A short user-facing README for the *generated* suite, separate from this repo's README. It documents how to run, what's measured, and how to customise. It is also editable by you and never overwritten by the tool unless you re-run with `--force`.
+A short user-facing README for the *generated* suite, separate from this repo's README. It documents how to run, what's measured, and how to customise. It is regenerated whenever the suite is, so it always describes the suite it sits in.
 
 
 ---

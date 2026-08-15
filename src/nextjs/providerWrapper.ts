@@ -71,7 +71,9 @@ export interface ProviderWrapperResult {
  * Derive `<outDir>/provider.tsx` from the layout's `{children}`-enclosing JSX
  * chain. Only client components ("use client" target files) are kept; literal
  * attributes are copied; everything else is dropped with a TODO comment.
- * Never overwrites an existing provider.tsx.
+ * Refreshed by --force, so a change to the layout's provider chain reaches an
+ * existing suite. The values you supply live in provider.fixtures.ts beside it,
+ * which is never regenerated under any flag.
  */
 export function ensureClientProviderWrapper(
   ctx: NextjsContext,

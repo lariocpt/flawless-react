@@ -7,8 +7,12 @@ description: Generate and maintain React/Next.js test suites with flawless-react
 
 Point it at a `.tsx` file or glob and it reads the component's props, state,
 hooks, children and fetches, then writes a runnable suite. Everything it emits
-is yours to edit — it never regenerates over your edits unless you pass
-`--force`.
+is yours to edit, but most of it is REGENERATED — the suite improves, and a
+frozen file never receives the improvement. Only what the tool cannot rebuild is
+protected: `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`,
+`e2e/global-setup.ts`, `e2e/params.json`, `mocks/handlers.ts`, and colocated
+specs. To keep a hand-hardened component spec, use `--colocate`; specs written
+inside the out dir are rewritten.
 
 ```bash
 # one component, unit specs only
@@ -47,9 +51,11 @@ the project's `package.json`, and appends gitignore entries.
 importing `next/font` or `next/headers` — unusable under jsdom. flawless
 detects that and derives `flawless/provider.tsx` from the JSX chain that
 encloses `{children}`, keeping only `"use client"` components and literal
-attributes; anything it drops becomes a `TODO(flawless)` comment. It is written
-once and never overwritten — edit it freely (that is where you add a seeded
-auth state or a theme). Pass `--provider <file>` to override.
+attributes; anything it drops becomes a `TODO(flawless)` comment. `--force`
+regenerates it, so a change to the layout's provider chain reaches an existing
+suite — put the values you supply (a seeded auth state, a theme) in
+`provider.fixtures.ts` beside it, which is never regenerated under any flag.
+Pass `--provider <file>` to override.
 
 **API fixtures.** Static route walking only sees `app/api/**/route.ts`, which
 is useless for catch-all APIs (Hono, tRPC). Pass `--api openapi.json` (or

@@ -23,7 +23,7 @@ component tree contains click interactions, up to three of them are replayed in
 a second test — each guarded by a visibility check, so a spec never fails
 merely because an element is behind state it did not open.
 
-Dynamic segments read env vars, defaulting to an obvious placeholder:
+Dynamic segments read env vars. When nothing resolves, the spec skips with the reason rather than navigating — the old placeholder produced a URL that 404s and reported a missing fixture as an application bug:
 
 ```bash
 FLAWLESS_E2E_ID=<seeded-id> bun run flawless:e2e

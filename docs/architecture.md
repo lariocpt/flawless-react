@@ -1,6 +1,6 @@
 # Architecture
 
-`flawless-react` is structured as a task registry. The CLI ([src/cli.ts](../src/cli.ts)) parses args (or prompts for them), expands the positional glob into entry files, analyses each into a `ComponentTree`, then dispatches the selected tasks against a shared `RunContext`. Each task in [src/tasks/](../src/tasks/) is self-contained; they share the analyse output and write their own slice of the output dir (`tests/`, `unit/`, `browser/`, `reports/`).
+`flawless-react` is structured as a task registry. The CLI ([src/cli.ts](../src/cli.ts)) parses args (or prompts for them), expands the positional glob into entry files, analyses each into a `ComponentTree`, then dispatches the selected tasks against a shared `RunContext`. Each task in [src/tasks/](../src/tasks/) is self-contained; they share the analyse output and write their own slice of the output dir (`profile/`, `unit/`, `browser/`, `e2e/`, `load/`, `reports/`).
 
 ```text
                  entry.tsx (or glob)
@@ -66,7 +66,7 @@ specifiers deliberately resolve to `undefined`: `node_modules` is never walked.
 
 ### extractProps.ts
 
-Walks the resolved `InterfaceDeclaration` or `TypeAliasDeclaration`, or an inline type literal on the first parameter. Same-file types resolve directly; an imported `Props` type is chased **one file deep** through `resolveModule` (no recursion past that hop, and still no type checker). Every member's declaration site is recorded in `propPositions` so findings can point at the prop rather than line 1. For each `PropertySignature`, the type node is mapped:
+Walks the resolved `InterfaceDeclaration` or `TypeAliasDeclaration`, or an inline type literal on the first parameter. Same-file types resolve directly; an imported `Props` type is chased **two hops** through `resolveModule` (`MAX_HOPS` in `extractProps.ts`, and still no type checker). Every member's declaration site is recorded in `propPositions` so findings can point at the prop rather than line 1. For each `PropertySignature`, the type node is mapped:
 
 | Source type | Default | Variants |
 | --- | --- | --- |
@@ -287,7 +287,7 @@ the output dir:
 - **Provider substitution** — when the auto-detected app resolver is an async
   server layout, `nextjs/providerWrapper.ts` derives a client-safe
   `flawless/provider.tsx` from the `{children}`-enclosing JSX chain and uses
-  that instead. Written once, never overwritten.
+  that instead. Refreshed by `--force`; the fixtures file beside it is not.
 - **Style adoption** — `scaffold/adoptStyle.ts` reformats everything written
   with the host project's own biome or prettier, and JSON merges preserve the
   file's existing indentation. Generation should read as an additive diff, not

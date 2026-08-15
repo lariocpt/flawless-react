@@ -103,7 +103,7 @@ Override the auto-detected app resolver with `--app-resolver <file>` if you have
 
 Three behaviours worth knowing before the first run:
 
-- **The layout is usually unusable as a test provider.** An app-router `layout.tsx` is typically an async server component importing `next/font` or `next/headers`, none of which run under jsdom. flawless detects that and derives `flawless/provider.tsx` from the JSX chain enclosing `{children}`, keeping only `"use client"` components and literal attributes (everything dropped becomes a `TODO(flawless)` comment). It's written once and never overwritten.
+- **The layout is usually unusable as a test provider.** An app-router `layout.tsx` is typically an async server component importing `next/font` or `next/headers`, none of which run under jsdom. flawless detects that and derives `flawless/provider.tsx` from the JSX chain enclosing `{children}`, keeping only `"use client"` components and literal attributes (everything dropped becomes a `TODO(flawless)` comment). `--force` regenerates it, so a change to the layout's provider chain reaches an existing suite — the values you supply live in `flawless/provider.fixtures.ts` beside it, which is never regenerated under any flag.
 - **Point `--api` at a real spec.** Walking `app/api/**/route.ts` finds nothing useful when the API is a catch-all (Hono, tRPC). `--api openapi.json` (or `--swagger-url <url>`) puts real example bodies into both the MSW handlers and each generated fetch spec.
 - **Generated files adopt your formatter.** Everything written is reformatted with the target project's own biome or prettier, and JSON merges preserve the file's existing indentation — generation produces an additive diff, not a reformat of your `package.json`.
 
@@ -116,7 +116,7 @@ flawless-react <entry.tsx> [options]
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `<entry.tsx>` | required | Path to the root component file. |
-| `--out <dir>` | `<cwd>/<ComponentName>.profile/` | Output directory for the generated suite. |
+| `--out <dir>` | `<cwd>/.flawless` (`<project>/flawless` under `--nextjs`) | Output directory for the generated suite. |
 | `--depth N` | `3` | Levels of locally-imported child components to follow (`0` = leaf only). |
 | `--variants N` | `5` | Prop-variant rows in the generated test matrix. |
 | `--changed [REF]` | off | After generating, run only the specs an edit affects — the changed components' unit/browser/profile specs, plus any e2e route whose page *renders* one of them. Defaults to comparing the worktree against `HEAD`. |
@@ -124,24 +124,24 @@ flawless-react <entry.tsx> [options]
 | `--include-children` | `true` | Walk transitive child components. Pass `--include-children=false` to skip. |
 | `--props '<json>'` | none | Override the synthesized default props. Merged on top of the static-parse result. |
 | `--provider <file>` | none | Path to a `.tsx` file that default-exports a wrapper component. The host renders every mounted component inside it — use this for Redux, React Query, theming, or any other context-based store. |
-| `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. |
+| `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. Read by `perf-harness`, and by the MSW emit under `--nextjs` — it does nothing for a `--tasks unit-browser` run outside Next.js mode. |
 | `--colocate` | off | Write unit specs beside their source as `<name>.flawless.test.tsx`. Existing colocated specs are kept unless `--force` — they're the ones you hand-harden. |
 | `--ci` | off | Shorthand for `--no-interactive --json`. |
 | `--force` | off | Overwrite an existing output directory (and regenerate colocated specs). |
 | `--report` | off | Emit `scripts/report.mjs` so `bun run report` aggregates run output into a markdown summary. |
 | `--tasks <ids>` | `perf-harness` | Comma-separated subset of `perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`. Omitting it does **not** run all seven — a non-interactive run with no `--tasks` runs `perf-harness` alone. In a TTY you get the checkbox menu instead, with `perf-harness` and `perf-static` preselected. |
 | `--roots <mode>` | `primary` | `exported` emits one tree per *exported* component — what a whole-app sweep needs, since a shadcn `card.tsx` exports seven of them. |
-| `--exclude <glob>` | see below | Repeatable. Added to the defaults, which already skip `*.flawless.test.*`, `*.test.*`, `*.spec.*`, `*.stories.*`, `*.d.ts`, `node_modules`, `.next`, `dist`, `build`, `coverage` and the output directory itself. |
+| `--exclude <glob>` | see below | Repeatable. Added to the defaults, which already skip `*.flawless.test.*`, `*.test.*`, `*.spec.*`, `*.stories.*`, `*.d.ts`, `node_modules`, `.next`, `dist`, `build`, `coverage` and `flawless/`. A non-default `--out` is not excluded automatically — add it yourself, or a second sweep analyses the suite it just wrote. |
 | `--no-default-excludes` | off | Drop those defaults and use only what `--exclude` names. |
 | `--no-interactive` | off | Never prompt. Required in CI and by any script. |
 | `--run-tests` | off | Run the generated suites after writing them. |
 | `--json` | off | Print the machine-readable run result to stdout. |
 | `--no-inline-summary` | off | Skip the per-component `<Component>.flawless.json` sidecars. |
-| `--swagger-url <url>` | auto-probe | Fetch the OpenAPI spec over HTTP instead of reading a file. `off` disables the probe entirely. |
+| `--swagger-url <url>` | auto-probe under `--nextjs` | Fetch the OpenAPI spec over HTTP instead of reading a file. `off` disables the probe entirely. Only consulted in `--nextjs` mode; outside it the value is parsed and never read. |
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
-The CLI prints a JSON summary on success: the chosen `outDir`, the detected component name, its children, hooks, props, and a `nextSteps` array you can copy-paste.
+With `--json` (or `--ci`) the CLI prints `{ outDir, results }` and nothing else — the human summary table is suppressed so the output parses. Without it you get the table and no JSON.
 
 ## What gets generated
 
@@ -155,9 +155,9 @@ The CLI prints a JSON summary on success: the chosen `outDir`, the detected comp
 │   ├── _polyfill.ts      # browser polyfills for process/global/setImmediate
 │   ├── index.html        # mounts the host bundle
 │   └── main.tsx          # createRoot + <Profiler> + react-scan + window.__profile driver
-├── tests/
+├── profile/
 │   ├── _helpers.ts       # render-info / scan-event harvesters, summarize() stats
-│   ├── _heap.ts          # CDP-driven heap-snapshot helpers (write to ./heaps/)
+│   ├── _heap.ts          # CDP-driven heap-snapshot helpers (write to <outDir>/heaps/)
 │   └── <Component>.profile.spec.ts   # one per analysed component
 ├── mock/                 # only if --api was passed
 │   ├── server.ts         # Bun.serve on :5174, host proxies /api/* requests to it
@@ -208,21 +208,18 @@ The CLI prints something like:
 
 ```json
 {
-  "outDir": "/your/cwd/Dashboard.profile",
-  "componentName": "Dashboard",
-  "children": ["Hello", "Card"],
-  "hooks": ["useMemo"],
-  "props": { "title": "", "count": 0 },
-  "filesWritten": 12,
-  "nextSteps": ["cd /your/cwd/Dashboard.profile", "bun install", "bun run test"]
+  "outDir": "/your/cwd/.flawless",
+  "results": [
+    { "id": "perf-harness", "ok": true, "outputs": ["…"], "findings": [], "summary": "scaffolded perf suite for 3 of 3 component(s): Dashboard, Hello, Card" }
+  ]
 }
 ```
 
-Inside `Dashboard.profile/` you get three spec files (`Dashboard.profile.spec.ts`, `Hello.profile.spec.ts`, `Card.profile.spec.ts`). Each spec contains:
+Inside `.flawless/profile/` you get three spec files (`Dashboard.profile.spec.ts`, `Hello.profile.spec.ts`, `Card.profile.spec.ts`). Each spec contains:
 
 - **`mounts at defaults`** — baseline mount; asserts `renderCount >= 1`; warns if `mountMs` (from `React.Profiler`'s `onRender` `actualDuration`) exceeds `budgets.json[name].mountMs`.
 - **`variant matrix`** — for `Hello.variant: "primary" | "secondary"`, the analyser produces two variants; the test rerenders with each and warns on the p95 over `updateMs` budget.
-- **`click rerender`** — locates the first `<button>` rendered by the component, clicks it, and asserts the render count incremented; if `react-scan` flagged any unnecessary rerender on a prop-stable child, the spec logs a warning.
+- **`click rerender`** — clicks the target the analyser derived from your source (a test id, an `aria-label`, a role plus its accessible name, an `id`, or literal copy), opening any disclosure it sits behind first, and asserts the render count incremented; if `react-scan` flagged any unnecessary rerender on a prop-stable child, the spec logs a warning. When nothing in the source names a target, the scenario is a skip carrying the reason — never a click on whichever button happens to be first.
 - **`forced rerender × N`** — cycles `--variants × 10` rerenders through the variant pool and prints `min / avg / p50 / p95 / max` from the `Profiler`-fed `renderTime.updates` array.
 - **`stress-click-rerender × 50`** — clicks the primary button 50 times between a baseline and a final V8 heap snapshot (via Playwright's CDP `HeapProfiler.takeHeapSnapshot`). Both `.heapsnapshot` files land at `./heaps/<spec>__<test>__<label>.heapsnapshot` — deterministic names you can `open` straight from the terminal and drop into Chrome DevTools' Memory tab → Comparison view to spot retained objects. The other three scenarios are also bracketed by snapshots, but those are only persisted on failure to keep CI artefacts small.
 
@@ -325,7 +322,7 @@ The analyser didn't recognise the export shape. Refactor to a `const X: React.FC
 One or more props use an imported type, a generic, or a non-literal union. Either:
 
 - Re-run with `--props '{"propName": "value", …}'`, or
-- Edit the generated `tests/<Component>.profile.spec.ts` and add the missing fields to the `DEFAULTS` constant.
+- Edit the generated `profile/<Component>.profile.spec.ts` and add the missing fields to the `DEFAULTS` constant.
 
 **Generated suite fails on `bun install` with a peer-dep mismatch**
 The suite pins `react` / `react-dom` to `^18.3.0`. If your parent project is on React 17 or React 19, edit the generated `package.json` to match before `bun install`, then re-`bun install`.
@@ -356,7 +353,7 @@ Either upgrade Bun, or convert your spec to JSON: `bunx js-yaml api.yaml > api.j
 
 ```bash
 bun install
-bun test           # 164 tests across analyse / scaffold / tasks / nextjs / core / cli
+bun test           # 424 tests across analyse / scaffold / tasks / nextjs / core / cli
 bun run check      # biome lint + format check
 bunx tsc --noEmit  # type-check
 ```
@@ -386,7 +383,7 @@ src/
 ├── cli.ts           # argparse + interactive menu
 ├── index.ts         # public programmatic API
 └── types.ts
-tests/               # 16 files; fixtures/ includes a static Next.js app
+tests/               # 34 files; fixtures/ includes a static Next.js app
 ```
 
 ## Licence

@@ -41,7 +41,7 @@ import { handlers } from "./mocks/handlers.ts";
 await setupWorker(...handlers).start({ quiet: true });
 ```
 
-Then write `host/mocks/handlers.ts` next to `main.tsx` with whatever endpoints your component expects. The handlers file is yours — it's not regenerated.
+Then write `mocks/handlers.ts` with whatever endpoints your component expects. The handlers file is yours — it is never regenerated, under any flag.
 
 ## Tighten the budgets into hard failures
 
@@ -76,13 +76,27 @@ Most of what you will want to change is a `test.skip` whose title states why the
 
 `--force` regenerates the derived output, but a few files are yours the moment they exist, because their contents cannot be recovered if lost:
 
-- `flawless/provider.fixtures.ts` — the typed holes for your store's initial state.
-- `flawless/e2e/params.json` — seeded record ids. Merge-preserving even under `--force`; stale route keys are pruned, filled values never are.
-- `flawless/load/routes.pipes` — merge-preserving under `--force`. A rate you tuned, a pipe you commented out and a POST flow you added by hand all survive; only the header above them is regenerated, and only when it is still the one this tool wrote. See below for why `--force` has to touch this file at all.
-- `flawless/e2e/global-setup.ts` — written once.
-- Colocated `*.flawless.test.tsx` specs when you pass `--colocate` without `--force`.
+Protected under every flag, including `--force`:
 
-`flawless/load/README.md` is the exception that proves the criterion: it is generated prose with nothing of yours in it, so `--force` regenerates it. Protecting it would only mean an existing suite never learns what a later version worked out — which is exactly what happened to the rule that `LOAD_BASE` must point at a production build.
+- `flawless/budgets.json` — thresholds you tightened to an observed p95. A regenerated default silently un-tightens the gate.
+- `flawless/host/main.tsx` — the providers and MSW wiring you added by hand (see above). Nothing can rebuild it from the analysis.
+- `flawless/provider.fixtures.ts` — the typed holes for your store's initial state.
+- `flawless/e2e/global-setup.ts` — where you wire up login.
+- `flawless/mocks/handlers.ts` — the response bodies are yours to fill in.
+
+Merge-preserving under `--force` — regenerated, but never at the cost of what you put there:
+
+- `flawless/e2e/params.json` — seeded record ids. Stale route keys are pruned, filled values never are; a default holding a value is kept whether or not a page route still claims it.
+- `flawless/load/routes.pipes` — a rate you tuned, a pipe you commented out and a POST flow you added by hand all survive; only the header above them is regenerated, and only when it is still the one this tool wrote.
+
+Kept without `--force`, regenerated with it:
+
+- `flawless/e2e/<route>.spec.ts` — route specs.
+- Colocated `*.flawless.test.tsx` specs written by `--colocate`.
+
+**Everything else is regenerated, and that is deliberate.** A frozen file never receives a later version's improvement — which is exactly what happened to `flawless/load/README.md`, stranded without the rule that `LOAD_BASE` must point at a production build. Generated prose (`load/README.md`, `e2e/README.md`, `mocks/README.md`), boilerplate (`mocks/browser.ts`, `mocks/node.ts`), every config, and the component specs inside the out dir are all refreshed. To keep a hand-hardened component spec, use `--colocate`.
+
+A re-run over an existing suite is refused unless you pass `--force`; the check keys on the suite's own `playwright.config.ts`, not on the directory existing.
 
 ## Run only what an edit affects
 
@@ -141,12 +155,12 @@ const VARIANTS = [
 ] as Array<Record<string, unknown>>;
 ```
 
-Edit-time concern: when you re-run the generator with `--force`, your hand-added variants get overwritten. That's by design — the tool is the source of *initial* truth, you are the source of *evolved* truth. Don't `--force` after you've started editing.
+Edit-time concern: a spec inside the out dir is rewritten on every regeneration, `--force` or not — the tool is the source of *initial* truth and keeps improving what it emits. If you want a spec to survive, pass `--colocate`: those are written beside your source and kept unless you `--force`. (Earlier advice here said "don't `--force` after you've started editing"; that protected nothing, because the perf harness regenerated regardless.)
 
 ## Run a specific spec or test
 
 ```bash
-bun run test tests/Dashboard.profile.spec.ts
+bun run test profile/Dashboard.profile.spec.ts
 bun run test -g "click rerender"
 ```
 
