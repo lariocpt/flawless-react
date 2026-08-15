@@ -530,6 +530,8 @@ export interface CliArgs {
   depth: number;
   variants: number;
   heaps: HeapMode;
+  /** Run only specs affected by files changed since this ref (true = HEAD). */
+  changed: string | true | undefined;
   includeChildren: boolean;
   force: boolean;
   report: boolean;

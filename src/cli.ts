@@ -49,6 +49,9 @@ Options:
                          force a specific URL or skip the auto-try via --swagger-url=off.
   --depth N              Levels of locally-imported children to follow (default 3)
   --variants N           Variant rows per component (default 5)
+  --changed [REF]        After generating, run only the specs affected by files
+                         changed since REF (default HEAD) — including e2e routes
+                         whose page renders a changed component
   --heaps MODE           V8 heap snapshots in the profile suite:
                          off | stress (default) | all. A snapshot is tens of MB
                          and one is taken either side of every scenario
@@ -84,6 +87,7 @@ export function parseArgs(argv: string[]): CliArgs {
   let depth = 3;
   let variants = 5;
   let heaps: HeapMode = "stress";
+  let changed: string | true | undefined;
   let includeChildren = true;
   let force = false;
   let report = false;
@@ -117,6 +121,12 @@ export function parseArgs(argv: string[]): CliArgs {
       depth = Number(argv[++i] ?? "3");
     } else if (a.startsWith("--depth=")) {
       depth = Number(a.slice("--depth=".length));
+    } else if (a === "--changed") {
+      // Optional value: `--changed` alone means HEAD, `--changed main` a ref.
+      const next = argv[i + 1];
+      changed = next !== undefined && !next.startsWith("-") ? (argv[++i] as string) : true;
+    } else if (a.startsWith("--changed=")) {
+      changed = a.slice("--changed=".length) || true;
     } else if (a === "--heaps") {
       heaps = readHeapMode(argv[++i]);
     } else if (a.startsWith("--heaps=")) {
@@ -229,6 +239,7 @@ export function parseArgs(argv: string[]): CliArgs {
     depth,
     variants,
     heaps,
+    changed,
     includeChildren,
     force,
     report,
@@ -309,6 +320,7 @@ export async function main(argv: string[]): Promise<void> {
       depth: args.depth,
       variants: args.variants,
       heaps: args.heaps,
+      ...(args.changed === undefined ? {} : { changed: args.changed }),
       includeChildren: args.includeChildren,
       force: args.force,
       report: args.report,

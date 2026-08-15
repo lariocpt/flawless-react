@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { analyseFile } from "./analyse/index.ts";
+import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
@@ -12,7 +13,7 @@ import { fetchLiveSwagger, loadLocalSpec } from "./nextjs/liveSpec.ts";
 import { ensureClientProviderWrapper, isUsableUnitProvider } from "./nextjs/providerWrapper.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
-import { runGeneratedTests } from "./runner/runTests.ts";
+import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { findTask } from "./tasks/index.ts";
 import type {
@@ -52,6 +53,8 @@ export interface CoreOptions {
   swaggerUrl?: string;
   colocate?: boolean;
   runTests?: boolean;
+  /** Run only the specs affected by files changed since this ref (true = HEAD). */
+  changed?: string | true;
   /** "exported" emits a tree per exported component in each entry file. */
   roots?: RootMode;
   /** Extra globs to skip, appended to DEFAULT_EXCLUDES. */
@@ -355,11 +358,32 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     warn(`style adoption failed (non-fatal): ${(err as Error).message}`);
   }
 
-  if (
-    !anyFailed &&
-    opts.runTests === true &&
-    selected.some((t) => t.id === "perf-harness" || t.id === "unit-browser" || t.id === "e2e")
-  ) {
+  const runnableSelected = selected.some(
+    (t) => t.id === "perf-harness" || t.id === "unit-browser" || t.id === "e2e",
+  );
+
+  // --changed narrows the RUN, never the generation. The profiling host is a
+  // single bundle of every component, so regenerating only part of it would
+  // leave a host that no longer matches its specs — and generation is not where
+  // the time goes anyway: analysing 99 files takes half a second, while running
+  // every spec they produce took seventeen minutes.
+  if (!anyFailed && opts.changed !== undefined && runnableSelected) {
+    const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
+    const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
+    const affected = affectedSpecs(trees, files);
+    log(
+      `changed: ${affected.changedFiles.length} source file(s) → ${affected.components.length} component spec(s), ${affected.routes.length} route(s)` +
+        (affected.withoutSpecs.length > 0
+          ? ` (${affected.withoutSpecs.length} unexported component(s) covered through their parent)`
+          : ""),
+    );
+    await runAffectedTests(
+      outDir,
+      selected.map((t) => t.id),
+      affected,
+      nextCtx?.root,
+    );
+  } else if (!anyFailed && opts.runTests === true && runnableSelected) {
     await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),

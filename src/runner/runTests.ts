@@ -1,5 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import type { AffectedSpecs } from "../changed.ts";
+import { grepFor } from "../changed.ts";
 import type { TaskId } from "../types.ts";
 
 /**
@@ -95,4 +97,77 @@ async function spawn(cmd: string, args: string[], cwd: string): Promise<boolean>
   });
   const code = await proc.exited;
   return code === 0;
+}
+
+/**
+ * Run only the suites that cover the changed components.
+ *
+ * Two different narrowing mechanisms, because the two runners offer different
+ * and better ones:
+ *
+ * - **vitest `--related`** walks the module graph, so it finds every spec that
+ *   imports a changed file without the tool having to reproduce its own spec
+ *   naming rules. It is also transitively correct for free.
+ * - **Playwright `--grep`** anchored on `^(Name): `, because every emitted
+ *   title starts that way. Anchoring matters: a bare "Card" would also select
+ *   CardHeader, CardFooter and CardTitle.
+ *
+ * e2e is selected by whether a page's tree RENDERS a changed component, which
+ * is the relationship a path filter cannot see.
+ */
+export async function runAffectedTests(
+  outDir: string,
+  selectedTasks: TaskId[],
+  affected: AffectedSpecs,
+  nextRoot?: string,
+): Promise<boolean> {
+  const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
+  const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
+
+  if (affected.components.length === 0 && affected.routes.length === 0) {
+    process.stdout.write("\nchanged: nothing affected — no specs to run\n");
+    return true;
+  }
+
+  const runs: Array<{ id: string; cmd: string[] }> = [];
+  const prefix = standalone ? "test" : "flawless";
+
+  if (selectedTasks.includes("unit-browser") && affected.changedFiles.length > 0) {
+    // `related` is a vitest SUBCOMMAND, not a flag, so it cannot be appended to
+    // the generated `vitest run` script — vitest exits with "Unknown option
+    // --related". Invoking vitest directly with the emitted config is the only
+    // way to reach it, and it is worth reaching: it walks the module graph, so
+    // it finds every spec that transitively imports a changed file without this
+    // tool having to reproduce its own spec-naming rules.
+    const configPath = path.join(path.resolve(outDir), "vitest.config.ts");
+    runs.push({
+      id: "unit",
+      cmd: ["bunx", "vitest", "related", ...affected.changedFiles, "--run", "--config", configPath],
+    });
+  }
+  if (affected.components.length > 0) {
+    const grep = grepFor(affected.components);
+    if (selectedTasks.includes("perf-harness")) {
+      runs.push({ id: "perf", cmd: ["bun", "run", `${prefix}:perf`, "--", "--grep", grep] });
+    }
+    if (selectedTasks.includes("unit-browser") && selectedTasks.includes("perf-harness")) {
+      runs.push({ id: "browser", cmd: ["bun", "run", `${prefix}:browser`, "--", "--grep", grep] });
+    }
+  }
+  if (selectedTasks.includes("e2e") && affected.routes.length > 0) {
+    runs.push({ id: "e2e", cmd: ["bun", "run", `${prefix}:e2e`] });
+  }
+
+  const failed: string[] = [];
+  for (const r of runs) {
+    process.stdout.write(`\n› ${r.cmd.join(" ")}\n`);
+    const ok = await spawn(r.cmd[0] as string, r.cmd.slice(1), cwd);
+    if (!ok) failed.push(r.id);
+  }
+  if (failed.length > 0) {
+    process.stdout.write(`\nfailed suites: ${failed.join(", ")}\n`);
+    return false;
+  }
+  process.stdout.write("\nall affected suites passed\n");
+  return true;
 }
