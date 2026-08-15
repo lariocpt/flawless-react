@@ -16,6 +16,7 @@ import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporte
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
+import { NEXT_SCRIPT } from "./suiteScripts.ts";
 import { findTask, TASKS } from "./tasks/index.ts";
 import type {
   ComponentTree,
@@ -386,6 +387,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
             ? {
                 "flawless:load": `crust -c 'test-pipes --target ${outRel}/load/routes.pipes --timeout 60000'`,
               }
+            : {}),
+          // --report emits scripts/report.mjs into the suite, but in Next.js
+          // mode there is no suite package.json to declare a `report` script,
+          // so the file sat there with nothing anywhere able to invoke it while
+          // its own banner said "Re-run with bun run report". Same gate as
+          // pkgJson's standalone `report` key, and same pairing with the task
+          // that writes the file.
+          ...(taskIds.includes("perf-harness") && opts.report === true
+            ? { [NEXT_SCRIPT.report]: `node ${outRel}/scripts/report.mjs` }
             : {}),
         },
       );

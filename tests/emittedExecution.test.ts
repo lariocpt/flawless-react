@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { cp, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -718,7 +718,7 @@ describe("emitted configuration is machine-readable and internally consistent", 
  */
 async function nextjsRun(
   taskIds: TaskId[],
-): Promise<{ scripts: Record<string, string>; present: Set<string> }> {
+): Promise<{ scripts: Record<string, string>; present: Set<string>; outDir: string }> {
   const app = path.join(await tmpRoot(), "app");
   await cp(fixture("nextapp"), app, { recursive: true });
   const outDir = path.join(app, "flawless");
@@ -742,7 +742,7 @@ async function nextjsRun(
   const scripts = Object.fromEntries(
     Object.entries(pkg.scripts ?? {}).filter(([n]) => n.startsWith("flawless:")),
   );
-  return { scripts, present: presentPaths(emitted) };
+  return { scripts, present: presentPaths(emitted), outDir };
 }
 
 /**
@@ -756,13 +756,15 @@ async function nextjsRun(
  */
 async function standaloneRun(
   taskIds: TaskId[],
-): Promise<{ scripts: Record<string, string>; present: Set<string> }> {
+  report = false,
+): Promise<{ scripts: Record<string, string>; present: Set<string>; outDir: string }> {
   const outDir = path.join(await tmpRoot(), "flawless");
   await runCore({
     pattern: fixture("Dashboard.tsx"),
     outDir,
     taskIds,
     force: true,
+    report,
     log: false,
     inlineSummary: false,
   });
@@ -773,7 +775,7 @@ async function standaloneRun(
   const pkg = JSON.parse(await Bun.file(path.join(outDir, "package.json")).text()) as {
     scripts?: Record<string, string>;
   };
-  return { scripts: pkg.scripts ?? {}, present: presentPaths(emitted) };
+  return { scripts: pkg.scripts ?? {}, present: presentPaths(emitted), outDir };
 }
 
 describe("the standalone test:* scripts point only at what the run emitted", () => {
@@ -1078,4 +1080,95 @@ describe("the emitted servers are started, not merely written", () => {
     },
     CASE_TIMEOUT_MS,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Emitted prose — the half danglingIn cannot see
+// ---------------------------------------------------------------------------
+
+/**
+ * Every `bun run <name>` an emitted file tells the reader to type.
+ *
+ * Read out of the files ON DISK rather than the template functions, so the
+ * READMEs the load and e2e tasks write are covered too — no template-level scan
+ * reaches those, and they carry as many instructions as the suite README.
+ */
+function bunRunNames(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    // "e.g. `bun run db:reset`" names a script in the READER's project as an
+    // illustration — e2e/README.md says "whatever your repo uses". Illustrations
+    // cannot be checked against anything, and demanding they exist would mean
+    // deleting a useful line. Only instructions are held to the rule.
+    if (/\be\.g\./.test(line)) continue;
+    for (const m of line.matchAll(/bun run ([\w:.-]+)/g)) out.push(m[1] as string);
+  }
+  return out;
+}
+
+/**
+ * Lifecycle scripts belonging to the TARGET project, named on purpose.
+ *
+ * The pipes header tells you to point LOAD_BASE at a production build rather
+ * than at `next dev`, because a dev server compiles on demand and the run
+ * measures the compiler. That instruction is about the reader's app, so these
+ * are never flawless's to declare.
+ */
+const HOST_LIFECYCLE = new Set(["build", "start", "dev"]);
+
+/** Every text file under a directory, relative-path keyed. */
+function emittedText(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
+    const abs = path.join(dir, rel);
+    if (!statSync(abs).isFile()) continue;
+    try {
+      out.set(rel.split(path.sep).join("/"), readFileSync(abs, "utf8"));
+    } catch {
+      // Binary or unreadable — nothing to scan.
+    }
+  }
+  return out;
+}
+
+/** Prose telling the reader to run a script this configuration never declared. */
+function proseNamingUndeclared(outDir: string, declared: Set<string>): string[] {
+  const bad: string[] = [];
+  for (const [rel, text] of emittedText(outDir)) {
+    for (const name of bunRunNames(text)) {
+      if (declared.has(name) || HOST_LIFECYCLE.has(name)) continue;
+      bad.push(`${rel}: \`bun run ${name}\` — no such script in this run`);
+    }
+  }
+  return bad;
+}
+
+describe("emitted prose names only scripts the run declared", () => {
+  test("the standalone suite", async () => {
+    const { scripts, outDir } = await standaloneRun(["perf-harness", "unit-browser"], true);
+
+    expect(proseNamingUndeclared(outDir, new Set(Object.keys(scripts)))).toEqual([]);
+  });
+
+  test("Next.js mode, where `bun run test` reaches the app's own suite", async () => {
+    // The defect this closes: the suite README's Run block was the standalone
+    // one in both modes, and there is no suite package.json in this one — so
+    // `bun run test` walked up to the APPLICATION's package.json and ran its
+    // real test suite while the reader believed they were running the profile
+    // suite. Silent, and it reads as success.
+    const { scripts, outDir } = await nextjsRun(["perf-harness", "unit-browser", "e2e", "load"]);
+
+    expect(proseNamingUndeclared(outDir, new Set(Object.keys(scripts)))).toEqual([]);
+  });
+
+  test("the scan sees an instruction and lets an illustration past", () => {
+    // Guards the guard, both ways: a bunRunNames that returned [] would make
+    // every case above assert nothing, and one that ignored "e.g." would force
+    // the removal of a line that is correct as written.
+    expect(bunRunNames("bun run flawless:perf   # headless")).toEqual(["flawless:perf"]);
+    expect(
+      bunRunNames("- Seed the DB (whatever your repo uses — e.g. `bun run db:reset`)."),
+    ).toEqual([]);
+    expect(bunRunNames("nothing to see here")).toEqual([]);
+  });
 });

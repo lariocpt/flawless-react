@@ -24,6 +24,26 @@ export const SUITE_SCRIPT = {
   report: "report",
 } as const;
 
+/**
+ * The same actions in Next.js mode, where the TARGET app's package.json holds
+ * them and there is no suite package.json at all.
+ *
+ * A separate map rather than a prefix of SUITE_SCRIPT, deliberately: these run
+ * different commands, not the same commands under another name — `flawless:perf`
+ * carries an explicit --config and --project that `test:perf` gets from the
+ * config it already sits beside. Deriving one from the other would encode a
+ * coincidence as a rule. The commands themselves stay in core.ts, which is the
+ * only place that knows the out dir they have to be written relative to.
+ */
+export const NEXT_SCRIPT = {
+  unit: "flawless:unit",
+  perf: "flawless:perf",
+  browser: "flawless:browser",
+  e2e: "flawless:e2e",
+  load: "flawless:load",
+  report: "flawless:report",
+} as const;
+
 export const SUITE_COMMAND = {
   unit: "vitest run",
   /**
