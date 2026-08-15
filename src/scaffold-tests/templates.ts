@@ -1496,11 +1496,16 @@ function emitPlaywrightTrigger(label: LabelSource): string | undefined {
 }
 
 function browserPlaywrightConfig(): string {
-  return `import { defineConfig, devices } from "@playwright/test";
+  return `import path from "node:path";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.ts",
+  // Anchored to this file. Playwright's default resolves against the directory
+  // the command was typed in, which put traces outside the flawless/ tree the
+  // generated .gitignore covers.
+  outputDir: path.join(__dirname, "test-results"),
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],

@@ -244,13 +244,18 @@ function playwrightConfig(hasMock: boolean): string {
     ? `webServer: [\n    ${hostServerBlock},\n    ${mockServerBlock},\n  ]`
     : `webServer: ${hostServerBlock}`;
 
-  return `import { defineConfig, devices } from "@playwright/test";
+  return `import path from "node:path";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./profile",
+  // Anchored to this file, not to the directory the command was typed in.
+  // Playwright's default put traces in <app>/test-results/ while the .gitignore
+  // the tool writes covers flawless/test-results/ — 347MB of untracked output.
+  outputDir: path.join(__dirname, "test-results"),
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
+  reporter: [["list"], ["html", { open: "never", outputFolder: path.join(__dirname, "playwright-report") }]],
   preserveOutput: "always",
   use: {
     baseURL: "http://127.0.0.1:5173",
@@ -843,10 +848,13 @@ function slug(s: string): string {
 }
 
 async function persistSnapshot(buf: Buffer, label: string, testInfo: TestInfo): Promise<string> {
-  // Resolve from CWD (suite root, where \`bun run test\` was invoked) — this
-  // keeps the path independent of Playwright's internal rootDir resolution,
-  // which can flip between the config dir and the testDir.
-  const dir = path.resolve(process.cwd(), HEAPS_DIR);
+  // Resolve from THIS FILE, not from CWD. Resolving from cwd was meant to keep
+  // the path independent of Playwright's rootDir resolution; what it actually
+  // did was make it depend on the directory the command was typed in. Run via
+  // the generated \`flawless:perf\` script that is the app root, so snapshots
+  // landed in <app>/heaps/ while the .gitignore the tool writes covers
+  // flawless/heaps/ — 566MB of untracked binaries in someone's repo.
+  const dir = path.resolve(__dirname, "..", HEAPS_DIR);
   await mkdir(dir, { recursive: true });
   const specBase = slug(path.basename(testInfo.file).replace(/\\.spec\\.ts$/, ""));
   const title = slug(testInfo.title);
