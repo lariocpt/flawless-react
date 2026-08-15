@@ -30,7 +30,14 @@ export interface ReportInput {
   projectRoot?: string;
   /** Files the analyser could not read a component out of. */
   unparseable?: UnparseableFile[];
-  /** The command that produced this, for reproduction. */
+  /**
+   * A command that reproduces this run.
+   *
+   * Rebuilt from the run's options rather than captured from argv, so it is the
+   * same line for a programmatic caller as for the CLI and carries no absolute
+   * path — this file is committed, and a path under one machine's root churns
+   * `git status` on every other. See reproCommand in core.ts.
+   */
   command?: string;
   /** Every task id the tool has, so a partial run can say that it was partial. */
   allTaskIds?: readonly string[];
@@ -75,7 +82,16 @@ export function renderReportMarkdown(input: ReportInput): string {
     "",
   ];
   if (input.command) {
-    lines.push("```bash", input.command, "```", "");
+    // Paths in it are relative to the same directory the file paths below are,
+    // so it only reproduces the run when run from there.
+    lines.push(
+      "Reproduce this run from the project root:",
+      "",
+      "```bash",
+      input.command,
+      "```",
+      "",
+    );
   }
 
   // --- components ----------------------------------------------------------

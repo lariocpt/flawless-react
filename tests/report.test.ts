@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { reproCommand } from "../src/core.ts";
 import { renderReportMarkdown } from "../src/reporters/report.ts";
 import type { ComponentInfo, ComponentTree, TaskResult } from "../src/types.ts";
 
@@ -120,5 +124,110 @@ describe("a partial run says so", () => {
     } as never);
     expect(md).not.toContain("This run selected");
     expect(md).not.toContain("Not run");
+  });
+});
+
+describe("REPORT.md carries a command that reproduces the run", () => {
+  const ROOT = "/home/lario/Projects/personal/mybodycorpai/apps/web";
+  const run = (opts: Record<string, unknown>, taskIds: string[] = ["perf-harness"]): string =>
+    reproCommand({ pattern: "src/**/*.tsx", ...opts } as never, ROOT, taskIds as never);
+
+  test("it names the published bin, not the interpreter that happened to run it", () => {
+    // argv[0..1] is `bun /home/…/src/bin.ts`, which is this machine's checkout.
+    expect(run({})).toStartWith("flawless-react ");
+    expect(run({})).not.toContain("bun ");
+    expect(run({})).not.toContain("bin.ts");
+  });
+
+  test("NO absolute path survives, whichever option carried it", () => {
+    // The load-bearing invariant. REPORT.md is committed and checked out under a
+    // different root on each machine (/home/lario/… vs /mnt/data/…), so one
+    // absolute path here churns `git status` everywhere else.
+    const cmd = run(
+      {
+        pattern: `${ROOT}/src/app/page.tsx`,
+        nextjs: ROOT,
+        outDir: `${ROOT}/flawless`,
+        apiSpec: `${ROOT}/openapi.json`,
+        provider: `${ROOT}/flawless/provider.tsx`,
+        exclude: [`${ROOT}/src/legacy/**`],
+      },
+      ["load"],
+    );
+    expect(cmd).not.toContain(ROOT);
+    expect(cmd).not.toMatch(/(^|[\s"'])\//);
+    expect(cmd).toContain("--nextjs .");
+    expect(cmd).toContain("--out flawless");
+    expect(cmd).toContain("--api openapi.json");
+  });
+
+  test("a relative pattern is left exactly as the caller wrote it", () => {
+    // Resolving it against root only to relativise it again turns a correct
+    // string into a guess about the cwd it was typed in.
+    expect(run({ pattern: "src/**/*.tsx" })).toContain('"src/**/*.tsx"');
+  });
+
+  test("globs are quoted, so the shell cannot expand them into a different run", () => {
+    expect(run({ pattern: "src/**/*.tsx" })).toContain('"src/**/*.tsx"');
+    expect(run({ pattern: "src/App.tsx" })).toContain(" src/App.tsx");
+  });
+
+  test("only what differs from the defaults is spelled out", () => {
+    expect(run({})).toBe('flawless-react "src/**/*.tsx"');
+    expect(run({ depth: 3, variants: 5, heaps: "stress", roots: "primary" })).toBe(
+      'flawless-react "src/**/*.tsx"',
+    );
+    expect(run({ depth: 0, heaps: "off" })).toBe(
+      'flawless-react "src/**/*.tsx" --depth 0 --heaps off',
+    );
+  });
+
+  test("--tasks is spelled out unless it is the CLI's own no-flag default", () => {
+    // Running with no --tasks does perf-harness alone, so anything else has to
+    // be named or the line reproduces a different run.
+    expect(run({}, ["perf-harness"])).not.toContain("--tasks");
+    expect(run({}, ["load"])).toContain("--tasks load");
+    expect(run({}, ["e2e", "load"])).toContain("--tasks e2e,load");
+  });
+
+  test("the same options twice produce the same bytes", () => {
+    // REPORT.md is committed and timestamp-free precisely so this holds.
+    const opts = { nextjs: ROOT, force: true, roots: "exported", apiSpec: `${ROOT}/openapi.json` };
+    expect(run(opts, ["load"])).toBe(run(opts, ["load"]));
+  });
+
+  test("the report renders it under a heading that says where to run it", () => {
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/tmp/x",
+      command: 'flawless-react "src/**/*.tsx" --nextjs .',
+      results: [],
+    } as never);
+    expect(md).toContain("Reproduce this run from the project root:");
+    expect(md).toContain('flawless-react "src/**/*.tsx" --nextjs .');
+  });
+
+  test("a standalone run emits no command, because it would not be runnable", async () => {
+    // Outside --nextjs there is no project root: the report lands in outDir
+    // while the pattern is relative to the caller's cwd. A line telling you to
+    // run it "from the project root" would name a directory the pattern does
+    // not resolve against, so the honest output is none.
+    const { runCore } = await import("../src/core.ts");
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-repro-"));
+    await runCore({
+      pattern: path.resolve(__dirname, "fixtures", "Toolbar.tsx"),
+      outDir: dir,
+      taskIds: ["perf-static"],
+      inlineSummary: false,
+      log: false,
+    });
+    const md = await Bun.file(path.join(dir, "REPORT.md")).text();
+    expect(md).not.toContain("Reproduce this run");
+  });
+
+  test("no command means no empty code fence", () => {
+    const md = renderReportMarkdown({ trees: [], outDir: "/tmp/x", results: [] } as never);
+    expect(md).not.toContain("Reproduce this run");
+    expect(md).not.toContain("```bash");
   });
 });

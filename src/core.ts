@@ -74,6 +74,74 @@ export interface CoreResult {
   provider: string | undefined;
 }
 
+/**
+ * A command that reproduces this run, for REPORT.md's header.
+ *
+ * Rebuilt from the options rather than captured from argv. argv carries the
+ * interpreter and the absolute path of the script — `bun /home/…/src/bin.ts` —
+ * and REPORT.md is committed, timestamp-free, and checked out under a different
+ * root on every machine. An absolute path in it would churn `git status`
+ * everywhere except the machine that generated it, which is the same failure the
+ * no-timestamp rule exists to prevent, arriving through a different door.
+ *
+ * So: the published bin name, never the interpreter; every path relative, never
+ * absolute; and only the options that differ from their defaults, so two runs
+ * that did the same thing produce the same line.
+ */
+export function reproCommand(opts: CoreOptions, root: string, taskIds: TaskId[]): string {
+  // Only absolutes are rewritten. A pattern the caller wrote as `src/**/*.tsx`
+  // is already relative to where they ran it, and resolving it against `root`
+  // just to relativise it again would turn a correct string into a guess.
+  const rel = (p: string): string => {
+    const r = path.isAbsolute(p) ? path.relative(root, p) : p;
+    const posix = r.split(path.sep).join("/");
+    return posix === "" ? "." : posix;
+  };
+  // Globs and spaces need quoting or the invoking shell expands them before
+  // flawless sees them — which is a different run.
+  const quote = (s: string): string => (/[\s*?[\]{}()|$]/.test(s) ? `"${s}"` : s);
+
+  const parts = ["flawless-react", quote(rel(opts.pattern))];
+  const flag = (name: string, value?: string): void => {
+    parts.push(name);
+    if (value !== undefined) parts.push(value);
+  };
+
+  if (opts.nextjs !== undefined) flag("--nextjs", quote(rel(opts.nextjs)));
+  if (opts.outDir !== undefined) flag("--out", quote(rel(opts.outDir)));
+  // The CLI's no-flag default is perf-harness alone, so anything else has to be
+  // spelled out or the line reproduces a different run.
+  if (!(taskIds.length === 1 && taskIds[0] === "perf-harness")) {
+    flag("--tasks", taskIds.join(","));
+  }
+  if (opts.roots !== undefined && opts.roots !== "primary") flag("--roots", opts.roots);
+  if (opts.apiSpec !== undefined) flag("--api", quote(rel(opts.apiSpec)));
+  if (opts.provider !== undefined) flag("--provider", quote(rel(opts.provider)));
+  if (opts.swaggerUrl !== undefined) flag("--swagger-url", quote(opts.swaggerUrl));
+  if (opts.depth !== undefined && opts.depth !== 3) flag("--depth", String(opts.depth));
+  if (opts.variants !== undefined && opts.variants !== 5) {
+    flag("--variants", String(opts.variants));
+  }
+  if (opts.heaps !== undefined && opts.heaps !== "stress") flag("--heaps", opts.heaps);
+  if (opts.includeChildren === false) flag("--include-children=false");
+  // Relativised like any other path: an exclude is usually already relative
+  // (`**/*.stories.tsx`), but nothing stops a caller passing an absolute one.
+  for (const g of opts.exclude ?? []) flag("--exclude", quote(rel(g)));
+  if (opts.useDefaultExcludes === false) flag("--no-default-excludes");
+  if (opts.propsOverride !== undefined) {
+    flag("--props", `'${JSON.stringify(opts.propsOverride)}'`);
+  }
+  if (opts.colocate === true) flag("--colocate");
+  if (opts.force === true) flag("--force");
+  if (opts.report === true) flag("--report");
+  if (opts.inlineSummary === false) flag("--no-inline-summary");
+  if (opts.changed !== undefined) {
+    flag("--changed", opts.changed === true ? undefined : quote(opts.changed));
+  }
+  if (opts.runTests === true) flag("--run-tests");
+  return parts.join(" ");
+}
+
 export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const log = (line: string): void => {
     if (opts.log !== false) process.stdout.write(`${line}\n`);
@@ -333,6 +401,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     projectRoot: nextCtx?.root,
     unparseable,
     allTaskIds: TASKS.map((t) => t.id),
+    // Only in Next.js mode, where there is a project root that both the command
+    // and the report's file paths are relative to, and which is where the user
+    // ran the command from. Standalone, the report lands in outDir while the
+    // pattern is relative to the caller's cwd — two different directories, so a
+    // line claiming to be runnable "from the project root" would not be.
+    command: nextCtx ? reproCommand(opts, nextCtx.root, taskIds) : undefined,
   });
 
   // Format everything we wrote with the host project's own formatter so
