@@ -119,6 +119,7 @@ flawless-react <entry.tsx> [options]
 | `--out <dir>` | `<cwd>/<ComponentName>.profile/` | Output directory for the generated suite. |
 | `--depth N` | `3` | Levels of locally-imported child components to follow (`0` = leaf only). |
 | `--variants N` | `5` | Prop-variant rows in the generated test matrix. |
+| `--changed [REF]` | off | After generating, run only the specs an edit affects — the changed components' unit/browser/profile specs, plus any e2e route whose page *renders* one of them. Defaults to comparing the worktree against `HEAD`. |
 | `--heaps MODE` | `stress` | V8 heap snapshots in the profile suite: `off`, `stress`, `all`. Each snapshot is tens of MB and one is taken either side of every scenario, so `off` also removes an observer from inside the measurement. |
 | `--include-children` | `true` | Walk transitive child components. Pass `--include-children=false` to skip. |
 | `--props '<json>'` | none | Override the synthesized default props. Merged on top of the static-parse result. |

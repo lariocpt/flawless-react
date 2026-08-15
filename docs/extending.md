@@ -84,6 +84,27 @@ Most of what you will want to change is a `test.skip` whose title states why the
 
 `flawless/load/README.md` is the exception that proves the criterion: it is generated prose with nothing of yours in it, so `--force` regenerates it. Protecting it would only mean an existing suite never learns what a later version worked out — which is exactly what happened to the rule that `LOAD_BASE` must point at a production build.
 
+## Run only what an edit affects
+
+A full suite is the wrong unit of work when three components changed. Analysing
+a whole app costs about half a second, so `--changed` keeps the analysis and the
+generation complete and narrows only the **run**:
+
+```bash
+bunx flawless-react "src/**/*.tsx" --nextjs . --tasks perf-harness,unit-browser --changed
+```
+
+It selects unit specs through vitest's module graph (`vitest related`, so it is
+transitively correct), profile and browser specs by the component names, and any
+e2e route whose page tree renders a changed component — that last one is the
+relationship a path filter cannot see, since editing a leaf `<StatusPill>`
+changes what every page rendering it produces without changing those pages'
+files.
+
+Generation is deliberately not narrowed: the profiling host is a single bundle
+of every component, so a partial regeneration would leave a host that no longer
+matches its specs.
+
 ## Turn heap snapshots off
 
 The profile suite takes a V8 heap snapshot either side of every scenario. On a real app each is tens of megabytes, and a whole-app sweep leaves hundreds on disk — plus two heap walks inside every measurement they bracket. `--heaps off` skips the capture entirely; `--heaps all` persists every scenario rather than only the stress ones. The default keeps the stress pairs, which is what leak-hunting needs.
