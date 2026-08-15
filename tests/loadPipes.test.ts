@@ -4,8 +4,42 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { ensureParamDefaults } from "../src/tasks/e2eRoutes.ts";
+import {
+  type LoadTarget,
+  mergePipes,
+  readFilledParams,
+  renderPipes,
+} from "../src/tasks/loadPipes.ts";
 
 const tmpDir = (): Promise<string> => mkdtemp(path.join(tmpdir(), "flawless-load-"));
+
+/** The two paths renderPipes needs; `rel` comes out as "flawless". */
+const OUT_DIR = "/app/flawless";
+const NEXT_ROOT = "/app";
+
+const target = (name: string, urlPath: string, params: string[] = []): LoadTarget => ({
+  name,
+  urlPath,
+  params,
+});
+
+const INVITE = target("invite-token", "/invite/$LOAD_TOKEN", ["token"]);
+const DASHBOARD = target("dashboard", "/dashboard");
+const ASHA = target(
+  "api-buildings-x-ai-conversations-x-messages",
+  "/api/buildings/$LOAD_BUILDINGID/ai/conversations/$LOAD_CONVERSATIONID/messages",
+  ["buildingId", "conversationId"],
+);
+
+const render = (targets: LoadTarget[], filled: string[]): string =>
+  renderPipes(targets, OUT_DIR, NEXT_ROOT, new Set(filled));
+
+const merge = (existing: string, targets: LoadTarget[], filled: string[]): string =>
+  mergePipes(existing, targets, OUT_DIR, NEXT_ROOT, new Set(filled));
+
+/** Pipe lines only — the header carries `# TODO(flawless): tune rate/duration`. */
+const pipeLines = (text: string): string[] =>
+  text.split("\n").filter((l) => l.startsWith("load ") || l.startsWith("# load "));
 
 async function paramsFileWith(body: unknown): Promise<string> {
   const dir = await tmpDir();
@@ -103,5 +137,137 @@ describe("heap snapshots are optional", () => {
     expect(parseArgs(["x.tsx", "--heaps=all"]).heaps).toBe("all");
     expect(parseArgs(["x.tsx"]).heaps).toBe("stress");
     expect(() => parseArgs(["x.tsx", "--heaps", "yes"])).toThrow(/--heaps must be/);
+  });
+});
+
+describe("which ids count as supplied", () => {
+  test("a blank string is not a value", async () => {
+    const file = await paramsFileWith({ defaults: { id: "abc", token: "" }, routes: {} });
+    const filled = await readFilledParams(file);
+    expect(filled.has("ID")).toBe(true);
+    expect(filled.has("TOKEN")).toBe(false);
+  });
+
+  test("a per-route override counts, so one filled route is enough", async () => {
+    const file = await paramsFileWith({
+      defaults: { token: "" },
+      routes: { "/invite/[token]": { token: "seeded" } },
+    });
+    expect((await readFilledParams(file)).has("TOKEN")).toBe(true);
+  });
+
+  test("an unreadable params.json supplies nothing rather than throwing", async () => {
+    const dir = await tmpDir();
+    const file = path.join(dir, "params.json");
+    await Bun.write(file, "{ not json");
+    expect((await readFilledParams(file)).size).toBe(0);
+  });
+});
+
+describe("a pipe whose ids are unfilled is commented out, not dropped", () => {
+  test("every id supplied renders a live pipe", () => {
+    const out = render([DASHBOARD], []);
+    expect(pipeLines(out)).toEqual([expect.stringMatching(/^load .*GET \$LOAD_BASE\/dashboard /)]);
+  });
+
+  test("a missing id comments the pipe and names the key in the source's casing", () => {
+    // Not "TOKEN": the fix is made in params.json, which is keyed as written.
+    const out = render([INVITE], []);
+    expect(out).toContain(
+      '# TODO(flawless): no value for LOAD_TOKEN. Fill "token" in flawless/e2e/params.json',
+    );
+    expect(out).toContain("# load 10s 50/s | parallel 16 | GET $LOAD_BASE/invite/$LOAD_TOKEN");
+    // The route stays visible, so the reader can see what is not being measured.
+    expect(pipeLines(out).every((l) => l.startsWith("# "))).toBe(true);
+  });
+
+  test("filling one of two ids leaves a TODO naming only the other", () => {
+    const out = render([ASHA], ["BUILDINGID"]);
+    expect(out).toContain(
+      '# TODO(flawless): no value for LOAD_CONVERSATIONID. Fill "conversationId" in flawless/e2e/params.json',
+    );
+    expect(out).not.toContain("LOAD_BUILDINGID.");
+  });
+
+  test("filling both turns it live", () => {
+    const out = render([ASHA], ["BUILDINGID", "CONVERSATIONID"]);
+    expect(out).not.toContain("TODO(flawless): no value for");
+    expect(pipeLines(out)).toEqual([expect.stringMatching(/^load /)]);
+  });
+});
+
+describe("--force merges routes.pipes rather than replacing it", () => {
+  test("a hand-tuned rate survives, body untouched", () => {
+    const tuned = render([DASHBOARD], []).replace("load 10s 50/s", "load 60s 5/s");
+    const merged = merge(tuned, [DASHBOARD], []);
+    expect(merged).toContain("load 60s 5/s");
+    expect(merged).not.toContain("load 10s 50/s |");
+  });
+
+  test("a POST flow added by hand is never pruned", () => {
+    const added = `${render([DASHBOARD], [])}
+# my own smoke check
+load 5s 1/s | POST $LOAD_BASE/api/things -H "$LOAD_AUTH" | expect 201
+`;
+    const merged = merge(added, [DASHBOARD], []);
+    expect(merged).toContain("# my own smoke check");
+    expect(merged).toContain("POST $LOAD_BASE/api/things");
+  });
+
+  test("filling the id un-gates the pipe and keeps the edits made to it", () => {
+    // The whole point of the gate: fill the id, regenerate, and it turns back on.
+    const gated = render([INVITE], []).replace("# load 10s 50/s", "# load 30s 20/s");
+    const merged = merge(gated, [INVITE], ["TOKEN"]);
+    expect(merged).not.toContain("TODO(flawless): no value for");
+    expect(merged).toContain("load 30s 20/s | parallel 16 | GET $LOAD_BASE/invite/$LOAD_TOKEN");
+    expect(pipeLines(merged)).toEqual([expect.stringMatching(/^load /)]);
+  });
+
+  test("blanking an id re-gates a live pipe without losing its body", () => {
+    const live = render([INVITE], ["TOKEN"]).replace("load 10s 50/s", "load 45s 3/s");
+    const merged = merge(live, [INVITE], []);
+    expect(merged).toContain('# TODO(flawless): no value for LOAD_TOKEN. Fill "token"');
+    expect(merged).toContain("# load 45s 3/s");
+  });
+
+  test("a pipe you commented out yourself is not resurrected", () => {
+    const off = render([DASHBOARD], []).replace(/^load /m, "# load ");
+    const merged = merge(off, [DASHBOARD], []);
+    expect(pipeLines(merged)).toEqual([expect.stringMatching(/^# load /)]);
+    expect(merged).not.toContain("TODO(flawless): no value for");
+  });
+
+  test("a route that appears since last time is appended", () => {
+    const before = render([DASHBOARD], []);
+    const merged = merge(before, [DASHBOARD, INVITE], ["TOKEN"]);
+    expect(pipeLines(merged)).toHaveLength(2);
+    expect(merged).toContain("/invite/$LOAD_TOKEN");
+  });
+
+  test("the header is refreshed, so an existing suite learns what a later version knows", () => {
+    const stale = render([DASHBOARD], []).replace(
+      "# Baseline gating: copy a good last-*.json to baseline-*.json; runs then fail",
+      "# Baseline gating: something an older version said",
+    );
+    const merged = merge(stale, [DASHBOARD], []);
+    expect(merged).toContain("# Baseline gating: copy a good last-*.json to baseline-*.json");
+    expect(merged).not.toContain("something an older version said");
+  });
+
+  test("a header this tool did not write is left alone", () => {
+    const mine = `# my own pipes file\n\n${render([DASHBOARD], []).split("\n\n").slice(1).join("\n\n")}`;
+    const merged = merge(mine, [DASHBOARD], []);
+    expect(merged.startsWith("# my own pipes file")).toBe(true);
+    expect(merged).not.toContain("Env contract");
+  });
+
+  test("two merges in a row produce the same bytes", () => {
+    const once = merge(render([DASHBOARD, INVITE], []), [DASHBOARD, INVITE], ["TOKEN"]);
+    expect(merge(once, [DASHBOARD, INVITE], ["TOKEN"])).toBe(once);
+  });
+
+  test("merging a freshly rendered file changes nothing but the trailing newline", () => {
+    const fresh = render([DASHBOARD, ASHA], ["BUILDINGID", "CONVERSATIONID"]);
+    expect(merge(fresh, [DASHBOARD, ASHA], ["BUILDINGID", "CONVERSATIONID"])).toBe(fresh);
   });
 });

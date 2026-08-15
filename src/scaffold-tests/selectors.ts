@@ -142,7 +142,17 @@ export function emitPlaywrightClickTarget(info: InteractionInfo | undefined): Cl
   const trigger = target.gatedBy ? emitPlaywrightDisclosure(target.gatedBy) : undefined;
   return {
     locator: firstOf(locator),
-    ...(trigger ? { prelude: `await ${firstOf(trigger)}.click();` } : {}),
+    // Guarded, because the trigger may not be there either. UserMenu returns
+    // null until a store hook supplies a session, so an unguarded
+    // `await trigger.click()` waited out the full 30s timeout for an element
+    // the component had decided not to render — and did it BEFORE the count
+    // check below could report the absence.
+    ...(trigger
+      ? {
+          prelude: `const __trigger = ${firstOf(trigger)};
+  if ((await __trigger.count()) > 0) await __trigger.click();`,
+        }
+      : {}),
   };
 }
 

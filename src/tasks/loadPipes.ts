@@ -52,10 +52,26 @@ export const loadPipes: Task = {
 
     const pipesPath = path.join(loadDir, "routes.pipes");
     let keptPipes = false;
-    if (!existsSync(pipesPath) || ctx.force) {
-      await Bun.write(pipesPath, renderPipes(targets, ctx.outDir, ctx.nextjs.root, filled));
+    let pipesText: string;
+    if (!existsSync(pipesPath)) {
+      pipesText = renderPipes(targets, ctx.outDir, ctx.nextjs.root, filled);
+      await Bun.write(pipesPath, pipesText);
+      written.push(pipesPath);
+    } else if (ctx.force) {
+      // Merged, not overwritten. A tuned rate, a hand-added POST flow and a pipe
+      // you commented out yourself cannot be recovered if lost, and --force is
+      // the only way to turn a gated pipe back on — so it has to do both.
+      pipesText = mergePipes(
+        await Bun.file(pipesPath).text(),
+        targets,
+        ctx.outDir,
+        ctx.nextjs.root,
+        filled,
+      );
+      await Bun.write(pipesPath, pipesText);
       written.push(pipesPath);
     } else {
+      pipesText = await Bun.file(pipesPath).text();
       keptPipes = true;
     }
 
@@ -63,28 +79,67 @@ export const loadPipes: Task = {
     await Bun.write(envPath, loadEnvScript());
     written.push(envPath);
 
+    // Regenerated under --force, unlike routes.pipes beside it: this README is
+    // generated prose with nothing of yours in it, so protecting it forever only
+    // means existing installs never learn what a later version worked out — such
+    // as that LOAD_BASE has to be a production build.
     const readmePath = path.join(loadDir, "README.md");
-    if (!existsSync(readmePath)) {
+    if (!existsSync(readmePath) || ctx.force) {
       await Bun.write(readmePath, loadReadme());
       written.push(readmePath);
     }
 
     const crustPresent = Bun.which("crust") !== null || hasLocalCrust(ctx.nextjs.root);
+    const tally = countPipes(pipesText);
     return {
       id: "load",
       ok: true,
       outputs: written,
       findings: [],
       summary: keptPipes
-        ? `kept existing load/routes.pipes (--force to regenerate for ${targets.length} target(s))`
-        : crustPresent
-          ? `load pipes for ${targets.length} target(s) — run with bun run flawless:load`
-          : `load pipes for ${targets.length} target(s) — crust not found on PATH; install it to run them`,
+        ? `kept existing load/routes.pipes (--force to merge in ${targets.length} target(s))`
+        : `load pipes for ${targets.length} target(s) — ${describeTally(tally, filled, targets)}${
+            crustPresent ? " — run with bun run flawless:load" : " — crust not found on PATH"
+          }`,
     };
   },
 };
 
-interface LoadTarget {
+interface PipeTally {
+  live: number;
+  gated: number;
+  userCommented: number;
+}
+
+/**
+ * What the file on disk actually measures, which is not `targets.length`.
+ *
+ * A gated pipe measures nothing, so counting it as a covered target is the same
+ * mistake REPORT.md exists to prevent — this string is what lands in its Tasks
+ * table.
+ */
+function countPipes(text: string): PipeTally {
+  const tally: PipeTally = { live: 0, gated: 0, userCommented: 0 };
+  for (const item of parsePipes(text).body) {
+    if (item.kind !== "pipe") continue;
+    if (item.state === "live") tally.live += 1;
+    else if (item.state === "gated") tally.gated += 1;
+    else tally.userCommented += 1;
+  }
+  return tally;
+}
+
+function describeTally(tally: PipeTally, filled: Set<string>, targets: LoadTarget[]): string {
+  const parts = [`${tally.live} live`];
+  if (tally.gated > 0) {
+    const ids = [...new Set(targets.flatMap((t) => missingParams(t, filled)))].sort();
+    parts.push(`${tally.gated} commented out pending ids (${ids.join(", ")})`);
+  }
+  if (tally.userCommented > 0) parts.push(`${tally.userCommented} commented out by you`);
+  return parts.join(", ");
+}
+
+export interface LoadTarget {
   name: string;
   /** URL path with $VARS for dynamic segments. */
   urlPath: string;
@@ -166,7 +221,7 @@ function slugify(p: string): string {
  * runs, so by the time load renders its pipes this is exactly the set of
  * fixtures the user has supplied.
  */
-async function readFilledParams(paramsPath: string): Promise<Set<string>> {
+export async function readFilledParams(paramsPath: string): Promise<Set<string>> {
   const out = new Set<string>();
   if (!existsSync(paramsPath)) return out;
   try {
@@ -189,52 +244,225 @@ async function readFilledParams(paramsPath: string): Promise<Set<string>> {
   return out;
 }
 
-function renderPipes(
+/** First line of a header this tool wrote — the signal that it may be refreshed. */
+const HEADER_MARKER = "# flawless-react load pipes — generated from the analysed component tree.";
+/** Prefix of the gate comment, which identifies a pipe as commented out BY the tool. */
+const GATE_MARKER = "# TODO(flawless): no value for ";
+
+function relOut(outDir: string, nextRoot: string): string {
+  return path.relative(nextRoot, outDir).split(path.sep).join("/");
+}
+
+/**
+ * The ids a target needs that nothing has supplied.
+ *
+ * Compared in upper case, reported in the source's: `filled` is keyed by the
+ * shouting form the pipe uses, but the fix a reader has to make is in
+ * params.json, which is keyed by the name as written.
+ */
+function missingParams(t: LoadTarget, filled: Set<string>): string[] {
+  return t.params.filter((p) => !filled.has(p.toUpperCase()));
+}
+
+function renderPipeBody(t: LoadTarget, rel: string): string {
+  const statsOut = `${rel}/load/last-${t.name}.json`;
+  const baseline = `${rel}/load/baseline-${t.name}.json`;
+  return (
+    `load 10s 50/s | parallel 16 | GET $LOAD_BASE${t.urlPath} -H "$LOAD_AUTH" --timeout 2s | expect 200 ` +
+    `| stats --out ${statsOut} ` +
+    `| assert (async s => { const b = Bun.file("${baseline}"); return !(await b.exists()) || s.p95 < 2 * (await b.json()).summary.p95 })`
+  );
+}
+
+function gateComment(missing: string[], rel: string): string {
+  return (
+    `${GATE_MARKER}${missing.map((m) => `LOAD_${m.toUpperCase()}`).join(", ")}. ` +
+    `Fill ${missing.map((m) => `"${m}"`).join(", ")} in ${rel}/e2e/params.json`
+  );
+}
+
+function pipesHeader(): string[] {
+  return [
+    HEADER_MARKER,
+    "# Env contract (export before running, or provide a crust setup module):",
+    "#   LOAD_BASE  — e.g. http://localhost:3001. Point this at a PRODUCTION build",
+    "#                (bun run build && bun run start), not at next dev: the dev",
+    "#                server compiles routes on demand, so a load run against it",
+    "#                measures the compiler rather than the app.",
+    '#   LOAD_AUTH  — a header line, e.g. "cookie: session=<value>" for a cookie',
+    '#                session, or "authorization: Bearer <token>" for a token one.',
+    '#                Use "accept: */*" if the route needs no auth.',
+    "#   LOAD_<PARAM> — one per dynamic segment below (e.g. LOAD_ID, LOAD_BUILDINGID).",
+    "#                If you filled flawless/e2e/params.json for the e2e task, those",
+    "#                are the same ids — source flawless/load/env.sh to reuse them",
+    "#                instead of keeping a second copy that drifts.",
+    "# Baseline gating: copy a good last-*.json to baseline-*.json; runs then fail",
+    "# when p95 degrades beyond 2x baseline. One assert per threshold.",
+    "# This header is regenerated by --force. Everything below it is merged, not",
+    "# replaced: an edited pipe, a pipe you commented out and a flow you added by",
+    "# hand all survive. Keep your own notes below this line.",
+    "# TODO(flawless): tune rate/duration to your app; add POST flows deliberately.",
+  ];
+}
+
+export function renderPipes(
   targets: LoadTarget[],
   outDir: string,
   nextRoot: string,
   filled: Set<string>,
 ): string {
-  const rel = path.relative(nextRoot, outDir).split(path.sep).join("/");
-  const lines = targets.map((t) => {
-    const statsOut = `${rel}/load/last-${t.name}.json`;
-    const baseline = `${rel}/load/baseline-${t.name}.json`;
-    const pipe =
-      `load 10s 50/s | parallel 16 | GET $LOAD_BASE${t.urlPath} -H "$LOAD_AUTH" --timeout 2s | expect 200 ` +
-      `| stats --out ${statsOut} ` +
-      `| assert (async s => { const b = Bun.file("${baseline}"); return !(await b.exists()) || s.p95 < 2 * (await b.json()).summary.p95 })`;
-    // Compared in upper case, reported in the source's: `filled` is keyed by
-    // the shouting form the pipe uses, but the fix a reader has to make is in
-    // params.json, which is keyed by the name as written.
-    const missing = t.params.filter((p) => !filled.has(p.toUpperCase()));
-    if (missing.length === 0) return pipe;
+  const rel = relOut(outDir, nextRoot);
+  const entries = targets.map((t) => {
+    const body = renderPipeBody(t, rel);
+    const missing = missingParams(t, filled);
+    if (missing.length === 0) return body;
     // Commented out rather than dropped: the route is still visible, and filling
     // the id in e2e/params.json plus a --force regeneration turns it back on.
-    return (
-      `# TODO(flawless): no value for ${missing.map((m) => `LOAD_${m.toUpperCase()}`).join(", ")}. ` +
-      `Fill ${missing.map((m) => `"${m}"`).join(", ")} in ${rel}/e2e/params.json\n` +
-      `# ${pipe}`
-    );
+    return `${gateComment(missing, rel)}\n# ${body}`;
   });
-  return `# flawless-react load pipes — generated from the analysed component tree.
-# Env contract (export before running, or provide a crust setup module):
-#   LOAD_BASE  — e.g. http://localhost:3001. Point this at a PRODUCTION build
-#                (bun run build && bun run start), not at next dev: the dev
-#                server compiles routes on demand, so a load run against it
-#                measures the compiler rather than the app.
-#   LOAD_AUTH  — a header line, e.g. "cookie: session=<value>" for a cookie
-#                session, or "authorization: Bearer <token>" for a token one.
-#                Use "accept: */*" if the route needs no auth.
-#   LOAD_<PARAM> — one per dynamic segment below (e.g. LOAD_ID, LOAD_BUILDINGID).
-#                If you filled flawless/e2e/params.json for the e2e task, those
-#                are the same ids — source flawless/load/env.sh to reuse them
-#                instead of keeping a second copy that drifts.
-# Baseline gating: copy a good last-*.json to baseline-*.json; runs then fail
-# when p95 degrades beyond 2x baseline. One assert per threshold.
-# TODO(flawless): tune rate/duration to your app; add POST flows deliberately.
+  return `${pipesHeader().join("\n")}\n\n${entries.join("\n\n")}\n`;
+}
 
-${lines.join("\n\n")}
-`;
+type PipeState = "live" | "gated" | "userCommented";
+
+type BodyItem =
+  | { kind: "raw"; line: string }
+  | { kind: "pipe"; state: PipeState; name?: string; todo?: string; body: string };
+
+interface ParsedPipes {
+  header: string[];
+  body: BodyItem[];
+}
+
+/**
+ * A pipe's stable identity: the `<name>` in `stats --out .../last-<name>.json`.
+ *
+ * Not the URL — that changes when a param is renamed — and not the line number,
+ * which changes whenever anything above it does.
+ */
+function pipeName(body: string): string | undefined {
+  const out = /--out\s+(\S+)/.exec(body);
+  if (!out?.[1]) return undefined;
+  const base = out[1].split("/").pop() ?? "";
+  return /^last-(.+)\.json$/.exec(base)?.[1];
+}
+
+/**
+ * Split routes.pipes into the header, the pipes it declares, and everything
+ * else — which is preserved verbatim and in place, because a note you wrote and
+ * a POST flow you added by hand are indistinguishable from each other to a
+ * line-oriented parser, and both are yours.
+ */
+export function parsePipes(text: string): ParsedPipes {
+  const lines = text.split("\n");
+  const header: string[] = [];
+  let i = 0;
+  if (lines[0] !== undefined && lines[0].startsWith("#")) {
+    while (i < lines.length && lines[i]?.startsWith("#")) header.push(lines[i++] as string);
+  }
+
+  const body: BodyItem[] = [];
+  for (; i < lines.length; i++) {
+    const line = lines[i] as string;
+    const next = lines[i + 1];
+    if (line.startsWith(GATE_MARKER) && next?.startsWith("# load ")) {
+      const pipe = next.slice(2);
+      body.push({ kind: "pipe", state: "gated", name: pipeName(pipe), todo: line, body: pipe });
+      i++;
+    } else if (line.startsWith("load ")) {
+      body.push({ kind: "pipe", state: "live", name: pipeName(line), body: line });
+    } else if (line.startsWith("# load ")) {
+      const pipe = line.slice(2);
+      body.push({ kind: "pipe", state: "userCommented", name: pipeName(pipe), body: pipe });
+    } else {
+      body.push({ kind: "raw", line });
+    }
+  }
+  return { header, body };
+}
+
+function renderParsed(parsed: ParsedPipes): string {
+  const out = [...parsed.header];
+  for (const item of parsed.body) {
+    if (item.kind === "raw") {
+      out.push(item.line);
+      continue;
+    }
+    if (item.state === "live") out.push(item.body);
+    else if (item.state === "gated") out.push(item.todo as string, `# ${item.body}`);
+    else out.push(`# ${item.body}`);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Fold this run's targets into the routes.pipes already on disk.
+ *
+ * Only ever toggles a pipe's comment state — the body is never rewritten, so a
+ * rate you tuned survives being gated and un-gated. Nothing is pruned: a stale
+ * generated pipe and a flow you added by hand look the same from here, and
+ * losing the second to tidy up the first is not a trade worth making.
+ */
+export function mergePipes(
+  existing: string,
+  targets: LoadTarget[],
+  outDir: string,
+  nextRoot: string,
+  filled: Set<string>,
+): string {
+  const rel = relOut(outDir, nextRoot);
+  const parsed = parsePipes(existing);
+
+  const byName = new Map<string, Extract<BodyItem, { kind: "pipe" }>>();
+  for (const item of parsed.body) {
+    if (item.kind === "pipe" && item.name !== undefined && !byName.has(item.name)) {
+      byName.set(item.name, item);
+    }
+  }
+
+  const fresh: BodyItem[] = [];
+  for (const t of targets) {
+    const missing = missingParams(t, filled);
+    const found = byName.get(t.name);
+    if (!found) {
+      fresh.push({
+        kind: "pipe",
+        state: missing.length === 0 ? "live" : "gated",
+        name: t.name,
+        todo: missing.length === 0 ? undefined : gateComment(missing, rel),
+        body: renderPipeBody(t, rel),
+      });
+      continue;
+    }
+    // A pipe you commented out yourself was a decision; the tool does not undo it.
+    if (found.state === "userCommented") continue;
+    if (missing.length === 0) {
+      found.state = "live";
+      found.todo = undefined;
+    } else {
+      // Re-stated rather than left alone: filling one of two ids should leave a
+      // TODO naming only the one still missing.
+      found.state = "gated";
+      found.todo = gateComment(missing, rel);
+    }
+  }
+
+  // The header is generated prose, so a run that recognises its own marker
+  // refreshes it. Notes belong below it, where they are preserved.
+  if (parsed.header[0] === HEADER_MARKER) parsed.header = pipesHeader();
+
+  // Normalise the trailing blank run before appending, so repeated --force runs
+  // do not accumulate empty lines at the end of the file.
+  while (
+    parsed.body.at(-1)?.kind === "raw" &&
+    (parsed.body.at(-1) as { line: string }).line === ""
+  ) {
+    parsed.body.pop();
+  }
+  for (const item of fresh) parsed.body.push({ kind: "raw", line: "" }, item);
+  parsed.body.push({ kind: "raw", line: "" });
+
+  return renderParsed(parsed);
 }
 
 function loadReadme(): string {
@@ -259,8 +487,14 @@ pass while measuring nothing.
 Baselines: after a good run, copy \`last-<name>.json\` to \`baseline-<name>.json\`.
 Subsequent runs fail when p95 exceeds 2x the baseline.
 
-This file and routes.pipes are yours after generation — flawless-react will
-not overwrite them (regenerate with --force).
+\`routes.pipes\` is yours after generation. \`--force\` merges this run's routes
+into it rather than replacing it: a rate you tuned, a pipe you commented out and
+a POST flow you added by hand all survive, and a pipe that was gated on a missing
+id turns back on once you fill that id in \`../e2e/params.json\`.
+
+This README is not yours — it is regenerated by \`--force\`, so that a later
+version of flawless-react can tell you something it worked out after your suite
+was generated. Put your own notes in \`routes.pipes\`, below its header.
 `;
 }
 

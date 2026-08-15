@@ -78,8 +78,11 @@ Most of what you will want to change is a `test.skip` whose title states why the
 
 - `flawless/provider.fixtures.ts` — the typed holes for your store's initial state.
 - `flawless/e2e/params.json` — seeded record ids. Merge-preserving even under `--force`; stale route keys are pruned, filled values never are.
-- `flawless/e2e/global-setup.ts`, `flawless/load/routes.pipes`, `flawless/load/README.md` — written once.
+- `flawless/load/routes.pipes` — merge-preserving under `--force`. A rate you tuned, a pipe you commented out and a POST flow you added by hand all survive; only the header above them is regenerated, and only when it is still the one this tool wrote. See below for why `--force` has to touch this file at all.
+- `flawless/e2e/global-setup.ts` — written once.
 - Colocated `*.flawless.test.tsx` specs when you pass `--colocate` without `--force`.
+
+`flawless/load/README.md` is the exception that proves the criterion: it is generated prose with nothing of yours in it, so `--force` regenerates it. Protecting it would only mean an existing suite never learns what a later version worked out — which is exactly what happened to the rule that `LOAD_BASE` must point at a production build.
 
 ## Turn heap snapshots off
 

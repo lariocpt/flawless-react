@@ -135,6 +135,24 @@ components actually fetch (mutations are excluded on purpose). Each line gates
 p95 against a baseline: copy a good `last-<name>.json` to `baseline-<name>.json`
 and later runs fail when p95 doubles.
 
+Two things decide whether the numbers mean anything, and both are easy to get
+wrong:
+
+- **`LOAD_BASE` must be a production build** (`bun run build && bun run start`),
+  not `next dev` — the dev server compiles routes on demand, so the first
+  request to each measures the compiler.
+- **`LOAD_AUTH` is a header line**, and for a cookie-session app that is
+  `cookie: session=<value>`, not a Bearer token. Prove it authenticates first:
+  an unauthenticated request to a dashboard route redirects to the login page,
+  which answers 200, so every pipe passes while measuring the login screen.
+
+A pipe whose ids are unfilled is emitted **commented out**, above a line naming
+which key in `flawless/e2e/params.json` to fill — a blank segment measures the
+app's 404 handler, not the route. Fill the id and regenerate with `--force`,
+which merges rather than overwrites: edited rates, hand-added flows and pipes
+you commented out yourself all survive. The task summary reports live versus
+commented counts, so REPORT.md does not call a gated pipe covered.
+
 ## Reading findings
 
 `perf-static` and the biome tasks print `file:line:col rule message` and write

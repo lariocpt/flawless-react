@@ -98,6 +98,51 @@ Two things decide whether a load run means anything:
 `flawless/e2e/params.json`, so the load pipes and the e2e specs cannot drift
 apart over which records they target.
 
+### A pipe with no id for its segments is commented out
+
+A pipe whose parameters are blank does not measure its route — it measures the
+app's 404 handler. `GET /invite/` with an empty token answered 500 on every one
+of 500 requests, and the run reported the route as failing when the truth was
+that nothing seeds an invitation.
+
+So a pipe whose ids are unfilled is emitted commented out, above a line naming
+exactly which key to fill:
+
+```text
+# TODO(flawless): no value for LOAD_TOKEN. Fill "token" in flawless/e2e/params.json
+# load 10s 50/s | parallel 16 | GET $LOAD_BASE/invite/$LOAD_TOKEN -H "$LOAD_AUTH" ...
+```
+
+The route stays visible, so the file itself says what is not being measured. Fill
+the id and regenerate with `--force` and the pipe turns back on. The key is named
+in the casing your source used — `"token"`, not `TOKEN` — because that is how
+`params.json` is keyed, and `$LOAD_BUILDINGID` cannot be turned back into
+`buildingId`.
+
+The task's summary counts what the file actually measures, not how many routes
+were found: `load pipes for 33 target(s) — 31 live, 2 commented out pending ids
+(buildingId, conversationId, token)`. That string is what lands in REPORT.md.
+
+### `--force` merges routes.pipes
+
+`--force` folds this run's routes into the existing file rather than replacing
+it. Only a pipe's comment state is ever changed; its body is not rewritten, so a
+rate you tuned survives being gated and un-gated. Pipes are matched by the
+`<name>` in their `stats --out .../last-<name>.json`, not by line number.
+
+| On disk | Ids now filled | What happens |
+| --- | --- | --- |
+| absent | either | appended |
+| commented by the tool | yes | un-gated, keeping any edit to the body |
+| commented by the tool | no | left, with the TODO restated for the ids still missing |
+| live | yes | left alone |
+| live | no | gated, keeping the body |
+| commented by you | either | left alone — that was a decision |
+
+Nothing is pruned. A stale generated pipe and a POST flow you added by hand look
+the same to a line-oriented parser, and losing the second to tidy up the first is
+not a trade worth making.
+
 The task succeeds even when crust is not installed — it says so in the summary
 rather than failing a generation run over a missing optional tool.
 
