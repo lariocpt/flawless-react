@@ -18,3 +18,8 @@ tests/.tmp
 playwright-report
 test-results
 heaps
+
+# Ephemeral agent worktrees — full checkouts of this repo, created and removed
+# under it. Untracked and unignored, a `git add -A` from any session sweeps a
+# copy of the tree into a commit.
+.claude/worktrees/
