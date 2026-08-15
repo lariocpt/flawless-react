@@ -14,7 +14,7 @@ Run it with no args for an interactive checkbox menu of seven tasks:
 
 Pass a single positional that resolves to a file or a glob (e.g. `src/**/*.tsx`) — each match becomes an entry component and runs against every selected task. A small `<Component>.flawless.json` is dropped next to every source file so issues surface where the code lives.
 
-The tool itself is a thin scaffolder. The intelligence is the static analysis that decides what to import, what props to vary, and which children to walk into. The runtime measurement is done by React's built-in [`<Profiler>`](https://react.dev/reference/react/Profiler) for per-component `renderCount` / `renderTime` and [`react-scan`](https://github.com/aidenybai/react-scan) for detecting unnecessary rerenders. Memory profiling uses Chrome DevTools Protocol's `HeapProfiler.takeHeapSnapshot` and writes `.heapsnapshot` files to a clean `./heaps/` directory.
+The tool itself is a thin scaffolder. The intelligence is the static analysis that decides what to import, what props to vary, and which children to walk into. The runtime measurement is done by React's built-in [`<Profiler>`](https://react.dev/reference/react/Profiler) for per-component `renderCount` / `renderTime` and [`react-scan`](https://github.com/aidenybai/react-scan) for detecting unnecessary rerenders. Memory profiling uses Chrome DevTools Protocol's `HeapProfiler.takeHeapSnapshot` and writes `.heapsnapshot` files to `<outDir>/heaps/`. They are large — tens of MB each — and one is taken either side of every scenario, so `--heaps off` turns the capture off entirely.
 
 Optional flags let you `--provider <file>` to wrap mounted components in your Redux / React Query / theme provider, and `--api <openapi.json>` to scaffold a standalone Bun mock server alongside the host so the component's `fetch('/api/…')` calls hit deterministic example responses.
 
@@ -78,7 +78,7 @@ bun run test           # headless Chromium
 bun run test:headed    # visible Chromium
 ```
 
-You should see Playwright report five tests per analysed component (`mounts at defaults`, `variant matrix`, `click rerender`, `forced rerender × N`, `stress-click-rerender × 50`) and console lines with timing summaries. After the run, `./heaps/` contains `.heapsnapshot` artefacts for every stress scenario, loadable in Chrome DevTools' Memory tab.
+You should see Playwright report five tests per analysed component (`mounts at defaults`, `variant matrix`, `click rerender`, `forced rerender × N`, `stress-click-rerender × 50`) and console lines with timing summaries. After the run, `<outDir>/heaps/` contains `.heapsnapshot` artefacts for every stress scenario, loadable in Chrome DevTools' Memory tab. Pass `--heaps off` to skip them.
 
 ## Next.js mode
 
@@ -119,6 +119,7 @@ flawless-react <entry.tsx> [options]
 | `--out <dir>` | `<cwd>/<ComponentName>.profile/` | Output directory for the generated suite. |
 | `--depth N` | `3` | Levels of locally-imported child components to follow (`0` = leaf only). |
 | `--variants N` | `5` | Prop-variant rows in the generated test matrix. |
+| `--heaps MODE` | `stress` | V8 heap snapshots in the profile suite: `off`, `stress`, `all`. Each snapshot is tens of MB and one is taken either side of every scenario, so `off` also removes an observer from inside the measurement. |
 | `--include-children` | `true` | Walk transitive child components. Pass `--include-children=false` to skip. |
 | `--props '<json>'` | none | Override the synthesized default props. Merged on top of the static-parse result. |
 | `--provider <file>` | none | Path to a `.tsx` file that default-exports a wrapper component. The host renders every mounted component inside it — use this for Redux, React Query, theming, or any other context-based store. |

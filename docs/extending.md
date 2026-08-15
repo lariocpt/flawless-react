@@ -1,6 +1,6 @@
 # Extending a generated suite
 
-The output of `flawless-react` is **your test code**, not a black box. There is no regeneration step that overwrites you — running the CLI again with the same `--out` is rejected unless you pass `--force`. The whole point of the tool is to skip the boilerplate, then hand you something you can shape to your project.
+The output of `flawless-react` is **your test code**, not a black box. There is no regeneration step that overwrites you — running the CLI again with the same `--out` is rejected unless you pass `--force`, and a handful of files stay yours even then (see below). The whole point of the tool is to skip the boilerplate, then hand you something you can shape to your project.
 
 This document covers the patterns we've found work well.
 
@@ -58,9 +58,38 @@ Once you have a baseline (say, three green runs in CI), turn warnings into asser
 
 Same for the variant-matrix p95 warning. Now a perf regression breaks CI.
 
+## Answer a skip
+
+Most of what you will want to change is a `test.skip` whose title states why the analyser stopped. They are written to be actionable — the fix is nearly always one attribute in your component, after which regenerating turns the skip into a test:
+
+| Skip reason | What to change |
+| --- | --- |
+| `nothing in the source identifies the <Button> it is bound to` | give it a `data-testid`, an `aria-label`, or literal text |
+| `more than one <button> renders here and nothing distinguishes this one` | as above — the tag alone cannot name it when there are several |
+| `no submit control in the markup` | the form declares no `<button type="submit">`; a component tag needs the `type` explicitly, since shadcn and base-ui default to `type="button"` |
+| `its submit control is disabled at these props` | supply props that enable it, or drive the UI that does |
+| `<form> holds no value to change` | nothing to do — the handler is delegation, and the form test covers the fields |
+| `an early return the analyser could not decide left nothing to drive` | pass the prop the guard reads, or fill the store fixture the hook uses |
+| `no id fixture for /route — fill flawless/e2e/params.json` | put a seeded id in `params.json`; the load pipes read the same file |
+
+## Files the tool will not overwrite
+
+`--force` regenerates the derived output, but a few files are yours the moment they exist, because their contents cannot be recovered if lost:
+
+- `flawless/provider.fixtures.ts` — the typed holes for your store's initial state.
+- `flawless/e2e/params.json` — seeded record ids. Merge-preserving even under `--force`; stale route keys are pruned, filled values never are.
+- `flawless/e2e/global-setup.ts`, `flawless/load/routes.pipes`, `flawless/load/README.md` — written once.
+- Colocated `*.flawless.test.tsx` specs when you pass `--colocate` without `--force`.
+
+## Turn heap snapshots off
+
+The profile suite takes a V8 heap snapshot either side of every scenario. On a real app each is tens of megabytes, and a whole-app sweep leaves hundreds on disk — plus two heap walks inside every measurement they bracket. `--heaps off` skips the capture entirely; `--heaps all` persists every scenario rather than only the stress ones. The default keeps the stress pairs, which is what leak-hunting needs.
+
 ## Add more interactions to `click rerender`
 
-The default `click rerender` test finds the first button and clicks it once. Real components have more nuanced interactions — typing into inputs, opening menus, dragging. Replace the body of that test with whatever sequence exercises the component:
+`click rerender` drives the target the analyser derived from your source — a test id, an aria-label, a role plus its accessible name, or literal copy — and opens the disclosure it lives behind first. When nothing names a target the scenario is a skip carrying the reason, not a click on whichever button happens to be first.
+
+Real components have more nuanced interactions — typing into inputs, dragging, multi-step flows. Replace the body of that test with whatever sequence exercises the component:
 
 ```ts
 test(`${NAME}: form submit cycle`, async ({ page }) => {
