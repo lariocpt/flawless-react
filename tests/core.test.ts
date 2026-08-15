@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { detectTestScriptCollisions, runCore, UsageError } from "../src/core.ts";
 import { runFlawless } from "../src/index.ts";
+import { mergePackageJson } from "../src/scaffold/index.ts";
+import type { TaskId } from "../src/types.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
 const DASHBOARD = path.join(FIXTURES, "Dashboard.tsx");
@@ -189,5 +191,85 @@ describe("test-script collision detection", () => {
     tmpDirs.push(dir);
     pkg(dir, { "flawless:unit": "vitest run", test: "bun test tests" });
     expect(detectTestScriptCollisions(dir, true)).toEqual([]);
+  });
+});
+
+/**
+ * package.json is the only file two tasks both write, and the CLI documents that
+ * tasks run in the order you type them — so the result must not depend on it.
+ */
+describe("the two emitters that share package.json", () => {
+  const scriptsAfter = async (taskIds: TaskId[]): Promise<string[]> => {
+    const outDir = tmpOutDir();
+    const result = await runCore({
+      pattern: DASHBOARD,
+      outDir,
+      taskIds,
+      log: false,
+      inlineSummary: false,
+    });
+    const pkgJson = (await Bun.file(path.join(result.outDir, "package.json")).json()) as {
+      scripts: Record<string, string>;
+    };
+    return Object.keys(pkgJson.scripts).sort();
+  };
+
+  test("either order keeps every script both tasks declare", async () => {
+    // Reversed, perf-harness's package.json overwrote the one unit-browser had
+    // merged into: test:unit and test:browser disappeared, and --run-tests then
+    // invoked test:unit and reported a correct suite as failing.
+    const registryOrder = await scriptsAfter(["perf-harness", "unit-browser"]);
+    expect(registryOrder).toEqual([
+      "test",
+      "test:browser",
+      "test:headed",
+      "test:perf",
+      "test:unit",
+    ]);
+    expect(await scriptsAfter(["unit-browser", "perf-harness"])).toEqual(registryOrder);
+  });
+
+  test("a script of your own survives the merge, and your pins are not bumped", () => {
+    const merged = JSON.parse(
+      mergePackageJson(
+        JSON.stringify({
+          name: "mine",
+          version: "1.2.3",
+          packageManager: "bun@1.1.0",
+          scripts: { deploy: "./deploy.sh", test: "vitest run" },
+          dependencies: { react: "^19.0.0" },
+        }),
+        JSON.stringify({
+          name: "generated",
+          version: "0.0.0",
+          scripts: { test: "playwright test" },
+          dependencies: { react: "^18.3.0", "react-dom": "^18.3.0" },
+        }),
+      ),
+    ) as {
+      name: string;
+      version: string;
+      packageManager: string;
+      scripts: Record<string, string>;
+      dependencies: Record<string, string>;
+    };
+
+    expect(merged.scripts.deploy).toBe("./deploy.sh");
+    expect(merged.packageManager).toBe("bun@1.1.0");
+    // Same as scaffoldUnitBrowser's merge, which keeps a renamed suite renamed —
+    // two merges into one file must not disagree about who owns a field.
+    expect(merged.name).toBe("mine");
+    expect(merged.version).toBe("1.2.3");
+    // Generated scripts win their own key, so a suite scaffolded by an older
+    // version picks up a corrected command — the same call the other two merges
+    // in this repo make.
+    expect(merged.scripts.test).toBe("playwright test");
+    // A version range is the project's decision; ours is only a default.
+    expect(merged.dependencies.react).toBe("^19.0.0");
+    expect(merged.dependencies["react-dom"]).toBe("^18.3.0");
+  });
+
+  test("an unparseable package.json is replaced rather than fatal", () => {
+    expect(mergePackageJson("{ not json", '{"name":"x"}')).toBe('{"name":"x"}');
   });
 });
