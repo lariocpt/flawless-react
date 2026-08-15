@@ -129,7 +129,7 @@ flawless-react <entry.tsx> [options]
 | `--ci` | off | Shorthand for `--no-interactive --json`. |
 | `--force` | off | Overwrite an existing output directory (and regenerate colocated specs). |
 | `--report` | off | Emit `scripts/report.mjs` so `bun run report` aggregates run output into a markdown summary. |
-| `--tasks <ids>` | all seven | Comma-separated subset: `perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`. |
+| `--tasks <ids>` | `perf-harness` | Comma-separated subset of `perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`. Omitting it does **not** run all seven — a non-interactive run with no `--tasks` runs `perf-harness` alone. In a TTY you get the checkbox menu instead, with `perf-harness` and `perf-static` preselected. |
 | `--roots <mode>` | `primary` | `exported` emits one tree per *exported* component — what a whole-app sweep needs, since a shadcn `card.tsx` exports seven of them. |
 | `--exclude <glob>` | see below | Repeatable. Added to the defaults, which already skip `*.flawless.test.*`, `*.test.*`, `*.spec.*`, `*.stories.*`, `*.d.ts`, `node_modules`, `.next`, `dist`, `build`, `coverage` and the output directory itself. |
 | `--no-default-excludes` | off | Drop those defaults and use only what `--exclude` names. |
