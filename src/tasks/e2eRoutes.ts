@@ -287,13 +287,15 @@ function collectClicks(tree: ComponentTree): HarvestedClick[] {
  * A value here was typed by a human against a seeded database and cannot be
  * recovered from the tool's inputs, so `--force` regenerates the HELPER and
  * never the DATA. Route keys whose page no longer exists are dropped, because a
- * stale entry silently stops matching anything.
+ * stale entry silently stops matching anything — but a DEFAULT holding a value
+ * is kept whether or not a page route claims it, since the load task's API-route
+ * ids live there too and nothing else remembers them.
  *
  * Two levels because most params are global — one seeded building — but some
  * routes need a consistent PAIR: a poll that actually belongs to that building.
  * Per-route overrides express that without forcing it everywhere.
  */
-async function writeParams(
+export async function writeParams(
   file: string,
   pages: Array<{ route: { urlPath: string; params: string[] } }>,
 ): Promise<boolean> {
@@ -315,6 +317,14 @@ async function writeParams(
   const next: ParamsFile = { defaults: {}, routes: {} };
   const allParams = new Set<string>();
   for (const p of pages) for (const name of p.route.params) allParams.add(name);
+  // Ids no page route claims, but which someone filled in anyway. The load task
+  // adds slots for API-route params the page router never sees — `buildingId`
+  // beside the page's `id` — and rebuilding `defaults` from pages alone dropped
+  // them back to "" on the next run. That silently re-gated the pipe they were
+  // filled for, so the fix looked like it had never been made.
+  for (const [name, value] of Object.entries(existing.defaults)) {
+    if (value !== "") allParams.add(name);
+  }
   for (const name of [...allParams].sort()) next.defaults[name] = existing.defaults[name] ?? "";
 
   for (const p of pages) {

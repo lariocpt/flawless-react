@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
-import { ensureParamDefaults } from "../src/tasks/e2eRoutes.ts";
+import { ensureParamDefaults, writeParams } from "../src/tasks/e2eRoutes.ts";
 import {
   type LoadTarget,
   mergePipes,
@@ -137,6 +137,70 @@ describe("heap snapshots are optional", () => {
     expect(parseArgs(["x.tsx", "--heaps=all"]).heaps).toBe("all");
     expect(parseArgs(["x.tsx"]).heaps).toBe("stress");
     expect(() => parseArgs(["x.tsx", "--heaps", "yes"])).toThrow(/--heaps must be/);
+  });
+});
+
+describe("the e2e task does not undo the load task's ids", () => {
+  const page = (urlPath: string, params: string[]) => ({ route: { urlPath, params } });
+
+  test("an API-route id nothing on a page claims survives a rewrite", async () => {
+    // The bug this guards: defaults were rebuilt from page-route params alone,
+    // so `buildingId` — added by the load task for /api/buildings/[buildingId] —
+    // went back to "" on the next run and re-gated the pipe it was filled for.
+    // The fix looked like it had never been made.
+    const file = await paramsFileWith({
+      defaults: {
+        buildingId: "seeded-building",
+        conversationId: "seeded-thread",
+        id: "seeded-id",
+      },
+      routes: {},
+    });
+    await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])]);
+
+    const after = await Bun.file(file).json();
+    expect(after.defaults.buildingId).toBe("seeded-building");
+    expect(after.defaults.conversationId).toBe("seeded-thread");
+    expect(after.defaults.id).toBe("seeded-id");
+  });
+
+  test("an unclaimed id with no value is still pruned", async () => {
+    // Kept for its value, not its name: a blank slot no route needs is noise,
+    // and the load task re-adds it if its pipes still reference it.
+    const file = await paramsFileWith({
+      defaults: { id: "seeded-id", staleParam: "" },
+      routes: {},
+    });
+    await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])]);
+
+    const after = await Bun.file(file).json();
+    expect(Object.keys(after.defaults)).toEqual(["id"]);
+  });
+
+  test("a route key whose page is gone is still dropped", async () => {
+    const file = await paramsFileWith({
+      defaults: { id: "seeded-id" },
+      routes: { "/gone/[id]": { id: "x" }, "/dashboard/buildings/[id]": { id: "y" } },
+    });
+    await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])]);
+
+    const after = await Bun.file(file).json();
+    expect(Object.keys(after.routes)).toEqual(["/dashboard/buildings/[id]"]);
+  });
+
+  test("writeParams then ensureParamDefaults is stable across runs", async () => {
+    const file = await paramsFileWith({
+      defaults: { buildingId: "seeded-building", id: "seeded-id" },
+      routes: { "/dashboard/buildings/[id]": { id: "" } },
+    });
+    const pages = [page("/dashboard/buildings/[id]", ["id"])];
+    await writeParams(file, pages);
+    await ensureParamDefaults(file, ["buildingId", "id"]);
+    const first = await Bun.file(file).text();
+
+    await writeParams(file, pages);
+    await ensureParamDefaults(file, ["buildingId", "id"]);
+    expect(await Bun.file(file).text()).toBe(first);
   });
 });
 
