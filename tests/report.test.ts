@@ -89,3 +89,36 @@ describe("renderReportMarkdown", () => {
     expect(md).not.toContain("| Component | File | Reason |");
   });
 });
+
+describe("a partial run says so", () => {
+  const ALL = ["perf-harness", "unit-browser", "perf-static", "a11y", "react-rules", "e2e", "load"];
+
+  test("names the tasks it did not run", () => {
+    // `--tasks load` used to rewrite the Tasks table with one row and no
+    // qualification, so the file read as "this project has one task". Two
+    // sessions reverted a truncated REPORT.md by hand before anyone noticed the
+    // report was the thing lying.
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/tmp/x",
+      allTaskIds: ALL,
+      results: [
+        { id: "load", ok: true, outputs: ["a"], findings: [], summary: "load pipes for 33" },
+      ],
+    } as never);
+    expect(md).toContain("This run selected 1 of 7 tasks");
+    expect(md).toContain("`perf-harness`");
+    expect(md).toContain("`e2e`");
+  });
+
+  test("a full run says nothing extra", () => {
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/tmp/x",
+      allTaskIds: ALL,
+      results: ALL.map((id) => ({ id, ok: true, outputs: [], findings: [], summary: id })),
+    } as never);
+    expect(md).not.toContain("This run selected");
+    expect(md).not.toContain("Not run");
+  });
+});

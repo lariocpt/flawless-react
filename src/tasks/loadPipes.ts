@@ -525,7 +525,25 @@ function loadEnvScript(): string {
 # pipes and the e2e specs cannot disagree about which records they target.
 # LOAD_BASE and LOAD_AUTH are yours to set; see README.md.
 set -a
-_params="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../e2e" && pwd)/params.json"
+# Locate params.json without depending on which shell sourced this file. The
+# shebang above does NOT apply to a sourced script, so \${BASH_SOURCE[0]} is
+# empty under zsh — dirname then returned ".", the lookup missed, and every
+# LOAD_<PARAM> silently went unset. The pipes still ran, requesting URLs with
+# empty path segments: 22 of 33 measured the 404 handler and reported the app.
+_self=""
+if [ -n "\${BASH_SOURCE:-}" ]; then
+  _self="\${BASH_SOURCE[0]}"
+elif [ -n "\${ZSH_VERSION:-}" ]; then
+  # Hidden behind eval so bash never parses zsh-only syntax.
+  eval '_self="\${(%):-%x}"'
+fi
+if [ -n "$_self" ] && [ -d "$(dirname "$_self")/../e2e" ]; then
+  _params="$(cd "$(dirname "$_self")/../e2e" && pwd)/params.json"
+else
+  # Fall back to the working directory the pipes themselves assume: their
+  # --out flawless/load/last-*.json paths are relative to the project root.
+  _params="$PWD/flawless/e2e/params.json"
+fi
 if [ -f "$_params" ]; then
   while IFS="=" read -r _k _v; do
     [ -n "$_k" ] && [ -n "$_v" ] && export "LOAD_$(echo "$_k" | tr '[:lower:]' '[:upper:]')=$_v"

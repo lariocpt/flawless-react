@@ -32,6 +32,8 @@ export interface ReportInput {
   unparseable?: UnparseableFile[];
   /** The command that produced this, for reproduction. */
   command?: string;
+  /** Every task id the tool has, so a partial run can say that it was partial. */
+  allTaskIds?: readonly string[];
 }
 
 export function renderReportMarkdown(input: ReportInput): string {
@@ -114,12 +116,21 @@ export function renderReportMarkdown(input: ReportInput): string {
   }
 
   // --- what each task produced ---------------------------------------------
-  lines.push(
-    "## Tasks",
-    "",
-    "| Task | Files written | Findings | Summary |",
-    "| --- | ---: | ---: | --- |",
-  );
+  // A `--tasks load` run used to rewrite this table with one row and no
+  // qualification, so the report read as "this project has one task" rather
+  // than "this run selected one". Two sessions reverted a truncated REPORT.md
+  // by hand before anyone noticed the file was the thing lying.
+  const ran = new Set<string>(input.results.map((r) => r.id));
+  const notRun = (input.allTaskIds ?? []).filter((id) => !ran.has(id));
+  lines.push("## Tasks", "");
+  if (notRun.length > 0) {
+    lines.push(
+      `This run selected ${input.results.length} of ${(input.allTaskIds ?? []).length} tasks.`,
+      `Not run, and therefore not described below: ${notRun.map((id) => `\`${id}\``).join(", ")}.`,
+      "",
+    );
+  }
+  lines.push("| Task | Files written | Findings | Summary |", "| --- | ---: | ---: | --- |");
   for (const r of input.results) {
     // The full component list in a task summary runs to thousands of characters.
     const summary = r.summary.length > 120 ? `${r.summary.slice(0, 117)}…` : r.summary;

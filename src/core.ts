@@ -15,7 +15,7 @@ import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporte
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
-import { findTask } from "./tasks/index.ts";
+import { findTask, TASKS } from "./tasks/index.ts";
 import type {
   ComponentTree,
   HeapMode,
@@ -332,6 +332,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     outDir,
     projectRoot: nextCtx?.root,
     unparseable,
+    allTaskIds: TASKS.map((t) => t.id),
   });
 
   // Format everything we wrote with the host project's own formatter so

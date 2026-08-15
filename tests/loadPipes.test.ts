@@ -422,3 +422,50 @@ load 5s 1/s | POST $LOAD_BASE/api/things -H "$LOAD_AUTH" | expect 201
     expect(merge(fresh, [DASHBOARD, ASHA], ["BUILDINGID", "CONVERSATIONID"])).toBe(fresh);
   });
 });
+
+describe("env.sh finds params.json whatever shell sources it", () => {
+  async function envScript(): Promise<string> {
+    const { loadPipes } = await import("../src/tasks/loadPipes.ts");
+    const outDir = await tmpDir();
+    await Bun.write(
+      path.join(outDir, "e2e", "params.json"),
+      JSON.stringify({ defaults: { id: "seeded-1", token: "" }, routes: {} }),
+    );
+    await loadPipes.run({
+      trees: [],
+      outDir,
+      variants: 3,
+      heaps: "stress",
+      force: true,
+      report: false,
+      provider: undefined,
+      apiSpec: undefined,
+      inlineSummary: false,
+      json: false,
+      changed: undefined,
+      nextjs: { root: outDir, router: "app", apiRoutes: [], appResolver: undefined },
+    } as never);
+    return Bun.file(path.join(outDir, "load", "env.sh")).text();
+  }
+
+  test("does not rely on BASH_SOURCE alone", async () => {
+    const env = await envScript();
+    // The shebang does not apply to a sourced file, so under zsh BASH_SOURCE is
+    // empty, dirname returned ".", and every LOAD_<PARAM> went unset — 22 of 33
+    // pipes then requested URLs with empty path segments and measured the 404
+    // handler while reporting the application.
+    expect(env).toContain("ZSH_VERSION");
+    expect(env).toMatch(/BASH_SOURCE(:-)?/);
+  });
+
+  test("keeps the zsh-only expansion behind eval, so bash never parses it", async () => {
+    const env = await envScript();
+    const zshLine = env.split("\n").find((l) => l.includes("%x")) ?? "";
+    expect(zshLine).toContain("eval");
+  });
+
+  test("falls back to the directory the pipes' own paths assume", async () => {
+    const env = await envScript();
+    expect(env).toContain("$PWD/flawless/e2e/params.json");
+  });
+});
