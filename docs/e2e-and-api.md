@@ -96,7 +96,10 @@ Two things decide whether a load run means anything:
 
 `source flawless/load/env.sh` exports one `LOAD_<PARAM>` per id in
 `flawless/e2e/params.json`, so the load pipes and the e2e specs cannot drift
-apart over which records they target.
+apart over which records they target. `--tasks load` on its own creates that
+file, with a blank slot per id its pipes reference: the gate comments, this
+README and `env.sh` all tell you to fill it in, and until they did it was a file
+no run without the e2e task had written.
 
 ### A pipe with no id for its segments is commented out
 

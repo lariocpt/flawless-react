@@ -86,7 +86,7 @@ Protected under every flag, including `--force`:
 
 Merge-preserving under `--force` — regenerated, but never at the cost of what you put there:
 
-- `flawless/e2e/params.json` — seeded record ids. Stale route keys are pruned, filled values never are; a default holding a value is kept whether or not a page route still claims it.
+- `flawless/e2e/params.json` — seeded record ids. Additive: nothing you have typed is ever removed, and neither is a blank slot another task added — the load task's API-route ids live here too and the run that needs them happens after the run that writes them. A route whose page this run did not analyse keeps its ids, so a narrower glob is not a decision to discard the rest. `--force` prunes entries that hold nothing; it never prunes a value.
 - `flawless/load/routes.pipes` — a rate you tuned, a pipe you commented out and a POST flow you added by hand all survive; only the header above them is regenerated, and only when it is still the one this tool wrote.
 
 Kept without `--force`, regenerated with it:

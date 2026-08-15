@@ -75,6 +75,23 @@ describe("params.json gains the ids other tasks need", () => {
     expect(after.routes["/invite/[token]"]).toEqual({ token: "per-route" });
   });
 
+  test("it creates the file when nothing else has, so --tasks load can point at it", async () => {
+    // `--tasks load` never runs the e2e task, so nothing else writes params.json
+    // — while every piece of prose that run emits (the gate comment on each
+    // pipe, load/README.md, env.sh) tells the reader to fill in ids there. The
+    // pipes stayed commented out and the instructions for turning them on named
+    // a file that was not on disk.
+    const dir = await tmpDir();
+    const file = path.join(dir, "e2e", "params.json");
+    expect(await ensureParamDefaults(file, ["buildingId", "token"])).toBe(true);
+
+    const after = await Bun.file(file).json();
+    expect(after.defaults).toEqual({ buildingId: "", token: "" });
+    // The shape the e2e task and the params.ts helper both expect, so a later
+    // run that does include e2e merges into it rather than tripping over it.
+    expect(after.routes).toEqual({});
+  });
+
   test("nothing to add means nothing written — the idempotence gate depends on it", async () => {
     const file = await paramsFileWith({ defaults: { id: "abc" }, routes: {} });
     const before = await Bun.file(file).text();
@@ -251,9 +268,10 @@ describe("the e2e task does not undo the load task's ids", () => {
     expect(after.defaults.id).toBe("seeded-id");
   });
 
-  test("an unclaimed id with no value is still pruned", async () => {
-    // Kept for its value, not its name: a blank slot no route needs is noise,
-    // and the load task re-adds it if its pipes still reference it.
+  test("an unclaimed blank slot is kept, because the task that needs it runs later", async () => {
+    // It used to be pruned as noise, on the reasoning that the load task re-adds
+    // it if its pipes still reference it. It does — and then writeParams deletes
+    // it again on the next run, forever. See the two-writer test below.
     const file = await paramsFileWith({
       defaults: { id: "seeded-id", staleParam: "" },
       routes: {},
@@ -261,10 +279,26 @@ describe("the e2e task does not undo the load task's ids", () => {
     await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])]);
 
     const after = await Bun.file(file).json();
-    expect(Object.keys(after.defaults)).toEqual(["id"]);
+    expect(Object.keys(after.defaults)).toEqual(["id", "staleParam"]);
   });
 
-  test("a route key whose page is gone is still dropped", async () => {
+  test("--force prunes the blank slot, and never a filled one", async () => {
+    const file = await paramsFileWith({
+      defaults: { id: "seeded-id", staleParam: "", staleButFilled: "typed-by-hand" },
+      routes: {},
+    });
+    await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])], true);
+
+    const after = await Bun.file(file).json();
+    // No page claims staleButFilled either — but somebody typed it against a
+    // seeded database, and nothing in this tool can recover that.
+    expect(Object.keys(after.defaults)).toEqual(["id", "staleButFilled"]);
+  });
+
+  test("a route this run never looked at keeps the ids you filled for it", async () => {
+    // The destructive one: `routes` was rebuilt from the pages in THIS run, so
+    // pointing flawless at a single page deleted the ids filled for every other
+    // one. Not a blank slot — a value typed against a seeded database.
     const file = await paramsFileWith({
       defaults: { id: "seeded-id" },
       routes: { "/gone/[id]": { id: "x" }, "/dashboard/buildings/[id]": { id: "y" } },
@@ -272,7 +306,23 @@ describe("the e2e task does not undo the load task's ids", () => {
     await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])]);
 
     const after = await Bun.file(file).json();
-    expect(Object.keys(after.routes)).toEqual(["/dashboard/buildings/[id]"]);
+    expect(Object.keys(after.routes)).toEqual(["/dashboard/buildings/[id]", "/gone/[id]"]);
+    expect(after.routes["/gone/[id]"].id).toBe("x");
+  });
+
+  test("--force drops a route row holding nothing, and keeps one holding something", async () => {
+    const file = await paramsFileWith({
+      defaults: {},
+      routes: {
+        "/blank/[id]": { id: "" },
+        "/filled/[id]": { id: "x" },
+        "/dashboard/buildings/[id]": { id: "y" },
+      },
+    });
+    await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])], true);
+
+    const after = await Bun.file(file).json();
+    expect(Object.keys(after.routes)).toEqual(["/dashboard/buildings/[id]", "/filled/[id]"]);
   });
 
   test("writeParams then ensureParamDefaults is stable across runs", async () => {
@@ -288,6 +338,32 @@ describe("the e2e task does not undo the load task's ids", () => {
     await writeParams(file, pages);
     await ensureParamDefaults(file, ["buildingId", "id"]);
     expect(await Bun.file(file).text()).toBe(first);
+  });
+
+  test("the two writers stop fighting: a settled file is written by neither", async () => {
+    // The bug in one assertion. writeParams rebuilt defaults from page params
+    // plus only the FILLED existing ones, so the blank slot ensureParamDefaults
+    // adds for an API-route id was deleted on every run and re-added on every
+    // run — both reporting the file as written, for the life of the suite.
+    // Stable bytes hid it: the file was the same at the END of each run.
+    const file = await paramsFileWith({ defaults: {}, routes: {} });
+    const pages = [page("/dashboard/buildings/[id]", ["id"])];
+    const settle = async (): Promise<[boolean, boolean]> => [
+      await writeParams(file, pages),
+      await ensureParamDefaults(file, ["buildingId", "id"]),
+    ];
+
+    await settle();
+    expect(await settle()).toEqual([false, false]);
+    expect(Object.keys((await Bun.file(file).json()).defaults)).toEqual(["buildingId", "id"]);
+  });
+
+  test("e2e alone does not delete what only the load task knows about", async () => {
+    // Same defect from the other side, and here nothing puts it back: a run
+    // without the load task deleted the API-route slot outright.
+    const file = await paramsFileWith({ defaults: { buildingId: "", id: "" }, routes: {} });
+    await writeParams(file, [page("/dashboard/buildings/[id]", ["id"])]);
+    expect(Object.keys((await Bun.file(file).json()).defaults)).toEqual(["buildingId", "id"]);
   });
 });
 

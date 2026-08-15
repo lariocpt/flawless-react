@@ -58,7 +58,7 @@ export const e2eRoutes: Task = {
     }
 
     const paramsJsonPath = path.join(e2eDir, "params.json");
-    const wroteParams = await writeParams(paramsJsonPath, pages);
+    const wroteParams = await writeParams(paramsJsonPath, pages, ctx.force);
     if (wroteParams) written.push(paramsJsonPath);
 
     const paramsHelperPath = path.join(e2eDir, "params.ts");
@@ -293,15 +293,33 @@ function collectClicks(tree: ComponentTree): HarvestedClick[] {
   return out;
 }
 
+/** Key order is part of the bytes: two runs must produce the same file. */
+function sortKeys<T>(obj: Record<string, T>): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const k of Object.keys(obj).sort()) out[k] = obj[k] as T;
+  return out;
+}
+
 /**
  * The shared id fixture, merged rather than overwritten.
  *
  * A value here was typed by a human against a seeded database and cannot be
- * recovered from the tool's inputs, so `--force` regenerates the HELPER and
- * never the DATA. Route keys whose page no longer exists are dropped, because a
- * stale entry silently stops matching anything — but a DEFAULT holding a value
- * is kept whether or not a page route claims it, since the load task's API-route
- * ids live there too and nothing else remembers them.
+ * recovered from the tool's inputs, so nothing this function does may lose one.
+ * That rules out rebuilding the file from a single run's view of the project:
+ *
+ *  - `defaults` also holds the load task's API-route ids, which no page route
+ *    claims. Dropping the blank ones each run left writeParams and
+ *    ensureParamDefaults deleting and re-adding the same key forever, both
+ *    reporting a write on every run of the suite's life.
+ *  - `routes` rows were rebuilt from the pages in THIS run, so pointing
+ *    flawless at one page deleted the ids you had filled for every other one.
+ *    A narrower glob is a smaller view of the project, not an instruction to
+ *    discard the rest of it.
+ *
+ * So it is additive by default. `prune` — set from `--force` — is the one door
+ * that tidies, and even then it only removes entries that hold nothing: a
+ * filled id survives every flag, the same rule routes.pipes follows for a pipe
+ * you commented out yourself.
  *
  * Two levels because most params are global — one seeded building — but some
  * routes need a consistent PAIR: a poll that actually belongs to that building.
@@ -310,6 +328,7 @@ function collectClicks(tree: ComponentTree): HarvestedClick[] {
 export async function writeParams(
   file: string,
   pages: Array<{ route: { urlPath: string; params: string[] } }>,
+  prune = false,
 ): Promise<boolean> {
   interface ParamsFile {
     defaults: Record<string, string>;
@@ -329,23 +348,51 @@ export async function writeParams(
   const next: ParamsFile = { defaults: {}, routes: {} };
   const allParams = new Set<string>();
   for (const p of pages) for (const name of p.route.params) allParams.add(name);
-  // Ids no page route claims, but which someone filled in anyway. The load task
-  // adds slots for API-route params the page router never sees — `buildingId`
-  // beside the page's `id` — and rebuilding `defaults` from pages alone dropped
-  // them back to "" on the next run. That silently re-gated the pipe they were
-  // filled for, so the fix looked like it had never been made.
-  for (const [name, value] of Object.entries(existing.defaults)) {
-    if (value !== "") allParams.add(name);
+  // Every id already in the file, blank ones included.
+  //
+  // The load task adds slots for API-route params the page router never sees —
+  // `buildingId` beside the page's `id` — and rebuilding `defaults` from pages
+  // plus only the FILLED existing ones deleted those blanks on every run. The
+  // two writers then fought forever: writeParams dropped the slot,
+  // ensureParamDefaults put it back, both reporting the file as written on
+  // every run for the lifetime of the suite. `--tasks e2e` on its own just
+  // deleted it, and the id the user was about to fill was gone.
+  //
+  // Blanks are only noise once nothing needs them, and this function cannot
+  // know that: the task that needs them runs after it. So it keeps them, and
+  // `--prune` (--force) is the one door that tidies.
+  for (const name of Object.keys(existing.defaults)) {
+    if (prune && (existing.defaults[name] ?? "") === "" && !allParams.has(name)) continue;
+    allParams.add(name);
   }
   for (const name of [...allParams].sort()) next.defaults[name] = existing.defaults[name] ?? "";
 
+  // Rows this run did not look at are carried over untouched. Rebuilding
+  // `routes` from `pages` alone meant running flawless on one page deleted the
+  // ids you had filled for every other one — not a blank slot, a value you
+  // typed. A narrower glob is a smaller view of the project, not a decision to
+  // discard the rest of it.
+  for (const [urlPath, row] of Object.entries(existing.routes)) {
+    const seen = pages.some((p) => p.route.urlPath === urlPath);
+    if (seen) continue;
+    // Under --prune a row is dropped only when it holds nothing. A filled id
+    // survives every flag: the tool does not delete what a person typed.
+    if (prune && Object.values(row).every((v) => v === "")) continue;
+    next.routes[urlPath] = row;
+  }
   for (const p of pages) {
     if (p.route.params.length === 0) continue;
     const prior = existing.routes[p.route.urlPath] ?? {};
     const row: Record<string, string> = {};
     for (const name of [...p.route.params].sort()) row[name] = prior[name] ?? "";
-    next.routes[p.route.urlPath] = row;
+    // An id this route no longer declares, but which someone filled in, is kept
+    // for the same reason.
+    for (const [name, value] of Object.entries(prior)) {
+      if (!(name in row) && (value !== "" || !prune)) row[name] = value;
+    }
+    next.routes[p.route.urlPath] = sortKeys(row);
   }
+  next.routes = sortKeys(next.routes);
 
   const body = `${JSON.stringify(next, null, 2)}\n`;
   if (existsSync(file) && (await readFile(file, "utf8")) === body) return false;
@@ -367,16 +414,25 @@ export async function writeParams(
  * across runs.
  */
 export async function ensureParamDefaults(file: string, names: string[]): Promise<boolean> {
-  if (names.length === 0 || !existsSync(file)) return false;
+  if (names.length === 0) return false;
   interface ParamsFile {
     defaults: Record<string, string>;
     routes: Record<string, Record<string, string>>;
   }
-  let parsed: ParamsFile;
-  try {
-    parsed = JSON.parse(await readFile(file, "utf8")) as ParamsFile;
-  } catch {
-    return false;
+  let parsed: ParamsFile = { defaults: {}, routes: {} };
+  if (existsSync(file)) {
+    try {
+      parsed = JSON.parse(await readFile(file, "utf8")) as ParamsFile;
+    } catch {
+      return false;
+    }
+  } else {
+    // Created rather than skipped. `--tasks load` on its own never runs the e2e
+    // task, so nothing else writes this file — while every piece of prose that
+    // run emits (the gate comment on each pipe, load/README.md, env.sh) tells
+    // the reader to fill in ids in a file that was not there. The pipes stayed
+    // commented out and the instruction for turning them on pointed at nothing.
+    await mkdir(path.dirname(file), { recursive: true });
   }
   const defaults = { ...(parsed.defaults ?? {}) };
   let added = false;
