@@ -157,6 +157,17 @@ function stripTsExt(spec: string): string {
   return spec.replace(/\.(tsx|ts|jsx|js)$/, "");
 }
 
+/**
+ * Safe inside the emitted `test.skip(\`...\`)` template literal.
+ *
+ * A skip reason quotes the source — a tag name, a prop name — so it can carry a
+ * backtick or a `${`, either of which would end the literal early and emit a
+ * spec that does not parse.
+ */
+function titleSafe(reason: string): string {
+  return reason.replace(/`/g, "'").replace(/\$\{/g, "$ {");
+}
+
 /** Named vs default import, aliased when the registry key differs from the name. */
 function hostComponentImport(c: FlatComponent): string {
   const { componentName, exportKind } = c.info;
@@ -255,8 +266,16 @@ export default defineConfig({
   // Playwright's default put traces in <app>/test-results/ while the .gitignore
   // the tool writes covers flawless/test-results/ — 347MB of untracked output.
   outputDir: path.join(__dirname, "test-results"),
-  fullyParallel: false,
-  workers: 1,
+  // One worker gives the cleanest timings; more give a fast verification run.
+  // Budgets only warn, so parallel measurement never fails a run — but it does
+  // make the numbers noisier, so CI (where a recorded number usually matters)
+  // keeps one, and FLAWLESS_WORKERS=1 forces it anywhere else.
+  fullyParallel: true,
+  workers: process.env.FLAWLESS_WORKERS
+    ? Number(process.env.FLAWLESS_WORKERS)
+    : process.env.CI
+      ? 1
+      : undefined,
   reporter: [["list"], ["html", { open: "never", outputFolder: path.join(__dirname, "playwright-report") }]],
   preserveOutput: "always",
   use: {
@@ -740,6 +759,32 @@ export async function rerenderComponent(
   );
 }
 
+/**
+ * N rerenders in one round trip.
+ *
+ * Driving the loop from Node cost a CDP round trip per iteration — 50 per
+ * component, 4,700 across a whole-app sweep, and about 150s of a 13.5-minute
+ * run spent in IPC rather than in React. The loop runs in the page instead, and
+ * rerender still awaits a frame between commits, so the Profiler records
+ * exactly the same renders.
+ */
+export async function rerenderMany(
+  page: Page,
+  name: string,
+  pool: Array<Record<string, unknown>>,
+  iterations: number,
+): Promise<void> {
+  await page.evaluate(
+    async ([n, p, count]) => {
+      const props = p as Array<Record<string, unknown>>;
+      for (let i = 0; i < (count as number); i++) {
+        await window.__profile.rerender(n as string, props[i % props.length] as Record<string, unknown>);
+      }
+    },
+    [name, pool, iterations] as [string, Array<Record<string, unknown>>, number],
+  );
+}
+
 export async function unmount(page: Page): Promise<void> {
   await page.evaluate(() => window.__profile.unmount());
 }
@@ -976,11 +1021,23 @@ function spec(c: FlatComponent, variants: number): string {
   const clickButtonExpr = targetedClick.locator || `page.locator("button").first()`;
   const openDisclosure = targetedClick.prelude ? `\n  ${targetedClick.prelude}` : "";
 
-  // When nothing in the source names a clickable target, the scenario is a bare
-  // skip carrying the reason. Emitting the body anyway left a
-  // `page.locator("button").first()` in the file below an unconditional skip —
-  // unreachable, but it still reads as a claim about which button matters.
-  const clickScenario = targetedClick.locator
+  // Whether a click scenario can run at all is decided HERE, not at run time.
+  // `test.skip(cond, reason)` inside a body runs every beforeEach first and then
+  // throws, so 259 of the dogfood app's 470 profile tests were paying a full
+  // page load to discover they had nothing to do — 38% of a 13.5-minute run.
+  // `test.skip(title, fn)` is declarative: Playwright never runs the hooks.
+  //
+  // The reason moves into the title, which is a reporting gain: the list
+  // reporter prints titles and does not print runtime skip reasons at all.
+  const clickSkipReason = !targetedClick.locator
+    ? (targetedClick.reason ?? "no clickable target could be derived")
+    : !canRerender
+      ? hasForm && !hasAnalysedClick
+        ? "the only clickable target is a form submit, not a render measurement"
+        : "no state or handler prop, so a click cannot re-render this component"
+      : undefined;
+
+  const clickScenario = !clickSkipReason
     ? `test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
   await mountComponent(page, NAME, DEFAULTS);${openDisclosure}
   const button = ${clickButtonExpr};
@@ -991,10 +1048,6 @@ function spec(c: FlatComponent, variants: number): string {
   // component as broken.
   const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
   test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
-  test.skip(
-    ${canRerender ? "false" : "true"},
-    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — a click cannot re-render this component"'},
-  );
   await bracketScenario(page, "click-rerender", testInfo, async () => {
     await clearScanEvents(page);
     const before = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
@@ -1012,10 +1065,8 @@ function spec(c: FlatComponent, variants: number): string {
     }
   });
 });`
-    : `test(\`\${NAME}: click rerender\`, () => {
-  test.skip(true, ${JSON.stringify(targetedClick.reason ?? "no clickable target could be derived")});
-});`;
-  const stressScenario = targetedClick.locator
+    : `test.skip(\`\${NAME}: click rerender — ${titleSafe(clickSkipReason)}\`, () => {});`;
+  const stressScenario = !clickSkipReason
     ? `test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
   await mountComponent(page, NAME, DEFAULTS);${openDisclosure}
   const button = ${clickButtonExpr};
@@ -1026,10 +1077,6 @@ function spec(c: FlatComponent, variants: number): string {
   // component as broken.
   const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
   test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
-  test.skip(
-    ${canRerender ? "false" : "true"},
-    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — 50 clicks cannot re-render this component"'},
-  );
   await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
     const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
     // Stop when the control goes away. A "Remove" button in a list removes its
@@ -1054,8 +1101,31 @@ function spec(c: FlatComponent, variants: number): string {
     console.log(\`[\${NAME} stress] \${__clicks} click(s) landed before the target went away\`);
   });
 });`
-    : `test(\`\${NAME}: stress-click-rerender x 50\`, () => {
-  test.skip(true, ${JSON.stringify(targetedClick.reason ?? "no clickable target could be derived")});
+    : `test.skip(\`\${NAME}: stress-click-rerender x 50 — ${titleSafe(clickSkipReason)}\`, () => {});`;
+
+  // Same reasoning as the click scenarios: VARIANTS is emitted as a literal, so
+  // "are there any" is answerable here rather than after a page load.
+  const variantScenario =
+    variantsLiteral === "[]"
+      ? `test.skip(\`\${NAME}: variant matrix — no union-of-literal props to vary\`, () => {});`
+      : `test(\`\${NAME}: variant matrix\`, async ({ page }, testInfo) => {
+  await bracketScenario(page, "variant-matrix", testInfo, async () => {
+    await mountComponent(page, NAME, DEFAULTS);
+    const samples: number[] = [];
+    for (const v of VARIANTS) {
+      await rerenderComponent(page, NAME, v);
+      const info = await getRenderInfo(page);
+      const updates = info.renderTime[NAME]?.updates ?? [];
+      const last = updates[updates.length - 1];
+      if (typeof last === "number") samples.push(last);
+    }
+    const stats = summarize(samples);
+    console.log(\`[\${NAME} variants] \${JSON.stringify(stats)}\`);
+    const budget = (budgets as Record<string, { updateMs: number } | undefined>)[NAME]?.updateMs ?? 16;
+    if (stats.p95 > budget) {
+      console.warn(\`[budget] \${NAME} p95 \${stats.p95.toFixed(2)}ms > \${budget}ms\`);
+    }
+  });
 });`;
 
   return `import { test, expect } from "@playwright/test";
@@ -1063,6 +1133,7 @@ import budgets from "../budgets.json" with { type: "json" };
 import {
   mountComponent,
   rerenderComponent,
+  rerenderMany,
   unmount,
   getRenderInfo,
   getScanEvents,
@@ -1098,26 +1169,7 @@ test(\`\${NAME}: mounts at defaults\`, async ({ page }) => {
   }
 });
 
-test(\`\${NAME}: variant matrix\`, async ({ page }, testInfo) => {
-  test.skip(VARIANTS.length === 0, "no variants extracted from static parse");
-  await bracketScenario(page, "variant-matrix", testInfo, async () => {
-    await mountComponent(page, NAME, DEFAULTS);
-    const samples: number[] = [];
-    for (const v of VARIANTS) {
-      await rerenderComponent(page, NAME, v);
-      const info = await getRenderInfo(page);
-      const updates = info.renderTime[NAME]?.updates ?? [];
-      const last = updates[updates.length - 1];
-      if (typeof last === "number") samples.push(last);
-    }
-    const stats = summarize(samples);
-    console.log(\`[\${NAME} variants] \${JSON.stringify(stats)}\`);
-    const budget = (budgets as Record<string, { updateMs: number } | undefined>)[NAME]?.updateMs ?? 16;
-    if (stats.p95 > budget) {
-      console.warn(\`[budget] \${NAME} p95 \${stats.p95.toFixed(2)}ms > \${budget}ms\`);
-    }
-  });
-});
+${variantScenario}
 
 ${clickScenario}
 
@@ -1126,10 +1178,7 @@ test(\`\${NAME}: forced rerender x \${${forcedIterations}}\`, async ({ page }, t
   await bracketScenario(page, "forced-rerender", testInfo, async () => {
     const pool: Array<Record<string, unknown>> =
       VARIANTS.length > 0 ? VARIANTS : [DEFAULTS];
-    for (let i = 0; i < ${forcedIterations}; i++) {
-      const props = pool[i % pool.length] as Record<string, unknown>;
-      await rerenderComponent(page, NAME, props);
-    }
+    await rerenderMany(page, NAME, pool, ${forcedIterations});
     const info = await getRenderInfo(page);
     const updates = info.renderTime[NAME]?.updates ?? [];
     const stats = summarize(updates as number[]);

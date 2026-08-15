@@ -1534,8 +1534,16 @@ export default defineConfig({
   // the command was typed in, which put traces outside the flawless/ tree the
   // generated .gitignore covers.
   outputDir: path.join(__dirname, "test-results"),
-  fullyParallel: false,
-  workers: 1,
+  // One worker gives the cleanest timings; more give a fast verification run.
+  // Budgets only warn, so parallel measurement never fails a run — but it does
+  // make the numbers noisier, so CI (where a recorded number usually matters)
+  // keeps one, and FLAWLESS_WORKERS=1 forces it anywhere else.
+  fullyParallel: true,
+  workers: process.env.FLAWLESS_WORKERS
+    ? Number(process.env.FLAWLESS_WORKERS)
+    : process.env.CI
+      ? 1
+      : undefined,
   reporter: [["list"]],
   use: {
     baseURL: "http://127.0.0.1:5173",
