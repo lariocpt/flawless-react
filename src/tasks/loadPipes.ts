@@ -164,17 +164,29 @@ function hasLocalCrust(fromDir: string): boolean {
   }
 }
 
-function collectTargets(
+export function collectTargets(
   trees: ComponentTree[],
   router: "app" | "pages",
   routerRoot: string,
 ): LoadTarget[] {
   const out: LoadTarget[] = [];
   const seen = new Set<string>();
+  const usedNames = new Set<string>();
   const add = (name: string, urlPath: string, params: string[]): void => {
     if (seen.has(urlPath)) return;
     seen.add(urlPath);
-    out.push({ name, urlPath, params });
+    // Two distinct routes can want the same name: slugify turns every dynamic
+    // segment into a bare `x`, so /api/a/[p]/b and /api/a/[q]/b both arrive as
+    // `api-a-x-b`. They would then share one last-*.json — each overwriting the
+    // other's numbers — and the merge, which keys on this name, would treat the
+    // second route as an update of the first and never emit a pipe for it.
+    //
+    // The first claimant keeps the plain name, so regenerating an existing suite
+    // does not rename anything already on disk.
+    let unique = name;
+    for (let n = 2; usedNames.has(unique); n++) unique = `${name}-${n}`;
+    usedNames.add(unique);
+    out.push({ name: unique, urlPath, params });
   };
 
   for (const tree of trees) {

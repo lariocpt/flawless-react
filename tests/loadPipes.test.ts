@@ -5,11 +5,13 @@ import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { ensureParamDefaults, writeParams } from "../src/tasks/e2eRoutes.ts";
 import {
+  collectTargets,
   type LoadTarget,
   mergePipes,
   readFilledParams,
   renderPipes,
 } from "../src/tasks/loadPipes.ts";
+import type { ComponentInfo, ComponentTree } from "../src/types.ts";
 
 const tmpDir = (): Promise<string> => mkdtemp(path.join(tmpdir(), "flawless-load-"));
 
@@ -137,6 +139,91 @@ describe("heap snapshots are optional", () => {
     expect(parseArgs(["x.tsx", "--heaps=all"]).heaps).toBe("all");
     expect(parseArgs(["x.tsx"]).heaps).toBe("stress");
     expect(() => parseArgs(["x.tsx", "--heaps", "yes"])).toThrow(/--heaps must be/);
+  });
+});
+
+describe("every target gets a name of its own", () => {
+  /**
+   * A tree whose file is not a page route, carrying the GET fetches whose URLs
+   * become API-route targets. `routerRoot` below points nowhere real, so
+   * pageFileToRoute finds nothing and only the fetch path runs.
+   */
+  const treeFetching = (...urls: Array<[string, string[]]>): ComponentTree => ({
+    entry: {
+      componentName: "Widget",
+      filePath: "/nowhere/Widget.tsx",
+      fetchCalls: urls.map(([urlTemplate, holes]) => ({
+        urlTemplate,
+        holes,
+        method: "GET",
+        pos: { line: 1, column: 1 },
+        inEffect: false,
+      })),
+    } as unknown as ComponentInfo,
+    children: [],
+  });
+
+  const namesFor = (tree: ComponentTree): string[] =>
+    collectTargets([tree], "app", "/nowhere/app").map((t) => t.name);
+
+  test("two routes that slugify the same are told apart", () => {
+    // slugify replaces every $LOAD_* with a bare `x`, so these collide. Sharing
+    // a name means sharing one last-*.json — each run overwriting the other's
+    // numbers — and mergePipes keys on it, so the second route would be read as
+    // an update of the first and never get a pipe.
+    const names = namesFor(treeFetching(["/api/a/:p/b", ["p"]], ["/api/a/:q/b", ["q"]]));
+    expect(names).toEqual(["api-a-x-b", "api-a-x-b-2"]);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  test("the first claimant keeps the plain name, so nothing on disk is renamed", () => {
+    // Regenerating an existing suite must not rename its last-*.json files, or
+    // every committed baseline stops matching the pipe it was captured for.
+    const names = namesFor(
+      treeFetching(["/api/a/:p/b", ["p"]], ["/api/a/:q/b", ["q"]], ["/api/a/:r/b", ["r"]]),
+    );
+    expect(names[0]).toBe("api-a-x-b");
+    expect(names).toEqual(["api-a-x-b", "api-a-x-b-2", "api-a-x-b-3"]);
+  });
+
+  test("the same URL twice is still one target, not a suffixed pair", () => {
+    // Deduplication is by URL and happens first: two components fetching the
+    // same endpoint want one pipe, not `-2`.
+    expect(namesFor(treeFetching(["/api/a/:p/b", ["p"]], ["/api/a/:p/b", ["p"]]))).toEqual([
+      "api-a-x-b",
+    ]);
+  });
+
+  test("distinct names are left alone", () => {
+    expect(namesFor(treeFetching(["/api/one", []], ["/api/two", []]))).toEqual([
+      "api-one",
+      "api-two",
+    ]);
+  });
+
+  test("disambiguated targets render as two pipes with two stats files", () => {
+    const targets = collectTargets(
+      [treeFetching(["/api/a/:p/b", ["p"]], ["/api/a/:q/b", ["q"]])],
+      "app",
+      "/nowhere/app",
+    );
+    const out = render(targets, ["P", "Q"]);
+    expect(pipeLines(out)).toHaveLength(2);
+    expect(out).toContain("--out flawless/load/last-api-a-x-b.json");
+    expect(out).toContain("--out flawless/load/last-api-a-x-b-2.json");
+  });
+
+  test("merging keeps them separate rather than folding one into the other", () => {
+    const targets = collectTargets(
+      [treeFetching(["/api/a/:p/b", ["p"]], ["/api/a/:q/b", ["q"]])],
+      "app",
+      "/nowhere/app",
+    );
+    const merged = merge(render(targets, []), targets, ["P", "Q"]);
+    expect(pipeLines(merged)).toHaveLength(2);
+    expect(merged).not.toContain("TODO(flawless): no value");
+    expect(merged).toContain("$LOAD_P");
+    expect(merged).toContain("$LOAD_Q");
   });
 });
 
