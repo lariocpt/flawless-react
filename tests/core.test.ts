@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { detectTestScriptCollisions, runCore, UsageError } from "../src/core.ts";
 import { runFlawless } from "../src/index.ts";
-import { mergePackageJson } from "../src/scaffold/index.ts";
+import { divergentScripts, mergePackageJson } from "../src/packageJson.ts";
+import { renderSuite } from "../src/scaffold/templates.ts";
+import { suitePackageJson } from "../src/scaffold-tests/index.ts";
 import type { TaskId } from "../src/types.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
@@ -213,6 +215,65 @@ describe("the two emitters that share package.json", () => {
     };
     return Object.keys(pkgJson.scripts).sort();
   };
+
+  /** Each emitter's fresh contribution, before either touches disk. */
+  const perfScripts = (): Record<string, string> => {
+    const pkg = renderSuite({
+      tree: {
+        entry: {
+          componentName: "Card",
+          filePath: "/app/src/Card.tsx",
+          importSpecifier: "./Card",
+          propsShape: {},
+          variants: [],
+          hooks: [],
+          unresolvedProps: [],
+          exportKind: "named",
+        },
+        children: [],
+      } as never,
+      outDir: "/app/flawless",
+      variants: 3,
+      report: true,
+    }).find((f) => f.relPath === "package.json");
+    if (!pkg) throw new Error("perf-harness emitted no package.json");
+    return (JSON.parse(pkg.content) as { scripts: Record<string, string> }).scripts;
+  };
+
+  const unitScripts = (): Record<string, string> =>
+    (JSON.parse(suitePackageJson("/app/flawless", true)) as { scripts: Record<string, string> })
+      .scripts;
+
+  test("no script key is declared by both emitters with different commands", () => {
+    // The asymmetry this closes: both declared test:perf, perf-harness as
+    // `playwright test` and unit-browser as `playwright test profile`. Both
+    // commands work, so nothing failed — the file's bytes just depended on
+    // which task ran last. Unfixable at merge time, where a differing value on
+    // disk is indistinguishable from an older version being upgraded.
+    expect(divergentScripts(perfScripts(), unitScripts())).toEqual([]);
+  });
+
+  test("the divergence check would catch one", () => {
+    // Guards the guard, and it earns its place: the two emitters share no key at
+    // all today, so the assertion above passes over an empty intersection and
+    // would keep passing if the check were dead.
+    expect(
+      divergentScripts({ "test:perf": "playwright test" }, { "test:perf": "playwright test x" }),
+    ).toEqual(['test:perf: "playwright test" vs "playwright test x"']);
+    expect(divergentScripts({ a: "x" }, { a: "x", b: "y" })).toEqual([]);
+  });
+
+  test("test:perf has exactly one owner", () => {
+    // It names perf-harness's config and directory, and browserSpecs is set from
+    // exactly selectedTasks.includes("perf-harness") — so unit-browser could
+    // only ever declare it in runs where perf-harness already had. A redundant
+    // second spelling is what let the two drift apart.
+    expect(perfScripts()["test:perf"]).toBe("playwright test");
+    expect(unitScripts()["test:perf"]).toBeUndefined();
+    expect(JSON.parse(suitePackageJson("/app/flawless", false)).scripts["test:browser"]).toBe(
+      undefined,
+    );
+  });
 
   test("either order keeps every script both tasks declare", async () => {
     // Reversed, perf-harness's package.json overwrote the one unit-browser had

@@ -92,7 +92,7 @@ describe("scaffoldUnitBrowser (file writes)", () => {
 });
 
 describe("scaffoldUnitBrowser inner package.json", () => {
-  test("creates one with the test:unit / test:perf / test:browser scripts", async () => {
+  test("creates one with the test:unit / test:browser scripts it owns", async () => {
     const root = tmpRoot();
     const outDir = path.join(root, "flawless");
 
@@ -106,8 +106,12 @@ describe("scaffoldUnitBrowser inner package.json", () => {
     const pkg = readJson(path.join(outDir, "package.json"));
     const scripts = pkg.scripts as Record<string, string>;
     expect(scripts["test:unit"]).toBe("vitest run");
-    expect(scripts["test:perf"]).toBe("playwright test profile");
     expect(scripts["test:browser"]).toBe("playwright test --config browser/playwright.config.ts");
+    // test:perf belongs to perf-harness, which declares it in every run this
+    // emitter would have. Two spellings of it — `playwright test` here,
+    // `playwright test profile` there — left the file depending on task order.
+    // tests/core.test.ts holds the two emitters against each other.
+    expect(scripts["test:perf"]).toBeUndefined();
     expect(pkg.name).toBe("flawless-suite");
     expect(pkg.private).toBe(true);
     expect(pkg.type).toBe("module");

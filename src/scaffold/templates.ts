@@ -9,6 +9,7 @@ import {
   synthesiseDefaults,
 } from "../scaffold-tests/registry.ts";
 import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
+import { SUITE_COMMAND, SUITE_SCRIPT } from "../suiteScripts.ts";
 import type { ComponentInfo, ComponentTree, HeapMode, MockRoute, PropsShape } from "../types.ts";
 
 const NL = "\n";
@@ -214,18 +215,18 @@ function pkgJson(name: string, report: boolean): string {
       private: true,
       type: "module",
       scripts: {
-        test: "playwright test",
+        [SUITE_SCRIPT.test]: SUITE_COMMAND.perf,
         // Same command under the name --run-tests looks for. Without it, a
         // standalone perf-harness run with --run-tests reported "failed suites:
         // perf" on a suite that was fine, because `bun run test:perf` did not
         // exist — the key is only added when unit-browser also ran.
-        "test:perf": "playwright test",
-        "test:headed": "playwright test --project=interactive",
+        [SUITE_SCRIPT.perf]: SUITE_COMMAND.perf,
+        [SUITE_SCRIPT.headed]: SUITE_COMMAND.headed,
         // Only when scripts/report.mjs is emitted beside it. Declared
         // unconditionally, `bun run report` on a suite generated without
         // --report failed with a module-not-found naming a file the user never
         // asked for and cannot restore without regenerating.
-        ...(report ? { report: "node ./scripts/report.mjs" } : {}),
+        ...(report ? { [SUITE_SCRIPT.report]: SUITE_COMMAND.report } : {}),
       },
       dependencies: {
         react: "^18.3.0",

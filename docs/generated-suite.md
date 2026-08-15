@@ -36,7 +36,7 @@ Declares the suite as its own private package with three runtime deps:
 
 Render timing comes from React's built-in `<Profiler>` — no separate measurement library required.
 
-Scripts: `test`, `test:perf` (the name `--run-tests` looks for), `test:headed`, and (if you used `--report`) `report`. The suite's package name is derived from the out dir's basename — `<out-dir-name>-profile`.
+Scripts: `test`, `test:perf` (the name `--run-tests` looks for), `test:headed`, and (if you used `--report`) `report`. The suite's package name is derived from the out dir's basename — `<out-dir-name>-profile`. `unit-browser` merges its own `test:unit` and `test:browser` into the same file and declares nothing perf-harness declares, so the result does not depend on the order you list the tasks in. Both emitters take their commands from [src/suiteScripts.ts](../src/suiteScripts.ts) and merge through [src/packageJson.ts](../src/packageJson.ts).
 
 **Edit when**: your parent project uses a different React major (17 / 19); pin the suite's `react` and `react-dom` to match before `bun install`.
 

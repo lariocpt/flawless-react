@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { stringifyLike } from "../scaffold/adoptStyle.ts";
+import { mergePackageJson } from "../packageJson.ts";
+import { SUITE_COMMAND, SUITE_SCRIPT } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute } from "../types.ts";
 import { type AliasEntry, renderUnitBrowser } from "./templates.ts";
 
@@ -48,82 +49,74 @@ export async function scaffoldUnitBrowser(
   }
 
   if (!opts.skipInnerPackageJson) {
-    await mergePackageJson(outDir, opts.browserSpecs !== false);
+    await writeSuitePackageJson(outDir, opts.browserSpecs !== false);
     written.push(path.join(outDir, "package.json"));
   }
   return { written, skipped };
 }
 
-async function mergePackageJson(outDir: string, withBrowser: boolean): Promise<void> {
-  const pkgPath = path.join(outDir, "package.json");
-  type Pkg = {
-    name?: string;
-    version?: string;
-    private?: boolean;
-    type?: string;
-    scripts?: Record<string, string>;
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-  };
-  let pkg: Pkg = {};
-  let source = "";
-  if (existsSync(pkgPath)) {
-    try {
-      source = await readFile(pkgPath, "utf8");
-      pkg = JSON.parse(source) as Pkg;
-    } catch {
-      pkg = {};
-    }
-  } else {
-    pkg = {
+/**
+ * What unit-browser contributes to the suite's package.json.
+ *
+ * Exported so tests/core.test.ts can compare it against perf-harness's without
+ * going through disk — the only place two emitters' declarations can be seen
+ * side by side, and so the only place a disagreement between them is visible.
+ *
+ * `test:perf` is deliberately absent. It names perf-harness's config and
+ * directory, and `browserSpecs` is set from exactly `selectedTasks.includes
+ * ("perf-harness")` (unitAndBrowser.ts), so this emitter could only ever declare
+ * it in the runs where perf-harness declares it too. A second, differently
+ * spelled copy of a key that is never needed alone is how the two files came to
+ * disagree in the first place.
+ */
+export function suitePackageJson(outDir: string, withBrowser: boolean): string {
+  return `${JSON.stringify(
+    {
       name: `${path.basename(outDir).replace(/[^a-zA-Z0-9_-]+/g, "-")}-suite`,
       version: "0.0.0",
       private: true,
       type: "module",
-    };
+      scripts: {
+        [SUITE_SCRIPT.unit]: SUITE_COMMAND.unit,
+        // browser/ is only rendered when browserSpecs is on. Declared
+        // unconditionally, `--tasks unit-browser` wrote a script pointing at a
+        // config that run never created, and --run-tests then invoked it and
+        // reported a correct suite as failing.
+        ...(withBrowser ? { [SUITE_SCRIPT.browser]: SUITE_COMMAND.browser } : {}),
+      },
+      dependencies: {
+        react: "^18.3.0",
+        "react-dom": "^18.3.0",
+      },
+      devDependencies: {
+        "@playwright/test": "^1.49.0",
+        "@types/node": "^22.0.0",
+        "@types/react": "^18.3.0",
+        "@types/react-dom": "^18.3.0",
+        typescript: "^5.6.0",
+        vitest: "^2.1.0",
+        "@vitest/ui": "^2.1.0",
+        jsdom: "^25.0.0",
+        "@testing-library/react": "^16.0.0",
+        "@testing-library/user-event": "^14.5.0",
+        "@testing-library/jest-dom": "^6.5.0",
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+/**
+ * Through the shared merge, like perf-harness — the version pins above are
+ * defaults an existing file overrides, not values that overwrite it.
+ */
+async function writeSuitePackageJson(outDir: string, withBrowser: boolean): Promise<void> {
+  const pkgPath = path.join(outDir, "package.json");
+  const generated = suitePackageJson(outDir, withBrowser);
+  if (!existsSync(pkgPath)) {
+    await writeFile(pkgPath, generated);
+    return;
   }
-
-  pkg.scripts = {
-    ...(pkg.scripts ?? {}),
-    "test:unit": "vitest run",
-    // Both of these need the perf-harness half of the run: browser/ is only
-    // rendered when browserSpecs is on, and profile/ belongs to perf-harness
-    // entirely. Declared unconditionally, `--tasks unit-browser` wrote two
-    // scripts pointing at directories that run never created — and --run-tests
-    // then invoked test:browser and reported a correct suite as failing, which
-    // is the same failure d47abbe fixed from the other side.
-    ...(withBrowser
-      ? {
-          // profile/, not tests/: the profile specs were moved and this path
-          // filter was not, so `bun run test:perf` selected nothing and
-          // --run-tests reported a correct suite as failing.
-          "test:perf": "playwright test profile",
-          "test:browser": "playwright test --config browser/playwright.config.ts",
-        }
-      : {}),
-  };
-
-  pkg.dependencies = {
-    ...(pkg.dependencies ?? {}),
-    react: pkg.dependencies?.react ?? "^18.3.0",
-    "react-dom": pkg.dependencies?.["react-dom"] ?? "^18.3.0",
-  };
-
-  pkg.devDependencies = {
-    ...(pkg.devDependencies ?? {}),
-    "@playwright/test": pkg.devDependencies?.["@playwright/test"] ?? "^1.49.0",
-    "@types/node": pkg.devDependencies?.["@types/node"] ?? "^22.0.0",
-    "@types/react": pkg.devDependencies?.["@types/react"] ?? "^18.3.0",
-    "@types/react-dom": pkg.devDependencies?.["@types/react-dom"] ?? "^18.3.0",
-    typescript: pkg.devDependencies?.typescript ?? "^5.6.0",
-    vitest: pkg.devDependencies?.vitest ?? "^2.1.0",
-    "@vitest/ui": pkg.devDependencies?.["@vitest/ui"] ?? "^2.1.0",
-    jsdom: pkg.devDependencies?.jsdom ?? "^25.0.0",
-    "@testing-library/react": pkg.devDependencies?.["@testing-library/react"] ?? "^16.0.0",
-    "@testing-library/user-event":
-      pkg.devDependencies?.["@testing-library/user-event"] ?? "^14.5.0",
-    "@testing-library/jest-dom": pkg.devDependencies?.["@testing-library/jest-dom"] ?? "^6.5.0",
-  };
-
-  await writeFile(pkgPath, stringifyLike(source, pkg));
+  await writeFile(pkgPath, mergePackageJson(await readFile(pkgPath, "utf8"), generated));
 }

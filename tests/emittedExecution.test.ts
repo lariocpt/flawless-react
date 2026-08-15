@@ -786,9 +786,9 @@ describe("the standalone test:* scripts point only at what the run emitted", () 
   });
 
   test("with perf-harness in the run, all five are declared and all resolve", async () => {
-    // Registry order (perf-harness before unit-browser) is what the CLI menu
-    // and ALL_TASK_IDS produce, and it is the order that matters here: the two
-    // emitters both write this package.json.
+    // Order no longer matters here, though it used to: both emitters wrote this
+    // package.json and both declared test:perf, so the file depended on which
+    // task ran last.
     const { scripts, present } = await standaloneRun(["perf-harness", "unit-browser"]);
 
     expect(danglingIn(scripts, present)).toEqual([]);
@@ -799,9 +799,15 @@ describe("the standalone test:* scripts point only at what the run emitted", () 
       "test:perf",
       "test:unit",
     ]);
-    // The corrected filter from d47abbe, not pkgJson's bare `playwright test`:
-    // the later emitter has to win, or test:perf selects nothing.
-    expect(scripts["test:perf"]).toBe("playwright test profile");
+    // Bare, and it selects the profile specs rather than nothing: scope comes
+    // from `testDir: "./profile"` in the config it runs under. `bun run test` —
+    // the command the emitted README gives every user — has always been exactly
+    // this, so a bare `playwright test` that selected nothing would mean no
+    // suite had ever run. What broke in d47abbe was a positional filter naming
+    // a directory that no longer existed, which is why the filter is gone
+    // rather than corrected: a path spelled twice can fall out of step, and the
+    // config cannot fall out of step with itself.
+    expect(scripts["test:perf"]).toBe("playwright test");
   });
 });
 
