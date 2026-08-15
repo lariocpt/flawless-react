@@ -1,4 +1,5 @@
 import path from "node:path";
+import { relativeToEmitted } from "../emitPaths.ts";
 import type {
   ClickHandler,
   ComponentInfo,
@@ -181,12 +182,20 @@ function emitComponentImport(info: ComponentInfo, importPath: string): string {
 }
 
 function vitestConfig(opts: UnitBrowserRenderOptions): string {
+  // Every replacement is resolved against the config's own directory rather
+  // than baked in absolute. This file is committed, and the react/react-dom
+  // pins in particular pointed into a node_modules path that exists only on the
+  // machine that generated them — on a checkout rooted elsewhere the suite
+  // could not resolve React at all.
   const aliasLines = (opts.resolveAliases ?? [])
-    .map((a) =>
-      a.prefix
-        ? `      { find: /^${escapeRegex(a.find)}/, replacement: ${JSON.stringify(`${a.replacement}/`)} },`
-        : `      { find: /^${escapeRegex(a.find)}$/, replacement: ${JSON.stringify(a.replacement)} },`,
-    )
+    .map((a) => {
+      const rel = JSON.stringify(relativeToEmitted(opts.outDir, a.replacement));
+      const target = a.prefix
+        ? `path.resolve(configDir, ${rel}) + "/"`
+        : `path.resolve(configDir, ${rel})`;
+      const find = a.prefix ? `/^${escapeRegex(a.find)}/` : `/^${escapeRegex(a.find)}$/`;
+      return `      { find: ${find}, replacement: ${target} },`;
+    })
     .join("\n");
   // dedupe is not optional in a workspace. When react resolves to the repo root
   // and react-dom to the package, react-dom-server sets its hook dispatcher on a
@@ -204,7 +213,8 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(configDir, "..");
 
 export default defineConfig({
   root: projectRoot,
@@ -217,8 +227,17 @@ ${resolveBlock}  test: {
 });
 `;
   }
-  return `import { defineConfig } from "vitest/config";
+  const anchor =
+    aliasLines.length > 0
+      ? `import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vitest/config";
 
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+`
+      : `import { defineConfig } from "vitest/config";
+`;
+  return `${anchor}
 export default defineConfig({
 ${resolveBlock}  test: {
     environment: "jsdom",

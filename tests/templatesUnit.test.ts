@@ -471,8 +471,17 @@ describe("renderUnitBrowser resolveAliases", () => {
     const cfg = contentOf(files, "vitest.config.ts");
     expect(cfg).toContain("resolve: {");
     expect(cfg).toContain("alias: [");
-    expect(cfg).toContain('{ find: /^@\\//, replacement: "/proj/src/" },');
-    expect(cfg).toContain('{ find: /^react$/, replacement: "/proj/node_modules/react" },');
+    // Resolved against the config's own directory, not baked in absolute: this
+    // file is committed, and the react pin pointed into a node_modules path that
+    // exists only on the machine that generated it.
+    expect(cfg).toContain(
+      '{ find: /^@\\//, replacement: path.resolve(configDir, "../src") + "/" },',
+    );
+    expect(cfg).toContain(
+      '{ find: /^react$/, replacement: path.resolve(configDir, "../node_modules/react") },',
+    );
+    expect(cfg).toContain("const configDir = path.dirname(fileURLToPath(import.meta.url));");
+    expect(cfg).not.toContain('"/proj/');
   });
 
   test("no aliases → no alias list, but dedupe is always emitted", () => {

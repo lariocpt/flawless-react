@@ -201,7 +201,10 @@ describe("e2e task", () => {
     expect(config).toContain("3123");
     expect(config).toContain("http://localhost:3123");
     expect(config).toContain("FLAWLESS_E2E_BASEURL");
-    expect(config).toContain(JSON.stringify(nextjs.root));
+    // Relative, anchored to the config itself. An absolute root here would name
+    // the machine that generated it, and this file is committed.
+    expect(config).toContain("cwd: path.resolve(__dirname,");
+    expect(config).not.toContain(nextjs.root);
 
     const spec = readFileSync(specPath, "utf8");
     expect(spec).toContain('from "@playwright/test"');

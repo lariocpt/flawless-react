@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { relativeToEmitted } from "../emitPaths.ts";
 import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
@@ -47,7 +48,7 @@ export const e2eRoutes: Task = {
     const port = devScriptPort(devScript);
 
     const configPath = path.join(e2eDir, "playwright.config.ts");
-    await Bun.write(configPath, e2eConfig(ctx.nextjs.root, port));
+    await Bun.write(configPath, e2eConfig(relativeToEmitted(e2eDir, ctx.nextjs.root), port));
     written.push(configPath);
 
     const setupPath = path.join(e2eDir, "global-setup.ts");
@@ -106,7 +107,14 @@ async function readDevScript(nextRoot: string): Promise<string | undefined> {
   }
 }
 
-function e2eConfig(nextRoot: string, port: number): string {
+/**
+ * @param toNextRoot Path from this config's own directory to the app root.
+ *   Relative, deliberately: the config is committed, and an absolute path in it
+ *   names the machine that generated it. The same repo lives under a different
+ *   root on other machines, so the checked-in file would both fail to resolve
+ *   there and rewrite itself on every regeneration.
+ */
+function e2eConfig(toNextRoot: string, port: number): string {
   return `import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
@@ -134,7 +142,7 @@ export default defineConfig({
     ? undefined
     : {
         command: "bun run dev",
-        cwd: ${JSON.stringify(nextRoot)},
+        cwd: path.resolve(__dirname, ${JSON.stringify(toNextRoot)}),
         url: "http://localhost:${port}",
         reuseExistingServer: true,
         timeout: 120_000,

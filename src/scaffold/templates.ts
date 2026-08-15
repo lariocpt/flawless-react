@@ -1,5 +1,6 @@
 import path from "node:path";
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
+import { relativeToEmitted } from "../emitPaths.ts";
 import {
   allocateSpecNames,
   flattenTrees,
@@ -54,7 +55,10 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
   const files: RenderedFile[] = [
     { relPath: "playwright.config.ts", content: playwrightConfig(hasMock) },
-    { relPath: "host/server.ts", content: hostServer(hasMock, serverActionStubs) },
+    {
+      relPath: "host/server.ts",
+      content: hostServer(hasMock, serverActionStubs, path.join(opts.outDir, "host")),
+    },
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
     { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath, useMsw) },
@@ -291,7 +295,11 @@ export default defineConfig({
 `;
 }
 
-function hostServer(hasMock: boolean, serverActionStubs = new Map<string, string[]>()): string {
+function hostServer(
+  hasMock: boolean,
+  serverActionStubs = new Map<string, string[]>(),
+  hostDir = "",
+): string {
   const mockProxyBlock = hasMock
     ? `
     // Proxy any other request to the mock server so the component's relative
@@ -324,14 +332,24 @@ function hostServer(hasMock: boolean, serverActionStubs = new Map<string, string
             : `export const ${n} = async () => ({});`,
         )
         .join("\n");
-      return `  ${JSON.stringify(abs)}: ${JSON.stringify(body || "export {};")},`;
+      // Relative to this file, resolved back to absolute when the map is built.
+      // Bun's onLoad hands us an absolute `args.path`, so the KEYS must be
+      // absolute at runtime — but an absolute key in the committed source names
+      // the machine that generated it, and every stub would miss on any other
+      // checkout, putting pg and nodemailer back into the browser bundle.
+      const key = hostDir ? relativeToEmitted(hostDir, abs) : abs;
+      return `  ${JSON.stringify(key)}: ${JSON.stringify(body || "export {};")},`;
     })
     .join("\n");
   const stubPlugin = `
-// Absolute path -> replacement source. See the comment where this was generated.
-const SERVER_STUBS: Record<string, string> = {
+// Path relative to this file -> replacement source, resolved to the absolute
+// paths Bun's onLoad reports. See the comment where this was generated.
+const SERVER_STUB_SOURCES: Record<string, string> = {
 ${stubSources}
 };
+const SERVER_STUBS: Record<string, string> = Object.fromEntries(
+  Object.entries(SERVER_STUB_SOURCES).map(([rel, src]) => [path.resolve(HOST_DIR, rel), src]),
+);
 
 const stubServerModules: BunPlugin = {
   name: "flawless-server-stubs",
