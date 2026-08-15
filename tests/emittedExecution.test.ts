@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, symlink } from "node:fs/promises";
+import { readdirSync } from "node:fs";
+import { cp, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
+import { runCore } from "../src/core.ts";
 import { scaffold } from "../src/scaffold/index.ts";
+import { extractRoutes, loadApiSpec } from "../src/scaffold/openapi.ts";
 import { type RenderedFile, renderSuite } from "../src/scaffold/templates.ts";
 import { e2eRoutes } from "../src/tasks/e2eRoutes.ts";
 import { type LoadTarget, loadPipes, renderPipes } from "../src/tasks/loadPipes.ts";
-import type { RunContext } from "../src/types.ts";
+import type { MockRoute, RunContext, TaskId } from "../src/types.ts";
 
 /**
  * The files this tool writes that something OTHER than TypeScript runs.
@@ -486,11 +489,123 @@ describe("the baseline assert in routes.pipes is real JavaScript", () => {
 // Emitted configuration
 // ---------------------------------------------------------------------------
 
-/** Local files a package.json script names, e.g. `node ./scripts/report.mjs`. */
-function scriptFileRefs(command: string): string[] {
-  return [...command.matchAll(/(?:^|\s)(\.?\.?\/?[\w./-]+\.(?:mjs|cjs|js|ts|json))/g)]
-    .map((m) => (m[1] as string).replace(/^\.\//, ""))
-    .filter((f) => !f.startsWith("../"));
+interface Token {
+  text: string;
+  quoted: boolean;
+}
+
+/** Split on whitespace, keeping quoted runs whole and remembering which they were. */
+function tokenize(command: string): Token[] {
+  const tokens: Token[] = [];
+  for (const m of command.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)) {
+    if (m[1] !== undefined) tokens.push({ text: m[1], quoted: true });
+    else if (m[2] !== undefined) tokens.push({ text: m[2], quoted: true });
+    else tokens.push({ text: m[3] as string, quoted: false });
+  }
+  return tokens;
+}
+
+/** Flags whose value is a path even when it carries no slash and no extension. */
+const PATH_FLAGS = new Set(["--config", "--root", "--target", "--dir", "--outputDir"]);
+
+/** A bare operand counts as a path when it is shaped like one. */
+function looksLikePath(s: string): boolean {
+  return s.includes("/") || /\.(mjs|cjs|js|ts|tsx|json|pipes|sh)$/.test(s);
+}
+
+/**
+ * Subcommands, so a bare operand that is NOT one of these reads as a path.
+ *
+ * `playwright test profile` is the whole reason: `profile` carries no slash and
+ * no extension, so shape alone cannot tell it from `run`. Listing the verbs is
+ * the honest way round — an unrecognised one produces a loud false positive
+ * that someone fixes, where guessing by shape produced a silent miss, and a
+ * silent miss on exactly this command is what d47abbe had to fix by hand.
+ */
+const SUBCOMMANDS = new Set(["test", "run", "related", "exec", "install"]);
+
+/**
+ * Every path a script command names — including the ones that are not files.
+ *
+ * The predecessor matched only operands ending in a known source extension,
+ * which is blind to exactly the family this check exists for. A script can name
+ * a DIRECTORY (`playwright test flawless/profile`, `playwright test profile`),
+ * a path carried by a flag with no extension at all (`vitest run --root
+ * flawless`), or a path buried in a quoted inner command (`crust -c 'test-pipes
+ * --target …/routes.pipes'`). All of those appear verbatim in the scripts this
+ * tool writes, and none of them was being checked.
+ */
+function commandPathRefs(command: string): string[] {
+  const out: string[] = [];
+  const tokens = tokenize(command);
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i] as Token;
+    // A quoted operand carrying spaces is a command line rather than a path:
+    // crust takes its whole pipeline that way, and its only path is inside.
+    if (t.quoted && t.text.includes(" ")) {
+      out.push(...commandPathRefs(t.text));
+      continue;
+    }
+    if (PATH_FLAGS.has(t.text)) {
+      // The flag declares its value a path, so take it whatever it looks like.
+      // This is the only reason `--root flawless` is visible at all.
+      const v = tokens[i + 1];
+      if (v !== undefined && !v.text.startsWith("-")) {
+        out.push(v.text);
+        i++;
+      }
+      continue;
+    }
+    const eq = /^(--[\w-]+)=(.*)$/.exec(t.text);
+    if (eq !== null) {
+      const flag = eq[1] as string;
+      const value = eq[2] as string;
+      if (PATH_FLAGS.has(flag) || looksLikePath(value)) out.push(value);
+      continue;
+    }
+    if (t.text.startsWith("-")) continue;
+    // i === 0 is the program itself (`playwright`, `node`, `crust`), which is
+    // resolved off PATH rather than out of the emitted tree.
+    if (i === 0 || SUBCOMMANDS.has(t.text)) continue;
+    // The value of a flag this function does not know is not a path — the
+    // 60000 in `--timeout 60000` read as one the moment bare words counted.
+    // An `=`-form flag carries its own value, so it does not claim the next.
+    const prev = i > 0 ? (tokens[i - 1] as Token) : undefined;
+    const claimedByFlag =
+      prev !== undefined && !prev.quoted && prev.text.startsWith("-") && !prev.text.includes("=");
+    if (claimedByFlag || /^\d+$/.test(t.text)) continue;
+    if (looksLikePath(t.text) || /^[\w.-]+$/.test(t.text)) out.push(t.text);
+  }
+  return out
+    .map((p) => p.replace(/^\.\//, ""))
+    .filter((p) => p !== "" && !p.startsWith("../") && !path.isAbsolute(p));
+}
+
+/**
+ * The emitted set, plus every directory on the way to each entry.
+ *
+ * `playwright test flawless/profile` names a directory that appears in no
+ * emitted path as such — without the ancestors it reads as missing and the
+ * check cries wolf on a script that is perfectly correct.
+ */
+function presentPaths(relPaths: string[]): Set<string> {
+  const present = new Set<string>();
+  for (const rel of relPaths) {
+    const parts = rel.split("/");
+    for (let i = 1; i <= parts.length; i++) present.add(parts.slice(0, i).join("/"));
+  }
+  return present;
+}
+
+/** Scripts naming something the run did not emit — `bun run <name>` would fail. */
+function danglingIn(scripts: Record<string, string>, present: Set<string>): string[] {
+  const out: string[] = [];
+  for (const [name, command] of Object.entries(scripts)) {
+    for (const ref of commandPathRefs(command)) {
+      if (!present.has(ref)) out.push(`${name}: ${command} — ${ref} is not emitted`);
+    }
+  }
+  return out;
 }
 
 describe("emitted configuration is machine-readable and internally consistent", () => {
@@ -535,20 +650,12 @@ describe("emitted configuration is machine-readable and internally consistent", 
     expect(() => JSON.parse(params)).not.toThrow();
   });
 
-  /** Scripts naming a file the suite does not write — `bun run <name>` would fail. */
   const danglingScripts = (report: boolean): string[] => {
     const files = suiteFiles(report);
-    const present = new Set(files.map((f) => f.relPath));
     const pkg = files.find((f) => f.relPath === "package.json");
     if (!pkg) throw new Error("no package.json emitted");
     const { scripts } = JSON.parse(pkg.content) as { scripts: Record<string, string> };
-    const out: string[] = [];
-    for (const [name, command] of Object.entries(scripts)) {
-      for (const ref of scriptFileRefs(command)) {
-        if (!present.has(ref)) out.push(`${name}: ${command} — ${ref} is not emitted`);
-      }
-    }
-    return out;
+    return danglingIn(scripts, presentPaths(files.map((f) => f.relPath)));
   };
 
   test("every script in the emitted package.json names a file the suite emits", () => {
@@ -559,10 +666,398 @@ describe("emitted configuration is machine-readable and internally consistent", 
     expect(danglingScripts(false)).toEqual([]);
   });
 
-  test("the reference check can tell a missing file from a present one", () => {
-    // Guards the guard: scriptFileRefs returning [] would make the loop above
-    // assert nothing at all.
-    expect(scriptFileRefs("node ./scripts/report.mjs")).toEqual(["scripts/report.mjs"]);
-    expect(scriptFileRefs("playwright test --project=interactive")).toEqual([]);
+  test("the reference check sees directories and quoted inner commands too", () => {
+    // Guards the guard: commandPathRefs returning [] would make every loop
+    // above assert nothing at all. The last three are the cases the previous
+    // extension-matching version could not see, and they are the exact
+    // commands core.ts writes.
+    expect(commandPathRefs("node ./scripts/report.mjs")).toEqual(["scripts/report.mjs"]);
+    expect(commandPathRefs("playwright test --project=interactive")).toEqual([]);
+    // The bare directory operand — no slash, no extension. This is the exact
+    // command d47abbe had to correct by hand, and shape alone cannot see it.
+    expect(commandPathRefs("playwright test profile")).toEqual(["profile"]);
+    expect(commandPathRefs("vitest run")).toEqual([]);
+    expect(
+      commandPathRefs(
+        "playwright test --config flawless/playwright.config.ts --project=chromium flawless/profile",
+      ),
+    ).toEqual(["flawless/playwright.config.ts", "flawless/profile"]);
+    expect(commandPathRefs("vitest run --root flawless")).toEqual(["flawless"]);
+    expect(
+      commandPathRefs("crust -c 'test-pipes --target flawless/load/routes.pipes --timeout 60000'"),
+    ).toEqual(["flawless/load/routes.pipes"]);
   });
+
+  test("a directory counts as present when the suite emitted files into it", () => {
+    // The other half of the same guard: without the ancestor walk, every
+    // directory-naming script reads as dangling and the check cries wolf.
+    const present = presentPaths(["profile/Card.profile.spec.ts", "load/routes.pipes"]);
+    expect(present.has("profile")).toBe(true);
+    expect(present.has("load/routes.pipes")).toBe(true);
+    expect(present.has("browser")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Next.js-mode flawless:* scripts, which no renderer produces
+// ---------------------------------------------------------------------------
+
+/**
+ * The scripts merged into the TARGET app's package.json, and what that run
+ * emitted for them to point at.
+ *
+ * These never pass through renderSuite, so the group above cannot see them —
+ * core.ts writes them straight into the host project. That is where the
+ * interesting version of this bug lived: the merge sits inside `if (nextCtx)`
+ * and runs on every Next.js invocation, so a `--tasks load` run declared
+ * flawless:unit, flawless:perf and flawless:browser naming a
+ * playwright.config.ts, a profile/ and a browser/ that only other tasks emit.
+ *
+ * The fixture is COPIED first. runCore in Next.js mode rewrites the target's
+ * package.json, and tests/fixtures/nextapp is tracked.
+ */
+async function nextjsRun(
+  taskIds: TaskId[],
+): Promise<{ scripts: Record<string, string>; present: Set<string> }> {
+  const app = path.join(await tmpRoot(), "app");
+  await cp(fixture("nextapp"), app, { recursive: true });
+  const outDir = path.join(app, "flawless");
+
+  await runCore({
+    pattern: path.join(app, "src", "app", "page.tsx"),
+    outDir,
+    taskIds,
+    nextjs: app,
+    force: true,
+    log: false,
+    inlineSummary: false,
+  });
+
+  const emitted = (readdirSync(outDir, { recursive: true }) as string[]).map((rel) =>
+    path.join("flawless", rel).split(path.sep).join("/"),
+  );
+  const pkg = JSON.parse(await Bun.file(path.join(app, "package.json")).text()) as {
+    scripts?: Record<string, string>;
+  };
+  const scripts = Object.fromEntries(
+    Object.entries(pkg.scripts ?? {}).filter(([n]) => n.startsWith("flawless:")),
+  );
+  return { scripts, present: presentPaths(emitted) };
+}
+
+/**
+ * The same question for a standalone suite, where the package.json is the
+ * suite's own and two emitters take turns writing it.
+ *
+ * `--tasks unit-browser` alone renders no browser/ (those specs mount through
+ * the perf host, so they are gated on perf-harness) and no profile/ — yet the
+ * merge declared test:browser and test:perf regardless, and --run-tests then
+ * invoked test:browser and reported a correct suite as failing.
+ */
+async function standaloneRun(
+  taskIds: TaskId[],
+): Promise<{ scripts: Record<string, string>; present: Set<string> }> {
+  const outDir = path.join(await tmpRoot(), "flawless");
+  await runCore({
+    pattern: fixture("Dashboard.tsx"),
+    outDir,
+    taskIds,
+    force: true,
+    log: false,
+    inlineSummary: false,
+  });
+
+  const emitted = (readdirSync(outDir, { recursive: true }) as string[]).map((rel) =>
+    rel.split(path.sep).join("/"),
+  );
+  const pkg = JSON.parse(await Bun.file(path.join(outDir, "package.json")).text()) as {
+    scripts?: Record<string, string>;
+  };
+  return { scripts: pkg.scripts ?? {}, present: presentPaths(emitted) };
+}
+
+describe("the standalone test:* scripts point only at what the run emitted", () => {
+  test("--tasks unit-browser declares neither the perf nor the browser script", async () => {
+    const { scripts, present } = await standaloneRun(["unit-browser"]);
+
+    expect(danglingIn(scripts, present)).toEqual([]);
+    // `vitest run` names no path, so only the key set catches the other two.
+    expect(Object.keys(scripts).sort()).toEqual(["test:unit"]);
+  });
+
+  test("with perf-harness in the run, all five are declared and all resolve", async () => {
+    // Registry order (perf-harness before unit-browser) is what the CLI menu
+    // and ALL_TASK_IDS produce, and it is the order that matters here: the two
+    // emitters both write this package.json.
+    const { scripts, present } = await standaloneRun(["perf-harness", "unit-browser"]);
+
+    expect(danglingIn(scripts, present)).toEqual([]);
+    expect(Object.keys(scripts).sort()).toEqual([
+      "test",
+      "test:browser",
+      "test:headed",
+      "test:perf",
+      "test:unit",
+    ]);
+    // The corrected filter from d47abbe, not pkgJson's bare `playwright test`:
+    // the later emitter has to win, or test:perf selects nothing.
+    expect(scripts["test:perf"]).toBe("playwright test profile");
+  });
+});
+
+describe("the flawless:* scripts point only at what the run emitted", () => {
+  test("--tasks load declares the load script and nothing needing another task", async () => {
+    const { scripts, present } = await nextjsRun(["load"]);
+
+    // The generic check first — it is the one that generalises. Before the fix
+    // it reported flawless:perf's playwright.config.ts and profile/, and
+    // flawless:browser's config, none of which a load run emits.
+    expect(danglingIn(scripts, present)).toEqual([]);
+    // Then the exact set. `flawless:unit` is `vitest run --root flawless`,
+    // which resolves to the suite root and so is never dangling — only naming
+    // the keys catches that one being declared by a run that emitted no specs.
+    expect(Object.keys(scripts).sort()).toEqual(["flawless:load"]);
+  });
+
+  test("--tasks e2e likewise", async () => {
+    const { scripts, present } = await nextjsRun(["e2e"]);
+
+    expect(danglingIn(scripts, present)).toEqual([]);
+    expect(Object.keys(scripts).sort()).toEqual(["flawless:e2e"]);
+  });
+
+  test("with every task selected, all four resolve into the emitted tree", async () => {
+    // Guards the guard from the other side: if the gates were simply always
+    // false the two cases above would pass while the tool emitted no scripts
+    // at all. Here every script must be present AND resolve.
+    const { scripts, present } = await nextjsRun(["perf-harness", "unit-browser", "e2e", "load"]);
+
+    expect(Object.keys(scripts).sort()).toEqual([
+      "flawless:browser",
+      "flawless:e2e",
+      "flawless:load",
+      "flawless:perf",
+      "flawless:unit",
+    ]);
+    expect(danglingIn(scripts, present)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// host/server.ts and mock/server.ts — nothing had ever started either
+// ---------------------------------------------------------------------------
+
+/** A port nothing is listening on, so the suite's hardcoded 5173/5174 stay free. */
+function freePort(): number {
+  const probe = Bun.serve({ port: 0, fetch: () => new Response("") });
+  const { port } = probe;
+  probe.stop(true);
+  if (port === undefined) throw new Error("could not allocate an ephemeral port");
+  return port;
+}
+
+/** Boot budget, and the per-test budget that has to outlast it to see the error. */
+const BOOT_TIMEOUT_MS = 20_000;
+const CASE_TIMEOUT_MS = 30_000;
+
+interface Booted {
+  base: string;
+  kill(): void;
+  stderr(): Promise<string>;
+}
+
+/**
+ * Start an emitted server and wait until it answers.
+ *
+ * A server that dies during boot must not read as a timeout. The emitted host
+ * throws "host bundle failed" out of Bun.build before it ever listens, and that
+ * is precisely the failure a stubbed node_modules could hide — so an exited
+ * process is reported with its stderr instead of being waited out.
+ */
+async function boot(script: string, port: number, env: Record<string, string>): Promise<Booted> {
+  const proc = Bun.spawn(["bun", script], {
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // Held, not awaited: this resolves only when the process exits, so awaiting
+  // it on a healthy server would hang the test forever.
+  const stderr = new Response(proc.stderr as ReadableStream).text();
+  const name = path.basename(script);
+  const base = `http://127.0.0.1:${port}`;
+  // Comfortably under the per-test timeout the two cases below pass to bun.
+  // With the default 5s the harness gave up first and reported a bare "timed
+  // out", throwing away the bundle error that says what actually broke.
+  const deadline = Date.now() + BOOT_TIMEOUT_MS;
+
+  for (;;) {
+    if (proc.exitCode !== null) {
+      throw new Error(`${name} exited ${proc.exitCode} before listening:\n${await stderr}`);
+    }
+    try {
+      await fetch(base);
+      return { base, kill: () => proc.kill(), stderr: () => stderr };
+    } catch {
+      if (Date.now() > deadline) {
+        proc.kill();
+        // Empty stderr here and no exit code means it was still running: with
+        // the stubs removed, bun tries to auto-install the missing react from
+        // the registry and hangs rather than reporting a resolution failure.
+        throw new Error(`${name} never listened on ${port}:\n${await stderr}`);
+      }
+      await Bun.sleep(50);
+    }
+  }
+}
+
+/**
+ * Enough of react, react-dom/client and react-scan to bundle against.
+ *
+ * The emitted host imports all three (and the JSX runtime, which the analysed
+ * components pull in), none of which is a dependency of this repo. Installing
+ * them for real is the slow, network-bound work that was deliberately left out,
+ * and stubs are sufficient here because Bun.build only has to RESOLVE and
+ * bundle these — nothing executes them. The bundle is asserted on rather than
+ * merely the boot, because a stub that satisfies resolution can still leave a
+ * bundling failure invisible.
+ */
+async function writeReactStubs(suiteDir: string): Promise<void> {
+  const mod = (dir: string, files: Record<string, string>): Promise<unknown> =>
+    Promise.all(
+      Object.entries(files).map(([rel, body]) =>
+        Bun.write(path.join(suiteDir, "node_modules", dir, rel), body),
+      ),
+    );
+
+  const hooks =
+    "export const useState = (v) => [v, () => {}];\n" +
+    "export const useEffect = () => {};\n" +
+    "export const useMemo = (f) => f();\n" +
+    "export const useCallback = (f) => f;\n" +
+    "export const useRef = (v) => ({ current: v });\n" +
+    "export const createElement = () => null;\n" +
+    "export const Profiler = 'Profiler';\n" +
+    "export const Fragment = 'Fragment';\n";
+
+  await mod("react", {
+    "package.json": JSON.stringify({
+      name: "react",
+      version: "18.3.0",
+      exports: {
+        ".": "./index.js",
+        "./jsx-runtime": "./jsx-runtime.js",
+        "./jsx-dev-runtime": "./jsx-runtime.js",
+      },
+    }),
+    "index.js": `${hooks}export default { createElement, Profiler, Fragment };\n`,
+    "jsx-runtime.js":
+      "export const jsx = () => null;\nexport const jsxs = () => null;\n" +
+      "export const jsxDEV = () => null;\nexport const Fragment = 'Fragment';\n",
+  });
+
+  await mod("react-dom", {
+    "package.json": JSON.stringify({
+      name: "react-dom",
+      version: "18.3.0",
+      exports: { ".": "./index.js", "./client": "./client.js" },
+    }),
+    "index.js": "export default {};\n",
+    "client.js": "export const createRoot = () => ({ render: () => {}, unmount: () => {} });\n",
+  });
+
+  await mod("react-scan", {
+    "package.json": JSON.stringify({ name: "react-scan", version: "0.4.3", main: "index.js" }),
+    "index.js": "export const scan = () => {};\n",
+  });
+}
+
+/** Render a suite to disk and hand back its directory. */
+async function emitSuiteTo(opts: { mockRoutes?: MockRoute[] } = {}): Promise<string> {
+  const tree = await analyse({ entry: fixture("Card.tsx"), depth: 0, includeChildren: false });
+  const outDir = path.join(await tmpRoot(), "flawless");
+  const files = renderSuite({
+    tree,
+    outDir,
+    variants: 3,
+    report: false,
+    ...(opts.mockRoutes ? { mockRoutes: opts.mockRoutes } : {}),
+  });
+  await Promise.all(files.map((f) => Bun.write(path.join(outDir, f.relPath), f.content)));
+  return outDir;
+}
+
+describe("the emitted servers are started, not merely written", () => {
+  test(
+    "mock/server.ts answers the readiness probe and its compiled routes",
+    async () => {
+      // Hermetic: this one imports ./routes and nothing else.
+      const mockRoutes = extractRoutes(await loadApiSpec(fixture("_api.json")));
+      expect(mockRoutes.length).toBeGreaterThan(0);
+      const outDir = await emitSuiteTo({ mockRoutes });
+      const port = freePort();
+      const server = await boot(path.join(outDir, "mock", "server.ts"), port, {
+        MOCK_PORT: String(port),
+      });
+
+      try {
+        // Playwright's webServer probe rejects a 404, so "/" has to be a 200 —
+        // a mock server that only answered its routes would hang every run that
+        // waits on it.
+        const root = await fetch(server.base);
+        expect(root.status).toBe(200);
+
+        const list = await fetch(`${server.base}/api/users`);
+        expect(list.status).toBe(200);
+        expect(await list.json()).toEqual([{ id: 1, name: "Alice" }]);
+
+        // The templated path — /api/users/{id} only answers if compile() turned
+        // the OpenAPI template into a matcher rather than comparing it literally.
+        expect((await fetch(`${server.base}/api/users/7`)).status).toBe(200);
+        expect((await fetch(`${server.base}/api/users/7/nope`)).status).toBe(404);
+      } finally {
+        server.kill();
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  test(
+    "host/server.ts bundles the registry and serves it",
+    async () => {
+      const outDir = await emitSuiteTo();
+      await writeReactStubs(outDir);
+      const port = freePort();
+      const server = await boot(path.join(outDir, "host", "server.ts"), port, {
+        PORT: String(port),
+      });
+
+      try {
+        const page = await fetch(server.base);
+        expect(page.status).toBe(200);
+        expect(page.headers.get("content-type")).toContain("text/html");
+        expect(await page.text()).toContain('<div id="root">');
+
+        // The build is what matters: reaching this line proves Bun.build resolved
+        // the components AND the bare specifiers through the resolve-from-suite
+        // plugin, since the server throws "host bundle failed" otherwise.
+        const bundle = await fetch(`${server.base}/bundle.js`);
+        expect(bundle.status).toBe(200);
+        expect(bundle.headers.get("content-type")).toContain("javascript");
+        const js = await bundle.text();
+        expect(js).toContain("Card");
+        expect(js.length).toBeGreaterThan(500);
+
+        // msw is not installed, so the documented stub answers rather than the
+        // route falling through to the generic 404.
+        const sw = await fetch(`${server.base}/mockServiceWorker.js`);
+        expect(sw.status).toBe(404);
+        expect(await sw.text()).toContain("msw not installed");
+
+        expect((await fetch(`${server.base}/nothing-here`)).status).toBe(404);
+      } finally {
+        server.kill();
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
 });

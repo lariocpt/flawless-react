@@ -341,14 +341,31 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           "react-scan": "^0.4.3",
         },
         {
-          "flawless:unit": opts.colocate
-            ? `vitest run --config ${outRel}/vitest.config.ts`
-            : `vitest run --root ${outRel}`,
+          // Every one of these is gated on the task that emits what it points
+          // at. This block runs on EVERY --nextjs invocation, so declaring them
+          // unconditionally wrote `flawless:perf` — and unit, and browser — into
+          // the app's package.json after a `--tasks load` run that never emitted
+          // a playwright.config.ts or a profile/ for them to find. `bun run
+          // flawless:perf` then failed on a config the user never asked for and
+          // cannot produce without regenerating. Same defect as the standalone
+          // suite's missing `test:perf`, from the other direction: there the
+          // script was absent, here its target is.
+          ...(taskIds.includes("unit-browser")
+            ? {
+                "flawless:unit": opts.colocate
+                  ? `vitest run --config ${outRel}/vitest.config.ts`
+                  : `vitest run --root ${outRel}`,
+                "flawless:browser": `playwright test --config ${outRel}/browser/playwright.config.ts`,
+              }
+            : {}),
           // --project=chromium, not both: the config also defines a headed
           // "interactive" project for manual debugging, and without this every
           // spec runs twice — once invisibly in a window nobody is watching.
-          "flawless:perf": `playwright test --config ${outRel}/playwright.config.ts --project=chromium ${outRel}/profile`,
-          "flawless:browser": `playwright test --config ${outRel}/browser/playwright.config.ts`,
+          ...(taskIds.includes("perf-harness")
+            ? {
+                "flawless:perf": `playwright test --config ${outRel}/playwright.config.ts --project=chromium ${outRel}/profile`,
+              }
+            : {}),
           ...(taskIds.includes("e2e")
             ? {
                 "flawless:e2e": `playwright test --config ${outRel}/e2e/playwright.config.ts`,

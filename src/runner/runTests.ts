@@ -38,7 +38,11 @@ export async function runGeneratedTests(
       scripts.push({ id: "unit", cmd: script("test:unit") });
     if (selectedTasks.includes("perf-harness"))
       scripts.push({ id: "perf", cmd: script("test:perf") });
-    if (selectedTasks.includes("unit-browser"))
+    // Browser specs are rendered only when perf-harness is in the run (they
+    // mount through its host), so the script only exists then. runAffectedTests
+    // already required both; this path asked for unit-browser alone and invoked
+    // a script that had not been written.
+    if (selectedTasks.includes("unit-browser") && selectedTasks.includes("perf-harness"))
       scripts.push({ id: "browser", cmd: script("test:browser") });
   } else {
     if (selectedTasks.includes("unit-browser"))

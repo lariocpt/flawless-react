@@ -79,6 +79,23 @@ describe("renderSuite", () => {
     const files = renderSuite({ tree, outDir: out, variants: 3, report: true });
     expect(files.some((f) => f.relPath === "scripts/report.mjs")).toBe(true);
   });
+
+  test("the emitted tsconfig type-checks every emitted directory of TypeScript", async () => {
+    // mock/ was outside `include`, so `bunx tsc --noEmit` inside a generated
+    // suite checked everything except the server the README tells you to run.
+    const tree = await analyse({ entry: DASHBOARD, depth: 0, includeChildren: false });
+    const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: false });
+    const tsconfig = files.find((f) => f.relPath === "tsconfig.json");
+    expect(tsconfig).toBeDefined();
+    const { include } = JSON.parse(tsconfig?.content ?? "{}") as { include: string[] };
+
+    expect(include).toContain("mock/**/*");
+    expect(include).toContain("host/**/*");
+    expect(include).toContain("profile/**/*");
+    // scripts/ stays out on purpose: it holds one .mjs, and tsc ignores JS
+    // without allowJs, so the glob would look like coverage and give none.
+    expect(include).not.toContain("scripts/**/*");
+  });
 });
 
 describe("renderSuite with --provider", () => {

@@ -48,13 +48,13 @@ export async function scaffoldUnitBrowser(
   }
 
   if (!opts.skipInnerPackageJson) {
-    await mergePackageJson(outDir);
+    await mergePackageJson(outDir, opts.browserSpecs !== false);
     written.push(path.join(outDir, "package.json"));
   }
   return { written, skipped };
 }
 
-async function mergePackageJson(outDir: string): Promise<void> {
+async function mergePackageJson(outDir: string, withBrowser: boolean): Promise<void> {
   const pkgPath = path.join(outDir, "package.json");
   type Pkg = {
     name?: string;
@@ -86,11 +86,21 @@ async function mergePackageJson(outDir: string): Promise<void> {
   pkg.scripts = {
     ...(pkg.scripts ?? {}),
     "test:unit": "vitest run",
-    // profile/, not tests/: the profile specs were moved and this path filter
-    // was not, so `bun run test:perf` selected nothing and --run-tests reported
-    // a correct suite as failing.
-    "test:perf": "playwright test profile",
-    "test:browser": "playwright test --config browser/playwright.config.ts",
+    // Both of these need the perf-harness half of the run: browser/ is only
+    // rendered when browserSpecs is on, and profile/ belongs to perf-harness
+    // entirely. Declared unconditionally, `--tasks unit-browser` wrote two
+    // scripts pointing at directories that run never created — and --run-tests
+    // then invoked test:browser and reported a correct suite as failing, which
+    // is the same failure d47abbe fixed from the other side.
+    ...(withBrowser
+      ? {
+          // profile/, not tests/: the profile specs were moved and this path
+          // filter was not, so `bun run test:perf` selected nothing and
+          // --run-tests reported a correct suite as failing.
+          "test:perf": "playwright test profile",
+          "test:browser": "playwright test --config browser/playwright.config.ts",
+        }
+      : {}),
   };
 
   pkg.dependencies = {

@@ -261,7 +261,13 @@ function tsConfig(): string {
         noEmit: true,
         resolveJsonModule: true,
       },
-      include: ["host/**/*", "profile/**/*", "playwright.config.ts"],
+      // mock/ is emitted TypeScript like the rest and was outside this list, so
+      // `bunx tsc --noEmit` inside a generated suite type-checked everything
+      // except the server it tells you to run. scripts/ is deliberately still
+      // out: it holds one .mjs, and tsc ignores JS without allowJs/checkJs, so
+      // the glob would look like coverage and give none — that file is covered
+      // by running it under node in tests/emittedExecution.test.ts instead.
+      include: ["host/**/*", "profile/**/*", "mock/**/*", "playwright.config.ts"],
     },
     null,
     2,
