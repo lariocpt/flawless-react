@@ -1052,7 +1052,8 @@ function spec(c: FlatComponent, variants: number): string {
       { timeout: 30_000 },
     );
     console.log(\`[\${NAME} stress] \${__clicks} click(s) landed before the target went away\`);
-  });`
+  });
+});`
     : `test(\`\${NAME}: stress-click-rerender x 50\`, () => {
   test.skip(true, ${JSON.stringify(targetedClick.reason ?? "no clickable target could be derived")});
 });`;
@@ -1144,10 +1145,10 @@ test(\`\${NAME}: forced rerender x \${${forcedIterations}}\`, async ({ page }, t
 // snapshots are always attached so a leak diff can be opened in Chrome DevTools
 // (Memory tab → load → Comparison view).
 ${stressScenario}
-  // takeHeapSnapshot is exported so future analyses (e.g. byte-delta asserts)
-  // can call it directly without bracketScenario.
-  void takeHeapSnapshot;
-});
+
+// takeHeapSnapshot is exported so future analyses (e.g. byte-delta asserts) can
+// call it directly without bracketScenario.
+void takeHeapSnapshot;
 `;
 }
 
