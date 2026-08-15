@@ -523,7 +523,8 @@ function loadEnvScript(): string {
 #
 # Exports LOAD_<PARAM> for every id in flawless/e2e/params.json, so the load
 # pipes and the e2e specs cannot disagree about which records they target.
-# LOAD_BASE and LOAD_AUTH are yours to set; see README.md.
+# Do not edit: this file is regenerated on every run. Set LOAD_BASE and
+# LOAD_AUTH in your shell (or a .env you source alongside this); see README.md.
 set -a
 # Locate params.json without depending on which shell sourced this file. The
 # shebang above does NOT apply to a sourced script, so \${BASH_SOURCE[0]} is

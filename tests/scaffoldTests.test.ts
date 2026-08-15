@@ -106,7 +106,7 @@ describe("scaffoldUnitBrowser inner package.json", () => {
     const pkg = readJson(path.join(outDir, "package.json"));
     const scripts = pkg.scripts as Record<string, string>;
     expect(scripts["test:unit"]).toBe("vitest run");
-    expect(scripts["test:perf"]).toBe("playwright test tests/");
+    expect(scripts["test:perf"]).toBe("playwright test profile");
     expect(scripts["test:browser"]).toBe("playwright test --config browser/playwright.config.ts");
     expect(pkg.name).toBe("flawless-suite");
     expect(pkg.private).toBe(true);

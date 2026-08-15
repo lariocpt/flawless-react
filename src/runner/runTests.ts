@@ -45,6 +45,11 @@ export async function runGeneratedTests(
       scripts.push({ id: "unit", cmd: script("flawless:unit") });
     if (selectedTasks.includes("perf-harness"))
       scripts.push({ id: "perf", cmd: script("flawless:perf") });
+    // The browser suite was written into package.json (core.ts) and then never
+    // run, so --run-tests generated browser specs, skipped them, and reported
+    // "all generated suites passed". The --changed path already ran it.
+    if (selectedTasks.includes("unit-browser"))
+      scripts.push({ id: "browser", cmd: script("flawless:browser") });
     if (selectedTasks.includes("e2e")) scripts.push({ id: "e2e", cmd: script("flawless:e2e") });
   }
 

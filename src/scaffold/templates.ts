@@ -215,6 +215,11 @@ function pkgJson(name: string): string {
       type: "module",
       scripts: {
         test: "playwright test",
+        // Same command under the name --run-tests looks for. Without it, a
+        // standalone perf-harness run with --run-tests reported "failed suites:
+        // perf" on a suite that was fine, because `bun run test:perf` did not
+        // exist — the key is only added when unit-browser also ran.
+        "test:perf": "playwright test",
         "test:headed": "playwright test --project=interactive",
         report: "node ./scripts/report.mjs",
       },

@@ -450,3 +450,48 @@ describe("the perf harness respects --force and protects what it cannot rebuild"
     expect(existsSync(path.join(outDir, "host/main.tsx"))).toBe(true);
   });
 });
+
+describe("generated prose is refreshed, generated data is not", () => {
+  // The criterion docs/extending.md states: a file is protected when its
+  // contents cannot be recovered if lost. These four hold nothing of the user's,
+  // and freezing them is what stranded load/README.md behind its own fixes.
+  test("--force refreshes e2e/README.md", async () => {
+    const nextjs = nextProject("next dev");
+    writePage(nextjs, "dashboard");
+    const outDir = tmp("e2e-readme");
+    const base = { outDir, nextjs, trees: [] as ComponentTree[] };
+
+    await task("e2e").run(ctxOf(base));
+    const readme = path.join(outDir, "e2e", "README.md");
+    writeFileSync(readme, "stale\n");
+
+    await task("e2e").run(ctxOf({ ...base, force: true }));
+    expect(readFileSync(readme, "utf8")).not.toBe("stale\n");
+  });
+
+  test("without --force it is still left alone", async () => {
+    const nextjs = nextProject("next dev");
+    writePage(nextjs, "dashboard");
+    const outDir = tmp("e2e-readme-keep");
+    const base = { outDir, nextjs, trees: [] as ComponentTree[] };
+
+    await task("e2e").run(ctxOf(base));
+    const readme = path.join(outDir, "e2e", "README.md");
+    writeFileSync(readme, "mine\n");
+
+    await task("e2e").run(ctxOf(base));
+    expect(readFileSync(readme, "utf8")).toBe("mine\n");
+  });
+
+  test("env.sh says not to edit it, because nothing stops it being overwritten", async () => {
+    // It is written with no gate at all, while its own body used to say
+    // "LOAD_BASE and LOAD_AUTH are yours to set" — inviting edits into a file
+    // rewritten on every run.
+    const nextjs = nextProject("next dev -p 3001");
+    const outDir = tmp("env-sh");
+    await task("load").run(ctxOf({ outDir, nextjs, trees: [] }));
+    const env = readFileSync(path.join(outDir, "load", "env.sh"), "utf8");
+    expect(env).toContain("Do not edit");
+    expect(env).not.toContain("yours to set");
+  });
+});

@@ -65,8 +65,11 @@ export const e2eRoutes: Task = {
     await Bun.write(paramsHelperPath, paramsHelper());
     written.push(paramsHelperPath);
 
+    // Refreshed by --force, like load/README.md beside it: generated prose with
+    // nothing of yours in it, and freezing it means an existing suite never
+    // learns what a later version worked out.
     const readmePath = path.join(e2eDir, "README.md");
-    if (!existsSync(readmePath)) {
+    if (!existsSync(readmePath) || ctx.force) {
       await Bun.write(readmePath, e2eReadme(port));
       written.push(readmePath);
     }

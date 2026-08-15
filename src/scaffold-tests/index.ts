@@ -86,7 +86,10 @@ async function mergePackageJson(outDir: string): Promise<void> {
   pkg.scripts = {
     ...(pkg.scripts ?? {}),
     "test:unit": "vitest run",
-    "test:perf": "playwright test tests/",
+    // profile/, not tests/: the profile specs were moved and this path filter
+    // was not, so `bun run test:perf` selected nothing and --run-tests reported
+    // a correct suite as failing.
+    "test:perf": "playwright test profile",
     "test:browser": "playwright test --config browser/playwright.config.ts",
   };
 

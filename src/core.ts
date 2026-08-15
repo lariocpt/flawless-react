@@ -319,11 +319,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const nextjsWritten: string[] = [];
   if (nextCtx) {
     try {
-      const nm = await emitNextjsMocks(nextCtx, outDir, { liveSpec });
+      const nm = await emitNextjsMocks(nextCtx, outDir, { liveSpec, force: opts.force });
       nextjsWritten.push(...nm.written, nm.swaggerPath);
       log(
         `nextjs: wrote ${nm.written.length} mock file(s) under ${path.relative(process.cwd(), outDir)}/mocks/`,
       );
+      // POSIX separators, like every other emitted path (loadPipes.ts,
+      // scaffold/templates.ts, scaffold-tests/mocks.ts). These land in a file;
+      // the rest of path.relative's uses in this file are log lines.
+      const outRel = path.relative(nextCtx.root, outDir).split(path.sep).join("/");
       await mergeIntoNextPackageJson(
         nextCtx.root,
         {},
@@ -339,21 +343,21 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         },
         {
           "flawless:unit": opts.colocate
-            ? `vitest run --config ${path.relative(nextCtx.root, outDir)}/vitest.config.ts`
-            : `vitest run --root ${path.relative(nextCtx.root, outDir)}`,
+            ? `vitest run --config ${outRel}/vitest.config.ts`
+            : `vitest run --root ${outRel}`,
           // --project=chromium, not both: the config also defines a headed
           // "interactive" project for manual debugging, and without this every
           // spec runs twice — once invisibly in a window nobody is watching.
-          "flawless:perf": `playwright test --config ${path.relative(nextCtx.root, outDir)}/playwright.config.ts --project=chromium ${path.relative(nextCtx.root, outDir)}/profile`,
-          "flawless:browser": `playwright test --config ${path.relative(nextCtx.root, outDir)}/browser/playwright.config.ts`,
+          "flawless:perf": `playwright test --config ${outRel}/playwright.config.ts --project=chromium ${outRel}/profile`,
+          "flawless:browser": `playwright test --config ${outRel}/browser/playwright.config.ts`,
           ...(taskIds.includes("e2e")
             ? {
-                "flawless:e2e": `playwright test --config ${path.relative(nextCtx.root, outDir)}/e2e/playwright.config.ts`,
+                "flawless:e2e": `playwright test --config ${outRel}/e2e/playwright.config.ts`,
               }
             : {}),
           ...(taskIds.includes("load")
             ? {
-                "flawless:load": `crust -c 'test-pipes --target ${path.relative(nextCtx.root, outDir)}/load/routes.pipes --timeout 60000'`,
+                "flawless:load": `crust -c 'test-pipes --target ${outRel}/load/routes.pipes --timeout 60000'`,
               }
             : {}),
         },

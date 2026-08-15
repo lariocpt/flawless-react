@@ -14,6 +14,14 @@ export interface EmitNextjsResult {
 export interface EmitNextjsOptions {
   /** When present, written verbatim to swagger.json instead of buildSwagger(routes). */
   liveSpec?: unknown;
+  /**
+   * Refresh the generated files here that hold nothing of the user's.
+   *
+   * handlers.ts stays protected either way — its bodies are yours to fill in.
+   * browser.ts, node.ts and the README are boilerplate, and freezing them meant
+   * an existing suite could never receive a later version's fix.
+   */
+  force?: boolean;
 }
 
 export async function emitNextjsMocks(
@@ -42,17 +50,17 @@ export async function emitNextjsMocks(
     written.push(handlersPath);
   }
 
-  if (!existsSync(browserPath)) {
+  if (!existsSync(browserPath) || opts.force) {
     await Bun.write(browserPath, renderBrowserSetup());
     written.push(browserPath);
   }
 
-  if (!existsSync(nodePath)) {
+  if (!existsSync(nodePath) || opts.force) {
     await Bun.write(nodePath, renderNodeSetup());
     written.push(nodePath);
   }
 
-  if (!existsSync(readmePath)) {
+  if (!existsSync(readmePath) || opts.force) {
     await Bun.write(readmePath, renderMocksReadme(ctx));
     written.push(readmePath);
   }
