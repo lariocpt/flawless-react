@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
+import { ensureParamDefaults } from "./e2eRoutes.ts";
 
 /**
  * Emit-only crust load pipes: page routes plus the API routes the analysed
@@ -34,10 +35,25 @@ export const loadPipes: Task = {
     const routerRoot = findRouterRoot(ctx.nextjs.root);
     const targets = collectTargets(ctx.trees, ctx.nextjs.router, routerRoot);
 
+    // Every id these pipes reference gets a slot in params.json, including the
+    // API-route ones the e2e task never sees (/api/buildings/[buildingId] beside
+    // the page's /dashboard/buildings/[id]). Without the slot there is nowhere
+    // to put the value, and the pipe silently requests a malformed URL.
+    const paramsPath = path.join(ctx.outDir, "e2e", "params.json");
+    const needed = [...new Set(targets.flatMap((t) => t.params))].sort();
+    if (await ensureParamDefaults(paramsPath, needed)) written.push(paramsPath);
+
+    // Which ids the user has actually filled in. A pipe whose parameters are
+    // blank does not measure the route, it measures the app's 404 handler —
+    // GET /invite/ with an empty token answered 500 on every one of 500
+    // requests and was reported as the route failing. Silence is worse than a
+    // comment: this way the file itself says which id is missing.
+    const filled = await readFilledParams(paramsPath);
+
     const pipesPath = path.join(loadDir, "routes.pipes");
     let keptPipes = false;
     if (!existsSync(pipesPath) || ctx.force) {
-      await Bun.write(pipesPath, renderPipes(targets, ctx.outDir, ctx.nextjs.root));
+      await Bun.write(pipesPath, renderPipes(targets, ctx.outDir, ctx.nextjs.root, filled));
       written.push(pipesPath);
     } else {
       keptPipes = true;
@@ -72,6 +88,14 @@ interface LoadTarget {
   name: string;
   /** URL path with $VARS for dynamic segments. */
   urlPath: string;
+  /**
+   * The dynamic segments this target needs, in the casing the source used.
+   *
+   * $LOAD_BUILDINGID cannot be turned back into `buildingId` — the shouting is
+   * lossy — and params.json is keyed by the source name. Deriving the key from
+   * the variable added a second, lowercased slot beside every existing one.
+   */
+  params: string[];
 }
 
 /** crust installed as a project dependency (bun run resolves node_modules/.bin). */
@@ -92,10 +116,10 @@ function collectTargets(
 ): LoadTarget[] {
   const out: LoadTarget[] = [];
   const seen = new Set<string>();
-  const add = (name: string, urlPath: string): void => {
+  const add = (name: string, urlPath: string, params: string[]): void => {
     if (seen.has(urlPath)) return;
     seen.add(urlPath);
-    out.push({ name, urlPath });
+    out.push({ name, urlPath, params });
   };
 
   for (const tree of trees) {
@@ -106,7 +130,7 @@ function collectTargets(
         p = p.replace(`[...${param}]`, `$LOAD_${param.toUpperCase()}`);
         p = p.replace(`[${param}]`, `$LOAD_${param.toUpperCase()}`);
       }
-      add(route.specStem, p);
+      add(route.specStem, p, route.params);
     }
     // API routes the UI actually calls (GET only — load-testing mutations by
     // default would write junk into the target DB).
@@ -117,7 +141,7 @@ function collectTargets(
         for (const hole of f.holes) {
           p = p.replace(`:${hole}`, `$LOAD_${hole.toUpperCase()}`);
         }
-        add(slugify(p), p);
+        add(slugify(p), p, f.holes);
       }
       for (const c of t.children) walk(c);
     };
@@ -135,15 +159,61 @@ function slugify(p: string): string {
   );
 }
 
-function renderPipes(targets: LoadTarget[], outDir: string, nextRoot: string): string {
+/**
+ * The ids in e2e/params.json that hold a value.
+ *
+ * Written by the e2e task earlier in the same run, and merge-preserving across
+ * runs, so by the time load renders its pipes this is exactly the set of
+ * fixtures the user has supplied.
+ */
+async function readFilledParams(paramsPath: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!existsSync(paramsPath)) return out;
+  try {
+    const parsed = (await Bun.file(paramsPath).json()) as {
+      defaults?: Record<string, string>;
+      routes?: Record<string, Record<string, string>>;
+    };
+    for (const [k, v] of Object.entries(parsed.defaults ?? {})) {
+      if (typeof v === "string" && v !== "") out.add(k.toUpperCase());
+    }
+    for (const route of Object.values(parsed.routes ?? {})) {
+      for (const [k, v] of Object.entries(route)) {
+        if (typeof v === "string" && v !== "") out.add(k.toUpperCase());
+      }
+    }
+  } catch {
+    // Unreadable params.json: emit every pipe and let the run report the truth,
+    // rather than commenting out the whole file over a parse error.
+  }
+  return out;
+}
+
+function renderPipes(
+  targets: LoadTarget[],
+  outDir: string,
+  nextRoot: string,
+  filled: Set<string>,
+): string {
   const rel = path.relative(nextRoot, outDir).split(path.sep).join("/");
   const lines = targets.map((t) => {
     const statsOut = `${rel}/load/last-${t.name}.json`;
     const baseline = `${rel}/load/baseline-${t.name}.json`;
-    return (
+    const pipe =
       `load 10s 50/s | parallel 16 | GET $LOAD_BASE${t.urlPath} -H "$LOAD_AUTH" --timeout 2s | expect 200 ` +
       `| stats --out ${statsOut} ` +
-      `| assert (async s => { const b = Bun.file("${baseline}"); return !(await b.exists()) || s.p95 < 2 * (await b.json()).summary.p95 })`
+      `| assert (async s => { const b = Bun.file("${baseline}"); return !(await b.exists()) || s.p95 < 2 * (await b.json()).summary.p95 })`;
+    // Compared in upper case, reported in the source's: `filled` is keyed by
+    // the shouting form the pipe uses, but the fix a reader has to make is in
+    // params.json, which is keyed by the name as written.
+    const missing = t.params.filter((p) => !filled.has(p.toUpperCase()));
+    if (missing.length === 0) return pipe;
+    // Commented out rather than dropped: the route is still visible, and filling
+    // the id in e2e/params.json plus a --force regeneration turns it back on.
+    return (
+      `# TODO(flawless): no value for ${missing.map((m) => `LOAD_${m.toUpperCase()}`).join(", ")}. ` +
+      `Fill ${missing.map((m) => `"${m}"`).join(", ")} in ${rel}/e2e/params.json\n` +
+      `# ${pipe}`
     );
   });
   return `# flawless-react load pipes — generated from the analysed component tree.

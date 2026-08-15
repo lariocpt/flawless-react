@@ -331,6 +331,46 @@ async function writeParams(
   return true;
 }
 
+/**
+ * Add ids another task needs to `defaults`, without touching anything else.
+ *
+ * The load pipes cover API routes as well as pages, and an API route's segment
+ * is often named differently from the page's — `/api/buildings/[buildingId]`
+ * beside `/dashboard/buildings/[id]`. params.json only knew about the page
+ * ones, so `$LOAD_BUILDINGID` expanded to nothing, the URL had an empty segment,
+ * and 500 requests to a malformed path were reported as the route failing.
+ *
+ * Additive only: existing values, route overrides and key order are preserved,
+ * so this is safe to call after writeParams in the same run and idempotent
+ * across runs.
+ */
+export async function ensureParamDefaults(file: string, names: string[]): Promise<boolean> {
+  if (names.length === 0 || !existsSync(file)) return false;
+  interface ParamsFile {
+    defaults: Record<string, string>;
+    routes: Record<string, Record<string, string>>;
+  }
+  let parsed: ParamsFile;
+  try {
+    parsed = JSON.parse(await readFile(file, "utf8")) as ParamsFile;
+  } catch {
+    return false;
+  }
+  const defaults = { ...(parsed.defaults ?? {}) };
+  let added = false;
+  for (const n of names) {
+    if (!(n in defaults)) {
+      defaults[n] = "";
+      added = true;
+    }
+  }
+  if (!added) return false;
+  const sorted: Record<string, string> = {};
+  for (const k of Object.keys(defaults).sort()) sorted[k] = defaults[k] as string;
+  await Bun.write(file, `${JSON.stringify({ ...parsed, defaults: sorted }, null, 2)}\n`);
+  return true;
+}
+
 function paramsHelper(): string {
   return `import params from "./params.json" with { type: "json" };
 
