@@ -289,7 +289,6 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     provider: providerOverride,
     apiSpec: opts.apiSpec,
     inlineSummary: opts.inlineSummary ?? true,
-    json: false,
     nextjs: nextCtx,
     colocate: opts.colocate ?? false,
     selectedTasks: taskIds,
@@ -449,7 +448,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   if (!anyFailed && opts.changed !== undefined && runnableSelected) {
     const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
     const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
-    const affected = affectedSpecs(trees, files);
+    const affected = affectedSpecs(
+      trees,
+      files,
+      nextCtx ? { router: nextCtx.router, root: nextCtx.root } : undefined,
+    );
     log(
       `changed: ${affected.changedFiles.length} source file(s) → ${affected.components.length} component spec(s), ${affected.routes.length} route(s)` +
         (affected.withoutSpecs.length > 0

@@ -336,10 +336,28 @@ describe("renderUnitBrowser colocate", () => {
     // root back to the project — otherwise "src/**" resolves under flawless/
     // and the run reports "no tests" while looking perfectly correct.
     expect(cfg).toContain("root: projectRoot");
-    expect(cfg).toContain('path.join(projectRoot, "flawless/setup.ts")');
+    expect(cfg).toContain('path.join(configDir, "setup.ts")');
     expect(cfg).toContain(
       'include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
     );
+  });
+
+  test("colocate honours the out dir's own name, not the literal 'flawless'", () => {
+    // setupFiles and the unit include were hardcoded to "flawless/", so
+    // --colocate with the standalone default (.flawless) or any --out produced a
+    // config pointing at a setup file that does not exist, and vitest died at
+    // startup. tests/templatesUnit.test.ts pinned the literal, so it stayed.
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Card"))],
+      outDir: "/proj/.flawless",
+      variants: 3,
+      colocate: true,
+    });
+    const cfg = contentOf(files, "vitest.config.ts");
+    expect(cfg).toContain('".flawless/unit/**/*.test.{ts,tsx}"');
+    // Anchored to the config's own directory, so the name cannot drift again.
+    expect(cfg).toContain('path.join(configDir, "setup.ts")');
+    expect(cfg).not.toContain('"flawless/unit');
   });
 
   test("without colocate the unit specs stay under outDir", () => {

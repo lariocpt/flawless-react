@@ -334,6 +334,10 @@ export async function main(argv: string[]): Promise<void> {
       roots: args.roots,
       exclude: args.exclude,
       useDefaultExcludes: args.useDefaultExcludes,
+      // --json (and --ci, which implies it) asks for a machine-readable run, so
+      // the progress and finding lines have to stay off stdout or the blob is
+      // preceded by prose and the whole thing fails to parse.
+      log: !args.json,
       runTests: args.runTests || (wantInteractive && (await confirmRunTests())),
     });
   } catch (err) {
@@ -341,7 +345,7 @@ export async function main(argv: string[]): Promise<void> {
     process.exit(err instanceof UsageError ? 2 : 1);
   }
 
-  printSummaryTable(result.results);
+  if (!args.json) printSummaryTable(result.results);
   if (args.json) {
     process.stdout.write(
       `${JSON.stringify({ outDir: result.outDir, results: result.results }, null, 2)}\n`,

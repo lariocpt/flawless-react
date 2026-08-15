@@ -21,11 +21,36 @@ describe("affectedSpecs", () => {
   test("a changed CHILD selects the page that renders it", async () => {
     // The relationship a path filter cannot see: the page's own file did not
     // change, but editing something it renders changes what the page produces.
-    const tree = await treeOf("Dashboard.tsx");
+    // Dashboard has real children; standing it at a page path is what makes it
+    // a route without needing a second multi-component fixture.
+    const page = fixture("nextapp/src/app/page.tsx");
+    const analysed = await treeOf("Dashboard.tsx");
+    const tree: ComponentTree = { ...analysed, entry: { ...analysed.entry, filePath: page } };
     const child = tree.children[0];
     expect(child).toBeDefined();
-    const affected = affectedSpecs([tree], [(child as ComponentTree).entry.filePath]);
-    expect(affected.routes).toContain(fixture("Dashboard.tsx"));
+    const affected = affectedSpecs([tree], [(child as ComponentTree).entry.filePath], {
+      router: "app",
+      root: fixture("nextapp"),
+    });
+    expect(affected.routes).toContain(page);
+  });
+
+  test("only real pages count as routes", async () => {
+    // Every affected tree used to be pushed into `routes`, so a leaf button in
+    // src/components counted the same as app/dashboard/page.tsx and the number
+    // in the `changed:` line was simply wrong.
+    const tree = await treeOf("Dashboard.tsx");
+    const affected = affectedSpecs([tree], [fixture("Dashboard.tsx")], {
+      router: "app",
+      root: fixture("nextapp"),
+    });
+    expect(affected.components).toContain("Dashboard");
+    expect(affected.routes).toEqual([]);
+  });
+
+  test("outside --nextjs there are no routes to narrow to", async () => {
+    const tree = await treeOf("Dashboard.tsx");
+    expect(affectedSpecs([tree], [fixture("Dashboard.tsx")]).routes).toEqual([]);
   });
 
   test("an unrelated change selects nothing", async () => {

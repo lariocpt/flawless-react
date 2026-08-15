@@ -492,7 +492,6 @@ export interface RunContext {
   provider: string | undefined;
   apiSpec: string | undefined;
   inlineSummary: boolean;
-  json: boolean;
   nextjs: NextjsContext | undefined;
   /** Emit unit specs next to the analysed source files instead of <outDir>/unit. */
   colocate?: boolean;
@@ -559,7 +558,6 @@ export interface NextjsApiRoute {
   path: string;
   methods: string[];
   file: string;
-  responseShape?: unknown;
   /** Per-method response body (from OpenAPI example/schema). */
   responseBodies?: Record<string, unknown>;
 }

@@ -46,7 +46,6 @@ function ctxOf(outDir: string, trees: ComponentTree[]): RunContext {
     provider: undefined,
     apiSpec: undefined,
     inlineSummary: false,
-    json: false,
     nextjs: undefined,
   };
 }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { findRouterRoot, pageFileToRoute } from "./nextjs/routes.ts";
 import { allocateSpecNames, flattenTrees } from "./scaffold-tests/registry.ts";
 import type { ComponentTree } from "./types.ts";
 
@@ -76,7 +77,19 @@ export async function findRepoRoot(from: string): Promise<string | undefined> {
  * `trees` must be the FULL analysis, not just the changed entries — the reverse
  * index below is the whole point, and it needs every page's children.
  */
-export function affectedSpecs(trees: ComponentTree[], changed: readonly string[]): AffectedSpecs {
+export function affectedSpecs(
+  trees: ComponentTree[],
+  changed: readonly string[],
+  /**
+   * Router context, so "route" means an actual page.
+   *
+   * Without it every affected tree was counted as a route — a leaf button in
+   * src/components counted the same as app/dashboard/page.tsx — and the number
+   * printed in the `changed:` line was simply wrong. Absent outside --nextjs,
+   * where there are no e2e routes to narrow to.
+   */
+  nextjs?: { router: "app" | "pages"; root: string },
+): AffectedSpecs {
   const changedSet = new Set(changed.map((f) => path.resolve(f)));
   const flat = flattenTrees(trees);
   const specNames = allocateSpecNames(flat);
@@ -98,8 +111,12 @@ export function affectedSpecs(trees: ComponentTree[], changed: readonly string[]
   // A page is affected when its tree renders a changed component anywhere,
   // which is not the same as the page's own file having changed.
   const routes: string[] = [];
-  for (const tree of trees) {
-    if (rendersAnyOf(tree, changedSet)) routes.push(tree.entry.filePath);
+  if (nextjs) {
+    const routerRoot = findRouterRoot(nextjs.root);
+    for (const tree of trees) {
+      if (!pageFileToRoute(tree.entry.filePath, nextjs.router, routerRoot)) continue;
+      if (rendersAnyOf(tree, changedSet)) routes.push(tree.entry.filePath);
+    }
   }
 
   return {

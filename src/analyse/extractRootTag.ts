@@ -34,24 +34,6 @@ export function extractRootTag(bodyNode: ts.Node, env: RenderEnv = emptyEnv()): 
   return everyReturnAgrees(bodyNode, root, tag) ? tag : undefined;
 }
 
-/**
- * The expression a component yields on its happy path: the last statement of
- * the body block when it is a `return`, or a concise arrow's body expression.
- *
- * Only the LAST statement counts. An earlier `if (!ready) return <Empty />` is a
- * guard path, and describing the component by it would describe a render the
- * spec's default props never produce.
- */
-export function happyPathReturnExpression(bodyNode: ts.Node): ts.Expression | undefined {
-  const fn = bodyNode as ts.FunctionLikeDeclaration;
-  const body = fn.body;
-  if (!body) return undefined;
-  if (!ts.isBlock(body)) return unwrapParens(body);
-  const last = body.statements.at(-1);
-  if (!last || !ts.isReturnStatement(last) || !last.expression) return undefined;
-  return unwrapParens(last.expression);
-}
-
 function unwrapParens(expr: ts.Expression): ts.Expression {
   let current = expr;
   while (ts.isParenthesizedExpression(current)) current = current.expression;

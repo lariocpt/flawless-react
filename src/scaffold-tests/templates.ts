@@ -206,9 +206,15 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
   const aliasBlock = aliasLines.length > 0 ? `    alias: [\n${aliasLines}\n    ],\n` : "";
   const resolveBlock = `  resolve: {\n${dedupeLine}${aliasBlock}  },\n`;
   if (opts.colocate) {
-    // Colocate mode runs as `vitest run --config flawless/vitest.config.ts`.
+    // Colocate mode runs as `vitest run --config <out>/vitest.config.ts`.
     // Vite roots itself at the CONFIG file's directory, so without an explicit
-    // root the include globs resolve under flawless/ and match nothing.
+    // root the include globs resolve under <out>/ and match nothing.
+    //
+    // The out dir's own name, not the literal "flawless": setupFiles and the
+    // unit include were hardcoded to it, so --colocate with the standalone
+    // default (.flawless) or any --out pointed vitest at a setup file that does
+    // not exist, and it died at startup.
+    const outName = path.basename(opts.outDir);
     return `import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
@@ -220,8 +226,8 @@ export default defineConfig({
   root: projectRoot,
 ${resolveBlock}  test: {
     environment: "jsdom",
-    setupFiles: [path.join(projectRoot, "flawless/setup.ts")],
-    include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"],
+    setupFiles: [path.join(configDir, "setup.ts")],
+    include: ["src/**/*.flawless.test.{ts,tsx}", "${outName}/unit/**/*.test.{ts,tsx}"],
     globals: true,
   },
 });

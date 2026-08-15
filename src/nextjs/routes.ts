@@ -62,10 +62,16 @@ export function pageFileToRoute(
   return { urlPath: urlPath === "/" ? "/" : urlPath, params, specStem };
 }
 
-/** Parse the port from a Next.js dev script ("next dev -p 3001" → 3001). */
+/**
+ * Parse the port from a Next.js dev script ("next dev -p 3001" → 3001).
+ *
+ * The separator is optional after `-p`, and `PORT=` is the other common form.
+ * Both used to fall through to 3000, and the emitted e2e config then waited out
+ * its full 120s webServer timeout on a URL nobody was serving.
+ */
 export function devScriptPort(devScript: string | undefined): number {
   if (!devScript) return 3000;
-  const m = devScript.match(/(?:-p|--port)[=\s]+(\d+)/);
+  const m = devScript.match(/(?:-p|--port)[=\s]*(\d+)/) ?? devScript.match(/\bPORT=(\d+)/);
   const port = m?.[1] ? Number(m[1]) : Number.NaN;
   return Number.isFinite(port) ? port : 3000;
 }

@@ -125,6 +125,10 @@ describe("devScriptPort", () => {
     expect(devScriptPort(pkg.scripts?.dev)).toBe(3123);
     expect(devScriptPort("next dev")).toBe(3000);
     expect(devScriptPort(undefined)).toBe(3000);
+    // Both of these used to fall through to 3000, and the emitted e2e config
+    // then waited out its full 120s webServer timeout on a port nobody served.
+    expect(devScriptPort("next dev -p3001")).toBe(3001);
+    expect(devScriptPort("PORT=4100 next dev")).toBe(4100);
     expect(devScriptPort("next dev --port=4000")).toBe(4000);
   });
 });

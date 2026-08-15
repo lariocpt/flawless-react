@@ -56,7 +56,6 @@ function ctxOf(over: Partial<RunContext> & { outDir: string }): RunContext {
     provider: undefined,
     apiSpec: undefined,
     inlineSummary: false,
-    json: false,
     nextjs: undefined,
     ...over,
   };
