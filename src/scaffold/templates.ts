@@ -8,7 +8,7 @@ import {
   synthesiseDefaults,
 } from "../scaffold-tests/registry.ts";
 import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
-import type { ComponentInfo, ComponentTree, MockRoute, PropsShape } from "../types.ts";
+import type { ComponentInfo, ComponentTree, HeapMode, MockRoute, PropsShape } from "../types.ts";
 
 const NL = "\n";
 
@@ -33,6 +33,8 @@ export interface RenderedFile {
 
 export interface RenderOptions {
   tree: ComponentTree;
+  /** How much of the V8 heap the emitted profile suite keeps. */
+  heaps?: HeapMode;
   extraTrees?: ComponentTree[];
   outDir: string;
   variants: number;
@@ -57,7 +59,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
     { relPath: "host/main.tsx", content: hostMain(flat, opts.providerImportPath, useMsw) },
     { relPath: "profile/_helpers.ts", content: helpers() },
-    { relPath: "profile/_heap.ts", content: heapHelper() },
+    { relPath: "profile/_heap.ts", content: heapHelper(opts.heaps ?? "stress") },
     { relPath: "budgets.json", content: budgets(flat, opts.variants) },
     {
       relPath: "README.md",
@@ -788,7 +790,7 @@ export function summarize(samples: number[]): {
 `;
 }
 
-function heapHelper(): string {
+function heapHelper(mode: HeapMode): string {
   return `import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CDPSession, Page, TestInfo } from "@playwright/test";
@@ -804,6 +806,16 @@ import type { CDPSession, Page, TestInfo } from "@playwright/test";
 const HEAPS_DIR = "heaps";
 
 /**
+ * How much of the heap this suite keeps, from --heaps at scaffold time.
+ *
+ * "off" skips the CDP capture entirely. That is not only about disk: a heap
+ * snapshot of a real app is tens of megabytes and takes real time, and one is
+ * taken either side of every scenario — an observer that costs more than the
+ * thing it observes, inside the measurement it is bracketing.
+ */
+const HEAP_MODE: "off" | "stress" | "all" = ${JSON.stringify(mode)};
+
+/**
  * A heap snapshot, or an empty buffer.
  *
  * Snapshots are diagnostics, not the measurement. Opening a CDP session can fail
@@ -813,6 +825,7 @@ const HEAPS_DIR = "heaps";
  * very tests it was added to observe. It warns and returns nothing instead.
  */
 async function captureSnapshot(page: Page): Promise<Buffer> {
+  if (HEAP_MODE === "off") return Buffer.alloc(0);
   let session: CDPSession;
   try {
     session = await page.context().newCDPSession(page);
@@ -901,7 +914,9 @@ export async function bracketScenario(
   const after = await captureSnapshot(page);
   const failed = threw !== undefined;
   const isStress = name.startsWith("stress-");
-  if (failed || isStress) {
+  const keep =
+    HEAP_MODE !== "off" && (HEAP_MODE === "all" || failed || isStress) && after.byteLength > 0;
+  if (keep) {
     const bp = await persistSnapshot(before, \`\${name}-before\`, testInfo);
     const ap = await persistSnapshot(after, \`\${name}-after\`, testInfo);
     const delta = after.byteLength - before.byteLength;
@@ -953,7 +968,94 @@ function spec(c: FlatComponent, variants: number): string {
     // control, and clicking it runs an action — against a stubbed server action
     // in a host with no backend, which is not a render measurement.
     !(hasForm && !hasAnalysedClick);
-  const clickButtonExpr = targetedClick ?? `page.locator("button").first()`;
+  // No blind fallback. `page.locator("button").first()` claims the first button
+  // is the one the analysis found a handler on — true only when there is one
+  // button, and in VoteCard it resolved to a disabled "Cast vote" while the
+  // handler belonged to a vote option. When nothing names the target, the
+  // scenario skips with the reason instead of clicking whatever is first.
+  const clickButtonExpr = targetedClick.locator || `page.locator("button").first()`;
+  const openDisclosure = targetedClick.prelude ? `\n  ${targetedClick.prelude}` : "";
+
+  // When nothing in the source names a clickable target, the scenario is a bare
+  // skip carrying the reason. Emitting the body anyway left a
+  // `page.locator("button").first()` in the file below an unconditional skip —
+  // unreachable, but it still reads as a claim about which button matters.
+  const clickScenario = targetedClick.locator
+    ? `test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
+  await mountComponent(page, NAME, DEFAULTS);${openDisclosure}
+  const button = ${clickButtonExpr};
+  const hasButton = (await button.count()) > 0;
+  test.skip(!hasButton, "component does not render a clickable target");
+  // A control that is disabled or covered is not a profiling failure; clicking
+  // it would just wait out the 30s actionability timeout and report the
+  // component as broken.
+  const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
+  test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
+  test.skip(
+    ${canRerender ? "false" : "true"},
+    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — a click cannot re-render this component"'},
+  );
+  await bracketScenario(page, "click-rerender", testInfo, async () => {
+    await clearScanEvents(page);
+    const before = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
+    await button.click();
+    await page.waitForFunction(
+      ([n, b]) => {
+        const v = window.__profile.getRenderInfo().renderCount as Record<string, { value: number } | undefined>;
+        return (v[n as string]?.value ?? 0) > (b as number);
+      },
+      [NAME, before],
+    );
+    const events = await getScanEvents(page);
+    if (events.length > 0) {
+      console.warn(\`[react-scan] \${NAME} click triggered \${events.length} unnecessary rerender(s)\`);
+    }
+  });
+});`
+    : `test(\`\${NAME}: click rerender\`, () => {
+  test.skip(true, ${JSON.stringify(targetedClick.reason ?? "no clickable target could be derived")});
+});`;
+  const stressScenario = targetedClick.locator
+    ? `test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
+  await mountComponent(page, NAME, DEFAULTS);${openDisclosure}
+  const button = ${clickButtonExpr};
+  const hasButton = (await button.count()) > 0;
+  test.skip(!hasButton, "component does not render a clickable target");
+  // A control that is disabled or covered is not a profiling failure; clicking
+  // it would just wait out the 30s actionability timeout and report the
+  // component as broken.
+  const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
+  test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
+  test.skip(
+    ${canRerender ? "false" : "true"},
+    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — 50 clicks cannot re-render this component"'},
+  );
+  await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
+    const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
+    // Stop when the control goes away. A "Remove" button in a list removes its
+    // own row, so it survives as many clicks as there are rows — and clicking a
+    // locator that no longer resolves waits out the whole timeout, reporting a
+    // working component as broken.
+    let __clicks = 0;
+    for (let __i = 0; __i < 50; __i++) {
+      if ((await button.count()) === 0 || !(await button.isEnabled())) break;
+      await button.click();
+      __clicks++;
+    }
+    test.skip(__clicks === 0, "the clickable target vanished before the first click");
+    await page.waitForFunction(
+      ([n, b]) => {
+        const v = window.__profile.getRenderInfo().renderCount as Record<string, { value: number } | undefined>;
+        return (v[n as string]?.value ?? 0) > (b as number);
+      },
+      [NAME, startCount],
+      { timeout: 30_000 },
+    );
+    console.log(\`[\${NAME} stress] \${__clicks} click(s) landed before the target went away\`);
+  });`
+    : `test(\`\${NAME}: stress-click-rerender x 50\`, () => {
+  test.skip(true, ${JSON.stringify(targetedClick.reason ?? "no clickable target could be derived")});
+});`;
 
   return `import { test, expect } from "@playwright/test";
 import budgets from "../budgets.json" with { type: "json" };
@@ -1016,37 +1118,7 @@ test(\`\${NAME}: variant matrix\`, async ({ page }, testInfo) => {
   });
 });
 
-test(\`\${NAME}: click rerender\`, async ({ page }, testInfo) => {
-  await mountComponent(page, NAME, DEFAULTS);
-  const button = ${clickButtonExpr};
-  const hasButton = (await button.count()) > 0;
-  test.skip(!hasButton, "component does not render a clickable target");
-  // A control that is disabled or covered is not a profiling failure; clicking
-  // it would just wait out the 30s actionability timeout and report the
-  // component as broken.
-  const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
-  test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
-  test.skip(
-    ${canRerender ? "false" : "true"},
-    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — a click cannot re-render this component"'},
-  );
-  await bracketScenario(page, "click-rerender", testInfo, async () => {
-    await clearScanEvents(page);
-    const before = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
-    await button.click();
-    await page.waitForFunction(
-      ([n, b]) => {
-        const v = window.__profile.getRenderInfo().renderCount as Record<string, { value: number } | undefined>;
-        return (v[n as string]?.value ?? 0) > (b as number);
-      },
-      [NAME, before],
-    );
-    const events = await getScanEvents(page);
-    if (events.length > 0) {
-      console.warn(\`[react-scan] \${NAME} click triggered \${events.length} unnecessary rerender(s)\`);
-    }
-  });
-});
+${clickScenario}
 
 test(\`\${NAME}: forced rerender x \${${forcedIterations}}\`, async ({ page }, testInfo) => {
   await mountComponent(page, NAME, DEFAULTS);
@@ -1071,43 +1143,7 @@ test(\`\${NAME}: forced rerender x \${${forcedIterations}}\`, async ({ page }, t
 // Repeat-N click stress: baseline snapshot, 50 clicks, final snapshot. Both
 // snapshots are always attached so a leak diff can be opened in Chrome DevTools
 // (Memory tab → load → Comparison view).
-test(\`\${NAME}: stress-click-rerender x 50\`, async ({ page }, testInfo) => {
-  await mountComponent(page, NAME, DEFAULTS);
-  const button = ${clickButtonExpr};
-  const hasButton = (await button.count()) > 0;
-  test.skip(!hasButton, "component does not render a clickable target");
-  // A control that is disabled or covered is not a profiling failure; clicking
-  // it would just wait out the 30s actionability timeout and report the
-  // component as broken.
-  const clickable = hasButton && (await button.isEnabled()) && (await button.isVisible());
-  test.skip(!clickable, "the clickable target is disabled or not visible at defaults");
-  test.skip(
-    ${canRerender ? "false" : "true"},
-    ${hasForm && !hasAnalysedClick ? '"the only clickable target is a form submit — not a render measurement"' : '"no state or handler prop — 50 clicks cannot re-render this component"'},
-  );
-  await bracketScenario(page, "stress-click-rerender", testInfo, async () => {
-    const startCount = (await getRenderInfo(page)).renderCount[NAME]?.value ?? 0;
-    // Stop when the control goes away. A "Remove" button in a list removes its
-    // own row, so it survives as many clicks as there are rows — and clicking a
-    // locator that no longer resolves waits out the whole timeout, reporting a
-    // working component as broken.
-    let __clicks = 0;
-    for (let __i = 0; __i < 50; __i++) {
-      if ((await button.count()) === 0 || !(await button.isEnabled())) break;
-      await button.click();
-      __clicks++;
-    }
-    test.skip(__clicks === 0, "the clickable target vanished before the first click");
-    await page.waitForFunction(
-      ([n, b]) => {
-        const v = window.__profile.getRenderInfo().renderCount as Record<string, { value: number } | undefined>;
-        return (v[n as string]?.value ?? 0) > (b as number);
-      },
-      [NAME, startCount],
-      { timeout: 30_000 },
-    );
-    console.log(\`[\${NAME} stress] \${__clicks} click(s) landed before the target went away\`);
-  });
+${stressScenario}
   // takeHeapSnapshot is exported so future analyses (e.g. byte-delta asserts)
   // can call it directly without bracketScenario.
   void takeHeapSnapshot;

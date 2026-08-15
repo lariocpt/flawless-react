@@ -23,6 +23,7 @@ export async function scaffold(tree: ComponentTree, opts: ScaffoldOptions): Prom
     suiteName: opts.suiteName,
     outDir,
     variants: opts.variants,
+    ...(opts.heaps ? { heaps: opts.heaps } : {}),
     report: opts.report,
     providerImportPath,
     mockRoutes,

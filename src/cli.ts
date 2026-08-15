@@ -2,7 +2,7 @@ import { runCore, UsageError } from "./core.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
 import { TASKS } from "./tasks/index.ts";
-import type { CliArgs, PropsShape, RootMode, TaskId } from "./types.ts";
+import type { CliArgs, HeapMode, PropsShape, RootMode, TaskId } from "./types.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `flawless-react — multi-task quality kit for React components
@@ -49,6 +49,9 @@ Options:
                          force a specific URL or skip the auto-try via --swagger-url=off.
   --depth N              Levels of locally-imported children to follow (default 3)
   --variants N           Variant rows per component (default 5)
+  --heaps MODE           V8 heap snapshots in the profile suite:
+                         off | stress (default) | all. A snapshot is tens of MB
+                         and one is taken either side of every scenario
   --include-children     Walk children (default true). Pass --include-children=false to skip.
   --props '<json>'       Override the synthesised default props for the first entry.
   --provider <file>      Path to a .tsx file default-exporting a Provider wrapper.
@@ -69,11 +72,18 @@ const VALID_TASK_IDS: ReadonlySet<TaskId> = new Set<TaskId>([
   "load",
 ]);
 
+/** A closed set, so a typo fails at the CLI rather than silently profiling everything. */
+function readHeapMode(raw: string | undefined): HeapMode {
+  if (raw === "off" || raw === "stress" || raw === "all") return raw;
+  throw new Error(`--heaps must be off, stress or all (got ${JSON.stringify(raw ?? "")})`);
+}
+
 export function parseArgs(argv: string[]): CliArgs {
   let entry: string | undefined;
   let out: string | undefined;
   let depth = 3;
   let variants = 5;
+  let heaps: HeapMode = "stress";
   let includeChildren = true;
   let force = false;
   let report = false;
@@ -107,6 +117,10 @@ export function parseArgs(argv: string[]): CliArgs {
       depth = Number(argv[++i] ?? "3");
     } else if (a.startsWith("--depth=")) {
       depth = Number(a.slice("--depth=".length));
+    } else if (a === "--heaps") {
+      heaps = readHeapMode(argv[++i]);
+    } else if (a.startsWith("--heaps=")) {
+      heaps = readHeapMode(a.slice("--heaps=".length));
     } else if (a === "--variants") {
       variants = Number(argv[++i] ?? "5");
     } else if (a.startsWith("--variants=")) {
@@ -214,6 +228,7 @@ export function parseArgs(argv: string[]): CliArgs {
     out,
     depth,
     variants,
+    heaps,
     includeChildren,
     force,
     report,
@@ -293,6 +308,7 @@ export async function main(argv: string[]): Promise<void> {
       taskIds,
       depth: args.depth,
       variants: args.variants,
+      heaps: args.heaps,
       includeChildren: args.includeChildren,
       force: args.force,
       report: args.report,

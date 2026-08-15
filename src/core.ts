@@ -17,6 +17,7 @@ import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { findTask } from "./tasks/index.ts";
 import type {
   ComponentTree,
+  HeapMode,
   NextjsApiRoute,
   NextjsContext,
   PropsShape,
@@ -37,6 +38,7 @@ export interface CoreOptions {
   taskIds?: TaskId[];
   depth?: number;
   variants?: number;
+  heaps?: HeapMode;
   includeChildren?: boolean;
   force?: boolean;
   report?: boolean;
@@ -210,6 +212,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     trees,
     outDir,
     variants: opts.variants ?? 5,
+    heaps: opts.heaps ?? "stress",
     force: opts.force ?? false,
     report: opts.report ?? false,
     provider: providerOverride,

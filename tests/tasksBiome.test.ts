@@ -40,6 +40,7 @@ function ctxOf(outDir: string, trees: ComponentTree[]): RunContext {
     trees,
     outDir,
     variants: 3,
+    heaps: "stress",
     force: false,
     report: false,
     provider: undefined,

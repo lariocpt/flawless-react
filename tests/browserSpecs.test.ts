@@ -119,7 +119,9 @@ describe("disabled controls never become a 30-second wait", () => {
     const browser = specs.get("browser/GatedSubmit.spec.ts") ?? "";
     expect(browser).toContain("'Pick A' #0 fires without error");
     // Not everything is a skip: the enabled button gets a real click.
-    expect(browser).toContain('page.getByRole("button", { name: "Pick A" }).first().click()');
+    expect(browser).toContain(
+      'page.getByRole("button", { name: "Pick A", exact: true }).first().click()',
+    );
   });
 
   test("an unknown operand does not make || or && unknown", async () => {
@@ -243,5 +245,29 @@ describe("function props the host has to supply", () => {
   test("a component with no callable props names none", async () => {
     const tree = await treeFor("TableParts.tsx");
     expect(functionProps(tree.entry)).toEqual([]);
+  });
+});
+
+describe("the profile suite no longer clicks whichever button is first", () => {
+  test("an unnameable target skips with the reason rather than guessing", async () => {
+    const { renderSuite } = await import("../src/scaffold/templates.ts");
+    const tree = await treeFor("AmbiguousTags.tsx");
+    const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: false });
+    const spec =
+      files.find((f) => f.relPath.endsWith("AmbiguousTags.profile.spec.ts"))?.content ?? "";
+    // page.locator("button").first() is the same guess that resolved to a
+    // disabled "Cast vote" while the handler belonged to a vote option.
+    expect(spec).not.toContain('page.locator("button").first()');
+    expect(spec).toContain("more than one <button> renders here");
+  });
+
+  test("a named target is still clicked", async () => {
+    const { renderSuite } = await import("../src/scaffold/templates.ts");
+    const tree = await treeFor("GatedSubmit.tsx");
+    const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: false });
+    const spec =
+      files.find((f) => f.relPath.endsWith("GatedSubmit.profile.spec.ts"))?.content ?? "";
+    expect(spec).toContain('name: "Pick A", exact: true');
+    expect(spec).not.toContain('page.locator("button").first()');
   });
 });

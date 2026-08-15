@@ -321,7 +321,9 @@ describe("renderUnitBrowser interaction-aware", () => {
     const spec = files.find((f) => f.relPath === "profile/Toolbar.profile.spec.ts");
     expect(spec).toBeDefined();
     const sc = spec?.content ?? "";
-    expect(sc).toContain('page.getByRole("button", { name: "Save" })');
+    // exact: true — Playwright's `name` is a case-insensitive substring match by
+    // default, so { name: "Save" } would also claim "Save and close".
+    expect(sc).toContain('page.getByRole("button", { name: "Save", exact: true })');
     // Legacy fallback should be gone for components that have interactions.
     expect(sc).not.toContain('page.locator("button").first()');
   });

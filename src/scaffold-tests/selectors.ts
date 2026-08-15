@@ -66,13 +66,18 @@ export function emitPlaywrightSelector(h: ClickHandler): string | undefined {
   const role = roleFor(h);
   if (role) {
     if (h.label.kind === "text") {
-      return `page.getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)} })`;
+      // exact: true for the same reason getByText needs it — Playwright's `name`
+      // is a case-insensitive SUBSTRING match by default, so { name: "Add" }
+      // also claims "Add member" and "Add building". Testing Library's
+      // equivalent defaults the other way, which is why the unit emitter says
+      // nothing here and this one has to.
+      return `page.getByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)}, exact: true })`;
     }
     if (h.label.kind === "text-partial") {
       return `page.getByRole(${JSON.stringify(role)}, { name: ${partialRegex(h.label.value)} })`;
     }
     if (h.label.kind === "prop") {
-      return `page.getByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })`;
+      return `page.getByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? ""), exact: true })`;
     }
   }
   if (h.hints.id) return `page.locator(${JSON.stringify(`#${h.hints.id}`)})`;
@@ -110,15 +115,49 @@ export function firstOf(locator: string): string {
  * violation: getByText('Remove') resolved to 2 elements" is a property of the
  * list, not a defect in the component being profiled.
  */
-export function emitPlaywrightClickTarget(info: InteractionInfo | undefined): string | undefined {
-  if (!info) return undefined;
+export interface ClickTarget {
+  /** Locator expression, already resolved to a single element. */
+  locator: string;
+  /** Statement that opens the disclosure this target lives behind, if any. */
+  prelude?: string;
+  /** Why no target could be derived, when `locator` is absent. */
+  reason?: string;
+}
+
+export function emitPlaywrightClickTarget(info: InteractionInfo | undefined): ClickTarget {
+  if (!info || info.clicks.length === 0) {
+    return { locator: "", reason: "the analyser found no click handler on this component" };
+  }
   // A disabled control never becomes clickable, and Playwright's actionability
   // wait runs to the test timeout before saying so.
   const target = info.clicks.find((c) => c.event === "onClick" && c.hints.disabled !== "always");
-  if (!target) return undefined;
+  if (!target) {
+    return { locator: "", reason: "every clickable target is disabled at these props" };
+  }
   const locator = emitPlaywrightSelector(target);
-  if (!locator) return undefined;
-  return firstOf(locator);
+  if (!locator) return { locator: "", reason: describeUnlocatable(target) };
+  // A menu item inside a portal does not exist until its trigger opens it. The
+  // unit and browser emitters learned this; the profile one clicked into an
+  // empty page and reported the component as having no clickable target.
+  const trigger = target.gatedBy ? emitPlaywrightDisclosure(target.gatedBy) : undefined;
+  return {
+    locator: firstOf(locator),
+    ...(trigger ? { prelude: `await ${firstOf(trigger)}.click();` } : {}),
+  };
+}
+
+/** Playwright form of a disclosure trigger. Shared by the browser and profile specs. */
+export function emitPlaywrightDisclosure(label: LabelSource): string | undefined {
+  switch (label.kind) {
+    case "testid":
+      return `page.getByTestId(${JSON.stringify(label.value)})`;
+    case "aria":
+      return `page.getByLabel(${JSON.stringify(label.value)})`;
+    case "text":
+      return `page.getByText(${JSON.stringify(label.value)}, { exact: true })`;
+    default:
+      return undefined;
+  }
 }
 
 /**

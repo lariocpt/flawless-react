@@ -26,6 +26,7 @@ export const perfHarness: Task = {
       extraTrees: rest,
       suiteName,
       variants: ctx.variants,
+      heaps: ctx.heaps,
       force: true,
       report: ctx.report,
       provider: ctx.provider,

@@ -50,6 +50,7 @@ function ctxOf(over: Partial<RunContext> & { outDir: string }): RunContext {
   return {
     trees: [],
     variants: 3,
+    heaps: "stress",
     force: false,
     report: false,
     provider: undefined,

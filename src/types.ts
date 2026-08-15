@@ -442,6 +442,7 @@ export interface MockRoute {
 export interface ScaffoldOptions {
   outDir: string;
   variants: number;
+  heaps?: HeapMode;
   force: boolean;
   report: boolean;
   provider: string | undefined;
@@ -484,6 +485,8 @@ export interface RunContext {
   trees: ComponentTree[];
   outDir: string;
   variants: number;
+  /** How much of the V8 heap the profile suite keeps; see HeapMode. */
+  heaps: HeapMode;
   force: boolean;
   report: boolean;
   provider: string | undefined;
@@ -505,11 +508,28 @@ export interface Task {
   run(ctx: RunContext): Promise<TaskResult>;
 }
 
+/**
+ * How much of the V8 heap the profiling suite keeps.
+ *
+ * A snapshot of a real app's heap is tens of megabytes, and the suite takes one
+ * before and after every scenario. The dogfood run left 566MB on disk and paid
+ * two full heap captures for every measurement it bracketed — an observer that
+ * costs more than the thing observed.
+ *
+ * - `off`    — no CDP capture at all. Fastest, and the measurements are the
+ *              component's rather than the component's plus a heap walk.
+ * - `stress` — capture always, persist on a failure or a stress scenario. The
+ *              default, and what the suite has always done.
+ * - `all`    — persist every scenario. For hunting a leak, not for CI.
+ */
+export type HeapMode = "off" | "stress" | "all";
+
 export interface CliArgs {
   entry: string | undefined;
   out: string | undefined;
   depth: number;
   variants: number;
+  heaps: HeapMode;
   includeChildren: boolean;
   force: boolean;
   report: boolean;
