@@ -432,6 +432,20 @@ function extractAssert(pipesText: string): string {
  * Evaluate it with a Bun whose `file()` resolves against a stand-in project
  * root — which also pins the emitted path as relative to the project root,
  * because that is the directory crust runs the pipes from.
+ *
+ * What this does and does not prove: the baseline file is written by this test,
+ * so it establishes that the assert is self-consistent, not that crust really
+ * produces that shape. The other half was checked by reading crust's source
+ * rather than running it — src/transforms.ts, where `stats --out` writes
+ * `{crustStats, startedAt, urls, summary}` (hence `.summary.p95` on the
+ * baseline) while the value passed downstream is the bare summary (hence
+ * `s.p95` on the live stats), and `summarize()` keys it `p95` even though its
+ * neighbours are `meanMs`/`wallMs`. In src/parser.ts the lambda is compiled
+ * with a bare `new Function` — so `Bun` comes off the global, which is there
+ * because crust runs under Bun — and awaited, so the async form here is not a
+ * permanently-true promise. crust also rejects a summary tagged `empty` before
+ * ever calling the lambda, so a pipe whose ids expanded to nothing cannot pass
+ * this gate on zero requests.
  */
 function baselineGate(src: string, projectRoot: string): (s: { p95: number }) => Promise<boolean> {
   const stub = { file: (p: string) => Bun.file(path.resolve(projectRoot, p)) };
