@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -110,6 +117,36 @@ async function toolbarInside(root: string): Promise<ComponentTree> {
   return analyse({ entry, depth: 0, includeChildren: false });
 }
 
+/**
+ * Every emitted unit spec is matched by at least one of the config's globs.
+ *
+ * Asserting the glob's TEXT — that it starts with the out dir, that it contains
+ * "unit" — passes for a glob that matches nothing, which is the failure worth
+ * catching: vitest then reports "no test files found" and a green run means the
+ * suite never executed. Globs are resolved against `root`, as vitest resolves
+ * them.
+ */
+function expectEverySpecSelected(globRoot: string, searchDirs: string[], globs: string[]): void {
+  const specs: string[] = [];
+  for (const dir of searchDirs) {
+    if (!existsSync(dir)) continue;
+    for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
+      if (!/\.test\.tsx?$/.test(rel)) continue;
+      specs.push(path.relative(globRoot, path.join(dir, rel)));
+    }
+  }
+  expect(specs.length, "the run emitted specs for the globs to select").toBeGreaterThan(0);
+
+  const matchers = globs.map((g) => new Bun.Glob(g));
+  for (const spec of specs) {
+    const posix = spec.split(path.sep).join("/");
+    expect(
+      matchers.some((m) => m.match(posix)),
+      `${posix} is selected by one of: ${globs.join(", ")}`,
+    ).toBe(true);
+  }
+}
+
 describe("the emitted vitest config resolves to files that exist", () => {
   test("setupFiles points at the setup.ts the same run wrote — under a NON-default out dir", async () => {
     // The bug: setupFiles was `path.join(projectRoot, "flawless/setup.ts")`, a
@@ -127,9 +164,11 @@ describe("the emitted vitest config resolves to files that exist", () => {
     expect(path.isAbsolute(test.setupFiles[0] as string)).toBe(true);
     expect(existsSync(test.setupFiles[0] as string), "setupFiles target exists").toBe(true);
     expect(cfg.root).toBe(root);
-    // The include glob has to name the real out dir too, or the unit specs are
-    // invisible to the run it configures.
-    expect(test.include.some((g) => g.startsWith(".flawless/"))).toBe(true);
+    // Run the globs, do not eyeball their prefix. `startsWith(".flawless/")`
+    // passes for a glob that selects nothing — the property is that every spec
+    // this run emitted is reachable from the config it emitted beside them.
+    // Colocate roots vitest at the project and writes specs beside the source.
+    expectEverySpecSelected(root, [path.join(root, "src"), outDir], test.include);
   });
 
   test("the default out dir resolves too, so the fix did not just move the hardcoding", async () => {
@@ -142,6 +181,24 @@ describe("the emitted vitest config resolves to files that exist", () => {
     const test = cfg.test as { setupFiles: string[] };
     expect(existsSync(test.setupFiles[0] as string)).toBe(true);
     expect(cfg.root).toBe(root);
+  });
+
+  test("without --colocate the globs still select the specs, which colocate never exercises", async () => {
+    // The two branches emit DIFFERENT include globs, and the colocate case above
+    // cannot reach this one: colocate writes specs beside the source, so
+    // `<out>/unit/**` matches nothing there and a break in it passes unnoticed.
+    // Found exactly that way — changing the glob to *.spec left the suite green.
+    const root = projectWithStubs();
+    const outDir = path.join(root, "flawless");
+    await run("unit-browser" as TaskId, ctxOf({ outDir, trees: [await toolbar()] }));
+
+    // .mts, not .ts: the non-colocate branch emits the ESM extension. The two
+    // branches differ in filename as well as content, which is itself a reason
+    // a check written against one of them proves nothing about the other.
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
+    const test = cfg.test as { include: string[] };
+    // No explicit root in this branch: vitest roots at the config's directory.
+    expectEverySpecSelected(outDir, [outDir], test.include);
   });
 
   test("every resolve alias points at a path that exists", async () => {
