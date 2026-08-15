@@ -177,6 +177,15 @@ them by hand when you have a safe target environment.
 Run: \`bun run flawless:load\` (crust must be installed — see the repo's crust
 setup or https://github.com/lariocpt/crust).
 
+Point \`LOAD_BASE\` at a PRODUCTION build — \`bun run build && bun run start\` —
+not at \`next dev\`. The dev server compiles routes on demand, so the first
+request to each one measures the compiler and every later one measures a warm
+cache; neither is the number you want. Source \`env.sh\` for the ids, and set
+\`LOAD_AUTH\` to a header line (\`cookie: session=…\`). Check that the header
+actually authenticates before trusting a run: an unauthenticated request to a
+dashboard route redirects to the login page, which answers 200, so the pipes
+pass while measuring nothing.
+
 Baselines: after a good run, copy \`last-<name>.json\` to \`baseline-<name>.json\`.
 Subsequent runs fail when p95 exceeds 2x the baseline.
 

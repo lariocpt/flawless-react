@@ -169,6 +169,17 @@ export function renderReportMarkdown(input: ReportInput): string {
     "- An early return this analysis cannot decide means the component may render",
     "  nothing at the props a spec can synthesise; its interaction tests are",
     "  skipped rather than failed.",
+    "- An element is addressed by test id, `aria-label`, role plus name, `id` or",
+    "  literal copy. The bare host tag is a last resort and only stands when it is",
+    "  the only element of its kind in that render — otherwise the test is skipped,",
+    "  because `button` names nothing when there are two of them.",
+    "- A form is submitted through the control its markup declares: a host",
+    "  `<button>` unless its `type` says otherwise, a component tag only with an",
+    '  explicit `type="submit"`. No such control, or one disabled at these props,',
+    "  means no submit test — the button's copy is never guessed at.",
+    "- A component that calls `console.error`, or `.error()` on an imported",
+    "  binding, reports errors by design, so its browser spec does not also assert",
+    "  that mounting produced none.",
     "",
   );
 

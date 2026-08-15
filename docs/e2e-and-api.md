@@ -83,6 +83,21 @@ Env contract: `LOAD_BASE`, `LOAD_AUTH`, and one `LOAD_<PARAM>` per dynamic
 segment. To arm the gate, copy a good `last-*.json` to `baseline-*.json` and
 commit it; `last-*.json` is gitignored.
 
+Two things decide whether a load run means anything:
+
+- **`LOAD_BASE` must be a production build** — `bun run build && bun run start`,
+  not `next dev`. The dev server compiles routes on demand, so the first request
+  to each measures the compiler and the rest measure a warm cache.
+- **`LOAD_AUTH` is a header line, and this app's is a cookie**:
+  `cookie: session=<value>`, not `authorization: Bearer …`. Prove it
+  authenticates before trusting the numbers — an unauthenticated request to a
+  dashboard route redirects to the login page, which answers 200, so every pipe
+  passes while measuring the login screen.
+
+`source flawless/load/env.sh` exports one `LOAD_<PARAM>` per id in
+`flawless/e2e/params.json`, so the load pipes and the e2e specs cannot drift
+apart over which records they target.
+
 The task succeeds even when crust is not installed — it says so in the summary
 rather than failing a generation run over a missing optional tool.
 
