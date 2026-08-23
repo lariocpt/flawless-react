@@ -99,6 +99,20 @@ describe("adoptProjectStyle", () => {
     if (result.formatted === 0) expect(typeof result.warning).toBe("string");
   });
 
+  test(".mts configs reach the formatter — the one file biome ci checks either way", async () => {
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "biome.json"), "{}\n");
+    const target = path.join(dir, "vitest.config.mts");
+    writeFileSync(target, "export default {\n  test: {},\n};\n");
+
+    // The suite emits vitest.config.mts, and an adopter's `biome ci` checks
+    // .mts files. If the style pass filters the extension out, the run still
+    // reports every other file formatted while the one config it always emits
+    // is the one file left in the template's indentation.
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result.formatter).toBe("biome");
+  });
+
   test("non-formattable extensions are ignored even when a formatter is configured", async () => {
     const dir = tmpDir();
     writeFileSync(path.join(dir, "biome.json"), "{}\n");
