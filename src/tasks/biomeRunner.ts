@@ -110,6 +110,11 @@ export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
     if (!p) continue;
     if (!wantedFiles.has(path.resolve(p))) continue;
     if (opts.categoryPrefix && !d.category?.startsWith(opts.categoryPrefix)) continue;
+    // The sweep runs against a scratch config with only its own rules, so a
+    // suppression aimed at the project's full config looks "unused" here.
+    // Reporting that would punish the user for answering another task's
+    // finding — suppression hygiene belongs to the project's own biome run.
+    if (d.category?.startsWith("suppressions/")) continue;
     findings.push({
       rule: d.category ?? "biome",
       severity: d.severity === "error" ? "error" : "warn",

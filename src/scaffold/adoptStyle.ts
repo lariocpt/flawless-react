@@ -15,7 +15,7 @@ export interface AdoptStyleResult {
   warning?: string;
 }
 
-const FORMATTABLE = /\.(tsx?|jsx?|mjs|cjs|json|css|md)$/;
+const FORMATTABLE = /\.(tsx?|jsx?|mts|cts|mjs|cjs|json|css|md)$/;
 
 export async function adoptProjectStyle(
   projectRoot: string,
