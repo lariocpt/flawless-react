@@ -358,3 +358,10 @@ export async function main(argv: string[]): Promise<void> {
   }
   process.exit(result.exitCode);
 }
+
+// Harmless when imported (bin.ts, the compiled binary, tests) and the
+// difference between a run and a silent exit-0 no-op when someone invokes
+// `bun src/cli.ts …` directly — the trap bin.ts's header documents.
+if (import.meta.main) {
+  await main(Bun.argv.slice(2));
+}

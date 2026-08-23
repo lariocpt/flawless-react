@@ -18,7 +18,7 @@ The tool itself is a thin scaffolder. The intelligence is the static analysis th
 
 Optional flags let you `--provider <file>` to wrap mounted components in your Redux / React Query / theme provider, and `--api <openapi.json>` to scaffold a standalone Bun mock server alongside the host so the component's `fetch('/api/…')` calls hit deterministic example responses.
 
-Once the suite is generated, it belongs to you — there is no regeneration step that overwrites your edits.
+Once the suite is generated, it belongs to you. A re-run regenerates derived files (specs inside the out dir, configs, generated prose) so they track your source; the files meant to hold your work — `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`, `mocks/handlers.ts`, `e2e/global-setup.ts`, and colocated specs — are write-once or kept unless you ask otherwise.
 
 ## Contents
 

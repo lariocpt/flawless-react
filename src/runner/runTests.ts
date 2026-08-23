@@ -15,7 +15,7 @@ export async function runGeneratedTests(
   outDir: string,
   selectedTasks: TaskId[],
   nextRoot?: string,
-): Promise<void> {
+): Promise<boolean> {
   const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
   const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
 
@@ -71,9 +71,10 @@ export async function runGeneratedTests(
 
   if (failed.length > 0) {
     process.stdout.write(`\nfailed suites: ${failed.join(", ")}\n`);
-  } else {
-    process.stdout.write("\nall generated suites passed\n");
+    return false;
   }
+  process.stdout.write("\nall generated suites passed\n");
+  return true;
 }
 
 /**
