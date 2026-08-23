@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { analyseFile } from "./analyse/index.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
@@ -32,7 +32,11 @@ import type {
 } from "./types.ts";
 
 /** Recoverable input/configuration error — the CLI maps it to exit code 2. */
-export class UsageError extends Error {}
+import { UsageError } from "./types.ts";
+
+// Re-exported so `import { UsageError } from "…/core.ts"` keeps working — the
+// class moved to types.ts so leaf modules can throw it without a cycle.
+export { UsageError };
 
 export interface CoreOptions {
   /** Entry file path or glob. */
@@ -163,7 +167,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   let providerOverride = opts.provider;
 
   if (opts.nextjs !== undefined) {
-    nextCtx = await detectNextjs(opts.nextjs); // throws UsageError-worthy Errors
+    nextCtx = await detectNextjs(opts.nextjs); // throws UsageError on bad input
     if (outDir === undefined) outDir = path.join(nextCtx.root, "flawless");
     if (providerOverride === undefined) providerOverride = nextCtx.appResolver;
     if (pattern === undefined) {
@@ -491,6 +495,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // leave a host that no longer matches its specs — and generation is not where
   // the time goes anyway: analysing 99 files takes half a second, while running
   // every spec they produce took seventeen minutes.
+  // A suite failure must reach the exit code: --ci --run-tests previously
+  // discarded both runners' outcomes and exited 0 on red suites.
+  let suitesGreen = true;
   if (!anyFailed && opts.changed !== undefined && runnableSelected) {
     const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
     const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
@@ -505,14 +512,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           ? ` (${affected.withoutSpecs.length} unexported component(s) covered through their parent)`
           : ""),
     );
-    await runAffectedTests(
+    suitesGreen = await runAffectedTests(
       outDir,
       selected.map((t) => t.id),
       affected,
       nextCtx?.root,
     );
   } else if (!anyFailed && opts.runTests === true && runnableSelected) {
-    await runGeneratedTests(
+    suitesGreen = await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),
       nextCtx?.root,
@@ -520,7 +527,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   }
 
   return {
-    exitCode: anyFailed ? 1 : 0,
+    exitCode: anyFailed || !suitesGreen ? 1 : 0,
     outDir,
     results,
     trees,
@@ -614,8 +621,19 @@ export interface ExpandGlobOptions {
 export async function expandGlob(pattern: string, opts: ExpandGlobOptions = {}): Promise<string[]> {
   const abs = path.resolve(pattern);
   // An explicit path wins over every exclusion — otherwise you could never
-  // deliberately point the tool at a file the defaults would skip.
-  if (existsSync(abs)) return [abs];
+  // deliberately point the tool at a file the defaults would skip. A directory
+  // is a usage mistake, not an entry: without this check it fell through to
+  // "Directories cannot be read like files" + "no analysable components found",
+  // neither of which names the fix. "" resolves to cwd, so the interactive
+  // prompt's empty submit landed here too.
+  if (existsSync(abs)) {
+    if (statSync(abs).isDirectory()) {
+      throw new UsageError(
+        `${pattern === "" ? abs : pattern} is a directory — pass a .tsx file or a glob like "${pattern === "" ? "src" : pattern}/**/*.tsx"`,
+      );
+    }
+    return [abs];
+  }
   const hasGlobChar = /[*?[\]{}]/.test(pattern);
   if (!hasGlobChar) {
     return [];

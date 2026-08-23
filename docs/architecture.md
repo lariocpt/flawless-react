@@ -228,7 +228,7 @@ The flat list of components (root + recursed children, deduped) becomes:
 
 - One **import line per component** in `host/main.tsx`, with the path expressed relative to the host directory.
 - One entry in the `REGISTRY` object keyed by component name, so `window.__profile.mount(name, props)` can find them.
-- One **spec file per component** at `tests/<Name>.profile.spec.ts`. Each spec bakes its defaults, variants, and hooks list in as literals — no shared fixture file, no implicit coupling.
+- One **spec file per component** at `profile/<Name>.profile.spec.ts` (never `tests/` — a project script reading `bun test tests` would collect them, see generated-suite.md). Each spec bakes its defaults, variants, and hooks list in as literals — no shared fixture file, no implicit coupling.
 
 The host page initialises `react-scan` once at module load, buffers any "unnecessary rerender" events into `scanEvents`, and exposes `mount` / `rerender` / `unmount` / `getRenderInfo` / `getScanEvents` on `window.__profile`. The driver API is deliberately small.
 

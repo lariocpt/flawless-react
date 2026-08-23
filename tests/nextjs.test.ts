@@ -38,6 +38,19 @@ afterAll(() => {
 });
 
 describe("detectNextjs", () => {
+  // The documented programmatic contract is "bad input throws UsageError";
+  // detect.ts threw plain Error, so `--nextjs <bad-path>` exited 1 (internal
+  // error) instead of 2 like every other usage mistake.
+  test("bad --nextjs input throws UsageError", async () => {
+    const { UsageError } = await import("../src/types.ts");
+    try {
+      await detectNextjs("/nonexistent-dir-for-this-test");
+      throw new Error("expected detectNextjs to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+    }
+  });
+
   test("finds the app router through src/app and uses layout.tsx as the app resolver", async () => {
     const ctx = await detectNextjs(NEXTAPP);
     expect(ctx.root).toBe(NEXTAPP);

@@ -23,6 +23,20 @@ describe("VERSION", () => {
     expect(await proc.exited).toBe(0);
     expect(out).toBe(`flawless-react ${VERSION}\n`);
   });
+
+  // `bun src/cli.ts …` used to be a silent exit-0 no-op — cli.ts only exported
+  // main() and nothing called it, the same trap bin.ts's header documents for
+  // the compile entry. A real session lost an afternoon to it (the project
+  // memory blamed the sandbox); running the obvious entry must do something.
+  test("bun src/cli.ts -V is not a silent no-op", async () => {
+    const proc = Bun.spawn(["bun", path.resolve(__dirname, "../src/cli.ts"), "-V"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(out).toBe(`flawless-react ${VERSION}\n`);
+  });
 });
 
 describe("parseArgs", () => {

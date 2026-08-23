@@ -129,6 +129,14 @@ describe("expandGlob exclusions", () => {
     expect(found).toEqual([path.join(dir, "Foo.tsx")]);
   });
 
+  // `flawless-react src` (and the interactive prompt's empty submit, which
+  // resolves "" to cwd) used to fall through to "Directories cannot be read
+  // like files" — two messages, neither naming the mistake.
+  test("a directory is a usage error that names the fix", async () => {
+    const dir = seed();
+    await expect(expandGlob(dir)).rejects.toThrow(/is a directory — pass a \.tsx file or a glob/);
+  });
+
   test("--no-default-excludes restores the raw match", async () => {
     const dir = seed();
     const found = await expandGlob(path.join(dir, "*.tsx"), { useDefaultExcludes: false });

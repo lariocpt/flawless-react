@@ -1,17 +1,17 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { stringifyLike } from "../scaffold/adoptStyle.ts";
-import type { NextjsApiRoute, NextjsContext, NextjsRouter } from "../types.ts";
+import { type NextjsApiRoute, type NextjsContext, type NextjsRouter, UsageError } from "../types.ts";
 import { walkApiRoutes } from "./apiRoutes.ts";
 
 export async function detectNextjs(root: string): Promise<NextjsContext> {
   const abs = path.resolve(root);
   if (!existsSync(abs)) {
-    throw new Error(`nextjs: directory not found: ${abs}`);
+    throw new UsageError(`nextjs: directory not found: ${abs}`);
   }
 
   if (!looksLikeNext(abs)) {
-    throw new Error(
+    throw new UsageError(
       `nextjs: ${abs} does not look like a Next.js project (no next.config or "next" in package.json).`,
     );
   }
@@ -36,7 +36,7 @@ export async function detectNextjs(root: string): Promise<NextjsContext> {
     router = "pages";
     routerRoot = srcPagesDir;
   } else {
-    throw new Error(`nextjs: no app/ or pages/ directory under ${abs}`);
+    throw new UsageError(`nextjs: no app/ or pages/ directory under ${abs}`);
   }
 
   const appResolver = await detectAppResolver(router, routerRoot);
@@ -159,7 +159,7 @@ export async function mergeIntoNextPackageJson(
   const pkgPath = path.join(nextRoot, "package.json");
   const fs = require("node:fs") as typeof import("node:fs");
   if (!existsSync(pkgPath)) {
-    throw new Error(`nextjs: package.json not found at ${pkgPath}`);
+    throw new UsageError(`nextjs: package.json not found at ${pkgPath}`);
   }
   type Pkg = {
     dependencies?: Record<string, string>;

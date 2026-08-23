@@ -1,3 +1,8 @@
+/** Bad input from the caller — the CLI maps it to exit 2, internal errors to 1.
+ *  Lives here (not core.ts) so leaf modules like nextjs/detect.ts can throw it
+ *  without importing core and creating a cycle. */
+export class UsageError extends Error {}
+
 export type PropPrimitive = string | number | boolean | null;
 export type PropValue = PropPrimitive | PropValue[] | { [k: string]: PropValue };
 export type PropsShape = Record<string, PropValue>;
