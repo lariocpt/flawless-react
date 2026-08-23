@@ -1,6 +1,6 @@
 ---
 name: flawless-react
-description: Generate and maintain React/Next.js test suites with flawless-react — task selection, Next.js mode, provider wrappers, MSW fixtures from an OpenAPI spec, colocated specs, route e2e, crust load pipes, the programmatic API, and how to read its findings. Use when adding component/e2e/load tests to a React codebase, when a generated flawless suite is red, or for "scaffold tests for this component" work.
+description: Generate and maintain React/Next.js test suites with flawless-react — task selection, Next.js mode, provider wrappers, MSW fixtures from an OpenAPI spec, colocated specs, route e2e, crust load pipes, the programmatic API, and how to read its findings. Use when adding component/e2e/load tests to a React codebase, when a generated flawless suite is red, or for "scaffold tests for this component" work. Deeper guidance lives in the sibling skills flawless-unit-browser, flawless-e2e-load, flawless-findings, flawless-regen, and flawless-api.
 ---
 
 # flawless-react
@@ -40,6 +40,13 @@ bunx flawless-react "src/app/dashboard/page.tsx" \
 
 Pick tasks explicitly with `--tasks a,b`; with no args in a TTY you get a
 checkbox menu.
+
+Over an EXISTING suite, a run that includes `perf-harness` refuses without
+`--force` and exits 1 while the other selected tasks still refresh their
+derived files — that exit 1 is the harness guard, not a broken run. See the
+flawless-regen skill for the full regeneration contract, and note the same
+refusal silently skips `--changed`'s affected-test run unless you narrow
+`--tasks`.
 
 ## Next.js mode
 
