@@ -183,6 +183,23 @@ describe("a11y task", () => {
   });
 
   testWithBiome(
+    "a suppression for a rule outside the sweep's set is not reported as unused",
+    async () => {
+      const outDir = tmp("rules-suppression");
+      const fixture = path.join(FIXTURES, "SuppressedElsewhere.tsx");
+      const tree = await analyse({ entry: fixture, depth: 0, includeChildren: false });
+
+      // react-rules does not enable lint/a11y, so the fixture's a11y
+      // suppression is "unused" under the sweep's scratch config. Reporting
+      // that would punish the user for answering another task's finding.
+      const result = await runTask("react-rules", ctxOf(outDir, [tree]));
+      expect(result.ok).toBe(true);
+      const suppressionNoise = result.findings.filter((f) => f.rule.startsWith("suppressions/"));
+      expect(suppressionNoise).toEqual([]);
+    },
+  );
+
+  testWithBiome(
     "one aggregate for the whole sweep; per-component reports only where findings are",
     async () => {
       const outDir = tmp("a11y-sweep");

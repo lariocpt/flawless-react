@@ -202,6 +202,7 @@ function collectModuleImports(
 function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
   const units: ParsedComponentUnit[] = [];
   const byName = new Map<string, ParsedComponentUnit>();
+  const renderHooks = renderHookNames(sf);
 
   const add = (unit: ParsedComponentUnit): void => {
     units.push(unit);
@@ -211,7 +212,7 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
   // Pass 1 — candidates from function declarations and variable statements.
   for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && /^[A-Z]/.test(stmt.name.text)) {
-      if (!stmt.body || !containsJsx(stmt.body)) continue;
+      if (!stmt.body || !looksLikeComponentBody(stmt, renderHooks)) continue;
       const mods = stmt.modifiers ?? [];
       const hasExport = mods.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
       const hasDefault = mods.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
@@ -232,7 +233,7 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || !/^[A-Z]/.test(decl.name.text)) continue;
         if (!decl.initializer) continue;
-        const unit = unitFromInitializer(decl.name.text, decl, decl.initializer, sf, byName);
+        const unit = unitFromInitializer(decl.name.text, decl, decl.initializer, sf, byName, renderHooks);
         if (!unit) continue;
         unit.exportKind = hasExport ? "named" : "none";
         add(unit);
@@ -259,7 +260,10 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
         continue;
       }
       const fn = unwrapped.inner ?? expr;
-      if ((ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && containsJsx(fn)) {
+      if (
+        (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) &&
+        looksLikeComponentBody(fn, renderHooks)
+      ) {
         const name = componentNameFromFilename(sf.fileName);
         add({
           componentName: name,
@@ -294,6 +298,7 @@ function unitFromInitializer(
   init: ts.Expression,
   sf: ts.SourceFile,
   byName: Map<string, ParsedComponentUnit>,
+  renderHooks: Set<string>,
 ): ParsedComponentUnit | undefined {
   // const X: React.FC<Props> = arrow | fnexpr
   const typeRef = decl.type && ts.isTypeReferenceNode(decl.type) ? decl.type : undefined;
@@ -307,7 +312,7 @@ function unitFromInitializer(
         (typeRef.typeName.text === "FC" || typeRef.typeName.text === "FunctionComponent")));
 
   if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-    if (!looksLikeFC && !containsJsx(init)) return undefined;
+    if (!looksLikeFC && !looksLikeComponentBody(init, renderHooks)) return undefined;
     const fcPropsArg = looksLikeFC ? typeRef?.typeArguments?.[0] : undefined;
     const fromParams = propsFromParams(init);
     const propsTypeRef =
@@ -344,7 +349,10 @@ function unitFromInitializer(
     }
     return undefined;
   }
-  if ((ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) && containsJsx(inner)) {
+  if (
+    (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) &&
+    looksLikeComponentBody(inner, renderHooks)
+  ) {
     return {
       componentName: name,
       bodyNode: inner,
@@ -426,6 +434,74 @@ function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration>
     destructuredProps,
     destructuredAliases,
   };
+}
+
+/**
+ * A body renders even without JSX in two decidable shapes: every one of its
+ * OWN returns is the `null` literal (an effect-only component — it renders
+ * nothing by construction), or a return is a call to a render hook like
+ * base-ui's useRender, where the element comes out of the hook. Both triggers
+ * are syntactic; anything less certain still requires JSX.
+ */
+function looksLikeComponentBody(
+  fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+  renderHooks: Set<string>,
+): boolean {
+  if (containsJsx(fn)) return true;
+
+  const isRenderHookCall = (e: ts.Expression | undefined): boolean =>
+    e !== undefined &&
+    ts.isCallExpression(e) &&
+    ts.isIdentifier(e.expression) &&
+    renderHooks.has(e.expression.text);
+
+  if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) {
+    return isRenderHookCall(fn.body) || fn.body.kind === ts.SyntaxKind.NullKeyword;
+  }
+  if (!fn.body || !ts.isBlock(fn.body)) return false;
+
+  const returns = ownReturns(fn.body);
+  if (returns.length === 0) return false;
+  if (returns.every((r) => r.expression?.kind === ts.SyntaxKind.NullKeyword)) return true;
+  return returns.some((r) => isRenderHookCall(r.expression));
+}
+
+/** The block's own return statements — a nested function's returns are its own. */
+function ownReturns(body: ts.Block): ts.ReturnStatement[] {
+  const out: ts.ReturnStatement[] = [];
+  const visit = (n: ts.Node): void => {
+    if (
+      ts.isArrowFunction(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isFunctionDeclaration(n) ||
+      ts.isMethodDeclaration(n)
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(n)) out.push(n);
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(body, visit);
+  return out;
+}
+
+/**
+ * Local names bound to render hooks: an import named useRender, or anything
+ * imported from a module specifier ending in /use-render.
+ */
+function renderHookNames(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    const fromUseRenderModule = /\/use-render$/.test(stmt.moduleSpecifier.text);
+    for (const el of bindings.elements) {
+      const imported = (el.propertyName ?? el.name).text;
+      if (imported === "useRender" || fromUseRenderModule) names.add(el.name.text);
+    }
+  }
+  return names;
 }
 
 function containsJsx(node: ts.Node): boolean {
