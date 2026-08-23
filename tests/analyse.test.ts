@@ -22,6 +22,23 @@ describe("parseFile", () => {
     expect(r.imports.get("useState")?.specifier).toBe("react");
   });
 
+  test("locates a component whose own returns are all null", async () => {
+    const r = await parseFile(path.resolve(__dirname, "fixtures/NullRenderer.tsx"));
+    const primary = r.components[0];
+    expect(primary?.componentName).toBe("NullRenderer");
+    expect(primary?.exportKind).toBe("named");
+    // The `return;` inside the effect callback belongs to the callback, not
+    // the component — it must not defeat the all-returns-null detection.
+    expect(primary?.propsTypeLiteral).toBeDefined();
+  });
+
+  test("locates a base-ui useRender component (no JSX in the body)", async () => {
+    const r = await parseFile(path.resolve(__dirname, "fixtures/RenderHookBadge.tsx"));
+    const primary = r.components[0];
+    expect(primary?.componentName).toBe("RenderHookBadge");
+    expect(primary?.exportKind).toBe("named");
+  });
+
   test("throws helpfully on a non-component file", async () => {
     const empty = path.resolve(__dirname, "fixtures/_empty.tsx");
     await Bun.write(empty, "export const x = 1;\n");
