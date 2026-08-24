@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
-import { affectedSpecs, grepFor } from "../src/changed.ts";
+import { affectedSpecs, grepFor, grepForRoutes } from "../src/changed.ts";
 import type { ComponentTree } from "../src/types.ts";
 
 const fixture = (rel: string): string => path.resolve(__dirname, "fixtures", rel);
@@ -32,7 +32,9 @@ describe("affectedSpecs", () => {
       router: "app",
       root: fixture("nextapp"),
     });
-    expect(affected.routes).toContain(page);
+    // Routes are URL templates, not file paths: they are what the emitted e2e
+    // titles embed ("GET / renders …"), so a --grep can be built from them.
+    expect(affected.routes).toEqual(["/"]);
   });
 
   test("only real pages count as routes", async () => {
@@ -108,6 +110,46 @@ describe("grepFor", () => {
     // read as "run the whole suite".
     const re = new RegExp(grepFor([]));
     expect(re.test("Card: mounts at defaults")).toBe(false);
+    expect(re.test("")).toBe(false);
+  });
+});
+
+describe("grepForRoutes", () => {
+  const TITLE = (route: string): string => `GET ${route} renders without console or page errors`;
+
+  test("escapes the brackets of a dynamic segment", () => {
+    // Unescaped, [id] is a character class: it would select /things/i and
+    // /things/d and never the literal /things/[id] the title embeds.
+    const re = new RegExp(grepForRoutes(["/things/[id]"]));
+    expect(re.test(TITLE("/things/[id]"))).toBe(true);
+    expect(re.test(TITLE("/things/i"))).toBe(false);
+  });
+
+  test("anchors both ends so /a selects neither /ab nor /x/a", () => {
+    const re = new RegExp(grepForRoutes(["/a"]));
+    expect(re.test(TITLE("/a"))).toBe(true);
+    expect(re.test(TITLE("/ab"))).toBe(false);
+    expect(re.test(TITLE("/x/a"))).toBe(false);
+  });
+
+  test("several routes become one alternation", () => {
+    const re = new RegExp(grepForRoutes(["/", "/things/[id]"]));
+    expect(re.test(TITLE("/"))).toBe(true);
+    expect(re.test(TITLE("/things/[id]"))).toBe(true);
+    expect(re.test(TITLE("/other"))).toBe(false);
+  });
+
+  test("matches the way Playwright actually greps — the whole title chain", () => {
+    const re = new RegExp(grepForRoutes(["/items/[id]"]));
+    expect(re.test(`[chromium] › flawless/e2e/items-id.spec.ts › ${TITLE("/items/[id]")}`)).toBe(
+      true,
+    );
+    expect(re.test(`[chromium] › flawless/e2e/items.spec.ts › ${TITLE("/items")}`)).toBe(false);
+  });
+
+  test("no routes matches nothing, rather than everything", () => {
+    const re = new RegExp(grepForRoutes([]));
+    expect(re.test(TITLE("/"))).toBe(false);
     expect(re.test("")).toBe(false);
   });
 });

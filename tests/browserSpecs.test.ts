@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { fillKind, requiredAncestors } from "../src/analyse/htmlContentModel.ts";
 import { analyse } from "../src/analyse/index.ts";
 import { functionProps } from "../src/scaffold-tests/registry.ts";
@@ -369,5 +370,34 @@ describe("rootTag is a host element or nothing", () => {
   test("a component whose root is a host element reports it", async () => {
     const tree = await treeFor("resolved/RealButton.tsx");
     expect(tree.entry.rootTag).toBe("button");
+  });
+});
+
+describe("hostile characters in interaction labels", () => {
+  // The click-label helper escaped only double quotes, but its output lands in
+  // TEMPLATE-LITERAL titles: a backtick in a clickable label terminated the
+  // emitted literal, and a `${` in an aria-label became a live substitution.
+  function parseErrorsIn(file: string, content: string): string[] {
+    const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+    const sf = ts.createSourceFile(file, content, ts.ScriptTarget.ESNext, true, kind);
+    const diagnostics = (sf as unknown as { parseDiagnostics?: ts.Diagnostic[] }).parseDiagnostics;
+    return (diagnostics ?? []).map((d) => ts.flattenDiagnosticMessageText(d.messageText, " "));
+  }
+
+  test("a backtick or ${ in a label still emits specs that parse", async () => {
+    const specs = await specsFor("TrickyLabels.tsx");
+    const browser = specs.get("browser/TrickyLabels.spec.ts") ?? "";
+    expect(browser.length).toBeGreaterThan(0);
+    expect(parseErrorsIn("browser/TrickyLabels.spec.ts", browser)).toEqual([]);
+    // "${amount}" PARSES — as a substitution of a name that does not exist.
+    // The titles have to carry defused text, not evaluate it.
+    const titles = browser.split("\n").filter((l) => l.trimStart().startsWith("test"));
+    expect(titles.length).toBeGreaterThan(1);
+    expect(titles.join("\n")).not.toContain("${amount}");
+    expect(titles.join("\n")).toContain("$ {amount}");
+    // The Playwright locator still targets the REAL label, verbatim.
+    expect(browser).toContain('page.getByLabel("Pay ${amount} now")');
+    const unit = specs.get("unit/TrickyLabels.test.tsx") ?? "";
+    expect(parseErrorsIn("unit/TrickyLabels.test.tsx", unit)).toEqual([]);
   });
 });

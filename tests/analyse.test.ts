@@ -98,6 +98,19 @@ describe("parseFile", () => {
     expect(r.components[0]?.exportKind).toBe("named");
   });
 
+  test("a `satisfies FC<Props>` component is detected, with the FC props type", async () => {
+    const r = await parseFile(path.resolve(__dirname, "fixtures/SatisfiesTag.tsx"));
+    expect(r.components).toHaveLength(1);
+    const primary = r.components[0];
+    expect(primary?.componentName).toBe("SatisfiesTag");
+    expect(primary?.exportKind).toBe("named");
+    // The parameter is untyped in the fixture — the props type is reachable
+    // ONLY through the satisfies target's type argument.
+    expect(primary?.propsTypeRef?.typeName.getText()).toBe("TagProps");
+    const p = extractProps(r.sourceFile, primary?.propsTypeNode, primary?.propsTypeLiteral);
+    expect(p.propsShape).toEqual({ label: "", count: 0 });
+  });
+
   test("throws helpfully on a non-component file", async () => {
     const empty = path.resolve(__dirname, "fixtures/_empty.tsx");
     await Bun.write(empty, "export const x = 1;\n");
@@ -125,6 +138,18 @@ describe("extractProps", () => {
     const variantValues = r.variants.map((v) => v.variant);
     expect(variantValues).toContain("primary");
     expect(variantValues).toContain("secondary");
+  });
+
+  test('string-literal prop names ("data-variant") are resolved, not dropped', async () => {
+    const parsed = await parseFile(path.resolve(__dirname, "fixtures/StringKeyTag.tsx"));
+    const unit = parsed.components[0];
+    const r = extractProps(parsed.sourceFile, unit?.propsTypeNode, unit?.propsTypeLiteral);
+    // The recorded-give-up contract: a member either lands in the shape or in
+    // unresolvedProps, and its position is recorded either way. The emitted
+    // DEFAULTS is JSON.stringify'd, so a quoted key survives emission as-is.
+    expect(r.propsShape).toEqual({ "data-variant": "", label: "" });
+    expect(Object.keys(r.propPositions)).toContain("data-variant");
+    expect(r.unresolvedProps).toEqual([]);
   });
 });
 

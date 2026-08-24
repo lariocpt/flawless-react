@@ -3,6 +3,7 @@ import { extractRootTag } from "./extractRootTag.ts";
 import type { ImportBinding } from "./parseFile.ts";
 import { parseFile } from "./parseFile.ts";
 import type { ModuleResolver } from "./resolveModule.ts";
+import type { SourceFileCache } from "./sourceCache.ts";
 
 /**
  * What host element each component tag in a render actually produces.
@@ -28,6 +29,8 @@ export async function resolveTagRootTags(
   imports: Map<string, ImportBinding>,
   fromPath: string,
   resolver: ModuleResolver,
+  /** Shared parse cache — without it every tag target re-parses once per entry. */
+  cache?: SourceFileCache,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const tags = componentTagsIn(bodyNode);
@@ -51,7 +54,7 @@ export async function resolveTagRootTags(
     // never walked, so a third-party <Button> stays unknown rather than guessed.
     if (!target) continue;
     try {
-      const parsed = await parseFile(target);
+      const parsed = await parseFile(target, cache);
       const wanted = binding.importedName ?? tag;
       const unit =
         parsed.components.find((c) => c.componentName === wanted) ??

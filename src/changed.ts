@@ -23,7 +23,11 @@ export interface AffectedSpecs {
   changedFiles: string[];
   /** Spec names (registry keys) for components declared in those files. */
   components: string[];
-  /** Route stems whose page tree renders one of those components. */
+  /**
+   * URL templates ("/things/[id]") of the pages whose tree renders one of
+   * those components — the exact text the emitted e2e titles embed, so an e2e
+   * --grep can be built from them (grepForRoutes).
+   */
   routes: string[];
   /** Components that changed but have no spec of their own. */
   withoutSpecs: string[];
@@ -114,8 +118,9 @@ export function affectedSpecs(
   if (nextjs) {
     const routerRoot = findRouterRoot(nextjs.root);
     for (const tree of trees) {
-      if (!pageFileToRoute(tree.entry.filePath, nextjs.router, routerRoot)) continue;
-      if (rendersAnyOf(tree, changedSet)) routes.push(tree.entry.filePath);
+      const route = pageFileToRoute(tree.entry.filePath, nextjs.router, routerRoot);
+      if (!route) continue;
+      if (rendersAnyOf(tree, changedSet)) routes.push(route.urlPath);
     }
   }
 
@@ -151,6 +156,29 @@ export function grepFor(components: readonly string[]): string {
   // test would slip through — and a grep that accidentally matches is how
   // "run nothing" becomes "run everything".
   if (components.length === 0) return "(?!)";
-  const alt = components.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const alt = components.map(escapeRegex).join("|");
   return `\\b(${alt}): `;
+}
+
+/** Escape `s` so it matches only itself inside a RegExp alternation. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A Playwright `--grep` that matches exactly these routes' e2e specs.
+ *
+ * Every emitted e2e title embeds its route template — `GET /things/[id]
+ * renders without console or page errors` — greppable only with the same
+ * discipline as grepFor: no `^` (Playwright greps the whole title chain, so it
+ * would anchor against the file path), the literal "GET " on the left, and the
+ * title's following space on the right so `/a` does not also select `/ab`.
+ * The brackets in a dynamic segment MUST be escaped: unescaped, `[id]` is a
+ * character class matching single letters, not the literal text in the title.
+ */
+export function grepForRoutes(routes: readonly string[]): string {
+  // `(?!)` matches nothing at all; an empty pattern would match everything.
+  if (routes.length === 0) return "(?!)";
+  const alt = routes.map(escapeRegex).join("|");
+  return `\\bGET (${alt}) `;
 }

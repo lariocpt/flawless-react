@@ -94,17 +94,10 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
     default:
       break;
   }
-  // A namespace import of a server-action module cannot be stubbed by name, and
-  // bundling it for the browser drags in the database driver.
-  const namespaceAction = (info.moduleImports ?? []).find(
-    (mi) => mi.isServerAction && mi.names.length === 1 && !mi.hasDefault && mi.kind === "value",
-  );
-  if (namespaceAction && namespaceAction.names.length === 0) {
-    return {
-      eligible: false,
-      reason: `imports the server-action module ${namespaceAction.specifier} without naming its exports`,
-    };
-  }
+  // No exclusion for server-action imports of any binding shape (namespace
+  // included): the host stubs those modules by absolute path with their FULL
+  // export surface (serverActionExports), so nothing drags in the database
+  // driver and every ESM binding — named or namespace member — resolves.
   return { eligible: true };
 }
 

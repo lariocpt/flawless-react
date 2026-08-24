@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyse, analyseFile } from "../src/analyse/index.ts";
+import { ModuleResolver } from "../src/analyse/resolveModule.ts";
+import { SourceFileCache } from "../src/analyse/sourceCache.ts";
 import { DEFAULT_EXCLUDES, expandGlob } from "../src/core.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
@@ -108,6 +110,64 @@ describe("analyseFile roots", () => {
       includeChildren: false,
     });
     expect(trees).toHaveLength(1);
+  });
+});
+
+describe("analyseFile shared context", () => {
+  const LEAF = `export function Leaf({ label }: { label: string }) {
+  return <em>{label}</em>;
+}
+`;
+  const entrySrc = (name: string) => `import { Leaf } from "./Leaf.tsx";
+
+export function ${name}() {
+  return (
+    <div>
+      <Leaf label="${name}" />
+    </div>
+  );
+}
+`;
+
+  test("two entries sharing one context parse a shared leaf once", async () => {
+    const dir = tmp();
+    const leafAbs = path.join(dir, "Leaf.tsx");
+    writeFileSync(leafAbs, LEAF);
+    writeFileSync(path.join(dir, "EntryA.tsx"), entrySrc("EntryA"));
+    writeFileSync(path.join(dir, "EntryB.tsx"), entrySrc("EntryB"));
+
+    // Counting probe: record every SourceFile the shared cache hands out for
+    // the leaf DURING analysis. Asserting on cache contents afterwards would
+    // pass vacuously (the assert itself would populate the cache).
+    const cache = new SourceFileCache();
+    const seenLeafParses: unknown[] = [];
+    const origGet = cache.get.bind(cache);
+    cache.get = (abs: string) => {
+      const sf = origGet(abs);
+      if (abs === leafAbs && sf) seenLeafParses.push(sf);
+      return sf;
+    };
+    const shared = { cache, resolver: new ModuleResolver() };
+
+    await analyseFile(
+      { entry: path.join(dir, "EntryA.tsx"), depth: 2, includeChildren: true },
+      shared,
+    );
+    await analyseFile(
+      { entry: path.join(dir, "EntryB.tsx"), depth: 2, includeChildren: true },
+      shared,
+    );
+
+    // Each entry must fetch the leaf THROUGH the shared cache — TWICE: once
+    // resolving <Leaf> as a tag target (what host element does it render?),
+    // once analysing it as a child. A count below 4 means one of those hops
+    // parsed the file on its own, invisibly to this probe: resolveTagRootTags
+    // did exactly that, re-parsing every tag target once per entry.
+    expect(seenLeafParses.length).toBeGreaterThanOrEqual(4);
+    // …and every fetch must receive the SAME parsed object — one parse for the
+    // corpus, not one per entry (FR-032: card.tsx parsed 237x in the dogfood
+    // sweep).
+    for (const sf of seenLeafParses) expect(sf).toBe(seenLeafParses[0] as object);
   });
 });
 

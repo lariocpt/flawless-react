@@ -17,7 +17,7 @@
  *             the interaction tests click. Anything not on the list is left real.
  */
 import path from "node:path";
-import type { ComponentInfo, ModuleImportInfo } from "../types.ts";
+import type { ComponentInfo, ModuleImportInfo, TodoRecorder } from "../types.ts";
 import { mockLiteral } from "./mockValues.ts";
 
 export type MockMode = "client" | "rsc";
@@ -40,6 +40,67 @@ const MOCK_SKIP =
   /^(react($|\/)|next\/(?!navigation|headers|cache)|.*\.(css|scss|sass|less|svg|png|jpe?g|gif|woff2?)$)/;
 
 /**
+ * Bindings whose modules must stay real even in "rsc" mode: pure, synchronous,
+ * class-string producers. Mocking them strips every className off the markup —
+ * or, with the generic async stub, injects a Promise where a string belongs and
+ * className renders as "[object Promise]".
+ *
+ * Membership is checked against the module-side (IMPORTED) name, so
+ * `import { cn as cx }` is still recognised. The decision is made per MODULE,
+ * merging every import statement of the same specifier: collectModuleImports
+ * emits one ModuleImportInfo per statement, and exempting one statement while
+ * another statement's mock replaces the whole module factory would erase the
+ * very binding the exemption promised to keep.
+ *
+ *   every imported binding pure → the module is not mocked at all;
+ *   mixed pure + data           → the module IS mocked, and each pure binding
+ *                                 gets a synchronous join stub (under its local
+ *                                 name) beside the data stubs.
+ */
+const PURE_UTILITY_BINDINGS = new Set(["cn", "clsx", "cva", "twMerge", "tw"]);
+
+/**
+ * Class-string producer stand-in for a pure binding inside a mocked module:
+ * synchronous and string-valued, because the component drops its result
+ * straight into className — vi.fn(async …) there renders "[object Promise]".
+ */
+const PURE_UTILITY_STUB = `vi.fn((...args: unknown[]) => args.filter(Boolean).join(" "))`;
+
+interface MergedBinding {
+  local: string;
+  isDefault: boolean;
+  pure: boolean;
+}
+
+interface MergedModule {
+  /** Original specifier texts (dataDeps records these, not the re-based one). */
+  specifiers: Set<string>;
+  bindings: MergedBinding[];
+}
+
+/** Default and namespace entries have no module-side name; the local stands in. */
+function membershipName(mi: ModuleImportInfo, index: number): string {
+  return mi.importedNames?.[index] ?? mi.names[index] ?? "";
+}
+
+function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key: string): void {
+  let group = groups.get(key);
+  if (!group) {
+    group = { specifiers: new Set(), bindings: [] };
+    groups.set(key, group);
+  }
+  group.specifiers.add(mi.specifier);
+  mi.names.forEach((local, i) => {
+    if (group.bindings.some((b) => b.local === local)) return;
+    group.bindings.push({
+      local,
+      isDefault: mi.hasDefault && i === 0,
+      pure: PURE_UTILITY_BINDINGS.has(membershipName(mi, i)),
+    });
+  });
+}
+
+/**
  * `specDir` is the absolute directory the spec will be written to. It matters:
  * vitest resolves a relative vi.mock() specifier against the file containing the
  * call, not against the component under test. Emitting the component's own
@@ -51,6 +112,7 @@ export function emitModuleMocks(
   info: ComponentInfo,
   mode: MockMode,
   specDir?: string,
+  todo?: TodoRecorder,
 ): EmittedMocks {
   const statements: string[] = [];
   const mocked: string[] = [];
@@ -63,6 +125,17 @@ export function emitModuleMocks(
     statements.push(make(spec));
     mocked.push(spec);
   };
+
+  // Merge the data-path statements per module BEFORE deciding anything: the
+  // pure-utility exemption and the mock factory must both see every binding the
+  // component imports from a module, however many statements deliver them.
+  const dataGroups = new Map<string, MergedModule>();
+  if (mode === "rsc") {
+    for (const mi of info.moduleImports ?? []) {
+      if (!reachesDataPath(mi)) continue;
+      mergeInto(dataGroups, mi, mockSpecifier(mi, specDir));
+    }
+  }
 
   for (const mi of info.moduleImports ?? []) {
     if (mi.isTypeOnly) continue;
@@ -91,18 +164,35 @@ export function emitModuleMocks(
       continue;
     }
     if (mi.isServerAction) {
-      push(mi, (spec) => serverActionMock(mi, spec));
+      push(mi, (spec) => serverActionMock(mi, spec, todo));
       continue;
     }
 
     // --- everything else: server specs only -----------------------------------
     if (mode === "client") continue;
-    if (mi.kind !== "value") continue;
-    if (MOCK_SKIP.test(mi.specifier)) continue;
-    push(mi, (spec) => dataModuleMock(mi, info, spec));
+    if (!reachesDataPath(mi)) continue;
+    const group = dataGroups.get(mockSpecifier(mi, specDir));
+    if (!group) continue;
+    if (group.bindings.length > 0 && group.bindings.every((b) => b.pure)) continue;
+    push(mi, (spec) => dataModuleMock(group, info, spec, todo));
   }
 
   return { statements, mocked };
+}
+
+/**
+ * The rsc-mode gates ahead of the data-module mock, shared by the merge
+ * pre-pass — grouping an allowlisted statement here would double-mock it.
+ */
+function reachesDataPath(mi: ModuleImportInfo): boolean {
+  if (mi.isTypeOnly || mi.isServerAction) return false;
+  if (
+    ["server-only", "next/navigation", "next/headers", "next/link"].includes(mi.specifier) ||
+    mi.specifier.startsWith("next/font/")
+  ) {
+    return false;
+  }
+  return mi.kind === "value" && !MOCK_SKIP.test(mi.specifier);
 }
 
 /**
@@ -179,44 +269,66 @@ function fontMock(mi: ModuleImportInfo, spec: string): string {
  * state` — undefined would crash the first render. vi.fn() is a real function,
  * so `action.bind(null, id)` in the JSX still works.
  */
-function serverActionMock(mi: ModuleImportInfo, spec: string): string {
+function serverActionMock(mi: ModuleImportInfo, spec: string, todo?: TodoRecorder): string {
   if (mi.names.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
   const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
   const entries = named.map((n) => `${n}: vi.fn(async () => ({}))`);
   if (mi.hasDefault) entries.unshift("default: vi.fn(async () => ({}))");
+  todo?.("server-action-stub");
   return `// TODO(flawless): server action stubbed — give it a realistic return value.
 vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
 }
 
-/** A project-local module a server component reads data from. */
-function dataModuleMock(mi: ModuleImportInfo, info: ComponentInfo, spec: string): string {
-  if (mi.names.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
+/**
+ * A project-local module a server component reads data from — every import
+ * statement of it merged, so the factory covers every binding at once.
+ */
+function dataModuleMock(
+  group: MergedModule,
+  info: ComponentInfo,
+  spec: string,
+  todo?: TodoRecorder,
+): string {
+  if (group.bindings.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
 
-  const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
-  const depsHere = (info.dataDeps ?? []).filter((d) => d.specifier === mi.specifier);
+  const depsHere = (info.dataDeps ?? []).filter(
+    (d) => d.specifier !== undefined && group.specifiers.has(d.specifier),
+  );
   let uncertain = false;
 
-  const entries = named.map((n) => {
-    const dep = depsHere.find((d) => d.calleeRoot === n);
+  const entry = (b: MergedBinding): string => {
+    const key = b.isDefault ? "default" : b.local;
+    // The factory replaces the whole module, so a pure class-string helper
+    // beside the data exports has to be re-supplied here — synchronously.
+    if (b.pure) return `${key}: ${PURE_UTILITY_STUB}`;
+    if (b.isDefault) return "default: vi.fn()";
+    const dep = depsHere.find((d) => d.calleeRoot === b.local);
     if (!dep) {
       // Imported and called, but no evidence of how its result is used. {} is a
       // better stand-in than undefined: it survives member access and only
       // fails on .length/.map, which is a legible failure rather than a crash.
       uncertain = true;
-      return `${n}: vi.fn(async () => ({}))`;
+      return `${key}: vi.fn(async () => ({}))`;
     }
     if (dep.uncertain || dep.shape.kind === "unknown") {
       uncertain = true;
-      return dep.awaited ? `${n}: vi.fn(async () => ({}))` : `${n}: vi.fn(() => ({}))`;
+      return dep.awaited ? `${key}: vi.fn(async () => ({}))` : `${key}: vi.fn(() => ({}))`;
     }
     // Shape inferred from how the awaited value is actually used in the body.
-    const literal = mockLiteral(dep.shape, n);
+    const literal = mockLiteral(dep.shape, b.local);
     return dep.awaited
-      ? `${n}: vi.fn(async () => (${literal}))`
-      : `${n}: vi.fn(() => (${literal}))`;
-  });
+      ? `${key}: vi.fn(async () => (${literal}))`
+      : `${key}: vi.fn(() => (${literal}))`;
+  };
 
-  if (mi.hasDefault) entries.unshift("default: vi.fn()");
+  const entries = [
+    ...group.bindings.filter((b) => b.isDefault).map(entry),
+    ...group.bindings.filter((b) => !b.isDefault).map(entry),
+  ];
+
+  // One marker (and one tally) per module mock, however many of its bindings
+  // were uninferrable — the marker is what the reader answers, not the binding.
+  if (uncertain) todo?.("uninferred-return-shape");
   const note = uncertain
     ? "// TODO(flawless): some return shapes could not be inferred — give them fixtures.\n"
     : "";

@@ -329,6 +329,12 @@ export interface ModuleImportInfo {
   specifier: string;
   /** Local names bound by this declaration (default + named + namespace). */
   names: string[];
+  /**
+   * Module-side export name per entry of `names`: `import { cn as cx }` records
+   * "cn" where `names` records "cx". Default and namespace entries repeat the
+   * local name — they have no module-side name.
+   */
+  importedNames?: string[];
   /** "component" iff any local name is used as a JSX tag root in the file. */
   kind: "component" | "value";
   isTypeOnly: boolean;
@@ -477,6 +483,85 @@ export interface Finding {
   source: TaskId;
 }
 
+/**
+ * What kind of hand-work a planted TODO(flawless) marker asks for. The three
+ * named-and-frequent kinds plus the two structural ones; everything else the
+ * templates plant (missing assertions, undrivable forms, guarded interactions)
+ * is "other" — on the dogfood app ~89% of markers fell in three kinds, which is
+ * exactly the adoption-cost distribution the report needs to show.
+ */
+export type TodoKind =
+  | "uninferred-return-shape"
+  | "compound-root-wrap"
+  | "server-action-stub"
+  | "unaddressable-target"
+  | "other";
+
+export interface TodoTally {
+  kind: TodoKind;
+  count: number;
+  /** One emitted spec carrying such a marker — absolute; the report relativises. */
+  exemplar: string;
+}
+
+/** Records one marker of `kind` into the file the recorder was bound to. */
+export type TodoRecorder = (kind: TodoKind) => void;
+
+/**
+ * Tallies TODO(flawless) markers AT THE EMISSION SITES, as each one is planted.
+ * These numbers must never be derived by grepping the emitted text: the marker
+ * wording is presentation and changes freely, so a text-based count breaks
+ * silently the moment a template is reworded.
+ */
+export class TodoCounter {
+  // Keyed by the file each recorder was bound to: tallying happens at RENDER
+  // time, but a renderer's output is not necessarily written (colocated specs
+  // are kept when they exist and --force is off), so the writer must be able
+  // to retract a whole file's tallies without touching the others'.
+  private byFile = new Map<string, Map<TodoKind, number>>();
+
+  add(kind: TodoKind, exemplar: string): void {
+    const perKind = this.byFile.get(exemplar) ?? new Map<TodoKind, number>();
+    perKind.set(kind, (perKind.get(kind) ?? 0) + 1);
+    this.byFile.set(exemplar, perKind);
+  }
+
+  /** A recorder bound to one emitted file, for threading through templates. */
+  for(file: string): TodoRecorder {
+    return (kind) => this.add(kind, file);
+  }
+
+  /**
+   * Forget everything tallied into `file`. For the writer that decided not to
+   * write it: markers in a discarded render are not debt, and may name TODOs
+   * the user already resolved in the file that was kept.
+   */
+  drop(file: string): void {
+    this.byFile.delete(file);
+  }
+
+  /** Sorted by kind: this lands verbatim in a committed, deterministic file. */
+  toTallies(): TodoTally[] {
+    const byKind = new Map<TodoKind, { count: number; exemplar: string }>();
+    for (const [file, perKind] of this.byFile) {
+      for (const [kind, count] of perKind) {
+        const row = byKind.get(kind);
+        if (!row) {
+          byKind.set(kind, { count, exemplar: file });
+          continue;
+        }
+        row.count += count;
+        // Lexicographically smallest, so the exemplar — and REPORT.md with it —
+        // is byte-identical however the trees happened to be ordered.
+        if (file < row.exemplar) row.exemplar = file;
+      }
+    }
+    return [...byKind.entries()]
+      .map(([kind, r]) => ({ kind, count: r.count, exemplar: r.exemplar }))
+      .sort((a, b) => (a.kind < b.kind ? -1 : 1));
+  }
+}
+
 export interface TaskResult {
   id: TaskId;
   ok: boolean;
@@ -484,6 +569,13 @@ export interface TaskResult {
   findings: Finding[];
   summary: string;
   error?: string;
+  /**
+   * Per-kind counts of the TODO(flawless) markers this task's emitters planted.
+   * Optional and set only by unit-browser: the report distinguishes "measured,
+   * zero" (empty array) from "never measured" (absent), so no other task is
+   * widened by it.
+   */
+  handWork?: TodoTally[];
 }
 
 export interface RunContext {

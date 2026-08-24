@@ -285,7 +285,7 @@ function renderWrapper(
       .join("");
     for (const d of el.dropped.filter((x) => x.name === "...spread")) {
       todos.push(
-        `${indent}{/* TODO(flawless): layout spread ${d.exprText} into <${el.name}> — not reconstructable */}`,
+        `${indent}{/* TODO(flawless): layout spread ${commentSafe(d.exprText)} into <${el.name}> — not reconstructable */}`,
       );
     }
     open += `${indent}<${el.name}${el.attrs}${fixtureAttrs}>\n`;
@@ -328,13 +328,24 @@ ${tree}
  * and a wrong-shaped fixture is worse than an empty one because the specs go
  * green against a fiction.
  */
-/** Source text on one line, so it can sit inside a doc comment. */
+/**
+ * Quoted source is illustrative only, but it sits inside a comment — and a
+ * star-slash pair in it (globs: "**" + "/*") would terminate that comment and
+ * break the emitted file. A zero-width space between the two keeps the text
+ * readable while making the pair inert. Applies to both comment forms: the
+ * fixtures' doc comments and the wrapper's JSX spread TODOs.
+ */
+function commentSafe(text: string): string {
+  return text.replaceAll("*/", "*\u200b/");
+}
+
+/** Source text on one line and comment-inert, so it can sit inside a doc comment. */
 function flatten(text: string): string {
   const one = text
     .replace(/^\{|\}$/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  return one.length > 90 ? `${one.slice(0, 87)}…` : one;
+  return commentSafe(one.length > 90 ? `${one.slice(0, 87)}…` : one);
 }
 
 function renderFixtures(
