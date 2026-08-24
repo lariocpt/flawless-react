@@ -30,6 +30,7 @@ describe("renderSuite", () => {
     expect(paths).toContain("host/server.ts");
     expect(paths).toContain("host/index.html");
     expect(paths).toContain("host/main.tsx");
+    expect(paths).toContain("host/registry.ts");
     expect(paths).toContain("profile/_helpers.ts");
     expect(paths).toContain("profile/_heap.ts");
     expect(paths).toContain("budgets.json");
@@ -39,13 +40,31 @@ describe("renderSuite", () => {
     expect(paths).toContain("profile/Hello.profile.spec.ts");
     expect(paths).toContain("profile/Card.profile.spec.ts");
 
+    // FR-016 split: the mount tables live in a REGENERATED registry.ts; the
+    // write-once main.tsx is only the wrapper and reads them via ./registry.
+    const registry = files.find((f) => f.relPath === "host/registry.ts");
+    expect(registry).toBeDefined();
+    expect(registry?.writeOnce).toBeUndefined();
+    const rc = registry?.content ?? "";
+    expect(rc).toContain("export type Component");
+    expect(rc).toContain("export const REGISTRY");
+    expect(rc).toContain("export const FN_PROPS");
+    expect(rc).toContain("export const WRAP_IN");
+    expect(rc).toContain('"Dashboard": Dashboard');
+    expect(rc).toContain('"Hello": Hello');
+
     const main = files.find((f) => f.relPath === "host/main.tsx");
     expect(main).toBeDefined();
+    expect(main?.writeOnce).toBe(true);
     const content = main?.content ?? "";
     expect(content).toContain("Profiler");
     expect(content).toContain('from "react-scan"');
-    expect(content).toContain('"Dashboard": Dashboard');
-    expect(content).toContain('"Hello": Hello');
+    expect(content).toContain('from "./registry"');
+    // The one extension point: internal lookups go through ALL, so a
+    // hand-registered entry in the spread mounts like a generated one.
+    expect(content).toContain("...REGISTRY");
+    expect(content).toContain("ALL[name]");
+    expect(content).not.toContain('"Dashboard": Dashboard');
     expect(content).toContain("window.__profile");
 
     const dashSpec = files.find((f) => f.relPath === "profile/Dashboard.profile.spec.ts");
@@ -294,6 +313,52 @@ describe("scaffold (file writes)", () => {
       expect(third.status).toBe("refreshed");
       expect(await Bun.file(budgets).text()).toBe('{"sentinel":true}\n');
       expect(await Bun.file(spec).text()).not.toBe("// stale\n");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  test("a newly analysed tree lands in registry.ts while the kept main.tsx is byte-identical", async () => {
+    // FR-016: the registry used to be trapped inside the write-once main.tsx,
+    // so a component the analyser learned to see could never mount. Now a plain
+    // no-force re-run refreshes host/registry.ts.
+    const tree = await analyse({ entry: DASHBOARD, depth: 0, includeChildren: false });
+    const toolbar = await analyse({
+      entry: path.resolve(__dirname, "fixtures/Toolbar.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const out = await tmpDir();
+    try {
+      await scaffold(tree, {
+        outDir: out,
+        variants: 3,
+        force: false,
+        report: false,
+        provider: undefined,
+        apiSpec: undefined,
+      });
+      const registry = path.join(out, "host/registry.ts");
+      const main = path.join(out, "host/main.tsx");
+      expect(await Bun.file(registry).text()).not.toContain('"Toolbar":');
+      // Sentinel: hand wiring in the wrapper — the edits the split protects.
+      const wired = `${await Bun.file(main).text()}// hand wiring sentinel\n`;
+      await Bun.write(main, wired);
+
+      const second = await scaffold(tree, {
+        outDir: out,
+        variants: 3,
+        force: false,
+        report: false,
+        provider: undefined,
+        apiSpec: undefined,
+        extraTrees: [toolbar],
+      });
+      expect(second.status).toBe("refreshed");
+      expect(await Bun.file(registry).text()).toContain(
+        '"Toolbar": Toolbar as unknown as Component,',
+      );
+      expect(await Bun.file(main).text()).toBe(wired);
     } finally {
       await rm(out, { recursive: true, force: true });
     }

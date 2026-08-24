@@ -329,10 +329,14 @@ describe("the emitted suite type-checks, not just parses", () => {
     // name one file per emitter so a template that stops writing something is a
     // failure rather than a silent reduction in coverage.
     for (const expected of [
-      // Toolbar is `export default` and Card is named-only, so naming host and
-      // unit for both pins BOTH import forms to a file that was really checked.
-      "suite-Toolbar/host/main.tsx", // hostComponentImport, default branch
-      "suite-Card/host/main.tsx", // hostComponentImport, named branch
+      // Toolbar is `export default` and Card is named-only, so naming the
+      // registry and unit spec for both pins BOTH import forms to a file that
+      // was really checked. The component imports live in host/registry.ts
+      // since the FR-016 split; main.tsx is the wrapper reading it.
+      "suite-Toolbar/host/registry.ts", // hostComponentImport, default branch
+      "suite-Card/host/registry.ts", // hostComponentImport, named branch
+      "suite-Toolbar/host/main.tsx",
+      "suite-Card/host/main.tsx",
       "suite-Toolbar/unit/Toolbar.test.tsx", // emitComponentImport, default branch
       "suite-Card/unit/Card.test.tsx", // emitComponentImport, named branch
       "suite-StatefulPanel/unit/StatefulPanel.test.tsx",

@@ -123,14 +123,16 @@ describe("renderSuite host", () => {
     files.find((f) => f.relPath === rel)?.content ?? "";
 
   test("a default export is imported as a default, never as a binding", () => {
-    const main = contentOf(
+    // The component imports live in the regenerated host/registry.ts (FR-016),
+    // not in the write-once wrapper.
+    const registry = contentOf(
       suite([tree(comp("Widget", { exportKind: "default" }))]),
-      "host/main.tsx",
+      "host/registry.ts",
     );
-    expect(main).toContain('import Widget from "../../src/Widget";');
-    expect(main).not.toContain("import { Widget }");
+    expect(registry).toContain('import Widget from "../../src/Widget";');
+    expect(registry).not.toContain("import { Widget }");
     // No .tsx: the target project type-checks the host.
-    expect(main).not.toContain('"../../src/Widget.tsx"');
+    expect(registry).not.toContain('"../../src/Widget.tsx"');
   });
 
   test("duplicate names are aliased so the module compiles", () => {
@@ -138,11 +140,13 @@ describe("renderSuite host", () => {
       tree(comp("PollPage"), [tree(comp("CommentForm", { filePath: "/proj/src/a/x.tsx" }))]),
       tree(comp("JobPage"), [tree(comp("CommentForm", { filePath: "/proj/src/b/x.tsx" }))]),
     ]);
-    const main = contentOf(files, "host/main.tsx");
+    const registry = contentOf(files, "host/registry.ts");
     // Two identical import identifiers in one module is a compile error, and it
     // took the whole bundle — and therefore every profile test — with it.
-    expect(main).toContain("as JobPage__CommentForm");
-    expect(main).toContain('"JobPage__CommentForm": JobPage__CommentForm as unknown as Component,');
+    expect(registry).toContain("as JobPage__CommentForm");
+    expect(registry).toContain(
+      '"JobPage__CommentForm": JobPage__CommentForm as unknown as Component,',
+    );
     expect(files.map((f) => f.relPath)).toContain("profile/JobPage__CommentForm.profile.spec.ts");
   });
 
@@ -185,8 +189,8 @@ describe("renderSuite host", () => {
     // import shape needs an eligibility exclusion.
     expect(server).toContain("export const deleteItem = async () => ({});");
     expect(server).toContain("export const renameItem = async () => ({});");
-    const main = contentOf(files, "host/main.tsx");
-    expect(main).toContain('"Widget": Widget as unknown as Component,');
+    const registry = contentOf(files, "host/registry.ts");
+    expect(registry).toContain('"Widget": Widget as unknown as Component,');
   });
 
   test("ineligible components are excluded and the README says why", () => {
@@ -196,10 +200,10 @@ describe("renderSuite host", () => {
       tree(comp("DialogContent", { renderMode: "compound-part" })),
       tree(comp("Private", { exportKind: "none" })),
     ]);
-    const main = contentOf(files, "host/main.tsx");
-    expect(main).toContain('"Widget": Widget as unknown as Component,');
+    const registry = contentOf(files, "host/registry.ts");
+    expect(registry).toContain('"Widget": Widget as unknown as Component,');
     for (const absent of ["Page", "DialogContent", "Private"]) {
-      expect(main).not.toContain(`"${absent}":`);
+      expect(registry).not.toContain(`"${absent}":`);
     }
     // Silence would read as "everything is covered".
     const readme = contentOf(files, "README.md");

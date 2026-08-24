@@ -56,6 +56,7 @@ function parseErrorsIn(file: string, content: string): string[] {
 describe("every emitted file parses", () => {
   test("the profile suite", async () => {
     const errors: string[] = [];
+    const parsed = new Set<string>();
     for (const fixture of FIXTURES) {
       const tree = await analyse({
         entry: path.resolve(__dirname, "fixtures", fixture),
@@ -65,10 +66,15 @@ describe("every emitted file parses", () => {
       const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: true });
       for (const f of files) {
         if (!/\.(m?tsx?)$/.test(f.relPath)) continue;
+        parsed.add(f.relPath);
         errors.push(...parseErrorsIn(`${fixture} → ${f.relPath}`, f.content));
       }
     }
     expect(errors).toEqual([]);
+    // Explicit, so a rename cannot silently drop the sweep's coverage of the
+    // regenerated registry beside the write-once wrapper.
+    expect([...parsed]).toContain("host/registry.ts");
+    expect([...parsed]).toContain("host/main.tsx");
   });
 
   test("the unit and browser specs", async () => {
