@@ -124,6 +124,23 @@ describe("TODO(flawless) markers are counted at their emission sites", () => {
     expect(t[0]?.count).toBe(1);
   });
 
+  test("a family-wrapped compound part counts NO compound-root-wrap — the tool wrapped it", () => {
+    const t = tally([
+      tree(
+        comp("DialogHeader", {
+          renderMode: "compound-part",
+          compoundFamily: {
+            root: "Dialog",
+            content: "DialogContent",
+            part: "other",
+            specifier: "@radix-ui/react-dialog",
+          },
+        }),
+      ),
+    ]);
+    expect(t).toEqual([]);
+  });
+
   test("an unaddressable click counts once per spec layer that skips on it", () => {
     const trees = [
       tree(

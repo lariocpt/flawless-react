@@ -421,6 +421,19 @@ export interface ComponentInfo {
   renderMode?: RenderMode;
   /** Why, in words — emitted into the spec and the run report. */
   renderNotes?: string[];
+  /**
+   * For a compound part: the family its OWN file exports — the sibling that
+   * renders the package Root, the Content sibling when there is one, and
+   * this part's role. Derived same-file only (analyse/compoundFamily.ts);
+   * whether the family is actually wrappable (open-state Roots only) is the
+   * emitters' decision, keyed off `specifier`.
+   */
+  compoundFamily?: {
+    root: string;
+    content?: string;
+    part: "trigger" | "content" | "other";
+    specifier: string;
+  };
   /** Literal text rendered unconditionally by the happy-path return. */
   staticText?: string[];
   /** Awaited module-level data dependencies (async server components only). */
