@@ -45,7 +45,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    BASE=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1) ; BASE=${BASE%-dev}
+                    BASE=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' package.json | head -1) ; BASE=${BASE%-dev}
                     SHA=$(git rev-parse --short HEAD)
                     # Two schemes on purpose — see publish/bin/apps-publish's header. semver
                     # ignores build metadata after `+` when ordering, so the registry cannot use
@@ -75,7 +75,7 @@ pipeline {
                     # tests/crustGate.test.ts (FR-021) needs the crust binary that the apps
                     # plane on this host serves. FLAWLESS_CI_BROWSER=1 arms the one gated
                     # real-browser case (FR-022).
-                    CID=$(docker create -w /w --add-host apps.in.drlario.org:host-gateway \
+                    CID=$(docker create -w /w --add-host apps.in.drlario.org:host-gateway \\
                         -e FLAWLESS_CI_BROWSER=1 oven/bun:1 sh -c '
                         set -eu
                         cd /w
@@ -147,7 +147,7 @@ pipeline {
                         *"$APPS_VERSION"*) : ;;
                         *) echo "FAIL: binary reports '$got', expected it to contain '$APPS_VERSION'"; exit 1 ;;
                     esac
-                    ./out/flawless-react --help | grep -q "multi-task quality kit" \
+                    ./out/flawless-react --help | grep -q "multi-task quality kit" \\
                         || { echo "FAIL: --help produced nothing — wrong compile entry?"; exit 1; }
                 '''
             }
@@ -158,7 +158,7 @@ pipeline {
                     set -eu
                     . ./version.env
                     /opt/publish/bin/apps-publish bin flawless-react "$APPS_VERSION" "$WORKSPACE/out/flawless-react"
-                    grep -q "	flawless-react	$APPS_VERSION	" /srv/apps/index.tsv \
+                    grep -q "	flawless-react	$APPS_VERSION	" /srv/apps/index.tsv \\
                         || { echo "FAIL: $APPS_VERSION not in index.tsv"; exit 1; }
                 '''
             }
@@ -203,9 +203,9 @@ pipeline {
                 sh '''
                     set -eu
                     . ./version.env
-                    curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- --list | grep -q flawless-react \
+                    curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- --list | grep -q flawless-react \\
                         || { echo "FAIL: flawless-react is not listed by install.sh"; exit 1; }
-                    docker run --rm node:22-bookworm-slim \
+                    docker run --rm node:22-bookworm-slim \\
                         npm view "flawless-react@$NPM_VERSION" dist.unpackedSize --registry "$REGISTRY"
                     echo "published flawless-react $NPM_VERSION (npm) / $APPS_VERSION (apps)"
                 '''
