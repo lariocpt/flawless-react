@@ -457,6 +457,10 @@ describe("the perf harness respects --force and protects what it cannot rebuild"
       expect(res.summary).toContain("delete");
       expect(res.summary).toContain("./registry");
       const warned = warnings.join("\n");
+      // The discriminating phrase, not just generic words: a future routine
+      // kept-files warning saying "host/main.tsx … delete … re-run" must not
+      // stand in for the migration warning.
+      expect(warned).toContain("predates the registry split");
       expect(warned).toContain("host/main.tsx");
       expect(warned).toContain("delete");
       expect(warned).toContain("re-run");

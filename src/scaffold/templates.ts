@@ -586,9 +586,15 @@ export {};
  * spread, which survives.
  */
 function hostRegistry(flat: FlatComponent[]): string {
-  // Sorted by registry key: emission must be byte-identical for identical
-  // trees, whatever order the entry globs delivered them in.
-  const sorted = [...flat].sort((a, b) => (a.specName < b.specName ? -1 : 1));
+  // Sorted by registry key: emission is byte-identical for a given set of
+  // specNames. (Byte-identity across PERMUTED entry order holds only until a
+  // componentName collision — allocateSpecNames is delivery-order-dependent
+  // in who keeps the bare name; that predates the split and lives upstream.)
+  // Code-unit order (not localeCompare): locale rules interleave cases and
+  // would reorder — churning — every adopted suite's registry on refresh.
+  const sorted = [...flat].sort((a, b) =>
+    a.specName < b.specName ? -1 : a.specName > b.specName ? 1 : 0,
+  );
   const imports = sorted.map(hostComponentImport).join(NL);
 
   // Cast per entry: a component declaring required props is not assignable to
@@ -667,8 +673,12 @@ try {
 import { createElement, Profiler, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { scan } from "react-scan";
+${mswImport}${providerImport}// ./registry last among the app imports: it pulls every component module,
+// and the monolithic host evaluated msw/provider modules FIRST — a component
+// with module-scope code leaning on a provider module's side effects (i18n
+// init, interceptor install) must keep that order across the split.
 import { type Component, FN_PROPS, REGISTRY, WRAP_IN } from "./registry";
-${mswImport}${providerImport}${mswBoot}
+${mswBoot}
 
 // We measure renders with React's built-in Profiler rather than
 // react-performance-testing's patching: the latter only instruments the
@@ -676,15 +686,25 @@ ${mswImport}${providerImport}${mswBoot}
 // the automatic \`react/jsx-runtime\`. Profiler works with either runtime and
 // across React versions, so the host stays portable.
 
-// Every lookup below goes through ALL, never REGISTRY directly: ./registry is
-// regenerated on every run, so this spread is the one place a hand-registered
-// component survives.
+// Every lookup below goes through the ALL_* spreads, never the registry
+// tables directly: ./registry is regenerated on every run, so these spreads
+// are the one place hand-registered entries survive. All three exist for the
+// same reason — a hand-registered component may also need function-prop
+// stubs (functions cannot cross page.evaluate's structured clone) or a
+// wrapper chain, and without its own spread each table would silently drop
+// hand entries on the next regeneration.
 const ALL: Record<string, Component> = {
   ...REGISTRY /* hand-registered components ride here and survive regeneration */,
 };
+const ALL_FN_PROPS: Record<string, readonly string[]> = {
+  ...FN_PROPS /* hand-registered components' function-prop names ride here */,
+};
+const ALL_WRAP_IN: Record<string, readonly string[]> = {
+  ...WRAP_IN /* hand-registered components' wrapper chains ride here */,
+};
 
 function withFnProps(name: string, props: Record<string, unknown>): Record<string, unknown> {
-  const names = FN_PROPS[name];
+  const names = ALL_FN_PROPS[name];
   if (!names) return props;
   const out = { ...props };
   for (const p of names) if (out[p] === undefined) out[p] = () => {};
@@ -692,7 +712,7 @@ function withFnProps(name: string, props: Record<string, unknown>): Record<strin
 }
 
 function nest(name: string, tree: ReactNode): ReactNode {
-  const chain = WRAP_IN[name];
+  const chain = ALL_WRAP_IN[name];
   if (!chain) return tree;
   let out = tree;
   for (let i = chain.length - 1; i >= 0; i--) out = createElement(chain[i] as string, null, out);

@@ -60,10 +60,15 @@ describe("renderSuite", () => {
     expect(content).toContain("Profiler");
     expect(content).toContain('from "react-scan"');
     expect(content).toContain('from "./registry"');
-    // The one extension point: internal lookups go through ALL, so a
-    // hand-registered entry in the spread mounts like a generated one.
+    // The extension points: internal lookups go through the ALL_* spreads,
+    // so a hand-registered entry — component, function-prop stubs, wrapper
+    // chain alike — behaves like a generated one.
     expect(content).toContain("...REGISTRY");
     expect(content).toContain("ALL[name]");
+    expect(content).toContain("...FN_PROPS");
+    expect(content).toContain("ALL_FN_PROPS[name]");
+    expect(content).toContain("...WRAP_IN");
+    expect(content).toContain("ALL_WRAP_IN[name]");
     expect(content).not.toContain('"Dashboard": Dashboard');
     expect(content).toContain("window.__profile");
 
@@ -162,6 +167,13 @@ describe("renderSuite with --provider", () => {
     expect(content).toContain('import AppProvider from "../../tests/fixtures/_AppProvider"');
     expect(content).toContain("createElement(AppProvider as never, null, tree)");
     expect(content).toContain("wrap(");
+    // Evaluation order across the split must match the monolith: the provider
+    // module evaluates before ./registry pulls every component module, so
+    // component-module side effects still see the provider's (i18n init,
+    // interceptor installs).
+    expect(content.indexOf("import AppProvider")).toBeLessThan(
+      content.indexOf('from "./registry"'),
+    );
   });
 
   test("without --provider, wrap is the identity", async () => {

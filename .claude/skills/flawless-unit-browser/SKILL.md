@@ -90,7 +90,11 @@ Browser specs mount through `flawless/host/` and exist only when both
 every run** — a newly analysed component arrives via a plain no-force re-run,
 nothing to hand-edit. The write-once `host/main.tsx` is only the wrapper
 (polyfills, provider, MSW, the profiling machinery); components you register
-by hand go in its `ALL` spread (`const ALL = { ...REGISTRY, /* yours */ }`),
+by hand go in its spreads — `ALL` for the component (`const ALL = {
+...REGISTRY, MyComponent: MyComponent as unknown as Component }` — the cast
+is required: strict tsconfig rejects a props-typed component in a
+Record<string, Component>), plus `ALL_FN_PROPS`/`ALL_WRAP_IN` entries when it
+needs function-prop stubs or a wrapper chain —
 which every lookup goes through and which survives regeneration.
 
 `unknown component: <Name>` on a current suite means the re-run has not

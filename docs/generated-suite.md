@@ -91,7 +91,7 @@ The mechanical mount tables, one import line per analysed component plus three e
 The write-once wrapper — the user-owned half of the split. Three things happen here:
 
 1. **react-scan is initialised once at module load**. It buffers any `unnecessary: true` render events into a `scanEvents` array.
-2. The tables are imported from `./registry` and `REGISTRY` is spread into **`ALL`** — `const ALL: Record<string, Component> = { ...REGISTRY /* hand-registered components ride here */ }`. Every internal lookup goes through `ALL`, so an entry you add to the spread mounts exactly like a generated one and survives every regeneration.
+2. The tables are imported from `./registry` and spread into **`ALL`**, **`ALL_FN_PROPS`** and **`ALL_WRAP_IN`** — e.g. `const ALL: Record<string, Component> = { ...REGISTRY /* hand-registered components ride here */ }`. Every internal lookup goes through the spreads, so an entry you add mounts like a generated one and survives every regeneration — add it as `MyComponent: MyComponent as unknown as Component` (the strict tsconfig requires the cast), with `ALL_FN_PROPS`/`ALL_WRAP_IN` entries when it takes function props or needs a wrapper chain.
 3. **`window.__profile`** is exposed for the Playwright driver:
 
 ```ts

@@ -66,7 +66,11 @@ export async function scaffold(
   // the loop below could not change the verdict either way.
   const mainPath = path.join(outDir, "host", "main.tsx");
   const preSplitMain =
-    existsSync(mainPath) && !(await Bun.file(mainPath).text()).includes('from "./registry"');
+    // Quote- and extension-tolerant: main.tsx is user-owned, so a prettier
+    // singleQuote pass or an explicit ./registry.ts import (the suite tsconfig
+    // allows importing .ts extensions) must not read as pre-split forever.
+    existsSync(mainPath) &&
+    !/from\s+['"]\.\/registry(\.ts)?['"]/.test(await Bun.file(mainPath).text());
 
   const providerImportPath = opts.provider ? toHostRelImport(outDir, opts.provider) : undefined;
   const mockRoutes = opts.apiSpec ? extractRoutes(await loadApiSpec(opts.apiSpec)) : undefined;

@@ -154,7 +154,8 @@ With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results }` and not
 │   ├── server.ts         # Bun.serve over a Bun.build bundle of your component(s)
 │   ├── _polyfill.ts      # browser polyfills for process/global/setImmediate
 │   ├── index.html        # mounts the host bundle
-│   └── main.tsx          # createRoot + <Profiler> + react-scan + window.__profile driver
+│   ├── registry.ts       # REGISTRY/FN_PROPS/WRAP_IN mount tables — regenerated every run
+│   └── main.tsx          # write-once wrapper: createRoot + <Profiler> + react-scan + window.__profile driver
 ├── profile/
 │   ├── _helpers.ts       # render-info / scan-event harvesters, summarize() stats
 │   ├── _heap.ts          # CDP-driven heap-snapshot helpers (write to <outDir>/heaps/)

@@ -28,7 +28,7 @@ ensureRoot().render(
 );
 ```
 
-If different components need different providers, factor the wrapping into a `wrap(name, element)` helper keyed on the component name. Keep all of this in `main.tsx`: the tables in `host/registry.ts` are regenerated on every run, so per-component wiring written there is lost. To register a component the analyser cannot see, add it to `main.tsx`'s `ALL` spread (`const ALL = { ...REGISTRY, MyComponent }`) — every lookup goes through `ALL`, and the spread survives regeneration.
+If different components need different providers, factor the wrapping into a `wrap(name, element)` helper keyed on the component name. Keep all of this in `main.tsx`: the tables in `host/registry.ts` are regenerated on every run, so per-component wiring written there is lost. To register a component the analyser cannot see, add it to `main.tsx`'s `ALL` spread — `const ALL = { ...REGISTRY, MyComponent: MyComponent as unknown as Component }` (the cast is what the generator itself emits: a props-typed component is not assignable to `Record<string, Component>` under the suite's strict tsconfig). Function-prop stubs and wrapper chains for hand entries go in the sibling `ALL_FN_PROPS` / `ALL_WRAP_IN` spreads; every lookup goes through the three spreads, which survive regeneration.
 
 ## Mock data sources
 
