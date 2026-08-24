@@ -50,99 +50,118 @@ describe("--ci process contract", () => {
   const BIN = path.resolve(__dirname, "../src/bin.ts");
   const CARD = path.resolve(__dirname, "fixtures/Card.tsx");
 
-  test(
-    "stdout is exactly one JSON blob carrying {exitCode, outDir, results}",
-    async () => {
-      const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
-      try {
-        // --no-inline-summary: without it the run drops a Card.flawless.json
-        // sidecar beside the tracked fixture, dirtying the repo on every run.
-        const proc = Bun.spawn(
-          ["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--no-inline-summary", "--out", out],
-          {
-            stdout: "pipe",
-            stderr: "pipe",
-          },
-        );
-        const stdout = await new Response(proc.stdout).text();
-        expect(await proc.exited).toBe(0);
-        const blob = JSON.parse(stdout) as {
-          exitCode: number;
-          outDir: string;
-          results: Array<{ id: string }>;
-        };
-        expect(blob.exitCode).toBe(0);
-        expect(typeof blob.outDir).toBe("string");
-        expect(blob.results.map((r) => r.id)).toEqual(["perf-static"]);
-      } finally {
-        await rm(out, { recursive: true, force: true });
-      }
-    },
-    30000,
-  );
+  test("stdout is exactly one JSON blob carrying {exitCode, outDir, results}", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+    try {
+      // --no-inline-summary: without it the run drops a Card.flawless.json
+      // sidecar beside the tracked fixture, dirtying the repo on every run.
+      const proc = Bun.spawn(
+        ["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--no-inline-summary", "--out", out],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const blob = JSON.parse(stdout) as {
+        exitCode: number;
+        outDir: string;
+        results: Array<{ id: string }>;
+      };
+      expect(blob.exitCode).toBe(0);
+      expect(typeof blob.outDir).toBe("string");
+      expect(blob.results.map((r) => r.id)).toEqual(["perf-static"]);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
 
-  test(
-    "a usage error exits 2 and leaves stdout empty",
-    async () => {
-      const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
-      try {
-        const proc = Bun.spawn(
-          ["bun", BIN, "does-not-exist-*.tsx", "--ci", "--tasks", "perf-static", "--out", out],
-          { stdout: "pipe", stderr: "pipe" },
-        );
-        const stdout = await new Response(proc.stdout).text();
-        expect(await proc.exited).toBe(2);
-        expect(stdout.trim()).toBe("");
-      } finally {
-        await rm(out, { recursive: true, force: true });
-      }
-    },
-    30000,
-  );
+  test("a usage error exits 2 and leaves stdout empty", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+    try {
+      const proc = Bun.spawn(
+        ["bun", BIN, "does-not-exist-*.tsx", "--ci", "--tasks", "perf-static", "--out", out],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(2);
+      expect(stdout.trim()).toBe("");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
 
-  test(
-    "a rejection escaping main() exits 1 with the error alone on stderr",
-    async () => {
-      const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
-      try {
-        // The only throw sites outside main()'s try/catch are its trailing
-        // stdout writes, so fault-inject there: refuse the JSON blob itself.
-        const preload = path.join(dir, "preload.ts");
-        await writeFile(
-          preload,
-          `const original = process.stdout.write.bind(process.stdout);
+  test("a rejection escaping main() exits 1 with the error alone on stderr", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+    try {
+      // The only throw sites outside main()'s try/catch are its trailing
+      // stdout writes, so fault-inject there: refuse the JSON blob itself.
+      const preload = path.join(dir, "preload.ts");
+      await writeFile(
+        preload,
+        `const original = process.stdout.write.bind(process.stdout);
 process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => {
   if (typeof chunk === "string" && chunk.startsWith("{")) throw new Error("stdout torn down");
   return (original as (...a: unknown[]) => boolean)(chunk, ...rest);
 }) as typeof process.stdout.write;
 `,
-        );
-        const proc = Bun.spawn(
-          [
-            "bun",
-            `--preload=${preload}`,
-            path.resolve(__dirname, "../src/cli.ts"),
-            CARD,
-            "--ci",
-            "--tasks",
-            "perf-static",
-            "--no-inline-summary",
-            "--out",
-            path.join(dir, "out"),
-          ],
-          { stdout: "pipe", stderr: "pipe" },
-        );
-        const stderr = await new Response(proc.stderr).text();
-        expect(await proc.exited).toBe(1);
-        // The entry catch writes String(err.stack): the message leads, with
-        // none of the runtime's uncaught-error framing around it.
-        expect(stderr.startsWith("Error: stdout torn down")).toBe(true);
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
-    },
-    30000,
-  );
+      );
+      const proc = Bun.spawn(
+        [
+          "bun",
+          `--preload=${preload}`,
+          path.resolve(__dirname, "../src/cli.ts"),
+          CARD,
+          "--ci",
+          "--tasks",
+          "perf-static",
+          "--no-inline-summary",
+          "--out",
+          path.join(dir, "out"),
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const stderr = await new Response(proc.stderr).text();
+      expect(await proc.exited).toBe(1);
+      // The entry catch writes String(err.stack): the message leads, with
+      // none of the runtime's uncaught-error framing around it.
+      expect(stderr.startsWith("Error: stdout torn down")).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+
+// FR-031: --help/--version must not pay for the TypeScript compiler. The
+// analyser (src/analyse/*) imports `typescript`, and a top-level value-import
+// of ./core.ts drags it into every invocation before parseArgs even runs.
+describe("startup latency (FR-031)", () => {
+  const CLI = path.resolve(__dirname, "../src/cli.ts");
+
+  test("--help answers fast (no compiler on the startup path)", async () => {
+    const started = performance.now();
+    const proc = Bun.spawn(["bun", CLI, "--help"], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    const elapsed = performance.now() - started;
+    expect(out).toContain("flawless-react");
+    // Measured on this machine: ~131ms with the top-level core.ts import
+    // (typescript in the graph), ~14ms without. 100ms sits between the two
+    // clusters with margin on both sides, so a compiler regression trips it
+    // while CI jitter does not.
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  // Bytes-level guard: timing can flake, source cannot. Only `import type` may
+  // reference ./core.ts at top level; the value import must stay dynamic.
+  test("cli.ts has no top-level value-import of ./core.ts", () => {
+    const src = readFileSync(path.resolve(__dirname, "../src/cli.ts"), "utf8");
+    const coreImports = src.match(/^import\s[^;]*?from\s+"\.\/core\.ts";?$/gm) ?? [];
+    for (const line of coreImports) {
+      expect(line.startsWith("import type")).toBe(true);
+    }
+  });
 });
 
 describe("parseArgs", () => {
@@ -195,6 +214,23 @@ describe("parseArgs", () => {
 
   test("negative depth rejected", () => {
     expect(() => parseArgs(["./Foo.tsx", "--depth=-1"])).toThrow(/--depth/);
+  });
+
+  // FR-033: a trailing `--depth`/`--variants` used to silently fall back to the
+  // default instead of failing like their --out sibling.
+  test("--depth without a value throws", () => {
+    expect(() => parseArgs(["x.tsx", "--depth"])).toThrow(/--depth requires a value/);
+  });
+
+  test("--variants without a value throws", () => {
+    expect(() => parseArgs(["x.tsx", "--variants"])).toThrow(/--variants requires a value/);
+  });
+
+  // FR-033: raw JSON.parse errors ("JSON Parse error: …") name no flag; the
+  // rethrow must say which flag failed and keep the original diagnostic.
+  test("--props with invalid JSON names the flag in both forms", () => {
+    expect(() => parseArgs(["x.tsx", "--props", "{bad"])).toThrow(/--props is not valid JSON/);
+    expect(() => parseArgs(["x.tsx", "--props={bad"])).toThrow(/--props is not valid JSON/);
   });
 
   test("--tasks csv parses to TaskId[]", () => {

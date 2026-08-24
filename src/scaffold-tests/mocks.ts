@@ -40,6 +40,20 @@ const MOCK_SKIP =
   /^(react($|\/)|next\/(?!navigation|headers|cache)|.*\.(css|scss|sass|less|svg|png|jpe?g|gif|woff2?)$)/;
 
 /**
+ * Bindings whose modules must stay real even in "rsc" mode: pure, synchronous,
+ * class-string producers. Mocking them strips every className off the markup —
+ * or, with the generic async stub, injects a Promise where a string belongs and
+ * className renders as "[object Promise]". A module is exempt only when EVERY
+ * binding the component imports from it is on this list; one data export beside
+ * a `cn` re-export and the module is stubbed as usual.
+ */
+const PURE_UTILITY_BINDINGS = new Set(["cn", "clsx", "cva", "twMerge", "tw"]);
+
+function importsOnlyPureUtilities(mi: ModuleImportInfo): boolean {
+  return mi.names.length > 0 && mi.names.every((n) => PURE_UTILITY_BINDINGS.has(n));
+}
+
+/**
  * `specDir` is the absolute directory the spec will be written to. It matters:
  * vitest resolves a relative vi.mock() specifier against the file containing the
  * call, not against the component under test. Emitting the component's own
@@ -99,6 +113,7 @@ export function emitModuleMocks(
     if (mode === "client") continue;
     if (mi.kind !== "value") continue;
     if (MOCK_SKIP.test(mi.specifier)) continue;
+    if (importsOnlyPureUtilities(mi)) continue;
     push(mi, (spec) => dataModuleMock(mi, info, spec));
   }
 

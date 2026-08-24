@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { walkApiRoutes } from "../src/nextjs/apiRoutes.ts";
 import { detectNextjs, mergeIntoNextPackageJson } from "../src/nextjs/detect.ts";
 import { fetchLiveSwagger, loadLocalSpec, parseSpecRoutes } from "../src/nextjs/liveSpec.ts";
@@ -223,6 +224,68 @@ describe("ensureClientProviderWrapper", () => {
     expect(second?.path).toBe(path.join(outDir, "provider.tsx"));
     expect(second?.included).toEqual([]);
     expect(readFileSync(path.join(outDir, "provider.tsx"), "utf8")).toBe(before);
+  });
+
+  test("a dropped prop containing */ cannot terminate the emitted comments", () => {
+    // The dropped-prop source is quoted inside a /** */ doc comment (fixtures)
+    // and a {/* */} JSX comment (the spread TODO). A glob like "**/*" carries
+    // the two characters that end both comment forms, so unsanitised it breaks
+    // the write-once provider.fixtures.ts — the one file --force never repairs.
+    const dir = tmpDir();
+    writeFileSync(
+      path.join(dir, "providers.tsx"),
+      `"use client";
+import type { ReactNode } from "react";
+export default function Cfg({ children }: { children: ReactNode }) {
+  return <>{children}</>;
+}
+`,
+    );
+    const layout = path.join(dir, "layout.tsx");
+    writeFileSync(
+      layout,
+      `import type { ReactNode } from "react";
+import Cfg from "./providers";
+const extras = { "**/*": {} };
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html>
+      <body>
+        <Cfg config={{ include: "**/*" }} {...extras["**/*"]}>{children}</Cfg>
+      </body>
+    </html>
+  );
+}
+`,
+    );
+    const ctx: NextjsContext = { root: dir, router: "app", appResolver: layout, apiRoutes: [] };
+    const outDir = tmpDir();
+    const result = ensureClientProviderWrapper(ctx, outDir, layout);
+    expect(result?.created).toBe(true);
+
+    const parseDiags = (file: string, kind: ts.ScriptKind): readonly ts.Diagnostic[] => {
+      const sf = ts.createSourceFile(
+        file,
+        readFileSync(file, "utf8"),
+        ts.ScriptTarget.ES2022,
+        true,
+        kind,
+      );
+      // Parser-level diagnostics live on the source file; the property is not
+      // in the public .d.ts but is the only way to see them without a Program.
+      return (sf as unknown as { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics;
+    };
+
+    const fixturesPath = path.join(outDir, "provider.fixtures.ts");
+    expect(parseDiags(fixturesPath, ts.ScriptKind.TS)).toEqual([]);
+    expect(parseDiags(path.join(outDir, "provider.tsx"), ts.ScriptKind.TSX)).toEqual([]);
+
+    // Still illustrative: the quoted source survives, minus the lethal pair.
+    const fixtures = readFileSync(fixturesPath, "utf8");
+    expect(fixtures).toContain('include: "**');
+    expect(fixtures).toContain("to <Cfg>");
+    const wrapper = readFileSync(path.join(outDir, "provider.tsx"), "utf8");
+    expect(wrapper).toContain("layout spread {...extras[");
   });
 
   test("returns undefined when there is no layout to derive from", () => {

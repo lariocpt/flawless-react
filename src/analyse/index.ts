@@ -23,8 +23,27 @@ import { resolveTagRootTags } from "./resolveTagRootTags.ts";
 import { exportedNames, SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
 
-export async function analyse(opts: AnalyseOptions): Promise<ComponentTree> {
-  const trees = await analyseFile({ ...opts, roots: "primary" });
+/**
+ * State shareable across EVERY entry of a sweep: both hold only
+ * filesystem-derived facts (parsed sources, prologue directives, tsconfig
+ * chains). Per-entry state — the visited sets above all — must never live
+ * here. Omit it and each call builds a fresh pair, so the public API is
+ * unchanged.
+ */
+export interface AnalyseSharedContext {
+  cache: SourceFileCache;
+  resolver: ModuleResolver;
+}
+
+export function createAnalyseSharedContext(): AnalyseSharedContext {
+  return { cache: new SourceFileCache(), resolver: new ModuleResolver() };
+}
+
+export async function analyse(
+  opts: AnalyseOptions,
+  shared?: AnalyseSharedContext,
+): Promise<ComponentTree> {
+  const trees = await analyseFile({ ...opts, roots: "primary" }, shared);
   const first = trees[0];
   if (!first) {
     throw new Error(`parseFile: could not locate a React component in ${opts.entry}`);
@@ -45,14 +64,17 @@ export async function analyse(opts: AnalyseOptions): Promise<ComponentTree> {
  * shared children. The resolver and parse cache ARE shared — that is what keeps
  * a 175-root sweep affordable.
  */
-export async function analyseFile(opts: AnalyseOptions): Promise<ComponentTree[]> {
-  const resolver = new ModuleResolver();
-  const cache = new SourceFileCache();
+export async function analyseFile(
+  opts: AnalyseOptions,
+  shared?: AnalyseSharedContext,
+): Promise<ComponentTree[]> {
+  const resolver = shared?.resolver ?? new ModuleResolver();
+  const cache = shared?.cache ?? new SourceFileCache();
   const absPath = path.resolve(opts.entry);
 
   let rootNames: Array<string | undefined> = [undefined];
   if (opts.roots === "exported") {
-    const parsed = await parseFile(absPath);
+    const parsed = await parseFile(absPath, cache);
     const exported = parsed.components.filter((c) => c.exportKind !== "none");
     const chosen = exported.length > 0 ? exported : parsed.components.slice(0, 1);
     rootNames = chosen.map((c) => c.componentName);
@@ -77,7 +99,7 @@ async function analyseOne(
   preferredName: string | undefined,
   cache: SourceFileCache,
 ): Promise<ComponentTree> {
-  const parsed = await parseFile(absPath);
+  const parsed = await parseFile(absPath, cache);
   const unit =
     (preferredName
       ? parsed.components.find((c) => c.componentName === preferredName)
@@ -290,4 +312,5 @@ export { extractProps } from "./extractProps.ts";
 export { parseFile } from "./parseFile.ts";
 export { posOf } from "./pos.ts";
 export { ModuleResolver, probeModuleFile } from "./resolveModule.ts";
+export { SourceFileCache } from "./sourceCache.ts";
 export { walkChildren } from "./walkChildren.ts";

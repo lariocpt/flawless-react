@@ -1,8 +1,20 @@
-import { runCore, UsageError } from "./core.ts";
+// core.ts (via the analyser) imports the TypeScript compiler — ~110ms of
+// startup nobody running --help/--version should pay. Only type-only imports
+// of that graph may appear here; the value imports of runCore and TASKS happen
+// inside main(), after parseArgs and its fast paths have had their chance to
+// exit. UsageError comes from types.ts, a leaf, precisely so this file never
+// needs core.ts at load time.
+import type { CoreResult } from "./core.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
-import { TASKS } from "./tasks/index.ts";
-import type { CliArgs, HeapMode, PropsShape, RootMode, TaskId } from "./types.ts";
+import {
+  type CliArgs,
+  type HeapMode,
+  type PropsShape,
+  type RootMode,
+  type TaskId,
+  UsageError,
+} from "./types.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `flawless-react — multi-task quality kit for React components
@@ -120,7 +132,9 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (a.startsWith("--out=")) {
       out = a.slice("--out=".length);
     } else if (a === "--depth") {
-      depth = Number(argv[++i] ?? "3");
+      const v = argv[++i];
+      if (v === undefined) throw new Error("--depth requires a value");
+      depth = Number(v);
     } else if (a.startsWith("--depth=")) {
       depth = Number(a.slice("--depth=".length));
     } else if (a === "--changed") {
@@ -134,7 +148,9 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (a.startsWith("--heaps=")) {
       heaps = readHeapMode(a.slice("--heaps=".length));
     } else if (a === "--variants") {
-      variants = Number(argv[++i] ?? "5");
+      const v = argv[++i];
+      if (v === undefined) throw new Error("--variants requires a value");
+      variants = Number(v);
     } else if (a.startsWith("--variants=")) {
       variants = Number(a.slice("--variants=".length));
     } else if (a === "--include-children") {
@@ -145,9 +161,9 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (a === "--props") {
       const v = argv[++i];
       if (v === undefined) throw new Error("--props requires a JSON value");
-      propsOverride = JSON.parse(v) as PropsShape;
+      propsOverride = parsePropsJson(v);
     } else if (a.startsWith("--props=")) {
-      propsOverride = JSON.parse(a.slice("--props=".length)) as PropsShape;
+      propsOverride = parsePropsJson(a.slice("--props=".length));
     } else if (a === "--provider") {
       const v = argv[++i];
       if (v === undefined) throw new Error("--provider requires a file path");
@@ -264,6 +280,16 @@ export function parseArgs(argv: string[]): CliArgs {
   };
 }
 
+/** A raw JSON.parse error ("JSON Parse error: …") names no flag; keep the
+ *  diagnostic but say which flag carried the bad value. */
+function parsePropsJson(raw: string): PropsShape {
+  try {
+    return JSON.parse(raw) as PropsShape;
+  } catch (err) {
+    throw new Error(`--props is not valid JSON: ${(err as Error).message}`);
+  }
+}
+
 function parseTaskList(s: string): TaskId[] {
   const parts = s
     .split(",")
@@ -294,6 +320,9 @@ export async function main(argv: string[]): Promise<void> {
 
   const wantInteractive = !args.noInteractive && pattern === undefined && process.stdin.isTTY;
   if (wantInteractive) {
+    // Deferred with core.ts: tasks/index.ts pulls every task module, and only
+    // the interactive menu needs the registry before runCore does.
+    const { TASKS } = await import("./tasks/index.ts");
     const picked = await promptInteractive({
       taskChoices: TASKS.map((t) => ({ id: t.id, label: t.label, description: t.description })),
       defaultTaskIds: ["perf-harness", "perf-static"],
@@ -313,7 +342,11 @@ export async function main(argv: string[]): Promise<void> {
     process.exit(2);
   }
 
-  let result: Awaited<ReturnType<typeof runCore>>;
+  // First value-touch of the core graph (and with it the TypeScript compiler):
+  // every exit path above must stay reachable without paying for it.
+  const { runCore } = await import("./core.ts");
+
+  let result: CoreResult;
   try {
     result = await runCore({
       pattern: pattern as string,

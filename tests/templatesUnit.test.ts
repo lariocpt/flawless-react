@@ -238,6 +238,51 @@ describe("renderUnitBrowser async server components", () => {
     expect(src).not.toContain('vi.mock("@/lib/types"');
   });
 
+  test("RSC auto-mocking leaves pure class-string utilities (cn/clsx/cva) real", () => {
+    // The blanket rsc-mode mock turned `cn` into vi.fn(async () => ({})) — an
+    // async stub for a sync classnames join, so className rendered as
+    // "[object Promise]". The tool's own docs say never to mock cn.
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [
+              moduleImport({ specifier: "@/lib/utils", names: ["cn"] }),
+              moduleImport({ specifier: "@/lib/variants", names: ["cva", "twMerge"] }),
+              moduleImport({ specifier: "@/lib/db", names: ["getUser"] }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    const src = contentOf(files, "unit/Page.test.tsx");
+    expect(src).not.toContain('vi.mock("@/lib/utils"');
+    expect(src).not.toContain('vi.mock("@/lib/variants"');
+    // A data module is still stubbed — the exemption is by imported bindings.
+    expect(src).toContain('vi.mock("@/lib/db"');
+  });
+
+  test("a module mixing cn with a data export is still mocked", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [moduleImport({ specifier: "@/lib/utils", names: ["cn", "getUser"] })],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    expect(contentOf(files, "unit/Page.test.tsx")).toContain('vi.mock("@/lib/utils"');
+  });
+
   test("RSC spec wraps the resolved tree in the provider when one is given", () => {
     const files = renderUnitBrowser({
       trees: [tree(comp("Page", { exportKind: "default", isAsync: true }))],
@@ -358,6 +403,50 @@ describe("renderUnitBrowser colocate", () => {
     // Anchored to the config's own directory, so the name cannot drift again.
     expect(cfg).toContain('path.join(configDir, "setup.ts")');
     expect(cfg).not.toContain('"flawless/unit');
+  });
+
+  test("include globs cover specs colocated outside src/ (src-less layout)", () => {
+    // The include was hardcoded to src/** — a project keeping components under
+    // <root>/components or <root>/app got its specs emitted and never selected.
+    const files = renderUnitBrowser({
+      trees: [
+        tree(comp("Card", { filePath: "/proj/components/Card.tsx", exportKind: "default" })),
+        tree(comp("Header", { filePath: "/proj/app/nav/Header.tsx", exportKind: "named" })),
+      ],
+      outDir: OUT,
+      variants: 3,
+      colocate: true,
+    });
+    const cfg = contentOf(files, "vitest.config.mts");
+    const match = cfg.match(/include: (\[[^\]]*\])/);
+    expect(match).not.toBeNull();
+    const include = JSON.parse(match?.[1] ?? "[]") as string[];
+    // Every colocated spec the run emits is covered by some include glob,
+    // relative to the project root the config resolves (parent of outDir).
+    for (const f of files) {
+      if (!f.absPath) continue;
+      const rel = path.relative("/proj", f.absPath);
+      expect(
+        include.some((g) => new Bun.Glob(g).match(rel)),
+        `${rel} matched by ${JSON.stringify(include)}`,
+      ).toBe(true);
+    }
+    // Deterministic: sorted and deduped ahead of the outDir's own unit glob.
+    const derived = include.slice(0, -1);
+    expect(derived).toEqual([...new Set(derived)].sort());
+  });
+
+  test("include falls back to src/** when nothing colocated is derivable", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Hidden", { exportKind: "none" }))],
+      outDir: OUT,
+      variants: 3,
+      colocate: true,
+    });
+    const cfg = contentOf(files, "vitest.config.mts");
+    expect(cfg).toContain(
+      'include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
+    );
   });
 
   test("without colocate the unit specs stay under outDir", () => {

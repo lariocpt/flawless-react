@@ -78,6 +78,33 @@ describe("hostEligibility", () => {
       expect(verdict.reason ?? "").toMatch(reason);
     }
   });
+
+  test("a namespace-shaped server-action import does not exclude the component", () => {
+    // ModuleImportInfo records `import * as actions` as names:["actions"] —
+    // the same shape as a single named import, so no eligibility gate can key
+    // on it. None is needed: the host stubs a server-action module by absolute
+    // path with its full export surface, whatever the import binding looks like
+    // (asserted on host/server.ts below).
+    const verdict = hostEligibility(
+      comp("Widget", {
+        renderMode: "client",
+        moduleImports: [
+          {
+            specifier: "@/app/actions",
+            names: ["actions"],
+            kind: "value",
+            isTypeOnly: false,
+            hasDefault: false,
+            resolvedPath: "/proj/src/app/actions.ts",
+            isServerAction: true,
+            serverActionExports: ["deleteItem", "renameItem"],
+            pos: { file: "/proj/src/Widget.tsx", line: 1, column: 1 },
+          },
+        ],
+      }),
+    );
+    expect(verdict.eligible).toBe(true);
+  });
 });
 
 describe("renderSuite host", () => {
@@ -130,6 +157,36 @@ describe("renderSuite host", () => {
     const paths = files.map((f) => f.relPath);
     expect(paths).toContain("profile/CardHeader.profile.spec.ts");
     expect(paths).toContain("profile/CardFooter.profile.spec.ts");
+  });
+
+  test("a server-action module is stubbed with its full export surface", () => {
+    const files = suite([
+      tree(
+        comp("Widget", {
+          renderMode: "client",
+          moduleImports: [
+            {
+              specifier: "@/app/actions",
+              names: ["actions"],
+              kind: "value" as const,
+              isTypeOnly: false,
+              hasDefault: false,
+              resolvedPath: "/proj/src/app/actions.ts",
+              isServerAction: true,
+              serverActionExports: ["deleteItem", "renameItem"],
+              pos: { file: "/proj/src/Widget.tsx", line: 1, column: 1 },
+            },
+          ],
+        }),
+      ),
+    ]);
+    const server = contentOf(files, "host/server.ts");
+    // Every real export binds — a namespace member access included — so no
+    // import shape needs an eligibility exclusion.
+    expect(server).toContain("export const deleteItem = async () => ({});");
+    expect(server).toContain("export const renameItem = async () => ({});");
+    const main = contentOf(files, "host/main.tsx");
+    expect(main).toContain('"Widget": Widget as unknown as Component,');
   });
 
   test("ineligible components are excluded and the README says why", () => {

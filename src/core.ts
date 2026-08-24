@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { analyseFile } from "./analyse/index.ts";
+import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import { outDirRel, underOutDir } from "./emitPaths.ts";
 import {
@@ -255,15 +255,22 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
 
   const trees: ComponentTree[] = [];
   const unparseable: UnparseableFile[] = [];
+  // One parse cache + resolver for the whole sweep: a leaf shared by many
+  // entries (ui/card.tsx under a dogfood sweep) parses once, not once per
+  // entry. Per-entry state (visited sets) stays inside analyseFile.
+  const analyseShared = createAnalyseSharedContext();
   for (const file of files) {
     try {
       trees.push(
-        ...(await analyseFile({
-          entry: file,
-          depth: opts.depth ?? 3,
-          includeChildren: opts.includeChildren ?? true,
-          roots: opts.roots ?? "primary",
-        })),
+        ...(await analyseFile(
+          {
+            entry: file,
+            depth: opts.depth ?? 3,
+            includeChildren: opts.includeChildren ?? true,
+            roots: opts.roots ?? "primary",
+          },
+          analyseShared,
+        )),
       );
     } catch (err) {
       // Also recorded so REPORT.md can account for it. A stderr line is lost in

@@ -113,7 +113,13 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
   }
   if (hasMock) {
     files.push({ relPath: "mock/server.ts", content: mockServer() });
-    files.push({ relPath: "mock/routes.ts", content: mockRoutesFile(opts.mockRoutes ?? []) });
+    // writeOnce: its emitted header says no regeneration step overwrites it —
+    // hand-tuned fixture bodies cannot be rebuilt from the OpenAPI spec.
+    files.push({
+      relPath: "mock/routes.ts",
+      content: mockRoutesFile(opts.mockRoutes ?? []),
+      writeOnce: true,
+    });
   }
   if (opts.report) {
     files.push({
@@ -196,13 +202,15 @@ function stripTsExt(spec: string): string {
 }
 
 /**
- * Safe inside the emitted `test.skip(\`...\`)` template literal.
+ * Safe inside an emitted `test(\`...\`)` / `test.skip(\`...\`)` template literal.
  *
- * A skip reason quotes the source — a tag name, a prop name — so it can carry a
- * backtick or a `${`, either of which would end the literal early and emit a
- * spec that does not parse.
+ * A title quotes the source — a tag name, a prop name, a clickable label — so
+ * it can carry a backtick or a `${`: the backtick would end the literal early
+ * and emit a spec that does not parse, the `${` would become a live
+ * substitution. Exported for the unit/browser emitter, whose titles quote the
+ * same source text.
  */
-function titleSafe(reason: string): string {
+export function titleSafe(reason: string): string {
   return reason.replace(/`/g, "'").replace(/\$\{/g, "$ {");
 }
 

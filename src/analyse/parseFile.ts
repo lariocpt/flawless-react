@@ -2,6 +2,7 @@ import path from "node:path";
 import ts from "typescript";
 import type { ModuleImportInfo, SourcePosition } from "../types.ts";
 import { posOf } from "./pos.ts";
+import type { SourceFileCache } from "./sourceCache.ts";
 
 export type ImportBindingKind = "default" | "named" | "namespace";
 
@@ -54,15 +55,25 @@ export interface ParsedFile {
   moduleImports: ModuleImportInfo[];
 }
 
-export async function parseFile(entry: string): Promise<ParsedFile> {
-  const src = await Bun.file(entry).text();
-  const sourceFile = ts.createSourceFile(
-    entry,
-    src,
-    ts.ScriptTarget.ES2022,
-    true,
-    ts.ScriptKind.TSX,
-  );
+/**
+ * With a `cache`, the parsed SourceFile comes from it (same parse settings) —
+ * a leaf shared by many entries in a sweep is then parsed once, not once per
+ * entry. Component detection still runs per call: its results are mutated by
+ * export fixups and would go stale if shared.
+ */
+export async function parseFile(entry: string, cache?: SourceFileCache): Promise<ParsedFile> {
+  const sourceFile = cache
+    ? cache.get(entry)
+    : ts.createSourceFile(
+        entry,
+        await Bun.file(entry).text(),
+        ts.ScriptTarget.ES2022,
+        true,
+        ts.ScriptKind.TSX,
+      );
+  if (!sourceFile) {
+    throw new Error(`parseFile: could not read ${entry}.`);
+  }
 
   const imports = collectImports(sourceFile);
   const components = findComponents(sourceFile);
@@ -304,21 +315,31 @@ function unitFromInitializer(
   byName: Map<string, ParsedComponentUnit>,
   renderHooks: RenderHookImports,
 ): ParsedComponentUnit | undefined {
-  // const X: React.FC<Props> = arrow | fnexpr
-  const typeRef = decl.type && ts.isTypeReferenceNode(decl.type) ? decl.type : undefined;
-  const looksLikeFC =
-    typeRef &&
-    ((ts.isQualifiedName(typeRef.typeName) &&
-      ts.isIdentifier(typeRef.typeName.right) &&
-      (typeRef.typeName.right.text === "FC" ||
-        typeRef.typeName.right.text === "FunctionComponent")) ||
-      (ts.isIdentifier(typeRef.typeName) &&
-        (typeRef.typeName.text === "FC" || typeRef.typeName.text === "FunctionComponent")));
+  // `(arrow) satisfies FC<Props>` / `as FC<Props>` states the props type just
+  // like a declared `const X: FC<Props>` does — the cast wrappers cannot change
+  // what the initializer evaluates to, so they are peeled before dispatch and
+  // their FC type argument feeds the same props-type path.
+  let castFcRef: ts.TypeReferenceNode | undefined;
+  for (let e: ts.Expression = init; ; ) {
+    if (ts.isAsExpression(e) || ts.isSatisfiesExpression(e)) {
+      castFcRef ??= fcTypeRef(e.type);
+      e = e.expression;
+    } else if (ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e)) {
+      e = e.expression;
+    } else {
+      break;
+    }
+  }
+  const peeled = unwrapTrivialExpression(init);
 
-  if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-    if (!looksLikeFC && !looksLikeComponentBody(init, renderHooks, name)) return undefined;
-    const fcPropsArg = looksLikeFC ? typeRef?.typeArguments?.[0] : undefined;
-    const fromParams = propsFromParams(init);
+  // const X: React.FC<Props> = arrow | fnexpr — the declared type wins over a cast.
+  const fcRef = fcTypeRef(decl.type) ?? castFcRef;
+  const looksLikeFC = fcRef !== undefined;
+
+  if (ts.isArrowFunction(peeled) || ts.isFunctionExpression(peeled)) {
+    if (!looksLikeFC && !looksLikeComponentBody(peeled, renderHooks, name)) return undefined;
+    const fcPropsArg = fcRef?.typeArguments?.[0];
+    const fromParams = propsFromParams(peeled);
     const propsTypeRef =
       fcPropsArg && ts.isTypeReferenceNode(fcPropsArg) ? fcPropsArg : fromParams.propsTypeRef;
     const propsTypeLiteral =
@@ -328,7 +349,7 @@ function unitFromInitializer(
     const propsTypeNode = fcPropsArg ?? fromParams.propsTypeNode;
     return {
       componentName: name,
-      bodyNode: init,
+      bodyNode: peeled,
       propsTypeNode,
       propsTypeRef,
       propsTypeLiteral,
@@ -336,14 +357,14 @@ function unitFromInitializer(
       destructuredProps: fromParams.destructuredProps,
       destructuredAliases: fromParams.destructuredAliases,
       exportKind: "none",
-      isAsync: (init.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.AsyncKeyword),
+      isAsync: (peeled.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.AsyncKeyword),
       wrappers: [],
       pos: posOf(decl, sf),
     };
   }
 
   // const X = memo(...) / forwardRef(...) — possibly nested.
-  const unwrapped = unwrapWrappers(init);
+  const unwrapped = unwrapWrappers(peeled);
   if (unwrapped.wrappers.length === 0 || !unwrapped.inner) return undefined;
   const inner = unwrapped.inner;
   if (ts.isIdentifier(inner)) {
@@ -459,6 +480,22 @@ export function unwrapTrivialExpression(e: ts.Expression): ts.Expression {
       return current;
     }
   }
+}
+
+/**
+ * `t` as an FC/FunctionComponent type reference (bare or React.-qualified),
+ * undefined for anything else. One test for the declared-type and cast forms,
+ * so they cannot drift apart.
+ */
+function fcTypeRef(t: ts.TypeNode | undefined): ts.TypeReferenceNode | undefined {
+  if (!t || !ts.isTypeReferenceNode(t)) return undefined;
+  const n = t.typeName;
+  const name = ts.isQualifiedName(n)
+    ? ts.isIdentifier(n.right)
+      ? n.right.text
+      : undefined
+    : n.text;
+  return name === "FC" || name === "FunctionComponent" ? t : undefined;
 }
 
 /**

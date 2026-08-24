@@ -1,5 +1,6 @@
 import path from "node:path";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { titleSafe } from "../scaffold/templates.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type {
   ClickHandler,
@@ -78,10 +79,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const flat = flattenTrees(opts.trees);
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
-  const files: RenderedFile[] = [
-    { relPath: VITEST_CONFIG, content: vitestConfig(opts) },
-    { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) },
-  ];
+  const files: RenderedFile[] = [{ relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) }];
   if (withBrowser) {
     files.push({ relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() });
   }
@@ -132,6 +130,11 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       });
     }
   }
+  // The config's include has to cover wherever the colocated specs actually
+  // landed — derived from the emitted files, so filtering rules stay in one
+  // place. Rendered last for that reason, prepended so it is written first.
+  const colocatedSpecPaths = files.flatMap((f) => (f.absPath ? [f.absPath] : []));
+  files.unshift({ relPath: VITEST_CONFIG, content: vitestConfig(opts, colocatedSpecPaths) });
   return files;
 }
 
@@ -183,7 +186,30 @@ function emitComponentImport(info: ComponentInfo, importPath: string): string {
   return `import { ${info.componentName} } from "${stripped}";`;
 }
 
-function vitestConfig(opts: UnitBrowserRenderOptions): string {
+/**
+ * The include globs for colocated specs, derived from where those specs are
+ * actually written. Hardcoding "src/**" meant a src-less layout (components/,
+ * app/ at the project root) had its specs emitted and never selected — vitest
+ * reported "no tests" while everything looked correct.
+ *
+ * One glob per top-level directory under the project root (the config resolves
+ * root as the parent of outDir), sorted and deduped so the emitted config is
+ * byte-identical across runs. Falls back to src/** when nothing is derivable.
+ */
+function colocateIncludeGlobs(projectRoot: string, colocatedSpecPaths: string[]): string[] {
+  const tops = new Set<string>();
+  for (const p of colocatedSpecPaths) {
+    const rel = path.relative(projectRoot, path.dirname(p));
+    if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+    tops.add(rel === "" ? "" : (rel.split(path.sep)[0] as string));
+  }
+  const globs = [...tops]
+    .sort()
+    .map((top) => (top === "" ? "*.flawless.test.{ts,tsx}" : `${top}/**/*.flawless.test.{ts,tsx}`));
+  return globs.length > 0 ? globs : ["src/**/*.flawless.test.{ts,tsx}"];
+}
+
+function vitestConfig(opts: UnitBrowserRenderOptions, colocatedSpecPaths: string[]): string {
   // Every replacement is resolved against the config's own directory rather
   // than baked in absolute. This file is committed, and the react/react-dom
   // pins in particular pointed into a node_modules path that exists only on the
@@ -217,6 +243,10 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
     // default (.flawless) or any --out pointed vitest at a setup file that does
     // not exist, and it died at startup.
     const outName = path.basename(opts.outDir);
+    const include = [
+      ...colocateIncludeGlobs(path.resolve(opts.outDir, ".."), colocatedSpecPaths),
+      `${outName}/unit/**/*.test.{ts,tsx}`,
+    ];
     return `import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
@@ -229,7 +259,7 @@ export default defineConfig({
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: [path.join(configDir, "setup.ts")],
-    include: ["src/**/*.flawless.test.{ts,tsx}", "${outName}/unit/**/*.test.{ts,tsx}"],
+    include: [${include.map((g) => JSON.stringify(g)).join(", ")}],
     globals: true,
   },
 });
@@ -1198,8 +1228,10 @@ ${isolationAsserts || "  // no prop handlers declared"}
 }
 
 function describeClickLabel(c: ClickHandler): string {
-  // Used inside double-quoted JS test names — escape internal double quotes.
-  const safe = (s: string): string => s.replace(/"/g, "'");
+  // Used inside double-quoted test names AND template-literal titles: a double
+  // quote would end the former, a backtick or ${ the latter — titleSafe defuses
+  // both (locators are untouched; they JSON.stringify the raw label).
+  const safe = (s: string): string => titleSafe(s.replace(/"/g, "'"));
   if (c.label.kind === "text") return `'${safe(c.label.value)}'`;
   if (c.label.kind === "prop") return `the {${c.label.propName}} ${c.tag}`;
   if (c.label.kind === "aria") return `[aria-label='${safe(c.label.value)}']`;
@@ -1316,7 +1348,7 @@ function browserSpec(c: FlatComponent, specName: string): string {
   const interactionTests = interactions
     ? emitBrowserInteractionTests(interactions, guarded)
     : `
-test.skip(\`\${NAME}: click — ${emitPlaywrightClickTarget(interactions).reason ?? "no clickable target could be derived"}\`, () => {
+test.skip(\`\${NAME}: click — ${titleSafe(emitPlaywrightClickTarget(interactions).reason ?? "no clickable target could be derived")}\`, () => {
   // TODO(flawless): the mount smoke above is the only claim the source
   // supports. If this component is interactive, name the control — a
   // data-testid, an aria-label or literal text — and regenerate.
@@ -1386,7 +1418,7 @@ function emitBrowserInteractionTests(
       // Saying "no interactions detected" here would be false — one was
       // detected and could not be addressed, which is a different fact and the
       // one worth reporting.
-      const why = describeUnlocatable(click);
+      const why = titleSafe(describeUnlocatable(click));
       parts.push(`
 test.skip(\`\${NAME}: ${click.event} on ${labelDesc} #${i} — ${why}\`, () => {
   // TODO(flawless): give it a data-testid, an aria-label or literal text.

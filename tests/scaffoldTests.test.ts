@@ -270,3 +270,36 @@ describe("scaffoldUnitBrowser colocate", () => {
     expect(readFileSync(headerSpec, "utf8")).toContain('import { CardHeader } from "./card";');
   });
 });
+
+// Lives here rather than in tests/scaffold.test.ts (which owns the rest of the
+// perf-suite scaffold coverage) because that file belongs to another cluster of
+// the same fix wave.
+describe("scaffold keeps hand-edited mock fixtures", () => {
+  test("mock/routes.ts survives a --force regeneration, as its header promises", async () => {
+    const { scaffold } = await import("../src/scaffold/index.ts");
+    const root = tmpRoot();
+    const outDir = path.join(root, "perf");
+    const apiSpec = path.resolve(__dirname, "fixtures", "_api.json");
+    const trees = tree(comp("Widget", path.join(root, "src", "Widget.tsx")));
+    const opts = {
+      outDir,
+      variants: 2,
+      force: false,
+      report: false,
+      provider: undefined,
+      apiSpec,
+    };
+
+    await scaffold(trees, opts);
+    const routes = path.join(outDir, "mock", "routes.ts");
+    const emitted = readFileSync(routes, "utf8");
+    // The emitted header makes the promise this test holds the writer to.
+    expect(emitted).toContain("no regeneration step that will overwrite this file");
+
+    const edited = `${emitted}\n// hand-tuned fixture body — must survive --force\n`;
+    writeFileSync(routes, edited);
+
+    await scaffold(trees, { ...opts, force: true });
+    expect(readFileSync(routes, "utf8")).toBe(edited);
+  });
+});

@@ -662,7 +662,10 @@ function walkMembers(
 
   for (const m of members) {
     if (!ts.isPropertySignature(m)) continue;
-    if (!ts.isIdentifier(m.name)) continue;
+    // String-literal names ('"data-variant": string') are real members and map
+    // like identifiers; the emitted DEFAULTS is JSON.stringify'd, so the quoted
+    // key survives emission. Computed/numeric/private names stay out.
+    if (!ts.isIdentifier(m.name) && !ts.isStringLiteral(m.name)) continue;
     const name = m.name.text;
     p.propPositions[name] = posOf(m, sf);
     const t = m.type;

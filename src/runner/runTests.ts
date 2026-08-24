@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { AffectedSpecs } from "../changed.ts";
-import { grepFor } from "../changed.ts";
+import { grepFor, grepForRoutes } from "../changed.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type { TaskId } from "../types.ts";
 
@@ -135,12 +135,13 @@ async function spawn(cmd: string, args: string[], cwd: string, quiet = false): P
  * - **vitest `--related`** walks the module graph, so it finds every spec that
  *   imports a changed file without the tool having to reproduce its own spec
  *   naming rules. It is also transitively correct for free.
- * - **Playwright `--grep`** anchored on `^(Name): `, because every emitted
+ * - **Playwright `--grep`** anchored on `\b(Name): `, because every emitted
  *   title starts that way. Anchoring matters: a bare "Card" would also select
  *   CardHeader, CardFooter and CardTitle.
  *
- * e2e is selected by whether a page's tree RENDERS a changed component, which
- * is the relationship a path filter cannot see.
+ * e2e is selected by whether a page's tree RENDERS a changed component — the
+ * relationship a path filter cannot see — and narrowed the same way, by
+ * grepping for the route templates its titles embed.
  */
 export async function runAffectedTests(
   outDir: string,
@@ -184,7 +185,13 @@ export async function runAffectedTests(
     }
   }
   if (selectedTasks.includes("e2e") && affected.routes.length > 0) {
-    runs.push({ id: "e2e", cmd: ["bun", "run", `${prefix}:e2e`] });
+    // Same narrowing as perf/browser: every emitted e2e title embeds its route
+    // template ("GET /things/[id] renders …"), so the affected routes select
+    // their specs by grep — the whole suite must not run for one route.
+    runs.push({
+      id: "e2e",
+      cmd: ["bun", "run", `${prefix}:e2e`, "--", "--grep", grepForRoutes(affected.routes)],
+    });
   }
 
   const failed: string[] = [];

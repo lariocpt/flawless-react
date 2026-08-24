@@ -101,4 +101,18 @@ describe("runAffectedTests", () => {
     const dir = suiteDir({ "test:perf": "exit 1 #" });
     expect(await runAffectedTests(dir, ["perf-harness"], affected([], []))).toBe(true);
   });
+
+  test("the e2e run is narrowed with --grep, not run whole", async () => {
+    // Affected routes must reach playwright as `--grep <pattern>` the way
+    // perf/browser already do — every emitted e2e title embeds its route
+    // template, so running the whole e2e suite for one route is pure waste.
+    // bun run appends passthrough args to the script's command LINE (they are
+    // not positional params of the script shell — that is the quirk behind
+    // suiteDir's `#` note), so a shell function is what can count them: the
+    // appended `--grep <pattern>` become the function's own "$@".
+    const dir = suiteDir({
+      "test:e2e": 'f(){ [ "$1" = "--grep" ] && [ -n "$2" ] && exit 0 || exit 1; }; f',
+    });
+    expect(await runAffectedTests(dir, ["e2e"], affected([], ["/things/[id]"]))).toBe(true);
+  });
 });
