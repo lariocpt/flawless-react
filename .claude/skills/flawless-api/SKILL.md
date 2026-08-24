@@ -61,6 +61,10 @@ import { analyse } from "flawless-react";
 const tree = await analyse({ entry: "src/Nav.tsx", depth: 3, includeChildren: true });
 // tree: ComponentTree — entry: ComponentInfo (propsShape, variants, hooks,
 // interactions, dataDeps, unresolvedProps/unresolvedTypes), children: ComponentTree[]
+// A dataDep whose usage inference came up empty may carry inferredReturn
+// (a fixture value from its Promise<T> annotation, provenance "annotation")
+// or wrapsFetch (method+path for the emit-time OpenAPI join); a server-action
+// moduleImport may carry serverActionReturns (module-side name -> literal).
 ```
 
 `analyse()` is pure static analysis — no files written — and is the right base
