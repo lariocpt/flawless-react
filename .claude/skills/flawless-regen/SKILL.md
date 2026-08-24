@@ -29,6 +29,15 @@ upgrade expect the derived files — and the version banner on the suite's
 `playwright.config.ts` first line — to move. An exit 1 means a real
 failure, never the old harness refusal (that was findings FR-028, fixed).
 
+A regeneration with a wave-3 tool also BURNS DOWN hand-work: the three
+biggest `TODO(flawless)` clusters are now auto-filled where the source
+supports inference — server-action stubs from the action's own literal
+returns, data-dep fixtures from `Promise<T>` annotations or OpenAPI
+examples, and compound parts mounted through their own file's family.
+REPORT.md's hand-work table shows the drop; the exact count depends on how
+much of the app's surface is inferable, so never promise a number —
+markers that remain are exactly the cases inference honestly refused.
+
 ## `--force` and the colocated stamp
 
 Every colocated spec opens with a provenance stamp —
