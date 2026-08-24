@@ -14,7 +14,11 @@ import { literalToValue } from "./renderPath.ts";
  *
  * - `redirect(...)` / `permanentRedirect(...)` / `notFound()` returns are
  *   exits, not values — Next aborts rendering there, so they say nothing
- *   about what a caller receives.
+ *   about what a caller receives. Only when the callee is provably
+ *   next/navigation's (extractGuards learned this first): a project-local
+ *   redirect() that RETURNS something would otherwise have its value
+ *   silently discounted and the recorded literal would disagree with what
+ *   the action really returns.
  * - Two distinct literal values bail (which one would the mock pick?);
  *   byte-identical duplicates from two branches collapse fine.
  * - Any non-literal return bails the whole name, even beside a literal one:
@@ -27,9 +31,10 @@ import { literalToValue } from "./renderPath.ts";
  * that is the name a vi.mock factory or a host stub has to provide.
  */
 export function extractServerActionReturns(sf: ts.SourceFile): Record<string, PropValue> {
+  const exits = exitBindings(sf);
   const out: Record<string, PropValue> = {};
   for (const [name, fn] of exportedFunctions(sf)) {
-    const value = singleReturnValue(fn);
+    const value = singleReturnValue(fn, exits);
     if (value !== undefined) out[name] = value;
   }
   return out;
@@ -37,11 +42,41 @@ export function extractServerActionReturns(sf: ts.SourceFile): Record<string, Pr
 
 const EXIT_CALLEES = new Set(["redirect", "permanentRedirect", "notFound"]);
 
-function isExitCall(expr: ts.Expression): boolean {
+interface ExitBindings {
+  /** Local names bound to a next/navigation exit, aliases resolved. */
+  locals: Set<string>;
+  /** Namespace locals of next/navigation, for `nav.redirect(...)`. */
+  namespaces: Set<string>;
+}
+
+function exitBindings(sf: ts.SourceFile): ExitBindings {
+  const locals = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    if (stmt.moduleSpecifier.text !== "next/navigation") continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamedImports(bindings)) {
+      for (const el of bindings.elements) {
+        if (EXIT_CALLEES.has((el.propertyName ?? el.name).text)) locals.add(el.name.text);
+      }
+    } else if (ts.isNamespaceImport(bindings)) {
+      namespaces.add(bindings.name.text);
+    }
+  }
+  return { locals, namespaces };
+}
+
+function isExitCall(expr: ts.Expression, exits: ExitBindings): boolean {
+  if (!ts.isCallExpression(expr)) return false;
+  const callee = expr.expression;
+  if (ts.isIdentifier(callee)) return exits.locals.has(callee.text);
   return (
-    ts.isCallExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    EXIT_CALLEES.has(expr.expression.text)
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    exits.namespaces.has(callee.expression.text) &&
+    EXIT_CALLEES.has(callee.name.text)
   );
 }
 
@@ -92,11 +127,14 @@ function exportedFunctions(sf: ts.SourceFile): Array<[string, ActionFn]> {
 }
 
 /** The one literal value every non-exit return yields, else undefined. */
-function singleReturnValue(fn: ActionFn): PropValue | undefined {
+function singleReturnValue(fn: ActionFn, exits: ExitBindings): PropValue | undefined {
+  // A generator's `return` sets the iterator's final result — calling the
+  // action yields an AsyncGenerator object, never a promise of that literal.
+  if (!ts.isArrowFunction(fn) && fn.asteriskToken) return undefined;
   // A concise arrow body IS the single return expression.
   if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) {
     const expr = unparenthesize(fn.body);
-    return isExitCall(expr) ? undefined : literalToValue(expr);
+    return isExitCall(expr, exits) ? undefined : literalToValue(expr);
   }
   if (!fn.body || !ts.isBlock(fn.body)) return undefined;
 
@@ -104,7 +142,7 @@ function singleReturnValue(fn: ActionFn): PropValue | undefined {
   let seen = false;
   for (const ret of ownReturns(fn.body)) {
     const expr = ret.expression === undefined ? undefined : unparenthesize(ret.expression);
-    if (expr !== undefined && isExitCall(expr)) continue;
+    if (expr !== undefined && isExitCall(expr, exits)) continue;
     // Bare `return;` or a non-literal expression: a value we cannot express.
     const v = expr === undefined ? undefined : literalToValue(expr);
     if (v === undefined) return undefined;

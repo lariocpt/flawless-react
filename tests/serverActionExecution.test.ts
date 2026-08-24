@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -80,9 +80,16 @@ function suitePins(): string[] {
   });
 }
 
+let tmpRoot: string | undefined;
+
+afterAll(() => {
+  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
+});
+
 describe("resolved server-action returns, executed", () => {
   test("the enriched mock turns the spec green; the {} stub control stays red", async () => {
-    const app = path.join(await mkdtemp(path.join(tmpdir(), "flawless-action-exec-")), "app");
+    tmpRoot = await mkdtemp(path.join(tmpdir(), "flawless-action-exec-"));
+    const app = path.join(tmpRoot, "app");
     mkdirSync(path.join(app, "src"), { recursive: true });
     // Any real React host carries a tsconfig with the automatic JSX runtime;
     // without one, vitest's esbuild falls back to the classic transform and

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import ts from "typescript";
 import { extractServerActionReturns } from "../src/analyse/serverActionReturns.ts";
+import { exportedNames } from "../src/analyse/sourceCache.ts";
 
 /**
  * The bail policy is literalToValue's: a return value is recorded only when it
@@ -102,14 +103,79 @@ export const block = async () => { return { kind: "block" }; };`),
   });
 
   test("a nested function's returns belong to it, not to the action", () => {
+    // Block-bodied on purpose: a concise arrow holds no ReturnStatement node,
+    // so it cannot tell ownReturns from a naive all-descendants walk — the
+    // mutation the adversarial review proved this test used to miss.
     expect(
       returnsOf(`"use server";
 export async function outer() {
-  const helper = () => ({ nested: "junk" });
+  const helper = () => {
+    return { nested: "junk" };
+  };
   void helper;
   return { ok: 1 };
 }`),
     ).toEqual({ outer: { ok: 1 } });
+  });
+
+  test("exit calls need next/navigation provenance — a shadowing local bails", () => {
+    // extractGuards learned this first: a project-local redirect() that
+    // RETURNS something would have its value silently discounted, and the
+    // recorded literal would disagree with what the action really returns.
+    expect(
+      returnsOf(`"use server";
+function redirect(url: string) {
+  return { redirected: url };
+}
+export async function go(x: boolean) {
+  if (x) return redirect("/a");
+  return { ok: true };
+}`),
+    ).toEqual({});
+  });
+
+  test("a redirect imported from anywhere but next/navigation is a value, so it bails", () => {
+    expect(
+      returnsOf(`"use server";
+import { redirect } from "./my-nav";
+export async function go(x: boolean) {
+  if (x) return redirect("/a");
+  return { ok: true };
+}`),
+    ).toEqual({});
+  });
+
+  test("an ALIASED next/navigation exit is still an exit", () => {
+    expect(
+      returnsOf(`"use server";
+import { redirect as bounce } from "next/navigation";
+export async function go(x: boolean) {
+  if (x) return bounce("/a");
+  return { ok: true };
+}`),
+    ).toEqual({ go: { ok: true } });
+  });
+
+  test("a namespaced next/navigation exit is still an exit", () => {
+    expect(
+      returnsOf(`"use server";
+import * as nav from "next/navigation";
+export async function go(x: boolean) {
+  if (x) return nav.redirect("/a");
+  return { ok: true };
+}`),
+    ).toEqual({ go: { ok: true } });
+  });
+
+  test("a generator's return is the generator's, not the caller's value", () => {
+    // gen() returns an AsyncGenerator object, never a promise of the literal.
+    expect(
+      returnsOf(`"use server";
+export async function* gen() {
+  yield 1;
+  return { done: true };
+}`),
+    ).toEqual({});
   });
 
   test("export clauses record under the exported name, not the local one", () => {
@@ -144,6 +210,22 @@ export default async function submit() {
   return { ok: true };
 }`),
     ).toEqual({ default: { ok: true } });
+  });
+
+  test('exportedNames agrees: `export default async function name()` exports "default"', () => {
+    // The module's export surface is {default}, not {doSave} — recording the
+    // function's own name made the retire rule unreachable for this shape and
+    // handed the host stub a named export the module never had, so a real
+    // default import failed to bind against the stub.
+    const sf = ts.createSourceFile(
+      "actions.ts",
+      `"use server";\nexport default async function doSave() { return { ok: 1 }; }`,
+      ts.ScriptTarget.ES2022,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(exportedNames(sf)).toEqual(["default"]);
+    expect(extractServerActionReturns(sf)).toEqual({ default: { ok: 1 } });
   });
 
   test("template literals resolve only without substitutions", () => {

@@ -145,8 +145,79 @@ describe("emitModuleMocks in client mode", () => {
     );
     const src = statements.join("\n");
     expect(src).toContain('createPost: vi.fn(async () => ({"ok":true}))');
+    // The factory replaces the whole module: the unresolved sibling must
+    // still BIND (a transitive importer needs it), as an honest {} stub.
+    expect(src).toContain("deletePost: vi.fn(async () => ({}))");
     expect(src).toContain("TODO(flawless)");
     expect(kinds).toEqual(["server-action-stub"]);
+  });
+
+  test("when every export resolved, the factory binds the whole surface, not just the imports", () => {
+    const kinds: string[] = [];
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/posts",
+          names: ["createPost"],
+          isServerAction: true,
+          serverActionExports: ["createPost", "deletePost"],
+          serverActionReturns: { createPost: { id: 1 }, deletePost: { ok: true } },
+        }),
+      ]),
+      "client",
+      undefined,
+      (kind) => kinds.push(kind),
+    );
+    const src = statements.join("\n");
+    expect(src).toContain('createPost: vi.fn(async () => ({"id":1}))');
+    expect(src).toContain('deletePost: vi.fn(async () => ({"ok":true}))');
+    expect(kinds).toEqual([]);
+  });
+
+  test("an EMPTY export list never retires the TODO — nothing resolved is not everything", () => {
+    // exportedNames cannot see `export * from` barrels, so serverActionExports
+    // can be [] while the component imports real names; [].every() is true.
+    const kinds: string[] = [];
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/barrel",
+          names: ["createPost"],
+          isServerAction: true,
+          serverActionExports: [],
+        }),
+      ]),
+      "client",
+      undefined,
+      (kind) => kinds.push(kind),
+    );
+    expect(statements.join("\n")).toContain("TODO(flawless)");
+    expect(kinds).toEqual(["server-action-stub"]);
+  });
+
+  test("a namespace import mocks the module's real exports, never the local binding", () => {
+    // `import * as actions` — a factory keyed "actions" exports a name the
+    // module never had, and actions.doSave stays undefined at runtime.
+    const kinds: string[] = [];
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/all",
+          names: ["actions"],
+          importedNames: ["actions"],
+          isServerAction: true,
+          serverActionExports: ["doSave"],
+          serverActionReturns: { doSave: { ok: true } },
+        }),
+      ]),
+      "client",
+      undefined,
+      (kind) => kinds.push(kind),
+    );
+    const src = statements.join("\n");
+    expect(src).toContain('doSave: vi.fn(async () => ({"ok":true}))');
+    expect(src).not.toContain("actions:");
+    expect(kinds).toEqual([]);
   });
 
   test("an aliased import mocks the MODULE-side name and joins returns by it", () => {
@@ -323,5 +394,43 @@ describe("host server stubs consume the resolved returns", () => {
       'export const doThing = async () => ({"ok":true});\n' +
       "export const opaqueThing = async () => ({});";
     expect(server).toContain(JSON.stringify(body));
+  });
+
+  test('a "default" export stubs as export default, enriched when resolved', () => {
+    const files = renderSuite({
+      tree: {
+        entry: {
+          componentName: "X",
+          filePath: "/app/src/X.tsx",
+          importSpecifier: "./X",
+          propsShape: {},
+          variants: [],
+          hooks: [],
+          unresolvedProps: [],
+          exportKind: "named",
+          isAsync: false,
+          moduleImports: [
+            {
+              specifier: "./submit",
+              names: ["submit"],
+              kind: "value",
+              isTypeOnly: false,
+              hasDefault: true,
+              resolvedPath: "/app/src/submit.ts",
+              isServerAction: true,
+              serverActionExports: ["default"],
+              serverActionReturns: { default: { done: true } },
+              pos: { file: "/app/src/X.tsx", line: 1, column: 1 },
+            },
+          ],
+        },
+        children: [],
+      } as never,
+      outDir: "/app/flawless",
+      variants: 3,
+      report: false,
+    });
+    const server = files.find((f) => f.relPath === "host/server.ts")?.content ?? "";
+    expect(server).toContain(JSON.stringify('export default async () => ({"done":true});'));
   });
 });

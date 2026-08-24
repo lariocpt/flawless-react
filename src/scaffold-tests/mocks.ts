@@ -271,10 +271,11 @@ function fontMock(mi: ModuleImportInfo, spec: string): string {
  * works. A name the analyser resolved (serverActionReturns) gets the action's
  * real literal return instead of the {} stand-in.
  *
- * The factory is keyed by MODULE-side names (importedNames), not the local
- * aliases: the module exports "createPost" whether the component called it
- * that or "saveIt", and a factory keyed by the alias exports a name the
- * module never had while leaving the real one unmocked.
+ * The factory is keyed by MODULE-side names, never the local aliases: the
+ * module exports "createPost" whether the component called it that or
+ * "saveIt" (or reached it through `import * as actions`), and a factory
+ * keyed by the local binding exports a name the module never had while
+ * leaving the real one unmocked.
  */
 function serverActionMock(mi: ModuleImportInfo, spec: string, todo?: TodoRecorder): string {
   if (mi.names.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
@@ -285,21 +286,23 @@ function serverActionMock(mi: ModuleImportInfo, spec: string, todo?: TodoRecorde
       ? "vi.fn(async () => ({}))"
       : `vi.fn(async () => (${JSON.stringify(v)}))`;
   };
+  // The factory replaces the WHOLE module, so it binds the module's whole
+  // export surface: the component's own imports and every sibling a
+  // transitive importer might pull. The imported names are only the fallback
+  // for when the export list could not be read.
   const namedIndices = mi.names.map((_, i) => i).filter((i) => !(mi.hasDefault && i === 0));
-  const entries = namedIndices.map((i) => {
-    const moduleName = membershipName(mi, i);
-    return `${moduleName}: ${stub(moduleName)}`;
-  });
-  if (mi.hasDefault) entries.unshift(`default: ${stub("default")}`);
-  // The TODO retires only when EVERY export of the module resolved — the
-  // factory replaces the whole module, so a transitive importer receives the
-  // sibling exports from this same factory, and an unresolved sibling means
-  // the stub surface is still partly fake.
-  const required = [
-    ...(mi.serverActionExports ?? namedIndices.map((i) => membershipName(mi, i))),
-    ...(mi.hasDefault ? ["default"] : []),
-  ];
-  if (required.every((n) => returns[n] !== undefined)) {
+  const surface = mi.serverActionExports?.length
+    ? mi.serverActionExports
+    : namedIndices.map((i) => membershipName(mi, i));
+  const exportNames = [...new Set(surface)].filter((n) => n !== "default");
+  const entries = exportNames.map((n) => `${n}: ${stub(n)}`);
+  const wantsDefault = mi.hasDefault || (mi.serverActionExports ?? []).includes("default");
+  if (wantsDefault) entries.unshift(`default: ${stub("default")}`);
+  // The TODO retires only when EVERY export of the module resolved (and the
+  // surface is non-empty: exportedNames cannot see `export * from` barrels,
+  // and an empty list proves nothing resolved, not that everything did).
+  const required = [...exportNames, ...(wantsDefault ? ["default"] : [])];
+  if (required.length > 0 && required.every((n) => returns[n] !== undefined)) {
     return `vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
   }
   todo?.("server-action-stub");
