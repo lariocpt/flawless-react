@@ -28,7 +28,7 @@ lines, default false programmatically).
 - **CLI exit codes:** 0 clean · 1 a task failed OR a `--run-tests`/`--changed`
   suite run failed (suite outcomes fold into the exit code) · 2 usage error.
 - **`--ci`** = `--no-interactive --json`: stdout is exactly one JSON blob
-  `{ exitCode, outDir, results }` and nothing else. Progress goes away entirely; parse
+  `{ exitCode, outDir, results, keptScripts }` and nothing else. Progress goes away entirely; parse
   the whole stdout, not a line of it.
 - `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error?,
   status? }` — `ok: false` with `error` set is a real task failure.
@@ -52,6 +52,9 @@ flawless-regen skill's run-proof discipline applies.
 Cwd matters in Next.js mode: `nextjs: "."` resolves against the process cwd,
 and the run merges `flawless:*` scripts into THAT root's `package.json`.
 `process.chdir(appRoot)` first, or pass absolute paths deliberately.
+The merge never clobbers a user-customised `flawless:*` value: only the
+tool's own recognised spellings upgrade; kept keys surface in
+`CoreResult.keptScripts`, the `--ci` blob, and REPORT.md.
 
 ## The analysis surface
 
