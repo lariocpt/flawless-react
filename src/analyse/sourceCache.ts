@@ -45,7 +45,13 @@ export function exportedNames(sf: ts.SourceFile): string[] {
       continue;
     }
     if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && exported) {
-      if (stmt.name) out.add(stmt.name.text);
+      // `export default function doSave()` exports "default", not "doSave" —
+      // the name is only local. Recording the name handed the server-action
+      // stub a named export the module never had, so a real default import
+      // failed to bind against it.
+      const isDefault = ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+      if (isDefault) out.add("default");
+      else if (stmt.name) out.add(stmt.name.text);
       continue;
     }
     // `export { a, b as c }` — the exported name is what importers bind to.

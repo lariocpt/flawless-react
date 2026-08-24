@@ -20,6 +20,7 @@ import { initialRenderExpression, makeEnv } from "./renderPath.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { resolveTagRootTags } from "./resolveTagRootTags.ts";
+import { extractServerActionReturns } from "./serverActionReturns.ts";
 import { exportedNames, SourceFileCache } from "./sourceCache.ts";
 import { walkChildren } from "./walkChildren.ts";
 
@@ -215,6 +216,9 @@ async function analyseOne(
     // emitter and the perf host stub it by name rather than by guesswork.
     if (!cache.hasPrologueDirective(resolvedPath, "use server")) return { ...mi, resolvedPath };
     const target = cache.get(resolvedPath);
+    // Only names with a single literal-derivable return land in the record;
+    // the emitters keep {} stubs (and the TODO) for everything absent.
+    const returns = target ? extractServerActionReturns(target) : {};
     return {
       ...mi,
       resolvedPath,
@@ -222,6 +226,7 @@ async function analyseOne(
       // Every export, not just the ones this component imports: a transitive
       // importer needs the others, and a missing name fails the bundle.
       serverActionExports: target ? exportedNames(target) : [...mi.names],
+      ...(Object.keys(returns).length > 0 ? { serverActionReturns: returns } : {}),
     };
   });
 

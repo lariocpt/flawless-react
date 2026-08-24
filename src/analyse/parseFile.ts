@@ -1,6 +1,7 @@
 import path from "node:path";
 import ts from "typescript";
 import type { ModuleImportInfo, SourcePosition } from "../types.ts";
+import { ownReturns } from "./ownReturns.ts";
 import { posOf } from "./pos.ts";
 import type { SourceFileCache } from "./sourceCache.ts";
 
@@ -257,7 +258,14 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || !/^[A-Z]/.test(decl.name.text)) continue;
         if (!decl.initializer) continue;
-        const unit = unitFromInitializer(decl.name.text, decl, decl.initializer, sf, byName, renderHooks);
+        const unit = unitFromInitializer(
+          decl.name.text,
+          decl,
+          decl.initializer,
+          sf,
+          byName,
+          renderHooks,
+        );
         if (!unit) continue;
         unit.exportKind = hasExport ? "named" : "none";
         add(unit);
@@ -561,28 +569,6 @@ function looksLikeComponentBody(
   if (returns.length === 0) return false;
   if (!screamingCase && returns.every((r) => isNullLiteral(r.expression))) return true;
   return returns.some((r) => returnsRenderHook(r.expression));
-}
-
-/** The block's own return statements — a nested function's returns are its own. */
-function ownReturns(body: ts.Block): ts.ReturnStatement[] {
-  const out: ts.ReturnStatement[] = [];
-  const visit = (n: ts.Node): void => {
-    if (
-      ts.isArrowFunction(n) ||
-      ts.isFunctionExpression(n) ||
-      ts.isFunctionDeclaration(n) ||
-      ts.isMethodDeclaration(n) ||
-      ts.isGetAccessorDeclaration(n) ||
-      ts.isSetAccessorDeclaration(n) ||
-      ts.isConstructorDeclaration(n)
-    ) {
-      return;
-    }
-    if (ts.isReturnStatement(n)) out.push(n);
-    ts.forEachChild(n, visit);
-  };
-  ts.forEachChild(body, visit);
-  return out;
 }
 
 interface RenderHookImports {
