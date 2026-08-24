@@ -351,7 +351,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // scaffold/templates.ts, scaffold-tests/mocks.ts). These land in a file;
       // the rest of path.relative's uses in this file are log lines.
       const outRel = outDirRel(outDir, nextCtx.root);
-      await mergeIntoNextPackageJson(
+      const scriptMerge = await mergeIntoNextPackageJson(
         nextCtx.root,
         {},
         {
@@ -424,6 +424,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       log(
         `nextjs: merged dev deps + flawless:* scripts into ${path.join(nextCtx.root, "package.json")}`,
       );
+      if (scriptMerge.keptScripts.length > 0) {
+        log(
+          `nextjs: kept ${scriptMerge.keptScripts.length} user-modified script(s): ` +
+            `${scriptMerge.keptScripts.join(", ")} — delete a key from package.json to take ` +
+            `the tool's current command`,
+        );
+      }
       // Colocated specs sit in src/ next to their components, where an
       // unscoped test runner will collect them and run them under the wrong
       // runner. Silently creating that collision is not acceptable — it turns

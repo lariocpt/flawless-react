@@ -420,16 +420,42 @@ describe("merging into the target project's package.json", () => {
     expect(after.msw).toBe("^2.6.0");
   });
 
-  test("the tool still owns its own script namespace", async () => {
-    // Deliberately the other way round from dependencies: a flawless:* script is
-    // generated, so an improvement to it has to reach an existing project — the
-    // same argument that un-froze load/README.md. Pinned here so the asymmetry
-    // is a decision rather than an accident.
+  test("a user-modified flawless:* script SURVIVES the merge, and the merge says so", async () => {
+    // The old rule ("the tool owns its namespace, spread-last wins") destroyed
+    // real work in dogfood round 5: the app's flawless:load carried
+    // `--env-file flawless/load/.env.load` by hand, a refresh clobbered it,
+    // and the load run failed at setup (FR-034's exact shape). Scripts are
+    // now like every other file that can hold your work: a differing existing
+    // value is YOURS, kept and reported — delete the key to take the tool's
+    // current command.
     const dir = pkgDir({ scripts: { dev: "next dev", "flawless:load": "my own version" } });
-    await mergeIntoNextPackageJson(dir, {}, {}, { "flawless:load": "crust -c '…'" });
+    const result = await mergeIntoNextPackageJson(
+      dir,
+      {},
+      {},
+      {
+        "flawless:load": "crust -c '…'",
+        "flawless:unit": "vitest run --root flawless",
+      },
+    );
     const after = read(dir).scripts as Record<string, string>;
-    expect(after["flawless:load"]).toBe("crust -c '…'");
+    expect(after["flawless:load"]).toBe("my own version");
+    expect(after["flawless:unit"]).toBe("vitest run --root flawless");
     expect(after.dev).toBe("next dev");
+    expect(result.keptScripts).toEqual(["flawless:load"]);
+  });
+
+  test("an identical script value is not reported as kept — nothing was at stake", async () => {
+    const dir = pkgDir({ scripts: { "flawless:unit": "vitest run --root flawless" } });
+    const result = await mergeIntoNextPackageJson(
+      dir,
+      {},
+      {},
+      {
+        "flawless:unit": "vitest run --root flawless",
+      },
+    );
+    expect(result.keptScripts).toEqual([]);
   });
 
   test("the file's own indentation survives", async () => {
