@@ -442,6 +442,10 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
     expect(fixtureOf("interface Q { n: number | undefined }", "Q")).toEqual({ n: 1 });
   });
 
+  test("a union of ONLY null/undefined arms bails — nothing remains to choose", () => {
+    expect(fixtureOf("interface Z { gone: null | undefined }", "Z")).toBeUndefined();
+  });
+
   test("a union with TWO non-null arms still bails — that would be a choice", () => {
     expect(
       fixtureOf("interface A1 { a: string }\ninterface B1 { b: string }", "A1 | B1"),
