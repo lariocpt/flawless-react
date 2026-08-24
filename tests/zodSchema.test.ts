@@ -482,6 +482,32 @@ export function Form(props: Props) {
     expect(info.unresolvedProps).toEqual([]);
   });
 
+  test("a LOCAL type alias shadowing a same-named zod const is not schema-resolved (control)", async () => {
+    // Mutation-probe finding: the imported-branch control could not catch a
+    // local-branch fallback that ignores the asZodInferRef gate. The TYPE
+    // here is Map<...>, not zod's — the same-named const is bait.
+    const info = await analysedComponent(
+      `export const unused = 1;
+`,
+      `import { z } from "zod";
+
+const Weird = z.string();
+type Weird = Map<string, number>;
+
+interface Props {
+  w: Weird;
+  title: string;
+}
+
+export function Form(props: Props) {
+  return <div>{props.title}</div>;
+}
+`,
+    );
+    expect(info.propsShape).toEqual({ title: "" });
+    expect(info.unresolvedProps).toContain("w");
+  });
+
   test("a NON-zod named member alias still lands in unresolvedProps (control — mapType untouched)", async () => {
     const info = await analysedComponent(
       `export type Weird = Map<string, number>;\n`,

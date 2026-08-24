@@ -610,6 +610,190 @@ export default async function Card() {
     return info.dataDeps ?? [];
   }
 
+  test("a NON-exported same-named schema const in an earlier star arm cannot shadow the real one", async () => {
+    // Mutation-probe finding: findSchemaConst's export enforcement on the
+    // barrel chase was otherwise untested — deleting it made the private
+    // const in the first arm win. The schema must be IMPORTED through a
+    // barrel for the star chase to run: the alias file pulls RoleSchema
+    // from ./inner, whose first arm hides the private decoy.
+    const { root } = monorepo({ workspaces: BOTH });
+    write(
+      root,
+      "packages/shared/src/private-schemas.ts",
+      `import { z } from "zod";
+const RoleSchema = z.enum(["wrong"]);
+export const unrelated = 1;
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/real-schemas.ts",
+      `import { z } from "zod";
+export const RoleSchema = z.enum(["host", "guest"]);
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/inner.ts",
+      `export * from "./private-schemas";
+export * from "./real-schemas";
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/shadow-types.ts",
+      `import { z } from "zod";
+import { RoleSchema } from "./inner";
+
+export type Role = z.infer<typeof RoleSchema>;
+
+export interface Participant {
+  name: string;
+  role: Role;
+}
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/shadow-api.ts",
+      `import type { Participant } from "./shadow-types";
+
+export async function fetchParticipants(): Promise<Participant[]> {
+  return [];
+}
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/index.ts",
+      `export * from "./shadow-types";
+export * from "./shadow-api";
+${SHARED_BARREL}`,
+    );
+    const entry = writeComponent(
+      root,
+      `import { fetchParticipants } from "@scope/shared";
+
+function opaque(x: unknown): string {
+  return String(x);
+}
+
+export default async function Card() {
+  const people = await fetchParticipants();
+  return <div>{opaque(people)}</div>;
+}
+`,
+    );
+    const info = await analysedEntry(entry);
+    const dep = (info.dataDeps ?? []).find((d) => d.callee === "fetchParticipants");
+    expect(dep?.inferredReturn).toEqual({
+      provenance: "annotation",
+      value: [{ name: "flawless-name", role: "host" }],
+    });
+  });
+
+  test("a private same-named const in the DIRECTLY-resolved module cannot shadow the star re-export", async () => {
+    // Correctness-lens finding (depth-0): for an import-reached lookup, TS
+    // binds the star re-export — a private local never blocks it. The
+    // directly-resolved file must vouch only for its EXPORTS too.
+    const { root } = monorepo({ workspaces: BOTH });
+    write(
+      root,
+      "packages/shared/src/real-schemas.ts",
+      `import { z } from "zod";
+export const RoleSchema = z.enum(["host", "guest"]);
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/inner.ts",
+      `import { z } from "zod";
+const RoleSchema = z.enum(["internal"]);
+export * from "./real-schemas";
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/shadow-types.ts",
+      `import { z } from "zod";
+import { RoleSchema } from "./inner";
+
+export type Role = z.infer<typeof RoleSchema>;
+
+export interface Participant {
+  name: string;
+  role: Role;
+}
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/shadow-api.ts",
+      `import type { Participant } from "./shadow-types";
+
+export async function fetchParticipants(): Promise<Participant[]> {
+  return [];
+}
+`,
+    );
+    write(
+      root,
+      "packages/shared/src/index.ts",
+      `export * from "./shadow-types";
+export * from "./shadow-api";
+${SHARED_BARREL}`,
+    );
+    const entry = writeComponent(
+      root,
+      `import { fetchParticipants } from "@scope/shared";
+
+function opaque(x: unknown): string {
+  return String(x);
+}
+
+export default async function Card() {
+  const people = await fetchParticipants();
+  return <div>{opaque(people)}</div>;
+}
+`,
+    );
+    const info = await analysedEntry(entry);
+    const dep = (info.dataDeps ?? []).find((d) => d.callee === "fetchParticipants");
+    expect(dep?.inferredReturn).toEqual({
+      provenance: "annotation",
+      value: [{ name: "flawless-name", role: "host" }],
+    });
+  });
+
+  test("the TYPE path has the same depth-0 rule: a private interface in the resolved module cannot shadow", async () => {
+    const { root } = monorepo({ workspaces: BOTH });
+    write(
+      root,
+      "packages/shared/src/real-shape.ts",
+      "export interface Shape {\n  title: string;\n}\n",
+    );
+    write(
+      root,
+      "packages/shared/src/index.ts",
+      `interface Shape {
+  wrong: boolean;
+}
+export * from "./real-shape";
+${SHARED_BARREL}`,
+    );
+    const entry = writeComponent(
+      root,
+      `import type { Shape } from "@scope/shared";
+
+export function Card(props: Shape) {
+  return <div>{props.title}</div>;
+}
+`,
+    );
+    const info = await analysedEntry(entry);
+    expect(info.propsShape).toEqual({ title: "" });
+  });
+
   test("an interface member typed by a barrel-re-exported z.enum alias enriches the dep", async () => {
     const deps = await zodDeps();
     const dep = deps.find((d) => d.callee === "fetchParticipants");

@@ -298,7 +298,14 @@ function fixtureReference(name: string, ctx: PropsResolveCtx): PropValue | undef
   const wanted = binding.importedName ?? name;
   // The resolved module may be a barrel that only re-exports the name; the
   // chase to the DECLARING file rides its own visited set, not the hops.
-  const located = findExportedDecl(target, wanted, ctx.cache, ctx.resolver, findExportedTypeDecl);
+  const located = findExportedDecl(
+    target,
+    wanted,
+    ctx.cache,
+    ctx.resolver,
+    findExportedTypeDecl,
+    true,
+  );
   if (!located) return undefined;
   return fixtureDecl(located.decl, {
     ...next,
@@ -929,6 +936,7 @@ function zodMemberSchema(
     ctx.cache,
     ctx.resolver,
     findExportedTypeDecl,
+    true,
   );
   if (!located) return undefined;
   const rhs = aliasRef(located.decl);
@@ -1032,6 +1040,7 @@ function resolveImportedTypeDecl(
     ctx.cache,
     ctx.resolver,
     findExportedTypeDecl,
+    true,
   );
   if (!located) return undefined;
 

@@ -50,8 +50,15 @@ export function resolveDepReturns(
       binding.kind === "default" ? "default" : (binding.importedName ?? dep.calleeRoot);
     // Barrel-aware: chase re-exports to the DECLARING file, so an annotation
     // behind `export * from "./api"` still enriches the dep.
-    const located = findExportedDecl(target, wanted, cache, resolver, (sf, name) =>
-      new Map(exportedFunctions(sf)).get(name),
+    const located = findExportedDecl(
+      target,
+      wanted,
+      cache,
+      resolver,
+      // exportedFunctions already lists only exported names, so the root
+      // flag is moot here — passed for uniformity of the import-reached rule.
+      (sf, name) => new Map(exportedFunctions(sf)).get(name),
+      true,
     );
     if (!located) return dep;
     const { sf, file: declFile, decl: fn } = located;

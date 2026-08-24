@@ -131,6 +131,7 @@ export function resolveZodSchemaConst(
     ctx.cache,
     ctx.resolver,
     findSchemaConst,
+    true,
   );
   if (!located?.decl.initializer) return undefined;
   return resolveZodExpr(located.decl.initializer, seed, {
