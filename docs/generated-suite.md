@@ -218,7 +218,7 @@ Clicks the target the analyser derived from your source — a test id, an `aria-
 - Wait for the render count to increment.
 - Check `getScanEvents()`: any unnecessary rerenders from `react-scan` become a console warning.
 
-There is no blind fallback: `page.locator("button").first()` would claim the first button is the one the analysis found a handler on. When nothing in the source names a target, the scenario is emitted as a skip carrying the reason in its title — decided at scaffold time, never at run time. If your component's real interactions are more nuanced (form flows, drag handles, keyboard shortcuts), this is the test you'll most often extend by hand.
+There is no blind fallback — in the profile clicks here, and equally in the browser interaction specs: `page.locator("button").first()` (or the browser suite's old `button:not([disabled])`) would claim the first button is the one the analysis found a handler on. When nothing in the source names a target, the scenario is emitted as a skip carrying the reason in its title — decided at scaffold time, never at run time. If your component's real interactions are more nuanced (form flows, drag handles, keyboard shortcuts), this is the test you'll most often extend by hand.
 
 ### `forced rerender × N`
 

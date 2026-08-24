@@ -31,7 +31,6 @@ import type {
   TaskResult,
 } from "./types.ts";
 
-/** Recoverable input/configuration error — the CLI maps it to exit code 2. */
 import { UsageError } from "./types.ts";
 
 // Re-exported so `import { UsageError } from "…/core.ts"` keeps working — the
@@ -517,12 +516,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       selected.map((t) => t.id),
       affected,
       nextCtx?.root,
+      // log:false means stdout belongs to the caller (--json's blob, or a
+      // programmatic consumer) — the runner and its children use stderr.
+      opts.log !== true,
     );
   } else if (!anyFailed && opts.runTests === true && runnableSelected) {
     suitesGreen = await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),
       nextCtx?.root,
+      opts.log !== true,
     );
   }
 
@@ -628,8 +631,11 @@ export async function expandGlob(pattern: string, opts: ExpandGlobOptions = {}):
   // prompt's empty submit landed here too.
   if (existsSync(abs)) {
     if (statSync(abs).isDirectory()) {
+      // Shell tab-completion appends a trailing slash ("src/"); keep it out of
+      // the suggested glob or the fix reads "src//**/*.tsx".
+      const shown = pattern.replace(/[\\/]+$/, "");
       throw new UsageError(
-        `${pattern === "" ? abs : pattern} is a directory — pass a .tsx file or a glob like "${pattern === "" ? "src" : pattern}/**/*.tsx"`,
+        `${shown === "" ? abs : shown} is a directory — pass a .tsx file or a glob like "${shown === "" ? "src" : shown}/**/*.tsx"`,
       );
     }
     return [abs];

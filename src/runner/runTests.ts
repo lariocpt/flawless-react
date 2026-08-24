@@ -15,13 +15,18 @@ export async function runGeneratedTests(
   outDir: string,
   selectedTasks: TaskId[],
   nextRoot?: string,
+  quiet = false,
 ): Promise<boolean> {
+  // Under --json/--ci stdout is contractually one JSON blob; in quiet mode
+  // everything the runner says — and the child suites' own stdout — goes to
+  // stderr so the blob stays parseable on exactly the red runs it exists for.
+  const say = sayInto(quiet);
   const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
   const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
 
   if (!existsSync(path.join(cwd, "node_modules"))) {
-    process.stdout.write(`\n› bun install in ${cwd}\n`);
-    await spawn("bun", ["install"], cwd);
+    say(`\n› bun install in ${cwd}\n`);
+    await spawn("bun", ["install"], cwd, quiet);
   }
 
   const wantsPlaywright =
@@ -29,7 +34,7 @@ export async function runGeneratedTests(
     selectedTasks.includes("unit-browser") ||
     selectedTasks.includes("e2e");
   if (wantsPlaywright) {
-    await ensureChromium(cwd);
+    await ensureChromium(cwd, quiet);
   }
 
   const scripts: Array<{ id: string; cmd: string[] }> = [];
@@ -64,17 +69,21 @@ export async function runGeneratedTests(
 
   const failed: string[] = [];
   for (const s of scripts) {
-    process.stdout.write(`\n› ${s.cmd.join(" ")}\n`);
-    const ok = await spawn(s.cmd[0] as string, s.cmd.slice(1), cwd);
+    say(`\n› ${s.cmd.join(" ")}\n`);
+    const ok = await spawn(s.cmd[0] as string, s.cmd.slice(1), cwd, quiet);
     if (!ok) failed.push(s.id);
   }
 
   if (failed.length > 0) {
-    process.stdout.write(`\nfailed suites: ${failed.join(", ")}\n`);
+    say(`\nfailed suites: ${failed.join(", ")}\n`);
     return false;
   }
-  process.stdout.write("\nall generated suites passed\n");
+  say("\nall generated suites passed\n");
   return true;
+}
+
+function sayInto(quiet: boolean): (s: string) => void {
+  return (s) => void (quiet ? process.stderr : process.stdout).write(s);
 }
 
 /**
@@ -84,14 +93,15 @@ export async function runGeneratedTests(
  */
 const INSTALL_TIMEOUT_MS = 300_000;
 
-async function ensureChromium(cwd: string): Promise<void> {
+async function ensureChromium(cwd: string, quiet = false): Promise<void> {
   if (process.env.FLAWLESS_SKIP_BROWSER_INSTALL === "1") return;
-  process.stdout.write(
+  sayInto(quiet)(
     "\n› bunx playwright install chromium (set FLAWLESS_SKIP_BROWSER_INSTALL=1 to skip)\n",
   );
   const proc = Bun.spawn(["bunx", "playwright", "install", "chromium"], {
     cwd,
-    stdout: "inherit",
+    // fd 2: in quiet mode even the child's stdout belongs on stderr.
+    stdout: quiet ? 2 : "inherit",
     stderr: "inherit",
   });
   const timer = setTimeout(() => proc.kill(), INSTALL_TIMEOUT_MS);
@@ -104,10 +114,12 @@ async function ensureChromium(cwd: string): Promise<void> {
   }
 }
 
-async function spawn(cmd: string, args: string[], cwd: string): Promise<boolean> {
+async function spawn(cmd: string, args: string[], cwd: string, quiet = false): Promise<boolean> {
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
-    stdout: "inherit",
+    // fd 2: in quiet mode the child suite's stdout must not contaminate the
+    // parent's stdout (the --json blob is the only thing allowed there).
+    stdout: quiet ? 2 : "inherit",
     stderr: "inherit",
   });
   const code = await proc.exited;
@@ -135,12 +147,14 @@ export async function runAffectedTests(
   selectedTasks: TaskId[],
   affected: AffectedSpecs,
   nextRoot?: string,
+  quiet = false,
 ): Promise<boolean> {
+  const say = sayInto(quiet);
   const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
   const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
 
   if (affected.components.length === 0 && affected.routes.length === 0) {
-    process.stdout.write("\nchanged: nothing affected — no specs to run\n");
+    say("\nchanged: nothing affected — no specs to run\n");
     return true;
   }
 
@@ -175,14 +189,14 @@ export async function runAffectedTests(
 
   const failed: string[] = [];
   for (const r of runs) {
-    process.stdout.write(`\n› ${r.cmd.join(" ")}\n`);
-    const ok = await spawn(r.cmd[0] as string, r.cmd.slice(1), cwd);
+    say(`\n› ${r.cmd.join(" ")}\n`);
+    const ok = await spawn(r.cmd[0] as string, r.cmd.slice(1), cwd, quiet);
     if (!ok) failed.push(r.id);
   }
   if (failed.length > 0) {
-    process.stdout.write(`\nfailed suites: ${failed.join(", ")}\n`);
+    say(`\nfailed suites: ${failed.join(", ")}\n`);
     return false;
   }
-  process.stdout.write("\nall affected suites passed\n");
+  say("\nall affected suites passed\n");
   return true;
 }

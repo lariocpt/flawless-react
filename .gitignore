@@ -23,3 +23,6 @@ heaps
 # under it. Untracked and unignored, a `git add -A` from any session sweeps a
 # copy of the tree into a commit.
 .claude/worktrees/
+
+# Sidecar summaries dropped beside fixtures by tests that run the analyser
+tests/fixtures/*.flawless.json

@@ -22,6 +22,7 @@ import {
 import {
   awaitSelector,
   describeUnlocatable,
+  emitPlaywrightClickTarget,
   emitPlaywrightDispatch,
   emitPlaywrightFill,
   emitPlaywrightSelector,
@@ -1307,16 +1308,18 @@ function browserSpec(c: FlatComponent, specName: string): string {
   // the host has no session, the component returns null, and the spec waited
   // 30 seconds for a trigger that was never going to exist.
   const guarded = c.info.renderGuarded === true;
+  // No blind fallback. `button:not([disabled])` names whichever enabled button
+  // comes first, not one the analysis found a handler on — in a form component
+  // that is the submit control, and clicking it runs an action. The reason
+  // wording comes from the same helper the profile suite skips with, and it
+  // goes in the title because the skip is decided here, at scaffold time.
   const interactionTests = interactions
     ? emitBrowserInteractionTests(interactions, guarded)
     : `
-test(\`\${NAME}: click first button without errors (fallback)\`, async ({ page }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (err) => errors.push(err.message));
-  await mount(page);
-  const btn = page.locator("button:not([disabled])").first();
-  if (await btn.count() > 0) await btn.click();
-  expect(errors).toEqual([]);
+test.skip(\`\${NAME}: click — ${emitPlaywrightClickTarget(interactions).reason ?? "no clickable target could be derived"}\`, () => {
+  // TODO(flawless): the mount smoke above is the only claim the source
+  // supports. If this component is interactive, name the control — a
+  // data-testid, an aria-label or literal text — and regenerate.
 });`;
 
   // An error boundary logs what it caught, by design. Failing it for that is the

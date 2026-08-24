@@ -13,4 +13,11 @@
 // that actually invokes main().
 import { main } from "./cli.ts";
 
-await main(Bun.argv.slice(2));
+try {
+  await main(Bun.argv.slice(2));
+} catch (err) {
+  // A rejection escaping main() must land on the documented exit-1 contract,
+  // not surface as the runtime's uncaught-error dump.
+  process.stderr.write(`${String((err as Error | undefined)?.stack ?? err)}\n`);
+  process.exit(1);
+}

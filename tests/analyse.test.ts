@@ -24,19 +24,78 @@ describe("parseFile", () => {
 
   test("locates a component whose own returns are all null", async () => {
     const r = await parseFile(path.resolve(__dirname, "fixtures/NullRenderer.tsx"));
+    // The `return;` inside the effect callback belongs to the callback, not
+    // the component — detection must succeed despite it, and the callback
+    // must not surface as a second component.
+    expect(r.components).toHaveLength(1);
     const primary = r.components[0];
     expect(primary?.componentName).toBe("NullRenderer");
     expect(primary?.exportKind).toBe("named");
-    // The `return;` inside the effect callback belongs to the callback, not
-    // the component — it must not defeat the all-returns-null detection.
     expect(primary?.propsTypeLiteral).toBeDefined();
   });
 
+  test("a get accessor's return in the body does not defeat all-returns-null", async () => {
+    const r = await parseFile(path.resolve(__dirname, "fixtures/GetterEffect.tsx"));
+    expect(r.components).toHaveLength(1);
+    expect(r.components[0]?.componentName).toBe("GetterEffect");
+    expect(r.components[0]?.exportKind).toBe("named");
+  });
+
+  test("locates a component whose only return is a parenthesized null", async () => {
+    const r = await parseFile(path.resolve(__dirname, "fixtures/ParenNull.tsx"));
+    expect(r.components).toHaveLength(1);
+    expect(r.components[0]?.componentName).toBe("ParenNull");
+  });
+
   test("locates a base-ui useRender component (no JSX in the body)", async () => {
-    const r = await parseFile(path.resolve(__dirname, "fixtures/RenderHookBadge.tsx"));
+    const fixture = path.resolve(__dirname, "fixtures/RenderHookBadge.tsx");
+    // The fixture must stay JSX-free: any JSX would satisfy detection on its
+    // own and this test would stop pinning the render-hook path.
+    expect(await Bun.file(fixture).text()).not.toMatch(/<[A-Za-z]/);
+    const r = await parseFile(fixture);
     const primary = r.components[0];
     expect(primary?.componentName).toBe("RenderHookBadge");
     expect(primary?.exportKind).toBe("named");
+  });
+
+  test("locates a namespace-imported useRender component (UR.useRender)", async () => {
+    const fixture = path.resolve(__dirname, "fixtures/NamespaceRenderHook.tsx");
+    // JSX-free for the same reason as the named-import useRender fixture.
+    expect(await Bun.file(fixture).text()).not.toMatch(/<[A-Za-z]/);
+    const r = await parseFile(fixture);
+    expect(r.components[0]?.componentName).toBe("NamespaceBadge");
+    expect(r.components[0]?.exportKind).toBe("named");
+  });
+
+  test("locates a component returning cond ? useRender(...) : null", async () => {
+    const fixture = path.resolve(__dirname, "fixtures/TernaryRenderHook.tsx");
+    // JSX-free for the same reason as the named-import useRender fixture.
+    expect(await Bun.file(fixture).text()).not.toMatch(/<[A-Za-z]/);
+    const r = await parseFile(fixture);
+    expect(r.components[0]?.componentName).toBe("TernaryBadge");
+  });
+
+  test("a SCREAMING_CASE null-returning arrow is not a component", async () => {
+    try {
+      await parseFile(path.resolve(__dirname, "fixtures/NoopConstant.tsx"));
+      throw new Error("expected parseFile to throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("could not locate a React component");
+    }
+  });
+
+  test("a PascalCase null-returning arrow is still a component", async () => {
+    const r = await parseFile(path.resolve(__dirname, "fixtures/PascalNoop.tsx"));
+    expect(r.components[0]?.componentName).toBe("Noop");
+    expect(r.components[0]?.exportKind).toBe("named");
+  });
+
+  test("an acronym-named function DECLARATION returning null is a component", async () => {
+    // The SCREAMING_CASE guard is for value constants; `function SEO()` is the
+    // canonical effect-only head manager and must not be caught by it.
+    const r = await parseFile(path.resolve(__dirname, "fixtures/SeoHead.tsx"));
+    expect(r.components[0]?.componentName).toBe("SEO");
+    expect(r.components[0]?.exportKind).toBe("named");
   });
 
   test("throws helpfully on a non-component file", async () => {

@@ -212,6 +212,10 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
   // Pass 1 — candidates from function declarations and variable statements.
   for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && /^[A-Z]/.test(stmt.name.text)) {
+      // No name passed: the SCREAMING_CASE guard exists for value constants
+      // (`const NOOP = () => null`), and a function DECLARATION is not a value
+      // constant — `function SEO() { …; return null; }` is the canonical
+      // effect-only head-manager component and must stay detected.
       if (!stmt.body || !looksLikeComponentBody(stmt, renderHooks)) continue;
       const mods = stmt.modifiers ?? [];
       const hasExport = mods.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
@@ -298,7 +302,7 @@ function unitFromInitializer(
   init: ts.Expression,
   sf: ts.SourceFile,
   byName: Map<string, ParsedComponentUnit>,
-  renderHooks: Set<string>,
+  renderHooks: RenderHookImports,
 ): ParsedComponentUnit | undefined {
   // const X: React.FC<Props> = arrow | fnexpr
   const typeRef = decl.type && ts.isTypeReferenceNode(decl.type) ? decl.type : undefined;
@@ -312,7 +316,7 @@ function unitFromInitializer(
         (typeRef.typeName.text === "FC" || typeRef.typeName.text === "FunctionComponent")));
 
   if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-    if (!looksLikeFC && !looksLikeComponentBody(init, renderHooks)) return undefined;
+    if (!looksLikeFC && !looksLikeComponentBody(init, renderHooks, name)) return undefined;
     const fcPropsArg = looksLikeFC ? typeRef?.typeArguments?.[0] : undefined;
     const fromParams = propsFromParams(init);
     const propsTypeRef =
@@ -351,7 +355,7 @@ function unitFromInitializer(
   }
   if (
     (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) &&
-    looksLikeComponentBody(inner, renderHooks)
+    looksLikeComponentBody(inner, renderHooks, name)
   ) {
     return {
       componentName: name,
@@ -437,33 +441,80 @@ function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration>
 }
 
 /**
+ * Peels wrappers that cannot change what an expression evaluates to:
+ * parentheses, `as` / `satisfies` casts, and non-null assertions. Exported for
+ * other detectors that must not be fooled by `(null)` or `x satisfies T`.
+ */
+export function unwrapTrivialExpression(e: ts.Expression): ts.Expression {
+  let current = e;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current)
+    ) {
+      current = current.expression;
+    } else {
+      return current;
+    }
+  }
+}
+
+/**
  * A body renders even without JSX in two decidable shapes: every one of its
  * OWN returns is the `null` literal (an effect-only component — it renders
  * nothing by construction), or a return is a call to a render hook like
  * base-ui's useRender, where the element comes out of the hook. Both triggers
- * are syntactic; anything less certain still requires JSX.
+ * are syntactic; anything less certain still requires JSX. A SCREAMING_CASE
+ * name marks a value constant (`const NOOP = () => null`), so under such a
+ * name the null-only trigger stands down — JSX and render hooks still count.
  */
 function looksLikeComponentBody(
   fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
-  renderHooks: Set<string>,
+  renderHooks: RenderHookImports,
+  componentName?: string,
 ): boolean {
   if (containsJsx(fn)) return true;
 
-  const isRenderHookCall = (e: ts.Expression | undefined): boolean =>
-    e !== undefined &&
-    ts.isCallExpression(e) &&
-    ts.isIdentifier(e.expression) &&
-    renderHooks.has(e.expression.text);
+  const screamingCase = componentName !== undefined && /^[A-Z][A-Z0-9_]+$/.test(componentName);
+
+  const isRenderHookCall = (e: ts.Expression): boolean => {
+    if (!ts.isCallExpression(e)) return false;
+    const callee = e.expression;
+    if (ts.isIdentifier(callee)) return renderHooks.names.has(callee.text);
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      renderHooks.namespaces.has(callee.expression.text) &&
+      callee.name.text === "useRender"
+    );
+  };
+
+  // A ternary renders through the hook when ANY branch is a hook call — the
+  // other branch (typically null) renders nothing, which is fine.
+  const returnsRenderHook = (e: ts.Expression | undefined): boolean => {
+    if (e === undefined) return false;
+    const inner = unwrapTrivialExpression(e);
+    if (isRenderHookCall(inner)) return true;
+    return (
+      ts.isConditionalExpression(inner) &&
+      (returnsRenderHook(inner.whenTrue) || returnsRenderHook(inner.whenFalse))
+    );
+  };
+
+  const isNullLiteral = (e: ts.Expression | undefined): boolean =>
+    e !== undefined && unwrapTrivialExpression(e).kind === ts.SyntaxKind.NullKeyword;
 
   if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) {
-    return isRenderHookCall(fn.body) || fn.body.kind === ts.SyntaxKind.NullKeyword;
+    return returnsRenderHook(fn.body) || (!screamingCase && isNullLiteral(fn.body));
   }
   if (!fn.body || !ts.isBlock(fn.body)) return false;
 
   const returns = ownReturns(fn.body);
   if (returns.length === 0) return false;
-  if (returns.every((r) => r.expression?.kind === ts.SyntaxKind.NullKeyword)) return true;
-  return returns.some((r) => isRenderHookCall(r.expression));
+  if (!screamingCase && returns.every((r) => isNullLiteral(r.expression))) return true;
+  return returns.some((r) => returnsRenderHook(r.expression));
 }
 
 /** The block's own return statements — a nested function's returns are its own. */
@@ -474,7 +525,10 @@ function ownReturns(body: ts.Block): ts.ReturnStatement[] {
       ts.isArrowFunction(n) ||
       ts.isFunctionExpression(n) ||
       ts.isFunctionDeclaration(n) ||
-      ts.isMethodDeclaration(n)
+      ts.isMethodDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n) ||
+      ts.isConstructorDeclaration(n)
     ) {
       return;
     }
@@ -485,23 +539,42 @@ function ownReturns(body: ts.Block): ts.ReturnStatement[] {
   return out;
 }
 
+interface RenderHookImports {
+  /** Locals that ARE a render hook: `useRender(...)` called bare. */
+  names: Set<string>;
+  /** Namespace/default locals of use-render modules: `NS.useRender(...)`. */
+  namespaces: Set<string>;
+}
+
 /**
  * Local names bound to render hooks: an import named useRender, or anything
- * imported from a module specifier ending in /use-render.
+ * imported from a module specifier ending in /use-render. Namespace and
+ * default imports of such modules live in a separate set and match only the
+ * `NS.useRender(...)` property-access form — a default import CALLED as a bare
+ * identifier is not detected (no such module shape has been seen in the wild;
+ * detection stays syntactic rather than guessing).
  */
-function renderHookNames(sf: ts.SourceFile): Set<string> {
+function renderHookNames(sf: ts.SourceFile): RenderHookImports {
   const names = new Set<string>();
+  const namespaces = new Set<string>();
   for (const stmt of sf.statements) {
     if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-    const bindings = stmt.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    const clause = stmt.importClause;
+    if (!clause) continue;
     const fromUseRenderModule = /\/use-render$/.test(stmt.moduleSpecifier.text);
-    for (const el of bindings.elements) {
-      const imported = (el.propertyName ?? el.name).text;
-      if (imported === "useRender" || fromUseRenderModule) names.add(el.name.text);
+    if (clause.name && fromUseRenderModule) namespaces.add(clause.name.text);
+    const bindings = clause.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamedImports(bindings)) {
+      for (const el of bindings.elements) {
+        const imported = (el.propertyName ?? el.name).text;
+        if (imported === "useRender" || fromUseRenderModule) names.add(el.name.text);
+      }
+    } else if (ts.isNamespaceImport(bindings) && fromUseRenderModule) {
+      namespaces.add(bindings.name.text);
     }
   }
-  return names;
+  return { names, namespaces };
 }
 
 function containsJsx(node: ts.Node): boolean {

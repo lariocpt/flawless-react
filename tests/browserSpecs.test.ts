@@ -6,7 +6,7 @@ import { fillKind, requiredAncestors } from "../src/analyse/htmlContentModel.ts"
 import { analyse } from "../src/analyse/index.ts";
 import { functionProps } from "../src/scaffold-tests/registry.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
-import type { ComponentTree } from "../src/types.ts";
+import type { ComponentInfo, ComponentTree } from "../src/types.ts";
 
 const tmpDir = (): Promise<string> => mkdtemp(path.join(tmpdir(), "flawless-browser-"));
 
@@ -273,6 +273,52 @@ describe("the profile suite no longer clicks whichever button is first", () => {
       files.find((f) => f.relPath.endsWith("GatedSubmit.profile.spec.ts"))?.content ?? "";
     expect(spec).toContain('name: "Pick A", exact: true');
     expect(spec).not.toContain('page.locator("button").first()');
+  });
+});
+
+describe("the browser suite no longer clicks whichever button is first", () => {
+  // `analyse` always fills `interactions`, so the undefined-interactions shape
+  // — a hand-registered entry, or info from before the analyser ran — is built
+  // directly rather than through a fixture.
+  const bareEntry = (): ComponentInfo => ({
+    componentName: "Plain",
+    filePath: path.join(tmpdir(), "Plain.tsx"),
+    importSpecifier: "./Plain.tsx",
+    propsShape: {},
+    variants: [],
+    hooks: [],
+    unresolvedProps: [],
+    exportKind: "named",
+  });
+
+  test("no derivable target skips with the reason instead of guessing", async () => {
+    const files = renderUnitBrowser({
+      trees: [{ entry: bareEntry(), children: [] }],
+      outDir: await tmpDir(),
+      variants: 3,
+      browserSpecs: true,
+    });
+    const spec = files.find((f) => f.relPath === "browser/Plain.spec.ts")?.content ?? "";
+    expect(spec.length).toBeGreaterThan(0);
+    // `button:not([disabled])` names whichever enabled button comes first, not
+    // one the analysis found a handler on — the same guess the profile suite
+    // dropped when it resolved to VoteCard's submit control.
+    expect(spec).not.toContain("button:not([disabled])");
+    expect(spec).not.toContain(".first()");
+    // Decided at scaffold time, reason in the title — a runtime skip would pay
+    // a full page load to discover it has nothing to do, and the list reporter
+    // prints titles, not runtime skip reasons.
+    expect(spec).toContain("test.skip(");
+    expect(spec).toContain("the analyser found no click handler on this component");
+  });
+
+  test("a component with derived targets keeps its targeted click test", async () => {
+    const specs = await specsFor("GatedSubmit.tsx");
+    const browser = specs.get("browser/GatedSubmit.spec.ts") ?? "";
+    expect(browser).toContain(
+      'page.getByRole("button", { name: "Pick A", exact: true }).first().click()',
+    );
+    expect(browser).not.toContain("button:not([disabled])");
   });
 });
 

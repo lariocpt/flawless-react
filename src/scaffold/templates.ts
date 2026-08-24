@@ -1093,8 +1093,10 @@ function spec(c: FlatComponent, variants: number): string {
   // is the one the analysis found a handler on — true only when there is one
   // button, and in VoteCard it resolved to a disabled "Cast vote" while the
   // handler belonged to a vote option. When nothing names the target, the
-  // scenario skips with the reason instead of clicking whatever is first.
-  const clickButtonExpr = targetedClick.locator || `page.locator("button").first()`;
+  // scenario skips with the reason instead of clicking whatever is first:
+  // an empty locator forces clickSkipReason below, so this expression is only
+  // ever emitted with a derived target in it.
+  const clickButtonExpr = targetedClick.locator;
   const openDisclosure = targetedClick.prelude ? `\n  ${targetedClick.prelude}` : "";
 
   // Whether a click scenario can run at all is decided HERE, not at run time.

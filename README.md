@@ -141,7 +141,7 @@ flawless-react <entry.tsx> [options]
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
-With `--json` (or `--ci`) the CLI prints `{ outDir, results }` and nothing else — the human summary table is suppressed so the output parses. Without it you get the table and no JSON.
+With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code (suite failures included), so a red run is readable from the blob alone. Without the flag you get the table and no JSON.
 
 ## What gets generated
 

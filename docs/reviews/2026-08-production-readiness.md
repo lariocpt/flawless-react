@@ -91,7 +91,7 @@ deliberately absent.
 
 | | Mechanism | Determinism | Input needed | You own the code | Categories | Source stays local | Price (as-of 2026-08) | Maintenance | React 19 / RSC |
 |---|---|---|---|---|---|---|---|---|---|
-| **flawless-react** | static analysis + codegen | same input → same bytes | source only | yes, entirely | unit, browser, perf-profile, perf-static, a11y, react-rules, e2e, load | yes — no network at all | $0 marginal | regen tracks source; write-once set holds hand-work | proven (dogfooded on React 19.2 + Next 16, RSC-aware) |
+| **flawless-react** | static analysis + codegen | same input → same bytes | source only | yes, entirely | unit, browser, perf-profile, perf-static, a11y, react-rules, e2e, load | yes — offline loop (two opt-outable network touches) | $0 marginal | regen tracks source; write-once set holds hand-work | proven (dogfooded on React 19.2 + Next 16, RSC-aware) |
 | **Meticulous** | record/replay, AI-curated | replay deterministic; curation not | script tag + real traffic + (Next.js) your app container on their infra | no — hosted suite, no test code exists | visual/behavioral e2e regression | no — sessions incl. network responses uploaded | sales-led, pricing page 404 | fully automatic (their side) | Next.js App Router guide; React 19 unstated |
 | **Checksum.ai** | LLM agents → Playwright PRs | output runs deterministically; generation/healing not | repo + running test environment | yes — plain Playwright via PRs | e2e, API, CI-generated tests | no — SaaS with repo access | tiered by workflows, $ undisclosed | self-healing agent (~70% autonomous, self-reported) | framework-agnostic (browser-level); unstated |
 | **Qodo Cover** | LLM loop, coverage-validated | generation nondeterministic | buildable project + LLM key | yes — AGPL OSS | unit only | yes, with a self-hosted model | free + tokens | none — **abandoned 2025-06** | no JS/TS support listed |
@@ -100,9 +100,9 @@ deliberately absent.
 | **Manual** (Testing Library + Playwright + Profiler wiring) | a person | as good as the person | source + time | yes | anything, at ~70–130 h for this scale | yes | salary | full manual burden | yes |
 
 **Choose it when:**
-- *flawless-react* — you want a deterministic, offline, code-owned scaffold of
-  the whole quality surface in one second, and accept hardening the TODOs and
-  living without vendor support.
+- *flawless-react* — you want a deterministic, code-owned scaffold of the
+  whole quality surface in one second from an offline analysis/generation
+  loop, and accept hardening the TODOs and living without vendor support.
 - *Meticulous* — you have real traffic, want zero test-authoring forever, and
   accept renting a suite you can neither read nor take with you.
 - *Checksum* — you want maintained Playwright e2e in your repo without writing
@@ -128,17 +128,25 @@ maturity/support scored honestly against funded vendors):
 | Maturity / support / community | **1** | 4 | 3 | 5 | 5 |
 | Framework future-proofing | 3 | 3 | 4 | 5 | 5 |
 
+*The offline 5, precisely:* the analysis/generation loop is offline; the two
+network touches are opt-outable — `--swagger-url` fetches a live OpenAPI spec
+(`--swagger-url off` disables it) and `--run-tests` auto-runs `bunx playwright
+install chromium` (`FLAWLESS_SKIP_BROWSER_INSTALL=1` skips it).
+
 The two rows flawless loses are real: it is a single-author 0.3.0-dev tool on
 a private registry with no support channel, and its framework coverage moves
 only when its author moves it — a funded vendor or a frontier model tracks
 React's churn for you. The rows it wins, it wins by construction, not by
-polish: no LLM and no network anywhere in the loop is a property the funded
+polish: no LLM anywhere, and no network in the analysis/generation loop (the
+two optional network touches — live-swagger probe, playwright install — both
+have documented opt-outs), is a property the funded
 half of this table cannot retrofit, and the May-2026/June-2025 shutdowns are
 a reminder that a hosted suite's exit cost is the whole suite.
 
 **Final rating:** flawless-react is a **strong niche instrument as a
-deterministic, offline, code-owned test scaffolder for React/Next.js — the
-only product in this comparison covering unit-through-load in one pass —
+deterministic, code-owned test scaffolder for React/Next.js with an offline
+analysis/generation loop — the only product in this comparison covering
+unit-through-load in one pass —
 compared against tools that are either better-funded conveniences with rented
 output (Meticulous, Checksum), general-purpose agents with no determinism
 story (editor LLMs), or dead (Octomind, Qodo Cover). At 66% weighted
