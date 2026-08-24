@@ -85,6 +85,13 @@ export interface CoreResult {
    * between. `green` is what folded into exitCode.
    */
   testRun?: { mode: "affected" | "generated"; green: boolean };
+  /**
+   * flawless:* scripts whose existing package.json value the merge did not
+   * recognize as the tool's own and therefore KEPT (FR-034). Durable on
+   * purpose: the log line is suppressed under --ci/--json and programmatic
+   * runs, exactly the modes an agent refreshes in.
+   */
+  keptScripts: string[];
 }
 
 /**
@@ -340,6 +347,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   }
 
   const nextjsWritten: string[] = [];
+  // Kept flawless:* scripts must outlive the log line: --ci/--json and
+  // programmatic runs suppress logging, and those are exactly the modes an
+  // agent refreshes in (the FR-034 dogfood bite happened under one).
+  let keptScripts: string[] = [];
   if (nextCtx) {
     try {
       const nm = await emitNextjsMocks(nextCtx, outDir, { liveSpec, force: opts.force });
@@ -351,7 +362,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // scaffold/templates.ts, scaffold-tests/mocks.ts). These land in a file;
       // the rest of path.relative's uses in this file are log lines.
       const outRel = outDirRel(outDir, nextCtx.root);
-      await mergeIntoNextPackageJson(
+      const scriptMerge = await mergeIntoNextPackageJson(
         nextCtx.root,
         {},
         {
@@ -420,10 +431,27 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
             ? { [NEXT_SCRIPT.report]: `node ${outRel}/scripts/report.mjs` }
             : {}),
         },
+        {
+          // Both spellings are the tool's own — which one a project holds
+          // depends only on whether --colocate was passed LAST run, and the
+          // stale one silently skips colocated specs under --run-tests.
+          "flawless:unit": [
+            `vitest run --config ${outRel}/${VITEST_CONFIG}`,
+            `vitest run --root ${outRel}`,
+          ],
+        },
       );
       log(
         `nextjs: merged dev deps + flawless:* scripts into ${path.join(nextCtx.root, "package.json")}`,
       );
+      keptScripts = scriptMerge.keptScripts;
+      if (keptScripts.length > 0) {
+        log(
+          `nextjs: kept ${keptScripts.length} script(s) with commands this tool does not ` +
+            `recognize: ${keptScripts.join(", ")} — delete a key from package.json to take ` +
+            `the tool's current command`,
+        );
+      }
       // Colocated specs sit in src/ next to their components, where an
       // unscoped test runner will collect them and run them under the wrong
       // runner. Silently creating that collision is not acceptable — it turns
@@ -471,6 +499,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     outDir,
     projectRoot: nextCtx?.root,
     unparseable,
+    keptScripts,
     allTaskIds: TASKS.map((t) => t.id),
     // Only in Next.js mode, where there is a project root that both the command
     // and the report's file paths are relative to, and which is where the user
@@ -566,6 +595,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   }
 
   return {
+    keptScripts,
     exitCode: anyFailed || !suitesGreen ? 1 : 0,
     outDir,
     results,

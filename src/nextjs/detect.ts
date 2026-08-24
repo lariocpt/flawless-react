@@ -160,7 +160,14 @@ export async function mergeIntoNextPackageJson(
   deps: Record<string, string>,
   devDeps: Record<string, string>,
   scripts: Record<string, string>,
-): Promise<void> {
+  /**
+   * Per key: OTHER command spellings this tool itself emits or once emitted
+   * (the --root vs --config forms of flawless:unit, say). An existing value
+   * on this list is tool-owned and upgrades; only a value the tool does not
+   * recognize is someone's work and kept.
+   */
+  toolSpellings: Record<string, readonly string[]> = {},
+): Promise<{ keptScripts: string[] }> {
   const pkgPath = path.join(nextRoot, "package.json");
   const fs = require("node:fs") as typeof import("node:fs");
   if (!existsSync(pkgPath)) {
@@ -182,12 +189,30 @@ export async function mergeIntoNextPackageJson(
   if (Object.keys(devDeps).length > 0 || pkg.devDependencies) {
     pkg.devDependencies = addMissing(pkg.devDependencies, devDeps);
   }
-  // Scripts go the other way on purpose: the tool spreads last and wins its own
-  // `flawless:*` namespace, so an improvement to a generated command reaches a
-  // project that was scaffolded by an older version. A version range is the
-  // project's decision; the command that runs the generated suite is not.
+  // Scripts used to be the one place the tool spread last and "won its own
+  // namespace" — so a command improvement reached older projects. Dogfood
+  // round 5 showed the cost: an app's hand-customized flawless:load
+  // (`--env-file …`) was clobbered by a refresh and the load run failed at
+  // setup (FR-034). A differing existing value is the user's work now, kept
+  // and REPORTED — the caller logs the kept keys with the same escape every
+  // kept file gets: delete the key to take the tool's current command.
+  const keptScripts: string[] = [];
   if (Object.keys(scripts).length > 0 || pkg.scripts) {
-    pkg.scripts = { ...(pkg.scripts ?? {}), ...scripts };
+    const merged = { ...(pkg.scripts ?? {}) };
+    for (const [name, cmd] of Object.entries(scripts)) {
+      const existing = merged[name];
+      if (
+        existing !== undefined &&
+        existing !== cmd &&
+        !(toolSpellings[name] ?? []).includes(existing)
+      ) {
+        keptScripts.push(name);
+        continue;
+      }
+      merged[name] = cmd;
+    }
+    pkg.scripts = merged;
   }
   fs.writeFileSync(pkgPath, stringifyLike(source, pkg));
+  return { keptScripts };
 }
