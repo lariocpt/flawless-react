@@ -71,7 +71,11 @@ describe("--ci process contract", () => {
         keptScripts: string[];
       };
       expect(blob.exitCode).toBe(0);
-      expect(existsSync(blob.outDir)).toBe(true);
+      // Echoing the tmpdir back proves --out was honored — existence alone is
+      // vacuous here (the test pre-created the dir), and a run that ignored
+      // --out would still have created whatever dir it reported.
+      expect(blob.outDir).toBe(out);
+      expect(existsSync(path.join(blob.outDir, "reports", "summary.json"))).toBe(true);
       expect(blob.results.map((r) => r.id)).toEqual(["perf-static"]);
       expect(blob.results[0]?.ok).toBe(true);
       expect(typeof blob.results[0]?.summary).toBe("string");
