@@ -1,9 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { analyse } from "../src/analyse/index.ts";
 import { ModuleResolver } from "../src/analyse/resolveModule.ts";
+import { findExportedDecl, SourceFileCache } from "../src/analyse/sourceCache.ts";
+import { runCore } from "../src/core.ts";
 import type { DataDepInfo } from "../src/types.ts";
 
 // B-8: bare workspace specifiers (@scope/shared) resolve through the
@@ -228,10 +231,102 @@ describe("ModuleResolver: workspace packages", () => {
     expect(resolver.resolve("@scope/shared", importer)).toBeUndefined();
   });
 
-  test("fancy globs (** and negations) are skipped, not guessed", () => {
+  test("fancy positive globs (**) are skipped, not guessed", () => {
     const { importer } = monorepo({ workspaces: ["packages/**", "!packages/shared"] });
     const resolver = new ModuleResolver();
     expect(resolver.resolve("@scope/shared", importer)).toBeUndefined();
+  });
+
+  test("a negation glob EXCLUDES its package — ignoring it would widen the map", () => {
+    // Review finding: a package excluded from workspaces (the app depends on
+    // its published registry version) must not have fixtures derived from
+    // local source the runtime never sees.
+    const { root, importer } = monorepo({
+      workspaces: ["apps/*", "packages/*", "!packages/legacy"],
+    });
+    write(root, "packages/legacy/package.json", JSON.stringify({ name: "@scope/legacy" }));
+    write(root, "packages/legacy/src/index.ts", "export const legacy = 1;\n");
+    const resolver = new ModuleResolver();
+    expect(resolver.resolve("@scope/legacy", importer)).toBeUndefined();
+    expect(resolver.resolve("@scope/shared", importer)).toBe(
+      path.join(root, "packages/shared/src/index.ts"),
+    );
+  });
+
+  test("an unsupported negation disables the whole root — it cannot be applied, so nothing is vouched for", () => {
+    const { importer } = monorepo({ workspaces: ["packages/*", "!packages/**"] });
+    const resolver = new ModuleResolver();
+    expect(resolver.resolve("@scope/shared", importer)).toBeUndefined();
+  });
+
+  test("zero-indent pnpm-workspace.yaml list items parse — pnpm accepts them", () => {
+    const { root, importer } = monorepo({ pnpmYaml: "packages:\n- 'packages/*'\n- apps/*\n" });
+    const resolver = new ModuleResolver();
+    expect(resolver.resolve("@scope/shared", importer)).toBe(
+      path.join(root, "packages/shared/src/index.ts"),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findExportedDecl semantics the review pinned: breadth must not starve the
+// walk, and local export clauses map aliases to their declarations.
+
+function interfaceFinder(
+  sf: ts.SourceFile,
+  name: string,
+  viaReexport?: boolean,
+): ts.InterfaceDeclaration | undefined {
+  for (const stmt of sf.statements) {
+    if (!ts.isInterfaceDeclaration(stmt) || stmt.name.text !== name) continue;
+    const exported =
+      ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+    if (viaReexport && !exported) return undefined;
+    return stmt;
+  }
+  return undefined;
+}
+
+describe("findExportedDecl", () => {
+  test("a wide star barrel (40 arms) still finds a name in arm 35 — the bound is depth, not breadth", () => {
+    // Review finding: counting every failed sibling probe against the cap
+    // silently reinstated the TODO wall for shadcn-sized generated barrels.
+    const root = tmpRoot();
+    const arms: string[] = [];
+    for (let i = 0; i < 40; i++) arms.push(`export * from "./m${i}";`);
+    const index = write(root, "src/index.ts", `${arms.join("\n")}\n`);
+    for (let i = 0; i < 40; i++) {
+      write(
+        root,
+        `src/m${i}.ts`,
+        i === 34
+          ? "export interface Deep {\n  x: string;\n}\n"
+          : `export const filler${i} = ${i};\n`,
+      );
+    }
+    const hit = findExportedDecl(
+      index,
+      "Deep",
+      new SourceFileCache(),
+      new ModuleResolver(),
+      interfaceFinder,
+    );
+    expect(hit?.file).toBe(path.join(root, "src/m34.ts"));
+  });
+
+  test("export { Real as Renamed } without a specifier maps the alias to the local declaration", () => {
+    const root = tmpRoot();
+    const index = write(root, "src/index.ts", `export * from "./local";\n`);
+    write(root, "src/local.ts", "interface Real {\n  n: number;\n}\nexport { Real as Renamed };\n");
+    const hit = findExportedDecl(
+      index,
+      "Renamed",
+      new SourceFileCache(),
+      new ModuleResolver(),
+      interfaceFinder,
+    );
+    expect(hit?.file).toBe(path.join(root, "src/local.ts"));
+    expect(hit?.decl.name.text).toBe("Real");
   });
 });
 
@@ -277,6 +372,60 @@ export function Card(props: PanelProps) {
     );
     const info = await analysedEntry(entry);
     expect(info.propsShape).toEqual({ title: "", count: 0 });
+  });
+
+  test("a non-exported same-named interface in an earlier star arm cannot shadow the real one", async () => {
+    // Review finding: findTypeDecl has no export check, so a PRIVATE decl in
+    // the first star target used to win — a wrong-shape fixture on valid TS.
+    const { root } = monorepo({ workspaces: BOTH });
+    write(
+      root,
+      "packages/shared/src/private-shape.ts",
+      "interface Shape {\n  wrong: boolean;\n}\nexport const unrelated = 1;\n",
+    );
+    write(
+      root,
+      "packages/shared/src/real-shape.ts",
+      "export interface Shape {\n  title: string;\n}\n",
+    );
+    write(
+      root,
+      "packages/shared/src/index.ts",
+      `export * from "./private-shape";\nexport * from "./real-shape";\n${SHARED_BARREL}`,
+    );
+    const entry = writeComponent(
+      root,
+      `import type { Shape } from "@scope/shared";
+
+export function Card(props: Shape) {
+  return <div>{props.title}</div>;
+}
+`,
+    );
+    const info = await analysedEntry(entry);
+    expect(info.propsShape).toEqual({ title: "" });
+  });
+
+  test("an explicit re-export clause shadows a star arm exporting the same name — ESM semantics", async () => {
+    const { root } = monorepo({ workspaces: BOTH });
+    write(root, "packages/shared/src/wa.ts", "export interface Widget {\n  fromA: string;\n}\n");
+    write(root, "packages/shared/src/wb.ts", "export interface Widget {\n  fromB: string;\n}\n");
+    write(
+      root,
+      "packages/shared/src/index.ts",
+      `export * from "./wa";\nexport { Widget } from "./wb";\n${SHARED_BARREL}`,
+    );
+    const entry = writeComponent(
+      root,
+      `import type { Widget } from "@scope/shared";
+
+export function Card(props: Widget) {
+  return <div>{props.fromB}</div>;
+}
+`,
+    );
+    const info = await analysedEntry(entry);
+    expect(info.propsShape).toEqual({ fromB: "" });
   });
 
   test("a name the barrel never exports stays unresolved — and the cyclic barrel terminates", async () => {
@@ -333,4 +482,55 @@ export default async function Card() {
       value: THING_FIXTURE,
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// --colocate must never write into a SIBLING package: the emitted vitest
+// config roots at the outDir's parent and can never run a spec there, while
+// the sibling's own test glob WOULD pick it up — red CI in a package the user
+// never targeted (review finding).
+
+describe("colocate stays inside the app", () => {
+  test("a workspace child's spec falls back to the outDir instead of the sibling package", async () => {
+    const { root } = monorepo({ workspaces: BOTH });
+    write(
+      root,
+      "packages/shared/src/badge.tsx",
+      "export function Badge() {\n  return <span>badge</span>;\n}\n",
+    );
+    const entry = writeComponent(
+      root,
+      `import { Badge } from "@scope/shared/badge";
+
+export default function Page() {
+  return (
+    <main>
+      <Badge />
+    </main>
+  );
+}
+`,
+    );
+    const outDir = path.join(root, "apps", "web", "flawless");
+    const result = await runCore({
+      pattern: entry,
+      outDir,
+      taskIds: ["unit-browser"],
+      colocate: true,
+      force: true,
+      log: false,
+      inlineSummary: false,
+    });
+    expect(result.exitCode).toBe(0);
+    const spill = readdirSync(path.join(root, "packages/shared/src")).filter((f) =>
+      f.includes(".flawless.test."),
+    );
+    expect(spill).toEqual([]);
+    // The child's coverage still exists — where the config can reach it.
+    const unitDir = path.join(outDir, "unit");
+    const unitSpecs = existsSync(unitDir) ? readdirSync(unitDir) : [];
+    expect(unitSpecs.some((f) => /badge/i.test(f))).toBe(true);
+    // The app's own component still colocates beside its source.
+    expect(existsSync(path.join(root, "apps/web/src/Card.flawless.test.tsx"))).toBe(true);
+  }, 30_000);
 });

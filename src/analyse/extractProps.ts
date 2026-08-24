@@ -284,7 +284,7 @@ function fixtureReference(name: string, ctx: PropsResolveCtx): PropValue | undef
   const wanted = binding.importedName ?? name;
   // The resolved module may be a barrel that only re-exports the name; the
   // chase to the DECLARING file rides its own visited set, not the hops.
-  const located = findExportedDecl(target, wanted, ctx.cache, ctx.resolver, findTypeDecl);
+  const located = findExportedDecl(target, wanted, ctx.cache, ctx.resolver, findExportedTypeDecl);
   if (!located) return undefined;
   return fixtureDecl(located.decl, {
     ...next,
@@ -800,6 +800,29 @@ function findTypeDecl(
   return undefined;
 }
 
+/**
+ * findTypeDecl for the barrel chase: a file reached THROUGH a re-export
+ * chain vouches only for its exported declarations — a private same-named
+ * interface in an earlier star arm must not shadow the real one (that emits
+ * a wrong-shape fixture on valid TS). The directly-resolved file keeps
+ * findTypeDecl's pre-B-8 looseness.
+ */
+function findExportedTypeDecl(
+  sf: ts.SourceFile,
+  name: string,
+  viaReexport: boolean,
+): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | undefined {
+  const decl = findTypeDecl(sf, name);
+  if (!decl) return undefined;
+  if (
+    viaReexport &&
+    !(ts.getModifiers(decl)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false)
+  ) {
+    return undefined;
+  }
+  return decl;
+}
+
 function resolveTypeDecl(
   decl: ts.InterfaceDeclaration | ts.TypeAliasDeclaration,
   ctx: PropsResolveCtx,
@@ -901,7 +924,7 @@ function resolveImportedTypeDecl(
     binding.importedName ?? name.text,
     ctx.cache,
     ctx.resolver,
-    findTypeDecl,
+    findExportedTypeDecl,
   );
   if (!located) return undefined;
 

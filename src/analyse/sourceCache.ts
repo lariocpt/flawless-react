@@ -69,57 +69,98 @@ export interface RelocatedExport<T> {
   decl: T;
 }
 
-/** Barrel chains beyond this are machine-generated or cyclic; stop looking. */
-const MAX_RELOCATION_FILES = 32;
+/** Barrel chains deeper than this are machine-generated; stop looking. */
+const MAX_RELOCATION_DEPTH = 8;
+/** Runaway backstop across the whole walk — cycles are caught by `visited`,
+ * so this only stops pathological generated fan-outs. It counts file::name
+ * pairs, NOT breadth per level: a wide shadcn-style barrel (40+ star arms)
+ * must still reach its last arm. */
+const MAX_RELOCATION_FILES = 512;
 
 /**
- * Find `name`'s declaration starting at `file`, chasing barrel re-exports:
- * on a miss, named re-exports (`export { A as B } from "./x"`, rename-aware)
- * and star re-exports (`export * from "./x"`) are followed in declaration
- * order, first hit wins. `export * as ns from` exports one namespace object,
+ * Find `name`'s declaration starting at `file`, chasing barrel re-exports.
+ * ESM semantics drive the order inside each file: a matching declaration
+ * first, then local export clauses (`export { Real as Renamed };` — the
+ * clause itself makes the local declaration exported), then explicit
+ * re-export clauses (`export { A as B } from "./x"`, rename-aware — these
+ * SHADOW star exports), then star re-exports (`export * from "./x"`) in
+ * declaration order. `export * as ns from` exports one namespace object,
  * never the names behind it, and is not followed.
  *
- * Bounded by a visited set (file::name, capped), deliberately NOT the props
- * hop budget: component → barrel → types.ts would exhaust MAX_HOPS before a
- * single member resolved, and relocation is finding where a name LIVES, not
- * a semantic resolution hop. Cycles (a→b→a) terminate on the visited set.
+ * `find` receives `viaReexport: true` for every file reached through a
+ * re-export chain — matchers use it to refuse non-exported declarations,
+ * which a star chase must never bind (a private same-named interface in an
+ * earlier arm would silently produce a wrong-shape fixture).
+ *
+ * Depth-bounded and cycle-guarded, deliberately NOT the props hop budget:
+ * component → barrel → types.ts would exhaust MAX_HOPS before a single
+ * member resolved, and relocation is finding where a name LIVES, not a
+ * semantic resolution hop.
  */
 export function findExportedDecl<T>(
   file: string,
   name: string,
   cache: SourceFileCache,
   resolver: { resolve(spec: string, importer: string): string | undefined } | undefined,
-  find: (sf: ts.SourceFile, name: string) => T | undefined,
+  find: (sf: ts.SourceFile, name: string, viaReexport: boolean) => T | undefined,
 ): RelocatedExport<T> | undefined {
   const visited = new Set<string>();
-  const walk = (f: string, wanted: string): RelocatedExport<T> | undefined => {
+  const walk = (f: string, wanted: string, depth: number): RelocatedExport<T> | undefined => {
     const key = `${f}::${wanted}`;
-    if (visited.has(key) || visited.size >= MAX_RELOCATION_FILES) return undefined;
+    if (visited.has(key) || depth > MAX_RELOCATION_DEPTH || visited.size >= MAX_RELOCATION_FILES)
+      return undefined;
     visited.add(key);
     const sf = cache.get(f);
     if (!sf) return undefined;
-    const hit = find(sf, wanted);
+    const hit = find(sf, wanted, depth > 0);
     if (hit !== undefined) return { sf, file: f, decl: hit };
+
+    const localClauses: ts.NamedExports[] = [];
+    const named: Array<{ clause: ts.NamedExports; spec: string }> = [];
+    const stars: string[] = [];
     for (const stmt of sf.statements) {
       if (!ts.isExportDeclaration(stmt)) continue;
-      if (!stmt.moduleSpecifier || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-      if (stmt.exportClause && !ts.isNamedExports(stmt.exportClause)) continue;
-      const target = resolver?.resolve(stmt.moduleSpecifier.text, f);
-      if (!target) continue;
-      if (stmt.exportClause) {
-        for (const el of stmt.exportClause.elements) {
-          if (el.name.text !== wanted) continue;
-          const relocated = walk(target, (el.propertyName ?? el.name).text);
-          if (relocated) return relocated;
+      if (!stmt.moduleSpecifier) {
+        if (stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+          localClauses.push(stmt.exportClause);
         }
         continue;
       }
-      const relocated = walk(target, wanted);
+      if (!ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+      if (stmt.exportClause) {
+        if (ts.isNamedExports(stmt.exportClause)) {
+          named.push({ clause: stmt.exportClause, spec: stmt.moduleSpecifier.text });
+        }
+        continue;
+      }
+      stars.push(stmt.moduleSpecifier.text);
+    }
+
+    for (const clause of localClauses) {
+      for (const el of clause.elements) {
+        if (el.name.text !== wanted) continue;
+        const localHit = find(sf, (el.propertyName ?? el.name).text, false);
+        if (localHit !== undefined) return { sf, file: f, decl: localHit };
+      }
+    }
+    for (const { clause, spec } of named) {
+      for (const el of clause.elements) {
+        if (el.name.text !== wanted) continue;
+        const target = resolver?.resolve(spec, f);
+        if (!target) continue;
+        const relocated = walk(target, (el.propertyName ?? el.name).text, depth + 1);
+        if (relocated) return relocated;
+      }
+    }
+    for (const spec of stars) {
+      const target = resolver?.resolve(spec, f);
+      if (!target) continue;
+      const relocated = walk(target, wanted, depth + 1);
       if (relocated) return relocated;
     }
     return undefined;
   };
-  return walk(file, name);
+  return walk(file, name, 0);
 }
 
 export class SourceFileCache {

@@ -101,23 +101,59 @@ function pnpmWorkspacePackages(file: string): string[] {
       continue;
     }
     if (!inList) continue;
-    const m = /^\s+-\s*['"]?([^'"#]+?)['"]?\s*(#.*)?$/.exec(line);
+    // Zero-indent items (`- 'packages/*'` at column 0) are valid YAML and
+    // pnpm accepts them; only a new top-level key ends the list.
+    const m = /^\s*-\s*['"]?([^'"#]+?)['"]?\s*(#.*)?$/.exec(line);
     if (m?.[1]) out.push(m[1]);
-    else if (line.trim() !== "" && !line.startsWith(" ")) break;
+    else if (/^\S/.test(line)) break;
   }
   return out;
 }
 
 /**
+ * The supported glob subset, classified: a literal dir, or a single
+ * TRAILING-star dir glob (`packages/*`, bare `*`). Anything else — `**`,
+ * mid-pattern or multiple stars — is undefined (unsupported).
+ */
+function dirGlobShape(
+  glob: string,
+): { kind: "literal"; dir: string } | { kind: "star"; parent: string } | undefined {
+  const star = glob.indexOf("*");
+  if (star === -1) return { kind: "literal", dir: glob };
+  if (glob !== "*" && !glob.endsWith("/*")) return undefined;
+  if (star !== glob.lastIndexOf("*")) return undefined;
+  return { kind: "star", parent: glob === "*" ? "." : glob.slice(0, -2) };
+}
+
+/**
  * Enumerate the packages the globs name. The supported subset is literal
- * dirs and single-star dir globs (`packages/*`) — anything fancier (`**`,
- * negations, mid-pattern stars) is silently skipped, because resolution
- * returning undefined is the bail-safe direction. node_modules is refused
- * even when a glob names it: the never-walk invariant outranks the map.
+ * dirs and single-star dir globs (`packages/*`) — a fancier POSITIVE glob
+ * (`**`, mid-pattern stars) is silently skipped, because resolution
+ * returning undefined is the bail-safe direction. Negations are APPLIED,
+ * not skipped: ignoring an exclusion would widen the map — the one
+ * direction that is not bail-safe — so an unsupported negation disables
+ * this root entirely. node_modules is refused even when a glob names it:
+ * the never-walk invariant outranks the map.
  */
 function buildWorkspaceMap(rootDir: string, globs: string[]): WorkspaceMap {
   const packages = new Map<string, string>();
+
+  const negations: Array<{ kind: "literal"; dir: string } | { kind: "star"; parent: string }> = [];
+  for (const glob of globs) {
+    if (!glob.startsWith("!")) continue;
+    const shape = dirGlobShape(glob.slice(1));
+    if (!shape) return { rootDir, packages };
+    negations.push(shape);
+  }
+  const excluded = (pkgDir: string): boolean =>
+    negations.some((neg) =>
+      neg.kind === "literal"
+        ? path.resolve(rootDir, neg.dir) === pkgDir
+        : path.dirname(pkgDir) === path.resolve(rootDir, neg.parent),
+    );
+
   const addPackage = (pkgDir: string): void => {
+    if (excluded(pkgDir)) return;
     const pkgJson = path.join(pkgDir, "package.json");
     if (!existsSync(pkgJson)) return;
     try {
@@ -130,17 +166,14 @@ function buildWorkspaceMap(rootDir: string, globs: string[]): WorkspaceMap {
     }
   };
   for (const glob of globs) {
-    if (glob.includes("node_modules")) continue;
-    if (glob.startsWith("!")) continue;
-    const star = glob.indexOf("*");
-    if (star === -1) {
-      addPackage(path.resolve(rootDir, glob));
+    if (glob.startsWith("!") || glob.includes("node_modules")) continue;
+    const shape = dirGlobShape(glob);
+    if (!shape) continue;
+    if (shape.kind === "literal") {
+      addPackage(path.resolve(rootDir, shape.dir));
       continue;
     }
-    // Single trailing dir star only: `packages/*` or bare `*`.
-    if (glob !== "*" && !glob.endsWith("/*")) continue;
-    if (glob.indexOf("*") !== glob.lastIndexOf("*")) continue;
-    const parent = glob === "*" ? rootDir : path.resolve(rootDir, glob.slice(0, -2));
+    const parent = path.resolve(rootDir, shape.parent);
     if (path.basename(parent) === "node_modules" || !isDirectory(parent)) continue;
     let entries: string[];
     try {

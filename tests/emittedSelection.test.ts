@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -65,10 +65,19 @@ interface Suite {
  * Cached: the install is the expensive part and every case reads the same tree.
  */
 let suitePromise: Promise<Suite> | undefined;
+let suiteRoot: string | undefined;
+
+// The cached tree carries a full runner install (~600MB). Without this,
+// every `bun test` run leaked one copy into /tmp — a day of runs filled a
+// 63G tmpfs to 100% and took the whole machine's temp space with it.
+afterAll(() => {
+  if (suiteRoot) rmSync(suiteRoot, { recursive: true, force: true });
+});
 
 function emittedSuite(): Promise<Suite> {
   suitePromise ??= (async (): Promise<Suite> => {
-    const app = path.join(await mkdtemp(path.join(tmpdir(), "flawless-select-")), "app");
+    suiteRoot = await mkdtemp(path.join(tmpdir(), "flawless-select-"));
+    const app = path.join(suiteRoot, "app");
     await cp(fixture("nextapp"), app, { recursive: true });
     // The fixture home page renders nothing clickable, so its e2e spec would
     // carry only the load test — and the grep-selection case would then pass
