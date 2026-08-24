@@ -15,7 +15,12 @@ import type {
   TodoCounter,
   TodoRecorder,
 } from "../types.ts";
-import { apiRouteFixture, emitModuleMocks, inferredDepReturn } from "./mocks.ts";
+import {
+  apiRouteFixture,
+  dottedMockConflicts,
+  emitModuleMocks,
+  inferredDepReturn,
+} from "./mocks.ts";
 import {
   allocateSpecNames,
   compoundWrappable,
@@ -1081,9 +1086,14 @@ function uncertainEscape(info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): str
   // join) is coverage, not an admitted gap — its crash must report as a real
   // failure, or the inferred fixture could be wrong forever without anyone
   // seeing red.
-  const uncertain = (info.dataDeps ?? []).some(
-    (d) => (d.uncertain || d.shape.kind === "unknown") && !inferredDepReturn(d, apiRoutes),
-  );
+  const uncertain =
+    (info.dataDeps ?? []).some(
+      (d) => (d.uncertain || d.shape.kind === "unknown") && !inferredDepReturn(d, apiRoutes),
+    ) ||
+    // A dotted-mock conflict falls back to {} even when every dep's shape is
+    // certain — the crash on the missing member is the tool's admitted gap,
+    // not the application's failure.
+    dottedMockConflicts(info.dataDeps ?? []);
   if (!uncertain) return "";
   // t.skip() takes no argument in this vitest major, so the reason goes to the
   // console — losing it entirely would leave a bare skip with no explanation.

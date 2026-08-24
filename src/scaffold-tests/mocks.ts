@@ -242,6 +242,31 @@ export function emitModuleMocks(
 }
 
 /**
+ * Roots whose deps cannot be mocked coherently: bare + dotted callees mixed
+ * on one binding, or one dotted path prefixing another. The emitter falls
+ * back to the honest {} for these — and the RSC skip escape must fire too,
+ * or the runtime crash on the missing member reads as an application
+ * failure (FR-014's exact failure mode, confined to the conflict shapes).
+ * One predicate, consumed by dataModuleMock AND uncertainEscape, so the
+ * fallback and the escape can never disagree.
+ */
+export function dottedMockConflicts(deps: DataDepInfo[]): boolean {
+  const byRoot = new Map<string, DataDepInfo[]>();
+  for (const d of deps) {
+    const group = byRoot.get(d.calleeRoot) ?? [];
+    group.push(d);
+    byRoot.set(d.calleeRoot, group);
+  }
+  for (const group of byRoot.values()) {
+    const dotted = group.filter((d) => d.callee !== d.calleeRoot);
+    if (dotted.length === 0) continue;
+    if (dotted.length !== group.length) return true;
+    if (dottedDepTree(dotted, () => "conflict-probe") === undefined) return true;
+  }
+  return false;
+}
+
+/**
  * Nested object source for dotted deps sharing one root binding:
  * db.query.users.findMany + db.query.posts.findFirst →
  * `{ query: { users: { findMany: <stub> }, posts: { findFirst: <stub> } } }`.

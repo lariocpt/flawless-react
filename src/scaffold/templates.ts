@@ -357,9 +357,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./profile",
-  // Relative, which playwright resolves against THIS FILE — not the directory
-  // the command was typed in (only the unset default does that; it once put
-  // 347MB of traces in <app>/test-results/ outside the emitted .gitignore).
+  // Relative, which playwright resolves against THIS FILE. The unset default
+  // resolves elsewhere (the package.json directory) and once put 347MB of
+  // traces in <app>/test-results/ outside the emitted .gitignore.
   // Never the CJS dirname global: a "type":"module" suite loads this config
   // as ESM, where it does not exist and the whole config dies at import.
   outputDir: "test-results",
@@ -1132,13 +1132,15 @@ function slug(s: string): string {
 }
 
 async function persistSnapshot(buf: Buffer, label: string, testInfo: TestInfo): Promise<string> {
-  // Anchored to the CONFIG's directory via the runtime FullConfig — the one
-  // anchor that exists under both loaders. The CJS dirname global resolved
-  // from this file once (until "type":"module" suites loaded specs as ESM),
-  // and cwd before that put 566MB of snapshots in <app>/heaps/ outside the
-  // emitted .gitignore. The config sits at the suite root, so rootDir IS the
-  // out dir.
-  const dir = path.join(testInfo.config.rootDir, HEAPS_DIR);
+  // Anchored to the CONFIG FILE via the runtime FullConfig — the one anchor
+  // that exists under both loaders. NOT rootDir: playwright resolves rootDir
+  // to the testDir ("./profile" here), which would put snapshots in
+  // profile/heaps/ outside the emitted .gitignore's <out>/heaps/ entry — the
+  // 566MB-of-untracked-binaries class this path has already been through
+  // twice (cwd first, the CJS dirname global second).
+  const configFile = testInfo.config.configFile;
+  const suiteRoot = configFile ? path.dirname(configFile) : testInfo.config.rootDir;
+  const dir = path.join(suiteRoot, HEAPS_DIR);
   await mkdir(dir, { recursive: true });
   const specBase = slug(path.basename(testInfo.file).replace(/\\.spec\\.ts$/, ""));
   const title = slug(testInfo.title);
