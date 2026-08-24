@@ -315,6 +315,15 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   rethrown as itself. When the analyser admitted it could not infer a data
   dependency's shape, the resulting crash is reported as a skip — the tool
   failing on a fixture it never had is not the application failing.
+- `"use server"` modules are mocked with the action's **own return value** when
+  it can be read off the source: an action whose every non-exit return (after
+  discounting `redirect()`/`notFound()`) collapses to one literal — an object,
+  array, string, number or null composed of literals — is stubbed as
+  `vi.fn(async () => (<that literal>))`. Anything dynamic keeps the honest `{}`
+  stub and its `TODO(flawless): server action stubbed` marker; the marker
+  retires only when every export of the module resolved, because the mock
+  factory replaces the whole module. The perf host's browser-bundle stubs use
+  the same values.
 - Components that cannot mount standalone — a `<Dialog.Content>` outside its
   Root, a layout returning `<html>` — get a spec that asserts what IS true and
   states the reason in the file.
