@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -161,6 +161,38 @@ describe("--ci process contract", () => {
       expect(() => JSON.parse(stdout)).not.toThrow();
     } finally {
       await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // The worst of the nine warn sites, and the only one that accompanies
+  // `anyFailed = true`: a Next.js emit that FAILED the run. Under the shared
+  // gate a --ci caller got exit 1 with an EMPTY stderr — the run said it was
+  // broken and refused to say how. Provoked deterministically by making
+  // .gitignore a DIRECTORY, so updateGitignore's writeFileSync throws EISDIR
+  // from inside core's try. (Found by the mutation pass: deleting this warn
+  // call was invisible to all 822 tests.)
+  test("a failed Next.js emit exits 1 and says why on stderr", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-emitfail-"));
+    try {
+      const app = path.join(dir, "app");
+      cpSync(path.resolve(__dirname, "fixtures", "nextapp"), app, { recursive: true });
+      mkdirSync(path.join(app, ".gitignore"));
+      const proc = Bun.spawn(
+        ["bun", BIN, "--nextjs", app, "--ci", "--tasks", "perf-static", "--no-inline-summary"],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("nextjs emit failed");
+      // …and the red run still hands the caller one parseable blob.
+      const blob = JSON.parse(stdout) as { exitCode: number };
+      expect(blob.exitCode).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   }, 30000);
 
