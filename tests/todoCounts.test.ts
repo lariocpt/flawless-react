@@ -88,6 +88,13 @@ describe("TODO(flawless) markers are counted at their emission sites", () => {
     expect(t[0]?.exemplar).toEndWith(".test.tsx");
   });
 
+  test("an enriched dep counts NO uninferred-return-shape — the tally drops with the gap", () => {
+    const enriched = opaqueRsc();
+    const dep = enriched.entry.dataDeps?.[0];
+    if (dep) dep.inferredReturn = { provenance: "annotation", value: { name: "flawless-name" } };
+    expect(tally([enriched])).toEqual([]);
+  });
+
   test("a stubbed server action counts one server-action-stub", () => {
     const t = tally([
       tree(

@@ -324,6 +324,22 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   retires only when every export of the module resolved, because the mock
   factory replaces the whole module. The perf host's browser-bundle stubs use
   the same values.
+- **Mock provenance.** A data dep whose usage told the analyser nothing gets a
+  second chance from its own declaration, and the emitted fixture says where
+  it came from:
+  - `/* inferred from <fn>'s return annotation */` — the dep declares
+    `Promise<T>` and `T` resolved completely (any unresolved member bails the
+    whole value; generics bail; `T[]` yields a one-element array).
+  - `/* inferred from the OpenAPI example for GET /api/… */` — the dep is an
+    unannotated wrapper around exactly one `fetch()`, joined to the API spec's
+    response example at emit time.
+
+  Deps with neither keep the `{}` stub, the
+  `TODO(flawless): some return shapes could not be inferred` marker, and the
+  RSC spec's fixture-missing skip escape. An **enriched** dep is real
+  coverage: its spec has no skip escape, so a wrong inferred fixture fails
+  red instead of hiding. Usage-derived shapes always outrank declarations —
+  the component's own reads are better testimony than a type annotation.
 - Components that cannot mount standalone — a `<Dialog.Content>` outside its
   Root, a layout returning `<html>` — get a spec that asserts what IS true and
   states the reason in the file.

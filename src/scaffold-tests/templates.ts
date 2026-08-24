@@ -15,7 +15,7 @@ import type {
   TodoCounter,
   TodoRecorder,
 } from "../types.ts";
-import { emitModuleMocks } from "./mocks.ts";
+import { apiRouteFixture, emitModuleMocks, inferredDepReturn } from "./mocks.ts";
 import {
   allocateSpecNames,
   type FlatComponent,
@@ -170,10 +170,10 @@ function renderUnitFile(
     : undefined;
   const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
   if (mode === "compound-part" || mode === "document-root") {
-    return constrainedSpec(c, importPath, providerImport, mode, specDir, todo);
+    return constrainedSpec(c, importPath, providerImport, mode, specDir, todo, opts.apiRoutes);
   }
   return mode === "rsc"
-    ? rscSpec(c, importPath, providerImport, specDir, todo)
+    ? rscSpec(c, importPath, providerImport, specDir, todo, opts.apiRoutes)
     : unitSpec(
         c,
         opts.variants,
@@ -752,7 +752,7 @@ function emitFetchTests(
   for (const f of fetches) {
     const mswPath = f.urlTemplate;
     const method = f.method.toLowerCase();
-    const fixture = fixtureFor(f, apiRoutes);
+    const fixture = apiRouteFixture(f.urlTemplate, f.method, apiRoutes);
     const fixtureLiteral = fixture !== undefined ? JSON.stringify(fixture) : "{}";
     const fixtureComment =
       fixture !== undefined
@@ -811,25 +811,6 @@ describe("${name} ${f.method} ${mswPath}", () => {
   return `\n${parts.join("\n")}\n`;
 }
 
-function fixtureFor(f: FetchCallInfo, apiRoutes: NextjsApiRoute[] | undefined): unknown {
-  if (!apiRoutes) return undefined;
-  const wanted = normalizeApiPath(f.urlTemplate);
-  for (const r of apiRoutes) {
-    if (normalizeApiPath(r.path) !== wanted) continue;
-    const body = r.responseBodies?.[f.method.toUpperCase()] ?? r.responseBodies?.GET;
-    if (body !== undefined) return body;
-  }
-  return undefined;
-}
-
-/** Compare /api/x/{id}/y, /api/x/:id/y and /api/x/:buildingId/y as the same shape. */
-function normalizeApiPath(p: string): string {
-  return p
-    .replace(/\{[^}]+\}/g, ":_")
-    .replace(/:[A-Za-z0-9_]+/g, ":_")
-    .replace(/\/+$/, "");
-}
-
 function emptyPayloadFor(fixture: unknown): string {
   if (Array.isArray(fixture)) return "[]";
   if (fixture && typeof fixture === "object") {
@@ -860,6 +841,7 @@ function constrainedSpec(
   mode: "compound-part" | "document-root",
   specDir?: string,
   todo?: TodoRecorder,
+  apiRoutes?: NextjsApiRoute[],
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -869,7 +851,7 @@ function constrainedSpec(
   // Importing the module runs its module scope, so "server-only" and
   // next/font/* throw at collection time even for a spec that only asserts the
   // export exists. These specs emitted no mocks at all until now.
-  const mocks = emitModuleMocks(info, "rsc", specDir, todo).statements;
+  const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
@@ -944,13 +926,14 @@ function rscSpec(
   providerImport: string | undefined,
   specDir?: string,
   todo?: TodoRecorder,
+  apiRoutes?: NextjsApiRoute[],
 ): string {
   const info = c.info;
   const name = info.componentName;
   const propsLiteral = JSON.stringify(info.propsShape);
   const promiseProps = info.promiseProps ?? [];
 
-  const mocks = emitModuleMocks(info, "rsc", specDir, todo).statements;
+  const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;
 
   const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
   const renderExpr = providerImport
@@ -1000,7 +983,7 @@ test("${name} (RSC): resolves, or takes one of its declared guard paths", async 
     // notFound()/redirect() are legitimate outcomes when the mocked data layer
     // returns nothing — this component declares ${guardSummary}.
     if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;
-${uncertainEscape(info)}    // Not a guard and not an admitted gap: a real failure, reported as itself
+${uncertainEscape(info, apiRoutes)}    // Not a guard and not an admitted gap: a real failure, reported as itself
     // rather than as a confusing "expected TypeError to match /notFound/".
     throw err;
   }
@@ -1020,8 +1003,14 @@ ${staticTextTests}${guardTests}`;
  * coverage that does not exist; failing would blame the application for a
  * fixture the tool never had.
  */
-function uncertainEscape(info: ComponentInfo): string {
-  const uncertain = (info.dataDeps ?? []).some((d) => d.uncertain || d.shape.kind === "unknown");
+function uncertainEscape(info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): string {
+  // A dep with an inferred return (annotation, or the emit-time OpenAPI
+  // join) is coverage, not an admitted gap — its crash must report as a real
+  // failure, or the inferred fixture could be wrong forever without anyone
+  // seeing red.
+  const uncertain = (info.dataDeps ?? []).some(
+    (d) => (d.uncertain || d.shape.kind === "unknown") && !inferredDepReturn(d, apiRoutes),
+  );
   if (!uncertain) return "";
   // t.skip() takes no argument in this vitest major, so the reason goes to the
   // console — losing it entirely would leave a bare skip with no explanation.

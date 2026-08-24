@@ -59,7 +59,7 @@ cluster into three kinds, each with a known answer:
 
 | TODO kind | The answer |
 | --- | --- |
-| "some return shapes could not be inferred" | Give the mocked data-dep a realistic resolved value. If every consumer of the handle is itself mocked (a `getDb` whose queries are all mocked above), an opaque `{}` IS the right fixture — replace the TODO with a comment saying so. |
+| "some return shapes could not be inferred" | The tool already tried the dep's own declaration (a `Promise<T>` annotation, or a single-fetch body joined to the OpenAPI example — those fixtures carry an `/* inferred from … */` comment and no TODO), so this marker means BOTH usage and declaration came up empty: a computed return, a generic, a dotted callee like `db.query.findMany`. Give the mocked data-dep a realistic resolved value. If every consumer of the handle is itself mocked (a `getDb` whose queries are all mocked above), an opaque `{}` IS the right fixture — replace the TODO with a comment saying so. |
 | "wrap renderTarget() in the matching Root" | Mount the compound part inside its Root the way call sites do: `render(<AlertDialog><AlertDialogTrigger>Delete</AlertDialogTrigger></AlertDialog>)`, then assert its content. Dialog-family parts need the content wrapper too (`<Dialog open><DialogContent>…`). |
 | "server action stubbed — give it a realistic return value" | The tool now does this itself when the action returns a single literal (redirect/notFound exits discounted), so this TODO only appears when inference bailed: computed returns, two distinct shapes, or an unresolved sibling export. Read the action, pick the shape the component actually consumes, and write it into the stub. |
 

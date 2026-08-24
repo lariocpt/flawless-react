@@ -285,6 +285,20 @@ export interface DataDepInfo {
   shape: MockShape;
   /** Inference was contradictory or absent — the spec emits a TODO. */
   uncertain: boolean;
+  /**
+   * Fixture value resolved from the dep's own DECLARATION when usage-based
+   * inference came up empty: today always from a Promise<T> return
+   * annotation ("annotation"); "openapi" values are joined at emit time from
+   * wrapsFetch and never stored here. See analyse/resolveDepReturns.ts.
+   */
+  inferredReturn?: { value: PropValue; provenance: "annotation" | "openapi" };
+  /**
+   * The dep is an unannotated wrapper whose body performs exactly one
+   * fetch(); the emitter joins method+path to the OpenAPI response example
+   * (NextjsApiRoute.responseBodies) — the join lives at emit time because
+   * analyse() has no route table.
+   */
+  wrapsFetch?: { method: string; path: string };
   pos: SourcePosition;
 }
 

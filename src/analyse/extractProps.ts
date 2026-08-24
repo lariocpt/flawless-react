@@ -127,6 +127,176 @@ export function extractProps(
   return finalise(partial);
 }
 
+/**
+ * B-1 Path A: a declared type → ONE concrete fixture value, or undefined.
+ *
+ * Deliberately NOT a pass over resolveTypeNode/mapType: the props machinery
+ * synthesises DEFAULTS and silently drops what it cannot resolve, and both
+ * habits are poison for a data fixture. A post-hoc restyle cannot tell a
+ * keyword `boolean`'s false from a declared literal `ok: false` (restyling
+ * the latter emits a value the type FORBIDS), and a silently dropped member
+ * ships a fixture with a hole the component crashes on — reported as a real
+ * app failure, because an enriched dep loses the RSC skip escape. So this
+ * resolver keeps provenance (keyword leaves restyle to the truthy house
+ * values, literal types are preserved exactly) and bails on ANY member it
+ * cannot fully resolve, at every depth.
+ *
+ * Structure: arrays (`T[]`, `Array<T>`) → ONE-element arrays at every depth
+ * (an empty list lets a spec pass without rendering the row markup); unions
+ * of literals → the first literal; type references resolve through local and
+ * one-hop imported interface/type-alias declarations only — no React special
+ * heads, so a data type shadowing `ButtonHTMLAttributes` means the LOCAL
+ * declaration, never the DOM table. Generics, intersections, heritage
+ * clauses and cycles all bail.
+ */
+export function resolveTypeNodeValue(
+  node: ts.TypeNode,
+  sf: ts.SourceFile,
+  file: string,
+  resolver: ModuleResolver | undefined,
+  cache: SourceFileCache | undefined,
+): PropValue | undefined {
+  return fixtureValue(node, "value", {
+    sf,
+    file,
+    imports: collectImportsSync(sf),
+    resolver,
+    cache,
+    hops: MAX_HOPS,
+    visited: new Set(),
+  });
+}
+
+function fixtureValue(
+  node: ts.TypeNode,
+  seed: string,
+  ctx: PropsResolveCtx,
+): PropValue | undefined {
+  if (ts.isParenthesizedTypeNode(node)) return fixtureValue(node.type, seed, ctx);
+
+  const element = fixtureArrayElement(node);
+  if (element) {
+    const el = fixtureValue(element, seed, ctx);
+    return el === undefined ? undefined : [el];
+  }
+
+  switch (node.kind) {
+    case ts.SyntaxKind.StringKeyword:
+      return `flawless-${seed}`;
+    case ts.SyntaxKind.NumberKeyword:
+      return 1;
+    case ts.SyntaxKind.BooleanKeyword:
+      return true;
+    case ts.SyntaxKind.NullKeyword:
+      return null;
+  }
+
+  if (ts.isLiteralTypeNode(node)) return literalTypeValue(node);
+
+  if (ts.isUnionTypeNode(node)) {
+    // Only a union of LITERALS has an authoritative first value; `User | null`
+    // would need a choice the type does not make for us.
+    const first = node.types[0];
+    if (!first || !node.types.every((t) => ts.isLiteralTypeNode(t))) return undefined;
+    return ts.isLiteralTypeNode(first) ? literalTypeValue(first) : undefined;
+  }
+
+  if (ts.isTypeLiteralNode(node)) return fixtureMembers(node.members, ctx);
+
+  if (ts.isTypeReferenceNode(node)) {
+    // A generic instantiation would need type-parameter substitution.
+    if ((node.typeArguments?.length ?? 0) > 0) return undefined;
+    if (!ts.isIdentifier(node.typeName)) return undefined;
+    return fixtureReference(node.typeName.text, ctx);
+  }
+
+  return undefined;
+}
+
+function literalTypeValue(node: ts.LiteralTypeNode): PropValue | undefined {
+  const lit = node.literal;
+  if (ts.isStringLiteral(lit)) return lit.text;
+  if (ts.isNumericLiteral(lit)) return Number(lit.text);
+  if (lit.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (lit.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (lit.kind === ts.SyntaxKind.NullKeyword) return null;
+  return undefined;
+}
+
+function fixtureArrayElement(node: ts.TypeNode): ts.TypeNode | undefined {
+  if (ts.isArrayTypeNode(node)) return node.elementType;
+  if (
+    ts.isTypeReferenceNode(node) &&
+    ts.isIdentifier(node.typeName) &&
+    (node.typeName.text === "Array" || node.typeName.text === "ReadonlyArray")
+  ) {
+    return node.typeArguments?.[0];
+  }
+  return undefined;
+}
+
+/** Every member resolves or the whole object bails — no silent holes. */
+function fixtureMembers(
+  members: ts.NodeArray<ts.TypeElement>,
+  ctx: PropsResolveCtx,
+): PropValue | undefined {
+  const out: { [k: string]: PropValue } = {};
+  let any = false;
+  for (const m of members) {
+    if (!ts.isPropertySignature(m)) return undefined;
+    if (!ts.isIdentifier(m.name) && !ts.isStringLiteral(m.name)) return undefined;
+    if (!m.type) return undefined;
+    // Optional members are included: a value for `name?: string` is
+    // type-legal, and richer beats sparser as long as it is never wrong.
+    const v = fixtureValue(m.type, m.name.text, ctx);
+    if (v === undefined) return undefined;
+    out[m.name.text] = v;
+    any = true;
+  }
+  return any ? out : undefined;
+}
+
+/** A named type, resolved through local then one-hop imported declarations. */
+function fixtureReference(name: string, ctx: PropsResolveCtx): PropValue | undefined {
+  const key = `${ctx.file}::${name}`;
+  if (ctx.visited.has(key)) return undefined;
+  const next: PropsResolveCtx = { ...ctx, visited: new Set([...ctx.visited, key]) };
+
+  const local = findTypeDecl(ctx.sf, name);
+  if (local) return fixtureDecl(local, next);
+
+  const binding = ctx.imports.get(name);
+  if (!binding || ctx.hops <= 0) return undefined;
+  const target = ctx.resolver?.resolve(binding.specifier, ctx.file);
+  if (!target) return undefined;
+  const targetSf = ctx.cache?.get(target);
+  if (!targetSf) return undefined;
+  const wanted = binding.importedName ?? name;
+  const decl = findTypeDecl(targetSf, wanted);
+  if (!decl) return undefined;
+  return fixtureDecl(decl, {
+    ...next,
+    sf: targetSf,
+    file: target,
+    imports: collectImportsSync(targetSf),
+    hops: ctx.hops - 1,
+  });
+}
+
+function fixtureDecl(
+  decl: ts.InterfaceDeclaration | ts.TypeAliasDeclaration,
+  ctx: PropsResolveCtx,
+): PropValue | undefined {
+  if (ts.isTypeAliasDeclaration(decl)) {
+    if (decl.typeParameters?.length) return undefined;
+    return fixtureValue(decl.type, decl.name.text, ctx);
+  }
+  // `extends` would need the base's members merged in; a partial fixture is
+  // worse than none, so heritage bails until it is resolved for real.
+  if (decl.typeParameters?.length || decl.heritageClauses?.length) return undefined;
+  return fixtureMembers(decl.members, ctx);
+}
+
 function finalise(p: PartialProps): ExtractedProps {
   // `children` is a boolean capability, never a prop value: propsShape is
   // JSON-stringified into the spec's DEFAULTS and spread, so a `children`
