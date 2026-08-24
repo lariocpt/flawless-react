@@ -66,8 +66,25 @@ export interface CoreOptions {
   /** Extra globs to skip, appended to DEFAULT_EXCLUDES. */
   exclude?: readonly string[];
   useDefaultExcludes?: boolean;
-  /** Interactive confirm already happened (CLI); when false, runTests decides alone. */
+  /**
+   * Progress narration on STDOUT (default on). False is what --json/--ci and the
+   * programmatic API pass: stdout then belongs to the caller — a JSON blob that
+   * must parse whole — so nothing may be written there.
+   *
+   * It is NOT a vow of silence. Diagnostics go to stderr and are gated by
+   * `quiet`, which is a separate decision: see below.
+   */
   log?: boolean;
+  /**
+   * Suppress diagnostics on STDERR (default off — they always speak).
+   *
+   * Sharing one flag with `log` is how `--ci`, the mode built for machines,
+   * became the mode that lost "warning: skipping <file>" and "could not parse
+   * <path> as OpenAPI JSON — ignoring". Whether stdout is the caller's and
+   * whether the run may report a problem at all are different questions, and a
+   * consumer that wants neither stream now has to say so deliberately.
+   */
+  quiet?: boolean;
 }
 
 export interface CoreResult {
@@ -171,8 +188,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const log = (line: string): void => {
     if (opts.log !== false) process.stdout.write(`${line}\n`);
   };
+  // Deliberately NOT `opts.log`: stdout purity and permission to report a
+  // problem are separate decisions (B-13). Gating both on one flag made --ci
+  // silent about work it skipped.
   const warn = (line: string): void => {
-    if (opts.log !== false) process.stderr.write(`${line}\n`);
+    if (opts.quiet !== true) process.stderr.write(`${line}\n`);
   };
 
   let pattern: string | undefined = opts.pattern;

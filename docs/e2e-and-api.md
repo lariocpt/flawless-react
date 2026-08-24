@@ -166,8 +166,13 @@ for (const r of results) console.log(r.id, r.ok, r.summary);
 ```
 
 - Never calls `process.exit`; bad input throws `UsageError`.
-- `log` defaults to `false` here (the CLI passes `true`), so nothing is printed
-  unless you ask for it.
+- `log` defaults to `false` here (the CLI passes `true`), so no progress
+  narration is printed on **stdout** unless you ask for it.
+- **Diagnostics are separate.** Warnings — a file the sweep skipped, an
+  unparseable OpenAPI spec, a provider that looks like a server component — go
+  to **stderr** and are not gated by `log`. Pass `quiet: true` to suppress
+  them, and only do that if you route them somewhere yourself: an embedder that
+  silently swallows "could not parse your spec" reproduces the bug `--ci` had.
 - Also exported: `analyse` (entry → `ComponentTree`), `analyseTree` (the
   perf-static rules as a pure function over a tree), `scaffoldUnitBrowser`,
   `scaffold`, `detectNextjs`, `runCore`, and the shared types.

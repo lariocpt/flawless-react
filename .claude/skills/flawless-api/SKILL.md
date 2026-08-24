@@ -18,8 +18,11 @@ const { exitCode, outDir, results, trees } = await runFlawless({
 
 `runFlawless` is the friendly wrapper (`entry`/`tasks`/`out`); `runCore` from
 `core.ts` is the same engine with CLI-shaped names (`pattern`/`taskIds`/
-`outDir`) plus `changed`, `runTests`, `force`, `report`, and `log` (progress
-lines, default false programmatically).
+`outDir`) plus `changed`, `runTests`, `force`, `report`, `log` (progress
+narration on **stdout**, default false programmatically) and `quiet`
+(diagnostics on **stderr**, default false — they speak even when `log` is off).
+The two are separate on purpose: one flag for both is how `--ci` became the
+mode that lost its warnings.
 
 ## Contracts
 
@@ -29,7 +32,10 @@ lines, default false programmatically).
   suite run failed (suite outcomes fold into the exit code) · 2 usage error.
 - **`--ci`** = `--no-interactive --json`: stdout is exactly one JSON blob
   `{ exitCode, outDir, results, keptScripts }` and nothing else. Progress goes away entirely; parse
-  the whole stdout, not a line of it.
+  the whole stdout, not a line of it. **stderr still carries diagnostics** —
+  skipped files, an unparseable spec, script collisions, a failed Next.js emit.
+  Capture it: under `--ci` those lines are the only account of work the run
+  quietly dropped.
 - `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error?,
   status? }` — `ok: false` with `error` set is a real task failure.
   `status` ("generated" | "refreshed" | "kept", perf-harness only for now)

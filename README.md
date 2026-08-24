@@ -143,6 +143,8 @@ flawless-react <entry.tsx> [options]
 
 With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code (suite failures included), so a red run is readable from the blob alone. Without the flag you get the table and no JSON.
 
+Suppressing stdout is not a vow of silence: **diagnostics still reach stderr under `--ci`** — a file the sweep skipped, an unparseable OpenAPI spec, a test-script collision, a failed Next.js emit. Those are the lines an unattended caller most needs, and they used to share the flag that silenced the table.
+
 ## What gets generated
 
 ```text
