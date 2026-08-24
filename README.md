@@ -354,7 +354,7 @@ Either upgrade Bun, or convert your spec to JSON: `bunx js-yaml api.yaml > api.j
 
 ```bash
 bun install
-bun test           # 424 tests across analyse / scaffold / tasks / nextjs / core / cli
+bun test           # the full suite across analyse / scaffold / tasks / nextjs / core / cli
 bun run check      # biome lint + format check
 bunx tsc --noEmit  # type-check
 ```

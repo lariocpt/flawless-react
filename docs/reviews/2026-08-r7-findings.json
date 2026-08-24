@@ -1,0 +1,112 @@
+{
+ "review": "2026-08 round-7 review (post-B-8/B-9), nine-dimension adversarial sweep",
+ "toolBase": "73f846e",
+ "corpus": "mybodycorpai apps/web @ 77a623b (99 files, 183 components) + the tool's own 820-test suite",
+ "method": "Nine finder agents (analysis soundness, emitter correctness, false-pass hunting, CLI contract, docs truth, security, performance, test vacuity, DX) produced 45 raw findings, 43 after dedup. The verification fan-out died mid-run on an account spend limit, so every finding below was verified BY HAND with a concrete probe before being recorded — and findings that could not be reproduced are recorded as unverified rather than as defects.",
+ "severityAnchors": {
+  "P0": "emitted suite broken, silently passes, or lies; or the tool corrupts user files",
+  "P1": "wrong analysis output, docs claim contradicted by code, or a CI gap that lets P0s ship",
+  "P2": "performance, DX, error-message quality, design friction",
+  "P3": "opportunity aligned with the product's spirit"
+ },
+ "findings": [
+  {
+   "id": "FR-035",
+   "severity": "P1",
+   "dimension": "design",
+   "status": "fixed",
+   "title": "An unknown task id was filtered away, so a typo ran zero tasks and exited 0",
+   "file": "src/core.ts",
+   "line": 307,
+   "claim": "taskIds.map(findTask).filter(Boolean) discarded unknown ids silently. Probe: runCore({taskIds:['unit']}) returned exitCode 0 with results:[] — a green run that tested nothing, the exact outcome the project forbids.",
+   "spirit": "honesty",
+   "fix": "runCore throws UsageError naming the unknown id(s) and listing the valid ones. tests/r7-honesty.test.ts pins both the throw and the message content."
+  },
+  {
+   "id": "FR-036",
+   "severity": "P1",
+   "dimension": "dx",
+   "status": "fixed",
+   "title": "--nextjs without an entry positional crashed in the report line after every task had run",
+   "file": "src/core.ts",
+   "line": 509,
+   "claim": "reproCommand read opts.pattern (typed string, genuinely undefined under Next.js auto-detection) instead of the resolved local. Probe: `bun src/bin.ts --nextjs <app> --ci --tasks perf-static` died with 'The \"path\" property must be of type string, got undefined' AFTER the work was done.",
+   "spirit": "mechanical",
+   "fix": "The resolved pattern is passed to reproCommand, and reproCommand renders a missing pattern as <entry> rather than throwing from path.relative. Pinned at unit level and by a real --nextjs-without-entry run that now completes and writes its own command line."
+  },
+  {
+   "id": "FR-037",
+   "severity": "P1",
+   "dimension": "tests",
+   "status": "fixed",
+   "title": "--changed with a ref git cannot resolve reported 'nothing affected' and exited 0",
+   "file": "src/changed.ts",
+   "line": 56,
+   "claim": "changedFiles ran three git commands and skipped each nonzero exit with a bare `continue`, so a typo'd ref — or a ref absent from a shallow CI clone — produced an empty changed set and a green run for a comparison that never happened.",
+   "spirit": "honesty",
+   "fix": "changedFiles verifies the checkout (`rev-parse --is-inside-work-tree`) and then the ref (`rev-parse --verify <ref>^{commit}`), throwing a UsageError that distinguishes 'not a git checkout' from 'ref does not resolve here'. The FR-017 regression test now runs against a real one-commit repo so both invariants stay pinned."
+  },
+  {
+   "id": "FR-038",
+   "severity": "P1",
+   "dimension": "tasks",
+   "status": "fixed",
+   "title": "A file biome could not parse was reported clean by the a11y sweep",
+   "file": "src/tasks/biomeRunner.ts",
+   "line": 112,
+   "claim": "biome emits `parse` diagnostics for an unreadable file (a merge-conflict marker, unsupported syntax), and the sweep's category filter ('lint/a11y') dropped them, so the run reported 'a11y: 0 finding(s)' for a file it never analysed. biome's exit code was read and discarded.",
+   "spirit": "honesty",
+   "fix": "Parse-failure diagnostics ride through the category filter as findings. A file the analyser could not read is never a pass. tests/r7-honesty.test.ts pins it with a merge-conflict fixture, plus a clean-file control proving the guard did not become noise."
+  },
+  {
+   "id": "FR-039",
+   "severity": "P2",
+   "dimension": "emitter",
+   "status": "fixed",
+   "title": "The emitted RSC spec's rendered-output assertion could not fail",
+   "file": "src/scaffold-tests/templates.ts",
+   "line": 1077,
+   "claim": "`expect(document.body.innerHTML.length).toBeGreaterThan(0)` holds no matter what the component rendered — @testing-library always appends its container div to document.body — so an RSC component that rendered nothing still passed its only output assertion.",
+   "spirit": "honesty",
+   "fix": "The spec captures the render result and asserts on `rendered?.container.innerHTML.length ?? 0`, kept OUTSIDE the try so an assertion failure is reported as itself rather than swallowed by the guard catch. Executing the emitted artefact caught a scoping bug in the first attempt — the three execution tests are why."
+  },
+  {
+   "id": "FR-040",
+   "severity": "P1",
+   "dimension": "docs",
+   "status": "fixed",
+   "title": "Skills and docs carried claims B-8/B-9 had already falsified",
+   "file": ".claude/skills/flawless-react/SKILL.md",
+   "line": 231,
+   "claim": "The flawless-react skill still listed z.infer aliases as unresolvable; flawless-unit-browser called zod inference 'a recorded frontier, not a bug' and presented the FR-027 async-cn stub as current; generated-suite.md said provider.tsx is 'written once and never overwritten' when --force regenerates it (the code comment at providerWrapper.ts:88 says so); README claimed 424 tests against a suite of 820.",
+   "spirit": "honesty",
+   "fix": "All five claims corrected: the zod subset is described where the limits are stated, the cn wart is marked historical-and-fixed, the provider claim now separates the derived provider.tsx from the never-regenerated provider.fixtures.ts, and the README's test count is replaced with a phrasing that cannot drift."
+  }
+ ],
+ "reportedNotReproduced": [
+  {
+   "title": "Unescaped fetch() URL breaks out of the emitted describe() title",
+   "file": "src/scaffold-tests/templates.ts",
+   "line": 794,
+   "note": "A component fetching a URL containing a double quote did not produce the claimed emission in a standalone unit-browser run (the fetch-spec path needs an --api spec). The escaping concern is real in principle; recorded for a targeted probe with apiRoutes present rather than claimed as a defect."
+  },
+  {
+   "title": "getAllBy* click trigger makes the skip-when-absent guard dead code",
+   "file": "src/scaffold-tests/templates.ts",
+   "line": 753,
+   "note": "Same path as above — unreproduced without an API spec in the run. Kept as a candidate, not a finding."
+  },
+  {
+   "title": "Emitted e2e route specs pass while rendering the login screen",
+   "file": "src/tasks/e2eRoutes.ts",
+   "line": 272,
+   "note": "The generated global-setup is a documented hand-fill stub (the flawless-e2e-load skill's anti-vacuous probes exist for exactly this), so 'green by default' is the documented pre-fill state rather than a silent lie. Recorded as an opportunity — see backlog B-12 — not a defect."
+  },
+  {
+   "title": "foldLocals folds let/var; returnedExpression skips nested guards; named-import child re-export mismatch",
+   "file": "src/analyse/renderPath.ts",
+   "line": 322,
+   "note": "Three analysis-soundness claims whose verification agents died before reproduction. Each needs a constructed component fixture to confirm or refute; carried into the next round's finder pass rather than recorded on unverified authority."
+  }
+ ]
+}

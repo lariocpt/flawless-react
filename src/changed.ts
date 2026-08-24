@@ -1,7 +1,7 @@
 import path from "node:path";
 import { findRouterRoot, pageFileToRoute } from "./nextjs/routes.ts";
 import { allocateSpecNames, flattenTrees } from "./scaffold-tests/registry.ts";
-import type { ComponentTree } from "./types.ts";
+import { type ComponentTree, UsageError } from "./types.ts";
 
 /**
  * Which specs a set of edited files actually affects.
@@ -41,6 +41,30 @@ export interface AffectedSpecs {
  * ignored. A new component file is the case a plain `git diff` misses.
  */
 export async function changedFiles(repoRoot: string, ref = "HEAD"): Promise<string[]> {
+  // A ref git cannot resolve — a typo, or a ref absent from a shallow CI
+  // clone — used to make every `git diff` exit nonzero, each skipped with a
+  // bare `continue`. The run then reported "nothing affected" and exited 0:
+  // a green result for a comparison that never happened.
+  const inRepo = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
+    cwd: repoRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if ((await inRepo.exited) !== 0) {
+    throw new UsageError(
+      `--changed needs a git checkout: ${repoRoot} is not one. Run it inside the repository, or drop --changed to run the full suite.`,
+    );
+  }
+  const check = Bun.spawn(["git", "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+    cwd: repoRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if ((await check.exited) !== 0) {
+    throw new UsageError(
+      `git cannot resolve the ref "${ref}" in ${repoRoot}. Pass a ref that exists here (a shallow CI clone may not have it).`,
+    );
+  }
   const out = new Set<string>();
   const runs: string[][] = [
     ["diff", "--name-only", ref],

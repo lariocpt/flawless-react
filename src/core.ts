@@ -121,7 +121,12 @@ export function reproCommand(opts: CoreOptions, root: string, taskIds: TaskId[])
   // flawless sees them — which is a different run.
   const quote = (s: string): string => (/[\s*?[\]{}()|$]/.test(s) ? `"${s}"` : s);
 
-  const parts = ["flawless-react", quote(rel(opts.pattern))];
+  // Defensive: a caller that reaches here without a pattern gets a line that
+  // is honest about what it does not know, never a TypeError from path.relative.
+  const parts = [
+    "flawless-react",
+    opts.pattern === undefined ? "<entry>" : quote(rel(opts.pattern)),
+  ];
   const flag = (name: string, value?: string): void => {
     parts.push(name);
     if (value !== undefined) parts.push(value);
@@ -304,6 +309,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     firstTree.entry.propsShape = { ...firstTree.entry.propsShape, ...opts.propsOverride };
   }
 
+  // An unknown id used to be filtered away, so a typo ran ZERO tasks and
+  // still exited 0 with an empty results array — a green run that tested
+  // nothing, which is the one outcome this tool must never produce.
+  const unknownTaskIds = taskIds.filter((id) => findTask(id) === undefined);
+  if (unknownTaskIds.length > 0) {
+    throw new UsageError(
+      `unknown task id(s): ${unknownTaskIds.join(", ")}. Valid ids: ${TASKS.map((t) => t.id).join(", ")}.`,
+    );
+  }
   const selected = taskIds.map((id) => findTask(id)).filter((t): t is Task => Boolean(t));
 
   const ctx: RunContext = {
@@ -506,7 +520,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     // ran the command from. Standalone, the report lands in outDir while the
     // pattern is relative to the caller's cwd — two different directories, so a
     // line claiming to be runnable "from the project root" would not be.
-    command: nextCtx ? reproCommand(opts, nextCtx.root, taskIds) : undefined,
+    // The RESOLVED pattern, not opts.pattern: Next.js mode auto-detects the
+    // entry glob, leaving opts.pattern undefined despite its type — which
+    // crashed the report line AFTER every task had already run.
+    command: nextCtx ? reproCommand({ ...opts, pattern }, nextCtx.root, taskIds) : undefined,
   });
 
   // Format everything we wrote with the host project's own formatter so

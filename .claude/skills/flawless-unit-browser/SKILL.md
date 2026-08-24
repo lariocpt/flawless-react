@@ -39,10 +39,11 @@ Client specs mock only `next/navigation`, `next/headers`, `server-only`,
 `next/link`, `next/font/*`, and `"use server"` modules. Do not widen it by
 hand: mocking a UI component replaces the element the interaction tests click.
 
-One known generator wart: specs for components whose file imports `cn` from a
-utils module may carry `vi.mock("@/lib/utils", () => ({ cn: vi.fn(async () =>
-({})) }))` — an async stub for a sync function. If the spec actually renders
-the component, replace it with a sync join so classes stay legible:
+Historical wart, fixed in FR-027 but still present in suites generated before
+it: specs whose file imports `cn` from a utils module may carry
+`vi.mock("@/lib/utils", () => ({ cn: vi.fn(async () => ({})) }))` — an async
+stub for a sync function. A regeneration emits the sync form; to fix an old
+spec in place, replace it with a sync join so classes stay legible:
 
 ```ts
 vi.mock("@/lib/utils", () => ({
@@ -59,7 +60,7 @@ cluster into three kinds, each with a known answer:
 
 | TODO kind | The answer |
 | --- | --- |
-| "some return shapes could not be inferred" | The tool already tried the dep's own declaration (a `Promise<T>` annotation, or a single-fetch body joined to the OpenAPI example — those fixtures carry an `/* inferred from … */` comment and no TODO), so this marker means BOTH usage and declaration came up empty: a computed return, a generic, a dotted callee like `db.query.findMany`, an unannotated client factory (`getDb`), a `cache()`-wrapped export the function mapper cannot unwrap, or an annotation whose type — even one resolved through a workspace package's barrel, which works since B-8 — has a `z.infer` alias as a MEMBER (bail-on-any-hole vetoes the whole interface; zod inference is a recorded frontier, not a bug). Give the mocked data-dep a realistic resolved value. If every consumer of the handle is itself mocked (a `getDb` whose queries are all mocked above), an opaque `{}` IS the right fixture — replace the TODO with a comment saying so. |
+| "some return shapes could not be inferred" | The tool already tried the dep's own declaration (a `Promise<T>` annotation, or a single-fetch body joined to the OpenAPI example — those fixtures carry an `/* inferred from … */` comment and no TODO), so this marker means BOTH usage and declaration came up empty: a computed return, a generic, a dotted callee like `db.query.findMany`, an unannotated client factory (`getDb`), a `cache()`-wrapped export the function mapper cannot unwrap, or an annotation whose type — even one resolved through a workspace package's barrel, which works since B-8 — has a schema construct zod inference deliberately bails on (`.transform`, a union, a record, a date — `z.infer` enums and objects DO resolve since B-9, so a surviving marker means the schema left the supported subset). Give the mocked data-dep a realistic resolved value. If every consumer of the handle is itself mocked (a `getDb` whose queries are all mocked above), an opaque `{}` IS the right fixture — replace the TODO with a comment saying so. |
 | "wrap renderTarget() in the matching Root" | The tool now does this itself when the part's OWN file exports the family (a Root-rendering sibling + a Content sibling) and the family is open-state (dialog and friends), so this TODO only appears for rootless files, cross-file families, or value-driven families (accordion/tabs). Mount the part inside its Root the way call sites do: `render(<AlertDialog><AlertDialogTrigger>Delete</AlertDialogTrigger></AlertDialog>)`, then assert its content — dialog-family parts need the content wrapper too (`<Dialog open><DialogContent>…`), and portal content is read off `baseElement`. |
 | "server action stubbed — give it a realistic return value" | The tool now does this itself when the action returns a single literal (redirect/notFound exits discounted), so this TODO only appears when inference bailed: computed returns, two distinct shapes, or an unresolved sibling export. Read the action, pick the shape the component actually consumes, and write it into the stub. |
 
