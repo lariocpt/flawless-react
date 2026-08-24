@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "../src/cli.ts";
 import { VERSION } from "../src/version.ts";
@@ -37,6 +39,104 @@ describe("VERSION", () => {
     expect(await proc.exited).toBe(0);
     expect(out).toBe(`flawless-react ${VERSION}\n`);
   });
+});
+
+// FR-020: the --ci process contract — a consumer pipes the ENTIRE stdout into
+// JSON.parse, so the stream must be one blob and nothing else, and the exit
+// code has to ride inside it or a scripted caller needs shell plumbing around
+// $? to learn whether the run was green. Only a subprocess can observe stdout,
+// stderr and the exit code at once.
+describe("--ci process contract", () => {
+  const BIN = path.resolve(__dirname, "../src/bin.ts");
+  const CARD = path.resolve(__dirname, "fixtures/Card.tsx");
+
+  test(
+    "stdout is exactly one JSON blob carrying {exitCode, outDir, results}",
+    async () => {
+      const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+      try {
+        const proc = Bun.spawn(["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--out", out], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const stdout = await new Response(proc.stdout).text();
+        expect(await proc.exited).toBe(0);
+        const blob = JSON.parse(stdout) as {
+          exitCode: number;
+          outDir: string;
+          results: Array<{ id: string }>;
+        };
+        expect(blob.exitCode).toBe(0);
+        expect(typeof blob.outDir).toBe("string");
+        expect(blob.results.map((r) => r.id)).toEqual(["perf-static"]);
+      } finally {
+        await rm(out, { recursive: true, force: true });
+      }
+    },
+    30000,
+  );
+
+  test(
+    "a usage error exits 2 and leaves stdout empty",
+    async () => {
+      const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+      try {
+        const proc = Bun.spawn(
+          ["bun", BIN, "does-not-exist-*.tsx", "--ci", "--tasks", "perf-static", "--out", out],
+          { stdout: "pipe", stderr: "pipe" },
+        );
+        const stdout = await new Response(proc.stdout).text();
+        expect(await proc.exited).toBe(2);
+        expect(stdout.trim()).toBe("");
+      } finally {
+        await rm(out, { recursive: true, force: true });
+      }
+    },
+    30000,
+  );
+
+  test(
+    "a rejection escaping main() exits 1 with the error alone on stderr",
+    async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+      try {
+        // The only throw sites outside main()'s try/catch are its trailing
+        // stdout writes, so fault-inject there: refuse the JSON blob itself.
+        const preload = path.join(dir, "preload.ts");
+        await writeFile(
+          preload,
+          `const original = process.stdout.write.bind(process.stdout);
+process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => {
+  if (typeof chunk === "string" && chunk.startsWith("{")) throw new Error("stdout torn down");
+  return (original as (...a: unknown[]) => boolean)(chunk, ...rest);
+}) as typeof process.stdout.write;
+`,
+        );
+        const proc = Bun.spawn(
+          [
+            "bun",
+            `--preload=${preload}`,
+            path.resolve(__dirname, "../src/cli.ts"),
+            CARD,
+            "--ci",
+            "--tasks",
+            "perf-static",
+            "--out",
+            path.join(dir, "out"),
+          ],
+          { stdout: "pipe", stderr: "pipe" },
+        );
+        const stderr = await new Response(proc.stderr).text();
+        expect(await proc.exited).toBe(1);
+        // The entry catch writes String(err.stack): the message leads, with
+        // none of the runtime's uncaught-error framing around it.
+        expect(stderr.startsWith("Error: stdout torn down")).toBe(true);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    30000,
+  );
 });
 
 describe("parseArgs", () => {

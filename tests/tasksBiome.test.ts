@@ -183,23 +183,6 @@ describe("a11y task", () => {
   });
 
   testWithBiome(
-    "a suppression for a rule outside the sweep's set is not reported as unused",
-    async () => {
-      const outDir = tmp("rules-suppression");
-      const fixture = path.join(FIXTURES, "SuppressedElsewhere.tsx");
-      const tree = await analyse({ entry: fixture, depth: 0, includeChildren: false });
-
-      // react-rules does not enable lint/a11y, so the fixture's a11y
-      // suppression is "unused" under the sweep's scratch config. Reporting
-      // that would punish the user for answering another task's finding.
-      const result = await runTask("react-rules", ctxOf(outDir, [tree]));
-      expect(result.ok).toBe(true);
-      const suppressionNoise = result.findings.filter((f) => f.rule.startsWith("suppressions/"));
-      expect(suppressionNoise).toEqual([]);
-    },
-  );
-
-  testWithBiome(
     "one aggregate for the whole sweep; per-component reports only where findings are",
     async () => {
       const outDir = tmp("a11y-sweep");
@@ -267,6 +250,66 @@ describe("a11y task", () => {
 });
 
 describe("react-rules task", () => {
+  testWithBiome(
+    "a suppression for a rule outside the sweep's set is not reported as unused",
+    async () => {
+      const outDir = tmp("rules-suppression");
+      const fixture = path.join(FIXTURES, "SuppressedElsewhere.tsx");
+      const tree = await analyse({ entry: fixture, depth: 0, includeChildren: false });
+
+      // react-rules does not enable lint/a11y, so the fixture's a11y
+      // suppression is "unused" under the sweep's scratch config. Reporting
+      // that would punish the user for answering another task's finding.
+      const result = await runTask("react-rules", ctxOf(outDir, [tree]));
+      expect(result.ok).toBe(true);
+      const suppressionNoise = result.findings.filter((f) => f.rule.startsWith("suppressions/"));
+      expect(suppressionNoise).toEqual([]);
+    },
+  );
+
+  testWithBiome(
+    "biome itself still emits the unused-suppression diagnostic the sweep drops",
+    async () => {
+      // Positive control for the absence test above, which would pass vacuously if biome
+      // stopped emitting suppressions/* at all. Replicates what runBiome does — scratch
+      // config holding only the sweep's rules, one process over the fixture — but reads
+      // the RAW diagnostics, upstream of the task's filter.
+      const configDir = tmp("rules-raw");
+      await Bun.write(
+        path.join(configDir, "biome.json"),
+        JSON.stringify(
+          {
+            $schema: "https://biomejs.dev/schemas/2.3.13/schema.json",
+            linter: { enabled: true, rules: reactRulesConfig() },
+          },
+          null,
+          2,
+        ),
+      );
+      const localBin = path.join(REPO_ROOT, "node_modules", ".bin", "biome");
+      const biomeBin = existsSync(localBin) ? localBin : Bun.which("biome");
+      if (!biomeBin) throw new Error("biome gate passed but no binary resolved");
+
+      const fixture = path.join(FIXTURES, "SuppressedElsewhere.tsx");
+      const proc = Bun.spawn(
+        [biomeBin, "lint", "--config-path", configDir, "--reporter=json", fixture],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const stdout = await new Response(proc.stdout).text();
+      await proc.exited;
+
+      const parsed = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        diagnostics?: Array<{ category?: string }>;
+      };
+      const suppressions = (parsed.diagnostics ?? [])
+        .map((d) => d.category ?? "")
+        .filter((c) => c.startsWith("suppressions/"));
+      // Exactly the fixture's one suppression: a second entry means the fixture has grown
+      // suppression-shaped noise, and the absence test above no longer isolates the filter.
+      expect(suppressions).toEqual(["suppressions/unused"]);
+    },
+  );
+
   testWithBiome("writes a single aggregate carrying the bypass note", async () => {
     const outDir = tmp("react-rules-sweep");
     const trees = [
@@ -309,3 +352,53 @@ describe("react-rules task", () => {
     expect(grouped).toHaveLength(result.findings.length);
   });
 });
+
+/** Mirror of the react-rules task's rule set (src/tasks/eslintReactRules.ts, which does not
+ *  export it). The raw-output control must lint under the SAME rules the sweep uses — with
+ *  a different set, "biome still emits suppressions/*" would be evidence about a config the
+ *  task never runs. */
+function reactRulesConfig(): unknown {
+  return {
+    recommended: false,
+    correctness: {
+      noChildrenProp: "error",
+      noConstAssign: "error",
+      noConstantCondition: "error",
+      noEmptyPattern: "error",
+      noInvalidUseBeforeDeclaration: "error",
+      noPrecisionLoss: "error",
+      noRenderReturnValue: "error",
+      noVoidElementsWithChildren: "error",
+      noVoidTypeReturn: "error",
+      useExhaustiveDependencies: "error",
+      useHookAtTopLevel: "error",
+      useIsNan: "error",
+      useJsxKeyInIterable: "error",
+      useValidForDirection: "error",
+    },
+    suspicious: {
+      noArrayIndexKey: "warn",
+      noAssignInExpressions: "error",
+      noAsyncPromiseExecutor: "error",
+      noCompareNegZero: "error",
+      noConfusingVoidType: "warn",
+      noControlCharactersInRegex: "error",
+      noDoubleEquals: "warn",
+      noDuplicateCase: "error",
+      noDuplicateClassMembers: "error",
+      noDuplicateJsxProps: "error",
+      noDuplicateObjectKeys: "error",
+      noDuplicateParameters: "error",
+      noEmptyBlockStatements: "warn",
+      noExplicitAny: "warn",
+      noExtraNonNullAssertion: "warn",
+      noFallthroughSwitchClause: "error",
+      noGlobalIsFinite: "error",
+      noGlobalIsNan: "error",
+      noImplicitAnyLet: "warn",
+      noLabelVar: "error",
+      noMisleadingCharacterClass: "error",
+      noMisleadingInstantiator: "error",
+    },
+  };
+}

@@ -15,7 +15,9 @@ export interface AdoptStyleResult {
   warning?: string;
 }
 
-const FORMATTABLE = /\.(tsx?|jsx?|mts|cts|mjs|cjs|json|css|md)$/;
+// .html is deliberately excluded: biome's HTML formatting is not stable enough
+// to churn the emitted host/index.html.
+const FORMATTABLE = /\.(tsx?|jsx?|mts|cts|mjs|cjs|jsonc?|css|md)$/;
 
 export async function adoptProjectStyle(
   projectRoot: string,

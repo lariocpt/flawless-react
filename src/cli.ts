@@ -349,8 +349,15 @@ export async function main(argv: string[]): Promise<void> {
 
   if (!args.json) printSummaryTable(result.results);
   if (args.json) {
+    // exitCode rides inside the blob: suite failures under --run-tests fold
+    // into it, and a --ci consumer parsing stdout alone must see them without
+    // shell plumbing around $?.
     process.stdout.write(
-      `${JSON.stringify({ outDir: result.outDir, results: result.results }, null, 2)}\n`,
+      `${JSON.stringify(
+        { exitCode: result.exitCode, outDir: result.outDir, results: result.results },
+        null,
+        2,
+      )}\n`,
     );
   }
   if (wantInteractive) {
@@ -363,5 +370,12 @@ export async function main(argv: string[]): Promise<void> {
 // difference between a run and a silent exit-0 no-op when someone invokes
 // `bun src/cli.ts …` directly — the trap bin.ts's header documents.
 if (import.meta.main) {
-  await main(Bun.argv.slice(2));
+  try {
+    await main(Bun.argv.slice(2));
+  } catch (err) {
+    // A rejection escaping main() must land on the documented exit-1 contract,
+    // not surface as the runtime's uncaught-error dump.
+    process.stderr.write(`${String((err as Error | undefined)?.stack ?? err)}\n`);
+    process.exit(1);
+  }
 }

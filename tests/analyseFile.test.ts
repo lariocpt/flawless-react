@@ -135,6 +135,14 @@ describe("expandGlob exclusions", () => {
   test("a directory is a usage error that names the fix", async () => {
     const dir = seed();
     await expect(expandGlob(dir)).rejects.toThrow(/is a directory — pass a \.tsx file or a glob/);
+    // Shell tab-completion hands over "src/" — the suggested glob must not
+    // read "src//**/*.tsx".
+    const message = await expandGlob(`${dir}/`).then(
+      () => "",
+      (err: Error) => err.message,
+    );
+    expect(message).toMatch(/is a directory/);
+    expect(message).not.toContain("//");
   });
 
   test("--no-default-excludes restores the raw match", async () => {
