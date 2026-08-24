@@ -10,7 +10,14 @@ import {
 } from "../scaffold-tests/registry.ts";
 import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
 import { NEXT_SCRIPT, SUITE_COMMAND, SUITE_SCRIPT } from "../suiteScripts.ts";
-import type { ComponentInfo, ComponentTree, HeapMode, MockRoute, PropsShape } from "../types.ts";
+import type {
+  ComponentInfo,
+  ComponentTree,
+  HeapMode,
+  MockRoute,
+  PropsShape,
+  PropValue,
+} from "../types.ts";
 import { VERSION } from "../version.ts";
 
 const NL = "\n";
@@ -157,14 +164,22 @@ export function toHostRelImport(outDir: string, absFile: string): string {
  * Names are allocated over the FULL list before filtering, so they match the
  * unit scaffolder's — the browser specs look components up by these keys.
  */
+/** One "use server" module to stub for the browser bundle. */
+interface ServerActionStub {
+  /** Every export name the stub must bind. */
+  names: string[];
+  /** Module-side name → the literal that action returns, where resolved. */
+  returns: Record<string, PropValue>;
+}
+
 function selectHostComponents(
   trees: ComponentTree[],
   outDir: string,
 ): {
   hosted: FlatComponent[];
   excluded: ExcludedComponent[];
-  /** Absolute path → the export names a hosted component imports from it. */
-  serverActionStubs: Map<string, string[]>;
+  /** Absolute path → the stub for the module at that path. */
+  serverActionStubs: Map<string, ServerActionStub>;
 } {
   const hostDir = path.resolve(outDir, "host");
   const flat = flattenTrees(trees);
@@ -172,7 +187,7 @@ function selectHostComponents(
 
   const hosted: FlatComponent[] = [];
   const excluded: ExcludedComponent[] = [];
-  const serverActionStubs = new Map<string, string[]>();
+  const serverActionStubs = new Map<string, ServerActionStub>();
   for (const c of flat) {
     const verdict = hostEligibility(c.info);
     if (!verdict.eligible) {
@@ -185,11 +200,16 @@ function selectHostComponents(
     }
     for (const mi of c.info.moduleImports ?? []) {
       if (!mi.isServerAction || !mi.resolvedPath || mi.isTypeOnly) continue;
-      const names = new Set(serverActionStubs.get(mi.resolvedPath) ?? []);
+      const entry = serverActionStubs.get(mi.resolvedPath) ?? { names: [], returns: {} };
+      const names = new Set(entry.names);
       for (const n of mi.serverActionExports ?? mi.names) names.add(n);
       // Sorted, not Set order: the emitted file has to be byte-identical across
-      // runs or the idempotence gate churns.
-      serverActionStubs.set(mi.resolvedPath, [...names].sort());
+      // runs or the idempotence gate churns. Returns merge trivially — every
+      // importer's record was extracted from the same file.
+      serverActionStubs.set(mi.resolvedPath, {
+        names: [...names].sort(),
+        returns: { ...entry.returns, ...(mi.serverActionReturns ?? {}) },
+      });
     }
     hosted.push({
       info: c.info,
@@ -376,7 +396,7 @@ export default defineConfig({
 
 function hostServer(
   hasMock: boolean,
-  serverActionStubs = new Map<string, string[]>(),
+  serverActionStubs = new Map<string, ServerActionStub>(),
   hostDir = "",
 ): string {
   const mockProxyBlock = hasMock
@@ -403,12 +423,16 @@ function hostServer(
   // imports have to bind, which a catch-all default export cannot satisfy.
   const stubEntries = [...serverActionStubs.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
   const stubSources = stubEntries
-    .map(([abs, names]) => {
-      const body = names
+    .map(([abs, stub]) => {
+      // A name the analyser resolved returns the action's real literal; the
+      // rest keep the {} stand-in the comment above justifies.
+      const valueOf = (n: string): string =>
+        stub.returns[n] === undefined ? "{}" : JSON.stringify(stub.returns[n]);
+      const body = stub.names
         .map((n) =>
           n === "default"
-            ? `export default async () => ({});`
-            : `export const ${n} = async () => ({});`,
+            ? `export default async () => (${valueOf(n)});`
+            : `export const ${n} = async () => (${valueOf(n)});`,
         )
         .join("\n");
       // Relative to this file, resolved back to absolute when the map is built.

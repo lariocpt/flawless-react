@@ -345,6 +345,14 @@ export interface ModuleImportInfo {
   isServerAction?: boolean;
   /** Every top-level export of that module, for stubbing it wholesale. */
   serverActionExports?: string[];
+  /**
+   * Module-side export name → the single literal value that action returns
+   * (redirect/notFound exits excluded; "default" for the default export).
+   * Only literal-derivable returns are recorded — see
+   * analyse/serverActionReturns.ts for the bail policy. Names absent here
+   * keep the honest {} stub and the server-action-stub TODO.
+   */
+  serverActionReturns?: Record<string, PropValue>;
   pos: SourcePosition;
 }
 

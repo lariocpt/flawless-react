@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
+import { renderSuite } from "../src/scaffold/templates.ts";
 import { emitModuleMocks } from "../src/scaffold-tests/mocks.ts";
 import type { ComponentInfo, ModuleImportInfo } from "../src/types.ts";
 
@@ -46,6 +47,17 @@ describe("isServerAction", () => {
     expect(importOf(imports, "plain.ts")?.isServerAction).toBeUndefined();
   });
 
+  test("the analyser records each action's literal return beside the export list", async () => {
+    const t = await analyse({ entry: POST_FORM, depth: 0, includeChildren: false });
+    const submit = importOf(t.entry.moduleImports ?? [], "submit.ts");
+    expect(submit?.serverActionReturns).toEqual({
+      createPost: { ok: true },
+      deletePost: { ok: true },
+    });
+    // Non-action modules never carry the field.
+    expect(importOf(t.entry.moduleImports ?? [], "plain.ts")?.serverActionReturns).toBeUndefined();
+  });
+
   test("bare specifiers never resolve, so they are never flagged", async () => {
     const t = await analyse({ entry: POST_FORM, depth: 0, includeChildren: false });
     const nav = importOf(t.entry.moduleImports ?? [], "next/navigation");
@@ -88,6 +100,96 @@ describe("emitModuleMocks in client mode", () => {
     // These land in useActionState, whose state is read as `state && "error" in
     // state` — undefined would crash the first render.
     expect(statements.join("\n")).toContain("createPost: vi.fn(async () => ({}))");
+  });
+
+  test("a resolved return replaces the {} stub and retires the TODO", () => {
+    const kinds: string[] = [];
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/posts",
+          names: ["createPost"],
+          isServerAction: true,
+          serverActionExports: ["createPost"],
+          serverActionReturns: { createPost: { ok: true, message: "saved" } },
+        }),
+      ]),
+      "client",
+      undefined,
+      (kind) => kinds.push(kind),
+    );
+    const src = statements.join("\n");
+    expect(src).toContain('createPost: vi.fn(async () => ({"ok":true,"message":"saved"}))');
+    expect(src).not.toContain("TODO(flawless)");
+    expect(kinds).toEqual([]);
+  });
+
+  test("one unresolved export keeps the TODO, even when the imported name resolved", () => {
+    // The vi.mock factory replaces the WHOLE module — a transitive importer
+    // gets the sibling exports from this same factory, so an unresolved
+    // sibling means the stub surface is still partly fake.
+    const kinds: string[] = [];
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/posts",
+          names: ["createPost"],
+          isServerAction: true,
+          serverActionExports: ["createPost", "deletePost"],
+          serverActionReturns: { createPost: { ok: true } },
+        }),
+      ]),
+      "client",
+      undefined,
+      (kind) => kinds.push(kind),
+    );
+    const src = statements.join("\n");
+    expect(src).toContain('createPost: vi.fn(async () => ({"ok":true}))');
+    expect(src).toContain("TODO(flawless)");
+    expect(kinds).toEqual(["server-action-stub"]);
+  });
+
+  test("an aliased import mocks the MODULE-side name and joins returns by it", () => {
+    // `import { createPost as saveIt }` — the module exports createPost, so
+    // the factory must too; a factory keyed by the local alias exports a name
+    // the module never had and leaves the real one unmocked.
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/posts",
+          names: ["saveIt"],
+          importedNames: ["createPost"],
+          isServerAction: true,
+          serverActionExports: ["createPost"],
+          serverActionReturns: { createPost: { ok: true } },
+        }),
+      ]),
+      "client",
+    );
+    const src = statements.join("\n");
+    expect(src).toContain('createPost: vi.fn(async () => ({"ok":true}))');
+    expect(src).not.toContain("saveIt:");
+  });
+
+  test('a default-imported action resolves through the "default" key', () => {
+    const kinds: string[] = [];
+    const { statements } = emitModuleMocks(
+      info([
+        mi({
+          specifier: "@/app/actions/submit",
+          names: ["submit"],
+          hasDefault: true,
+          isServerAction: true,
+          serverActionExports: [],
+          serverActionReturns: { default: { done: true } },
+        }),
+      ]),
+      "client",
+      undefined,
+      (kind) => kinds.push(kind),
+    );
+    expect(statements.join("\n")).toContain('default: vi.fn(async () => ({"done":true}))');
+    expect(kinds).toEqual([]);
   });
 
   test("the allowlist is exhaustive: an ordinary util is left real", () => {
@@ -176,5 +278,50 @@ describe("emitModuleMocks in client mode", () => {
     const imports = [mi({ specifier: "@/lib/dal", names: ["getCurrentUser"] })];
     expect(emitModuleMocks(info(imports), "client").mocked).toEqual([]);
     expect(emitModuleMocks(info(imports), "rsc").mocked).toEqual(["@/lib/dal"]);
+  });
+});
+
+describe("host server stubs consume the resolved returns", () => {
+  test("a resolved export stubs with its literal; an unresolved sibling keeps {}", () => {
+    const files = renderSuite({
+      tree: {
+        entry: {
+          componentName: "X",
+          filePath: "/app/src/X.tsx",
+          importSpecifier: "./X",
+          propsShape: {},
+          variants: [],
+          hooks: [],
+          unresolvedProps: [],
+          exportKind: "named",
+          isAsync: false,
+          moduleImports: [
+            {
+              specifier: "./actions",
+              names: ["doThing"],
+              kind: "value",
+              isTypeOnly: false,
+              hasDefault: false,
+              resolvedPath: "/app/src/actions.ts",
+              isServerAction: true,
+              serverActionExports: ["doThing", "opaqueThing"],
+              serverActionReturns: { doThing: { ok: true } },
+              pos: { file: "/app/src/X.tsx", line: 1, column: 1 },
+            },
+          ],
+        },
+        children: [],
+      } as never,
+      outDir: "/app/flawless",
+      variants: 3,
+      report: false,
+    });
+    const server = files.find((f) => f.relPath === "host/server.ts")?.content ?? "";
+    // The stub module source is embedded JSON-encoded as one string; assert on
+    // the encoded whole so this fails if the join ever detaches.
+    const body =
+      'export const doThing = async () => ({"ok":true});\n' +
+      "export const opaqueThing = async () => ({});";
+    expect(server).toContain(JSON.stringify(body));
   });
 });
