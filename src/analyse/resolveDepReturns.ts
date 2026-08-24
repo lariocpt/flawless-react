@@ -6,7 +6,7 @@ import { ownReturns } from "./ownReturns.ts";
 import type { ImportBinding } from "./parseFile.ts";
 import type { ModuleResolver } from "./resolveModule.ts";
 import { exportedFunctions } from "./serverActionReturns.ts";
-import type { SourceFileCache } from "./sourceCache.ts";
+import { findExportedDecl, type SourceFileCache } from "./sourceCache.ts";
 
 /**
  * Second-chance enrichment for data deps whose USAGE told us nothing: when
@@ -46,16 +46,22 @@ export function resolveDepReturns(
     // skip escape for a fixture that is never emitted, turning the honest
     // skip into a false RED that blames the application.
     if (cache.hasPrologueDirective(target, "use server")) return dep;
-    const sf = cache.get(target);
-    if (!sf) return dep;
     const wanted =
       binding.kind === "default" ? "default" : (binding.importedName ?? dep.calleeRoot);
-    const fn = new Map(exportedFunctions(sf)).get(wanted);
-    if (!fn) return dep;
+    // Barrel-aware: chase re-exports to the DECLARING file, so an annotation
+    // behind `export * from "./api"` still enriches the dep.
+    const located = findExportedDecl(target, wanted, cache, resolver, (sf, name) =>
+      new Map(exportedFunctions(sf)).get(name),
+    );
+    if (!located) return dep;
+    const { sf, file: declFile, decl: fn } = located;
+    // The barrel itself rarely carries the directive — the declaring module
+    // is what decides whether this is serverActionMock's channel.
+    if (declFile !== target && cache.hasPrologueDirective(declFile, "use server")) return dep;
 
     const promiseArg = promiseTypeArg(fn.type);
     if (promiseArg) {
-      const value = resolveTypeNodeValue(promiseArg, sf, target, resolver, cache);
+      const value = resolveTypeNodeValue(promiseArg, sf, declFile, resolver, cache);
       if (value === undefined) return dep;
       return { ...dep, inferredReturn: { provenance: "annotation" as const, value } };
     }

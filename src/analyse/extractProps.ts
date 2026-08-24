@@ -5,7 +5,7 @@ import { hostPropsFor, isHostTagRecognised } from "./hostProps.ts";
 import type { ImportBinding } from "./parseFile.ts";
 import { posOf } from "./pos.ts";
 import type { ModuleResolver } from "./resolveModule.ts";
-import type { SourceFileCache } from "./sourceCache.ts";
+import { findExportedDecl, type SourceFileCache } from "./sourceCache.ts";
 
 export interface ExtractedProps {
   propsShape: PropsShape;
@@ -280,17 +280,17 @@ function fixtureReference(name: string, ctx: PropsResolveCtx): PropValue | undef
   const binding = ctx.imports.get(name);
   if (!binding || ctx.hops <= 0) return undefined;
   const target = ctx.resolver?.resolve(binding.specifier, ctx.file);
-  if (!target) return undefined;
-  const targetSf = ctx.cache?.get(target);
-  if (!targetSf) return undefined;
+  if (!target || !ctx.cache) return undefined;
   const wanted = binding.importedName ?? name;
-  const decl = findTypeDecl(targetSf, wanted);
-  if (!decl) return undefined;
-  return fixtureDecl(decl, {
+  // The resolved module may be a barrel that only re-exports the name; the
+  // chase to the DECLARING file rides its own visited set, not the hops.
+  const located = findExportedDecl(target, wanted, ctx.cache, ctx.resolver, findTypeDecl);
+  if (!located) return undefined;
+  return fixtureDecl(located.decl, {
     ...next,
-    sf: targetSf,
-    file: target,
-    imports: collectImportsSync(targetSf),
+    sf: located.sf,
+    file: located.file,
+    imports: collectImportsSync(located.sf),
     hops: ctx.hops - 1,
   });
 }
@@ -893,19 +893,25 @@ function resolveImportedTypeDecl(
   const binding = ctx.imports.get(name.text);
   if (!binding) return undefined;
   const target = ctx.resolver?.resolve(binding.specifier, ctx.file);
-  if (!target) return undefined;
-  const targetSf = ctx.cache?.get(target);
-  if (!targetSf) return undefined;
-  const decl = findTypeDecl(targetSf, binding.importedName ?? name.text);
-  if (!decl) return undefined;
+  if (!target || !ctx.cache) return undefined;
+  // Barrel-aware: the resolved module may only re-export the name; chase to
+  // the declaring file on its own visited set (never the hops budget).
+  const located = findExportedDecl(
+    target,
+    binding.importedName ?? name.text,
+    ctx.cache,
+    ctx.resolver,
+    findTypeDecl,
+  );
+  if (!located) return undefined;
 
-  const key = `${target}::${decl.name.text}`;
+  const key = `${located.file}::${located.decl.name.text}`;
   if (ctx.visited.has(key)) return undefined;
 
-  return resolveTypeDecl(decl, {
-    sf: targetSf,
-    file: target,
-    imports: collectImportsSync(targetSf),
+  return resolveTypeDecl(located.decl, {
+    sf: located.sf,
+    file: located.file,
+    imports: collectImportsSync(located.sf),
     resolver: ctx.resolver,
     cache: ctx.cache,
     hops: ctx.hops - 1,

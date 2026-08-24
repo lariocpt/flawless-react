@@ -109,8 +109,9 @@ export function exportedFunctions(sf: ts.SourceFile): Array<[string, ActionFn]> 
       continue;
     }
     // `export { doSave as save }` — the exported name is what importers bind
-    // to. A re-export from another file has no local to resolve; skipped, so
-    // the name stays unrecorded and the stub stays an honest {}.
+    // to. A re-export from another file has no local to resolve; skipped
+    // HERE — sourceCache's findExportedDecl is the cross-file chase, and
+    // callers that want it (resolveDepReturns) walk barrels through that.
     if (
       ts.isExportDeclaration(stmt) &&
       stmt.moduleSpecifier === undefined &&

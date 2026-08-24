@@ -62,6 +62,66 @@ export function exportedNames(sf: ts.SourceFile): string[] {
   return [...out].sort();
 }
 
+/** Where a re-export chase landed: the declaring file and its parse. */
+export interface RelocatedExport<T> {
+  sf: ts.SourceFile;
+  file: string;
+  decl: T;
+}
+
+/** Barrel chains beyond this are machine-generated or cyclic; stop looking. */
+const MAX_RELOCATION_FILES = 32;
+
+/**
+ * Find `name`'s declaration starting at `file`, chasing barrel re-exports:
+ * on a miss, named re-exports (`export { A as B } from "./x"`, rename-aware)
+ * and star re-exports (`export * from "./x"`) are followed in declaration
+ * order, first hit wins. `export * as ns from` exports one namespace object,
+ * never the names behind it, and is not followed.
+ *
+ * Bounded by a visited set (file::name, capped), deliberately NOT the props
+ * hop budget: component → barrel → types.ts would exhaust MAX_HOPS before a
+ * single member resolved, and relocation is finding where a name LIVES, not
+ * a semantic resolution hop. Cycles (a→b→a) terminate on the visited set.
+ */
+export function findExportedDecl<T>(
+  file: string,
+  name: string,
+  cache: SourceFileCache,
+  resolver: { resolve(spec: string, importer: string): string | undefined } | undefined,
+  find: (sf: ts.SourceFile, name: string) => T | undefined,
+): RelocatedExport<T> | undefined {
+  const visited = new Set<string>();
+  const walk = (f: string, wanted: string): RelocatedExport<T> | undefined => {
+    const key = `${f}::${wanted}`;
+    if (visited.has(key) || visited.size >= MAX_RELOCATION_FILES) return undefined;
+    visited.add(key);
+    const sf = cache.get(f);
+    if (!sf) return undefined;
+    const hit = find(sf, wanted);
+    if (hit !== undefined) return { sf, file: f, decl: hit };
+    for (const stmt of sf.statements) {
+      if (!ts.isExportDeclaration(stmt)) continue;
+      if (!stmt.moduleSpecifier || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+      if (stmt.exportClause && !ts.isNamedExports(stmt.exportClause)) continue;
+      const target = resolver?.resolve(stmt.moduleSpecifier.text, f);
+      if (!target) continue;
+      if (stmt.exportClause) {
+        for (const el of stmt.exportClause.elements) {
+          if (el.name.text !== wanted) continue;
+          const relocated = walk(target, (el.propertyName ?? el.name).text);
+          if (relocated) return relocated;
+        }
+        continue;
+      }
+      const relocated = walk(target, wanted);
+      if (relocated) return relocated;
+    }
+    return undefined;
+  };
+  return walk(file, name);
+}
+
 export class SourceFileCache {
   private files = new Map<string, ts.SourceFile | null>();
   private directives = new Map<string, string | null>();
