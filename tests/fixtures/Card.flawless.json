@@ -21,8 +21,8 @@
     }
   ],
   "reports": {
-    "a11y": "/tmp/flawless-ci-VX6mgp/out/reports/Card.a11y.json",
-    "reactRules": "/tmp/flawless-ci-VX6mgp/out/reports/Card.react-rules.json",
-    "perfStatic": "/tmp/flawless-ci-VX6mgp/out/reports/Card.perf-static.json"
+    "a11y": "/tmp/flawless-ci-YPfRqI/out/reports/Card.a11y.json",
+    "reactRules": "/tmp/flawless-ci-YPfRqI/out/reports/Card.react-rules.json",
+    "perfStatic": "/tmp/flawless-ci-YPfRqI/out/reports/Card.perf-static.json"
   }
 }
