@@ -120,6 +120,85 @@ describe("runCore", () => {
     expect(summary.results[0]?.findings).toBe(perf?.findings.length ?? -1);
   });
 
+  test("a second run over the same outDir refreshes the harness and exits 0", async () => {
+    // FR-028: this used to be { ok: false, summary: "task threw" } and exit 1,
+    // committed into REPORT.md as a failure of a healthy adopted suite.
+    const outDir = tmpOutDir();
+    const base = {
+      pattern: DASHBOARD,
+      outDir,
+      taskIds: ["perf-harness"] as TaskId[],
+      log: false,
+      inlineSummary: false,
+    };
+    const first = await runCore(base);
+    expect(first.exitCode).toBe(0);
+    expect(first.results.find((r) => r.id === "perf-harness")?.status).toBe("generated");
+
+    const second = await runCore(base);
+    expect(second.exitCode).toBe(0);
+    const perf = second.results.find((r) => r.id === "perf-harness");
+    expect(perf?.ok).toBe(true);
+    expect(perf?.status).toBe("refreshed");
+  });
+
+  test("changed-mode keeps the harness, so the affected-run gate cannot trip", async () => {
+    // FR-017's fix is indirect: the !anyFailed gate on the affected run stays,
+    // and a full selection now passes it because a kept harness is ok:true
+    // rather than a manufactured failure. testRun is the load-bearing
+    // assertion here — exit 0 alone is equally consistent with the affected
+    // branch never executing (a mutation reinstating FR-017 passed the whole
+    // suite until this seam existed). A true end-to-end (git repo with staged
+    // component edits + a real playwright run) would re-prove the runner,
+    // already pinned in tests/runTests.test.ts, at disproportionate cost.
+    const outDir = tmpOutDir();
+    const base = {
+      pattern: DASHBOARD,
+      outDir,
+      taskIds: ["perf-harness"] as TaskId[],
+      log: false,
+      inlineSummary: false,
+    };
+    await runCore(base);
+    const second = await runCore({ ...base, changed: true });
+    expect(second.exitCode).toBe(0);
+    const perf = second.results.find((r) => r.id === "perf-harness");
+    expect(perf?.ok).toBe(true);
+    expect(perf?.status).toBe("kept");
+    expect(perf?.outputs).toEqual([]);
+    // The affected run FIRED in the kept state — the gate opened.
+    expect(second.testRun?.mode).toBe("affected");
+    expect(second.testRun?.green).toBe(true);
+  });
+
+  test("a genuinely failing task still exits 1 over a kept-or-refreshed harness", async () => {
+    // The honesty floor: nothing that failed maps to 0. e2e without --nextjs is
+    // the cheapest real failure — the task returns ok:false without spawning.
+    const outDir = tmpOutDir();
+    const base = {
+      pattern: DASHBOARD,
+      outDir,
+      taskIds: ["perf-harness", "e2e"] as TaskId[],
+      log: false,
+      inlineSummary: false,
+    };
+    await runCore(base);
+    const second = await runCore(base);
+    expect(second.exitCode).toBe(1);
+    expect(second.results.find((r) => r.id === "perf-harness")?.ok).toBe(true);
+    expect(second.results.find((r) => r.id === "e2e")?.ok).toBe(false);
+
+    // The kept variant of the honesty floor: --changed with a real failure
+    // still exits 1, and the failure BLOCKS the affected run (the gate's
+    // other half — running tests over a half-failed generation would report
+    // green against artefacts that were never produced).
+    const kept = await runCore({ ...base, changed: true });
+    expect(kept.exitCode).toBe(1);
+    expect(kept.results.find((r) => r.id === "perf-harness")?.status).toBe("kept");
+    expect(kept.results.find((r) => r.id === "e2e")?.ok).toBe(false);
+    expect(kept.testRun).toBeUndefined();
+  });
+
   test("inlineSummary:false leaves no <Component>.flawless.json beside the source", async () => {
     expect(sidecars()).toEqual([]);
     const outDir = tmpOutDir();

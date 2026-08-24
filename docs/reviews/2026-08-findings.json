@@ -225,14 +225,15 @@
       "orig": "dogfood-D6",
       "severity": "P1",
       "dimension": "design",
-      "status": "open",
+      "status": "fixed",
       "title": "--changed with the full task selection silently skips the affected-test run on an adopted suite",
       "file": "src/core.ts",
       "line": 494,
       "claim": "perf-harness's no-force refusal sets anyFailed, and the affected run is gated on !anyFailed — so the flag's primary use case (fast loop over an existing suite) runs nothing unless the user knows to narrow --tasks. Observed live in dogfood iteration 4.",
       "proposed_fix": "In changed-mode, treat an existing harness as the normal case (skip scaffold instead of throwing), or run affected tests despite the refusal and say so.",
       "effort": "M",
-      "spirit": "mechanical"
+      "spirit": "mechanical",
+      "fix": "Kept harness is ok:true so the !anyFailed gate opens with any selection; CoreResult.testRun {mode, green} is the seam proving the affected run FIRED (a mutation reinstating the bug passed 591 tests until that seam existed). (wave 2)"
     },
     {
       "id": "FR-018",
@@ -376,14 +377,15 @@
       "orig": "dogfood-D1",
       "severity": "P2",
       "dimension": "design",
-      "status": "open",
+      "status": "fixed",
       "title": "No minimal upgrade path: a no-force run over an adopted suite always exits 1",
       "file": "src/scaffold/index.ts",
       "line": 17,
       "claim": "perf-harness hard-refuses without --force, so refreshing derived files costs exit 1 ('task threw' committed into REPORT.md), and --force is the only harness refresh — which also clobbers hand-hardened colocated specs.",
       "proposed_fix": "A refresh mode between nothing and --force: regenerate derived files, keep the harness, exit 0 with an explicit 'harness kept (N runs old)' line.",
       "effort": "M",
-      "spirit": "ownership"
+      "spirit": "ownership",
+      "fix": "scaffold/index.ts no longer throws: an existing suite is REFRESHED (derived files rewritten as a fresh scaffold would, writeOnce files kept, exit 0, TaskResult status \"refreshed\"); the marker playwright.config.ts now carries a generated-by version banner. Guarded by tests/scaffold.test.ts + tests/tasks.test.ts + tests/core.test.ts (second run exits 0)."
     },
     {
       "id": "FR-029",
@@ -449,6 +451,20 @@
       "claim": "--depth/--variants silently default where siblings throw 'requires a value'; bad --props JSON surfaces a bare engine message.",
       "spirit": "mechanical",
       "fix": "--depth/--variants throw 'requires a value'; --props errors name the flag. (wave 1)"
+    },
+    {
+      "id": "FR-034",
+      "orig": "wave2-review",
+      "severity": "P3",
+      "dimension": "design",
+      "status": "open",
+      "title": "package.json script merge follows the current run's flags over an adopted suite",
+      "file": "src/core.ts",
+      "line": 369,
+      "claim": "The flawless:* script merge is driven by THIS run's flags, so a --changed run without --colocate over a colocate-generated suite flips flawless:unit's command while 'keeping' the harness. Pre-existing merge semantics, newly reachable now that changed-mode runs do not fail.",
+      "proposed_fix": "Derive script-affecting flags from the suite's own on-disk state (colocate detectable from the vitest config's include) rather than the invocation, or refuse to narrow scripts in changed mode.",
+      "effort": "S",
+      "spirit": "ownership"
     }
   ]
 }

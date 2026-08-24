@@ -73,7 +73,9 @@ Options:
   --props '<json>'       Override the synthesised default props for the first entry.
   --provider <file>      Path to a .tsx file default-exporting a Provider wrapper.
   --api <spec>           Path to an OpenAPI/Swagger spec; scaffolds a mock server.
-  --force                Overwrite an existing output dir.
+  --force                Also regenerate what a re-run keeps: colocated specs,
+                         e2e route specs, the derived provider wrapper.
+                         (A plain re-run already refreshes the out-dir harness.)
   --report               Emit scripts/report.mjs to aggregate run output.
   -h, --help             Show this help.
   -V, --version          Show version.

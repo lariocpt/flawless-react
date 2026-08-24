@@ -234,7 +234,7 @@ The host page initialises `react-scan` once at module load, buffers any "unneces
 
 ### index.ts (the writer)
 
-Resolves `outDir`, refuses to overwrite unless `--force`, creates the dir tree with `fs/promises.mkdir({ recursive: true })`, and writes each `RenderedFile` with `Bun.write`. The `executable` flag flips a `chmod 0o755` on emitted scripts.
+Resolves `outDir` and decides the run's lifecycle status off the suite's own `playwright.config.ts` marker: absent → `generated`; present → `refreshed` (every derived file rewritten, `writeOnce` files kept); present with `keepExisting` (changed-mode) → `kept`, nothing written, the marker's generated-by banner parsed so the caller can name the version that wrote the suite. Creates the dir tree with `fs/promises.mkdir({ recursive: true })` and writes each `RenderedFile` with `Bun.write`; the `executable` flag flips a `chmod 0o755` on emitted scripts.
 
 ## Phase 2b — scaffold-tests
 

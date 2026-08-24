@@ -77,6 +77,13 @@ export interface CoreResult {
   nextjs: NextjsContext | undefined;
   /** Path of the provider wrapper actually used for unit specs, if any. */
   provider: string | undefined;
+  /**
+   * Present when a test run happened (--run-tests, or --changed's affected
+   * run); absent when none did. Distinguishes "exit 0 because the suites
+   * passed" from "exit 0 because nothing ran" — the two states FR-017 hid
+   * between. `green` is what folded into exitCode.
+   */
+  testRun?: { mode: "affected" | "generated"; green: boolean };
 }
 
 /**
@@ -304,6 +311,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     nextjs: nextCtx,
     colocate: opts.colocate ?? false,
     selectedTasks: taskIds,
+    // Changed-mode reaches the tasks so perf-harness can keep an existing
+    // suite instead of churning it — the affected-run gate below stays on
+    // !anyFailed, and a kept harness is not a failure.
+    ...(opts.changed === undefined ? {} : { changed: opts.changed }),
   };
 
   const results: TaskResult[] = [];
@@ -504,6 +515,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // A suite failure must reach the exit code: --ci --run-tests previously
   // discarded both runners' outcomes and exited 0 on red suites.
   let suitesGreen = true;
+  // Recorded on CoreResult so a caller (or a test) can tell the affected run
+  // actually FIRED — exit 0 alone is equally consistent with the branch never
+  // executing, which is exactly how FR-017 hid.
+  let testRun: CoreResult["testRun"];
   if (!anyFailed && opts.changed !== undefined && runnableSelected) {
     const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
     const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
@@ -527,6 +542,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // programmatic consumer) — the runner and its children use stderr.
       opts.log !== true,
     );
+    testRun = { mode: "affected", green: suitesGreen };
   } else if (!anyFailed && opts.runTests === true && runnableSelected) {
     suitesGreen = await runGeneratedTests(
       outDir,
@@ -534,6 +550,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       nextCtx?.root,
       opts.log !== true,
     );
+    testRun = { mode: "generated", green: suitesGreen };
   }
 
   return {
@@ -543,6 +560,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     trees,
     nextjs: nextCtx,
     provider: providerOverride,
+    testRun,
   };
 }
 

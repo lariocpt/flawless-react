@@ -41,12 +41,13 @@ bunx flawless-react "src/app/dashboard/page.tsx" \
 Pick tasks explicitly with `--tasks a,b`; with no args in a TTY you get a
 checkbox menu.
 
-Over an EXISTING suite, a run that includes `perf-harness` refuses without
-`--force` and exits 1 while the other selected tasks still refresh their
-derived files — that exit 1 is the harness guard, not a broken run. See the
-flawless-regen skill for the full regeneration contract, and note the same
-refusal silently skips `--changed`'s affected-test run unless you narrow
-`--tasks`.
+Over an EXISTING suite, a re-run exits 0: `perf-harness` refreshes its derived
+files exactly as a fresh scaffold would (write-once files untouched; TaskResult
+and REPORT.md carry `status: "refreshed"`), and under `--changed` it keeps the
+harness entirely — nothing written, `status: "kept"` — so the affected-test run
+happens with any task selection. `--force` is only for regenerating what a
+plain re-run keeps (colocated specs, e2e route specs, the provider wrapper).
+See the flawless-regen skill for the full regeneration contract.
 
 ## Next.js mode
 

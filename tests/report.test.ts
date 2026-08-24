@@ -94,6 +94,30 @@ describe("renderReportMarkdown", () => {
   });
 });
 
+describe("task rows carry the lifecycle status", () => {
+  test("a status lands in its own column", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-harness", {
+          status: "refreshed",
+          outputs: ["a"],
+          summary: "refreshed perf suite",
+        } as never),
+      ],
+    });
+    expect(md).toContain("| Task | Files written | Findings | Status | Summary |");
+    expect(md).toContain("| `perf-harness` | 1 | 0 | refreshed | refreshed perf suite |");
+  });
+
+  test("a result without a status renders an em dash, not an empty cell", () => {
+    // Only perf-harness sets status today; the other rows must still read as a
+    // table, and an empty cell is indistinguishable from a rendering bug.
+    const md = renderReportMarkdown(INPUT);
+    expect(md).toContain("| `unit-browser` | 2 | 0 | — | unit tests for 3 component(s) |");
+  });
+});
+
 describe("Hand-work remaining", () => {
   const handWork = [
     { kind: "uninferred-return-shape", count: 9, exemplar: "/proj/flawless/unit/page.test.tsx" },
