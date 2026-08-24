@@ -212,7 +212,11 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
   // Pass 1 — candidates from function declarations and variable statements.
   for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && /^[A-Z]/.test(stmt.name.text)) {
-      if (!stmt.body || !looksLikeComponentBody(stmt, renderHooks, stmt.name.text)) continue;
+      // No name passed: the SCREAMING_CASE guard exists for value constants
+      // (`const NOOP = () => null`), and a function DECLARATION is not a value
+      // constant — `function SEO() { …; return null; }` is the canonical
+      // effect-only head-manager component and must stay detected.
+      if (!stmt.body || !looksLikeComponentBody(stmt, renderHooks)) continue;
       const mods = stmt.modifiers ?? [];
       const hasExport = mods.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
       const hasDefault = mods.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
@@ -545,8 +549,10 @@ interface RenderHookImports {
 /**
  * Local names bound to render hooks: an import named useRender, or anything
  * imported from a module specifier ending in /use-render. Namespace and
- * default imports of such modules reach the hook as a property access, so
- * they live in a separate set.
+ * default imports of such modules live in a separate set and match only the
+ * `NS.useRender(...)` property-access form — a default import CALLED as a bare
+ * identifier is not detected (no such module shape has been seen in the wild;
+ * detection stays syntactic rather than guessing).
  */
 function renderHookNames(sf: ts.SourceFile): RenderHookImports {
   const names = new Set<string>();

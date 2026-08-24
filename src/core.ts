@@ -516,12 +516,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       selected.map((t) => t.id),
       affected,
       nextCtx?.root,
+      // log:false means stdout belongs to the caller (--json's blob, or a
+      // programmatic consumer) — the runner and its children use stderr.
+      opts.log !== true,
     );
   } else if (!anyFailed && opts.runTests === true && runnableSelected) {
     suitesGreen = await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),
       nextCtx?.root,
+      opts.log !== true,
     );
   }
 

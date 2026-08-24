@@ -55,10 +55,15 @@ describe("--ci process contract", () => {
     async () => {
       const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
       try {
-        const proc = Bun.spawn(["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--out", out], {
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+        // --no-inline-summary: without it the run drops a Card.flawless.json
+        // sidecar beside the tracked fixture, dirtying the repo on every run.
+        const proc = Bun.spawn(
+          ["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--no-inline-summary", "--out", out],
+          {
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
         const stdout = await new Response(proc.stdout).text();
         expect(await proc.exited).toBe(0);
         const blob = JSON.parse(stdout) as {
@@ -121,6 +126,7 @@ process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => {
             "--ci",
             "--tasks",
             "perf-static",
+            "--no-inline-summary",
             "--out",
             path.join(dir, "out"),
           ],

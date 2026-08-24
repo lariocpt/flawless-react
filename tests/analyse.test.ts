@@ -90,6 +90,14 @@ describe("parseFile", () => {
     expect(r.components[0]?.exportKind).toBe("named");
   });
 
+  test("an acronym-named function DECLARATION returning null is a component", async () => {
+    // The SCREAMING_CASE guard is for value constants; `function SEO()` is the
+    // canonical effect-only head manager and must not be caught by it.
+    const r = await parseFile(path.resolve(__dirname, "fixtures/SeoHead.tsx"));
+    expect(r.components[0]?.componentName).toBe("SEO");
+    expect(r.components[0]?.exportKind).toBe("named");
+  });
+
   test("throws helpfully on a non-component file", async () => {
     const empty = path.resolve(__dirname, "fixtures/_empty.tsx");
     await Bun.write(empty, "export const x = 1;\n");
