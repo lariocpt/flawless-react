@@ -364,7 +364,7 @@ export default async function Page() {
 });
 
 describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () => {
-  function valueOf(source: string, expr: string): unknown {
+  function fixtureOf(source: string, expr: string): unknown {
     const sf = ts.createSourceFile(
       "/proj/lib.ts",
       `${source}\ntype __T = ${expr};`,
@@ -383,7 +383,7 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
   test("declared LITERAL types are preserved exactly — never restyled into forbidden values", () => {
     // `success: false` restyled to true steers the component down a branch
     // production can never take; the restyle is only safe for keyword types.
-    expect(valueOf('interface Flags { ok: false; count: 0; tag: "" }', "Flags")).toEqual({
+    expect(fixtureOf('interface Flags { ok: false; count: 0; tag: "" }', "Flags")).toEqual({
       ok: false,
       count: 0,
       tag: "",
@@ -391,11 +391,11 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
   });
 
   test("a union of literals resolves to its FIRST literal, untouched", () => {
-    expect(valueOf("interface S { status: 0 | 2 }", "S")).toEqual({ status: 0 });
+    expect(fixtureOf("interface S { status: 0 | 2 }", "S")).toEqual({ status: 0 });
   });
 
   test("keyword types restyle to the truthy house values", () => {
-    expect(valueOf("interface U { name: string; n: number; b: boolean }", "U")).toEqual({
+    expect(fixtureOf("interface U { name: string; n: number; b: boolean }", "U")).toEqual({
       name: "flawless-name",
       n: 1,
       b: true,
@@ -403,30 +403,30 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
   });
 
   test("an unresolvable nested member bails the WHOLE value", () => {
-    expect(valueOf("interface T { meta: { createdAt: Date; id: string } }", "T")).toBeUndefined();
+    expect(fixtureOf("interface T { meta: { createdAt: Date; id: string } }", "T")).toBeUndefined();
   });
 
   test("a mutual type-alias cycle bails instead of hanging", () => {
-    expect(valueOf("type A = B; type B = A;", "A")).toBeUndefined();
+    expect(fixtureOf("type A = B; type B = A;", "A")).toBeUndefined();
   });
 
   test("a local type shadowing a React attr name resolves to ITS members, not the DOM table", () => {
     expect(
-      valueOf("interface ButtonHTMLAttributes { totallyCustom: number }", "ButtonHTMLAttributes"),
+      fixtureOf("interface ButtonHTMLAttributes { totallyCustom: number }", "ButtonHTMLAttributes"),
     ).toEqual({ totallyCustom: 1 });
   });
 
   test("member arrays are one-element too — an empty list renders no rows anywhere", () => {
-    expect(valueOf("interface L { tags: string[] }", "L")).toEqual({ tags: ["flawless-tags"] });
+    expect(fixtureOf("interface L { tags: string[] }", "L")).toEqual({ tags: ["flawless-tags"] });
   });
 
   test("optional members are included — type-legal and strictly richer", () => {
-    expect(valueOf("interface O { name?: string }", "O")).toEqual({ name: "flawless-name" });
+    expect(fixtureOf("interface O { name?: string }", "O")).toEqual({ name: "flawless-name" });
   });
 
   test("an interface with heritage bails (v1) — silently partial would be worse", () => {
     expect(
-      valueOf("interface B1 { b: string }\ninterface A1 extends B1 { a: string }", "A1"),
+      fixtureOf("interface B1 { b: string }\ninterface A1 extends B1 { a: string }", "A1"),
     ).toBeUndefined();
   });
 });

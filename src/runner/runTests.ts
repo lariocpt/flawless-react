@@ -5,6 +5,39 @@ import { grepFor, grepForRoutes } from "../changed.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type { TaskId } from "../types.ts";
 
+/** One suite invocation the runner will spawn, in order. */
+export interface PlannedRun {
+  id: string;
+  cmd: string[];
+}
+
+/**
+ * The command plan for a full generated-suite run — a PURE function (FR-019:
+ * the two shipped bugs in this module both lived in these branches, guarded
+ * only by comments; tests/runPlan.test.ts pins the matrix now).
+ *
+ * Standalone suites carry test:* scripts in their own package.json; Next.js
+ * mode runs the target project's flawless:* scripts. The browser suite needs
+ * BOTH unit-browser and perf-harness: its specs mount through perf-harness's
+ * host, so the script exists only when both were generated — asking for it
+ * otherwise invoked a script that had never been written. Standalone suites
+ * have no e2e script at all.
+ */
+export function planGeneratedRuns(selectedTasks: TaskId[], standalone: boolean): PlannedRun[] {
+  const prefix = standalone ? "test" : "flawless";
+  const script = (name: string): string[] => ["bun", "run", `${prefix}:${name}`];
+  const runs: PlannedRun[] = [];
+  if (selectedTasks.includes("unit-browser")) runs.push({ id: "unit", cmd: script("unit") });
+  if (selectedTasks.includes("perf-harness")) runs.push({ id: "perf", cmd: script("perf") });
+  if (selectedTasks.includes("unit-browser") && selectedTasks.includes("perf-harness")) {
+    runs.push({ id: "browser", cmd: script("browser") });
+  }
+  if (!standalone && selectedTasks.includes("e2e")) {
+    runs.push({ id: "e2e", cmd: script("e2e") });
+  }
+  return runs;
+}
+
 /**
  * Run the generated suites. Standalone mode (no nextRoot): the suite is its
  * own package under outDir with test:* scripts. Next.js mode: the target
@@ -37,35 +70,7 @@ export async function runGeneratedTests(
     await ensureChromium(cwd, quiet);
   }
 
-  const scripts: Array<{ id: string; cmd: string[] }> = [];
-  const script = (name: string): string[] => ["bun", "run", name];
-  if (standalone) {
-    if (selectedTasks.includes("unit-browser"))
-      scripts.push({ id: "unit", cmd: script("test:unit") });
-    if (selectedTasks.includes("perf-harness"))
-      scripts.push({ id: "perf", cmd: script("test:perf") });
-    // Browser specs are rendered only when perf-harness is in the run (they
-    // mount through its host), so the script only exists then. runAffectedTests
-    // already required both; this path asked for unit-browser alone and invoked
-    // a script that had not been written.
-    if (selectedTasks.includes("unit-browser") && selectedTasks.includes("perf-harness"))
-      scripts.push({ id: "browser", cmd: script("test:browser") });
-  } else {
-    if (selectedTasks.includes("unit-browser"))
-      scripts.push({ id: "unit", cmd: script("flawless:unit") });
-    if (selectedTasks.includes("perf-harness"))
-      scripts.push({ id: "perf", cmd: script("flawless:perf") });
-    // The browser suite was written into package.json (core.ts) and then never
-    // run, so --run-tests generated browser specs, skipped them, and reported
-    // "all generated suites passed". The --changed path already ran it.
-    // Both tasks, not just unit-browser: the specs and their config are only
-    // rendered when perf-harness is in the run too, so asking for unit-browser
-    // alone invoked a script core.ts had (correctly) not declared. Matches the
-    // standalone branch above and runAffectedTests below.
-    if (selectedTasks.includes("unit-browser") && selectedTasks.includes("perf-harness"))
-      scripts.push({ id: "browser", cmd: script("flawless:browser") });
-    if (selectedTasks.includes("e2e")) scripts.push({ id: "e2e", cmd: script("flawless:e2e") });
-  }
+  const scripts = planGeneratedRuns(selectedTasks, standalone);
 
   const failed: string[] = [];
   for (const s of scripts) {
@@ -143,23 +148,21 @@ async function spawn(cmd: string, args: string[], cwd: string, quiet = false): P
  * relationship a path filter cannot see — and narrowed the same way, by
  * grepping for the route templates its titles embed.
  */
-export async function runAffectedTests(
+/**
+ * The command plan for an affected-only run — pure, same discipline as
+ * planGeneratedRuns. An empty components+routes set plans nothing at all
+ * (the runner reports "nothing affected"); unit narrowing keys on changed
+ * FILES because vitest `related` walks the module graph from them.
+ */
+export function planAffectedRuns(
   outDir: string,
   selectedTasks: TaskId[],
   affected: AffectedSpecs,
-  nextRoot?: string,
-  quiet = false,
-): Promise<boolean> {
-  const say = sayInto(quiet);
-  const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
-  const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
+  standalone: boolean,
+): PlannedRun[] {
+  if (affected.components.length === 0 && affected.routes.length === 0) return [];
 
-  if (affected.components.length === 0 && affected.routes.length === 0) {
-    say("\nchanged: nothing affected — no specs to run\n");
-    return true;
-  }
-
-  const runs: Array<{ id: string; cmd: string[] }> = [];
+  const runs: PlannedRun[] = [];
   const prefix = standalone ? "test" : "flawless";
 
   if (selectedTasks.includes("unit-browser") && affected.changedFiles.length > 0) {
@@ -192,6 +195,25 @@ export async function runAffectedTests(
       id: "e2e",
       cmd: ["bun", "run", `${prefix}:e2e`, "--", "--grep", grepForRoutes(affected.routes)],
     });
+  }
+  return runs;
+}
+
+export async function runAffectedTests(
+  outDir: string,
+  selectedTasks: TaskId[],
+  affected: AffectedSpecs,
+  nextRoot?: string,
+  quiet = false,
+): Promise<boolean> {
+  const say = sayInto(quiet);
+  const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
+  const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
+
+  const runs = planAffectedRuns(outDir, selectedTasks, affected, standalone);
+  if (runs.length === 0 && affected.components.length === 0 && affected.routes.length === 0) {
+    say("\nchanged: nothing affected — no specs to run\n");
+    return true;
   }
 
   const failed: string[] = [];

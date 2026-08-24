@@ -191,3 +191,123 @@ describe("no emitted file names the machine that generated it", () => {
 function fixture(rel: string): string {
   return path.resolve(__dirname, "fixtures", rel);
 }
+
+describe("standalone emissions never use __dirname", () => {
+  test("every suite and unit file is loader-neutral", async () => {
+    // A "type":"module" suite is loaded as ESM, where __dirname does not
+    // exist: the browser config died at import and the profile spec's heap
+    // writer threw mid-run (FR-022, found on first real execution). Relative
+    // config paths and the runtime FullConfig.rootDir are the loader-neutral
+    // anchors. The e2e emitter is exempt BY LOCATION, not by grace: its
+    // config needs an absolute use.storageState (cwd-relative otherwise) and
+    // only ever lands in Next.js projects, where playwright's CJS transpile
+    // defines __dirname — it never ships in a standalone suite.
+    const tree = await analyse({
+      entry: fixture("actions/PostForm.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const files = [
+      ...renderSuite({ tree, outDir: `${SENTINEL}/app/flawless`, variants: 3, report: true }),
+      ...renderUnitBrowser({
+        trees: [tree],
+        outDir: `${SENTINEL}/app/flawless`,
+        variants: 3,
+        browserSpecs: true,
+      }),
+    ];
+    expect(files.length).toBeGreaterThan(5);
+    for (const f of files) {
+      if (!/\.(m?tsx?)$/.test(f.relPath)) continue;
+      expect(f.content.includes("__dirname"), `${f.relPath} uses __dirname`).toBe(false);
+    }
+  });
+});
+
+describe("the profile heap dir anchors on the CONFIG FILE, never rootDir", () => {
+  test("the emitted spec derives heaps/ from configFile — rootDir is the resolved testDir", async () => {
+    // Playwright computes FullConfig.rootDir as resolve(configDir, testDir):
+    // with the perf config's testDir "./profile", rootDir is the PROFILE dir,
+    // and a rootDir-anchored heap writer put snapshots in profile/heaps/ —
+    // outside the emitted .gitignore's <out>/heaps/ entry, the 566MB class
+    // all over again. configFile is the config's own path in both loaders.
+    const tree = await analyse({
+      entry: fixture("actions/PostForm.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const files = renderSuite({
+      tree,
+      outDir: `${SENTINEL}/app/flawless`,
+      variants: 3,
+      report: true,
+    });
+    const heap = files.find((f) => f.relPath === "profile/_heap.ts");
+    expect(heap).toBeDefined();
+    const content = heap?.content ?? "";
+    expect(content).toContain("configFile");
+    expect(content).not.toContain("config.rootDir, HEAPS_DIR");
+  });
+});
+
+describe("a dotted-mock conflict still gets the RSC skip escape", () => {
+  test("certain-shaped conflicting deps crash on the {} fallback — that must skip, not fail", () => {
+    // The fallback mocks the binding as vi.fn(async () => ({})); db.query is
+    // then undefined at runtime. With CERTAIN dep shapes nothing set
+    // d.uncertain, so the escape vanished and correct code failed red —
+    // FR-014's exact failure mode, confined to the conflict shapes.
+    const certainShape = {
+      kind: "array",
+      element: {
+        kind: "object",
+        fields: [{ name: "name", shape: { kind: "string" }, rendersAsText: true }],
+      },
+    } as const;
+    const dep = (callee: string, varName: string) => ({
+      varName,
+      callee,
+      calleeRoot: "db",
+      specifier: "@/lib/db",
+      awaited: true,
+      shape: certainShape,
+      uncertain: false,
+      pos: { file: "/proj/src/Page.tsx", line: 3, column: 1 },
+    });
+    const files = renderUnitBrowser({
+      trees: [
+        {
+          entry: {
+            componentName: "MixPanel",
+            filePath: "/proj/src/MixPanel.tsx",
+            importSpecifier: "./MixPanel.tsx",
+            propsShape: {},
+            variants: [],
+            hooks: [],
+            unresolvedProps: [],
+            exportKind: "default",
+            isAsync: true,
+            renderMode: "rsc",
+            moduleImports: [
+              {
+                specifier: "@/lib/db",
+                names: ["db"],
+                kind: "value",
+                isTypeOnly: false,
+                hasDefault: false,
+                pos: { file: "/proj/src/MixPanel.tsx", line: 1, column: 1 },
+              },
+            ],
+            dataDeps: [dep("db", "conn"), dep("db.query.users.findMany", "rows")],
+          },
+          children: [],
+        } as never,
+      ],
+      outDir: `${SENTINEL}/app/flawless`,
+      variants: 1,
+      browserSpecs: false,
+    });
+    const spec = files.find((f) => f.relPath === "unit/MixPanel.test.tsx")?.content ?? "";
+    expect(spec).toContain("db: vi.fn(async () => ({}))");
+    expect(spec).toContain("data fixture missing");
+  });
+});

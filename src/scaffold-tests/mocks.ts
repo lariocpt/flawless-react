@@ -242,6 +242,75 @@ export function emitModuleMocks(
 }
 
 /**
+ * Roots whose deps cannot be mocked coherently: bare + dotted callees mixed
+ * on one binding, or one dotted path prefixing another. The emitter falls
+ * back to the honest {} for these — and the RSC skip escape must fire too,
+ * or the runtime crash on the missing member reads as an application
+ * failure (FR-014's exact failure mode, confined to the conflict shapes).
+ * One predicate, consumed by dataModuleMock AND uncertainEscape, so the
+ * fallback and the escape can never disagree.
+ */
+export function dottedMockConflicts(deps: DataDepInfo[]): boolean {
+  const byRoot = new Map<string, DataDepInfo[]>();
+  for (const d of deps) {
+    const group = byRoot.get(d.calleeRoot) ?? [];
+    group.push(d);
+    byRoot.set(d.calleeRoot, group);
+  }
+  for (const group of byRoot.values()) {
+    const dotted = group.filter((d) => d.callee !== d.calleeRoot);
+    if (dotted.length === 0) continue;
+    if (dotted.length !== group.length) return true;
+    if (dottedDepTree(dotted, () => "conflict-probe") === undefined) return true;
+  }
+  return false;
+}
+
+/**
+ * Nested object source for dotted deps sharing one root binding:
+ * db.query.users.findMany + db.query.posts.findFirst →
+ * `{ query: { users: { findMany: <stub> }, posts: { findFirst: <stub> } } }`.
+ * Undefined on any conflict — one path prefixing another, or two deps
+ * claiming the same leaf differently — so the caller can fall back honestly.
+ */
+function dottedDepTree(
+  deps: DataDepInfo[],
+  stubOf: (dep: DataDepInfo, seed: string) => string,
+): string | undefined {
+  interface TreeNode {
+    children: Map<string, TreeNode>;
+    leaf?: string;
+  }
+  const root: TreeNode = { children: new Map() };
+  for (const dep of deps) {
+    const segs = dep.callee.split(".").slice(1);
+    let cur = root;
+    for (const [i, seg] of segs.entries()) {
+      if (cur.leaf !== undefined) return undefined;
+      const last = i === segs.length - 1;
+      let next = cur.children.get(seg);
+      if (!next) {
+        next = { children: new Map() };
+        cur.children.set(seg, next);
+      }
+      if (last) {
+        if (next.children.size > 0) return undefined;
+        // Two deps on the same full path (the call appears twice): the first
+        // stub stands — same callee, same shape source.
+        next.leaf ??= stubOf(dep, seg);
+      }
+      cur = next;
+    }
+  }
+  const print = (node: TreeNode): string => {
+    if (node.leaf !== undefined) return node.leaf;
+    const entries = [...node.children.entries()].map(([k, v]) => `${k}: ${print(v)}`);
+    return `{ ${entries.join(", ")} }`;
+  };
+  return print(root);
+}
+
+/**
  * The rsc-mode gates ahead of the data-module mock, shared by the merge
  * pre-pass — grouping an allowlisted statement here would double-mock it.
  */
@@ -389,24 +458,10 @@ function dataModuleMock(
   );
   let uncertain = false;
 
-  const entry = (b: MergedBinding): string => {
-    const key = b.isDefault ? "default" : b.local;
-    // The factory replaces the whole module, so a pure class-string helper
-    // beside the data exports has to be re-supplied here — synchronously.
-    if (b.pure) return `${key}: ${PURE_UTILITY_STUB}`;
-    // A default-imported dep is still a dep: its calleeRoot is the local
-    // binding name. The old `default: vi.fn()` shortcut resolved undefined —
-    // worse than {} — and, once deps could be enriched, dropped the very
-    // fixture whose presence had suppressed the RSC skip escape.
-    const dep = depsHere.find((d) => d.calleeRoot === b.local);
-    if (!dep) {
-      if (b.isDefault) return "default: vi.fn()";
-      // Imported and called, but no evidence of how its result is used. {} is a
-      // better stand-in than undefined: it survives member access and only
-      // fails on .length/.map, which is a legible failure rather than a crash.
-      uncertain = true;
-      return `${key}: vi.fn(async () => ({}))`;
-    }
+  // The stub expression for ONE dep — shared by root-level bindings and the
+  // leaves of a dotted tree. Sets the module-level `uncertain` flag exactly
+  // where the old inline logic did.
+  const depStub = (dep: DataDepInfo, seed: string): string => {
     if (dep.uncertain || dep.shape.kind === "unknown") {
       // Usage said nothing, but the dep's own declaration may have: the
       // annotation-derived value, or the OpenAPI example for the fetch the
@@ -419,17 +474,50 @@ function dataModuleMock(
             : `/* inferred from the OpenAPI example for ${commentSafe(`${dep.wrapsFetch?.method} ${dep.wrapsFetch?.path}`)} */`;
         const lit = JSON.stringify(inf.value);
         return dep.awaited
-          ? `${key}: vi.fn(async () => (${lit})) ${provenance}`
-          : `${key}: vi.fn(() => (${lit})) ${provenance}`;
+          ? `vi.fn(async () => (${lit})) ${provenance}`
+          : `vi.fn(() => (${lit})) ${provenance}`;
       }
       uncertain = true;
-      return dep.awaited ? `${key}: vi.fn(async () => ({}))` : `${key}: vi.fn(() => ({}))`;
+      return dep.awaited ? "vi.fn(async () => ({}))" : "vi.fn(() => ({}))";
     }
     // Shape inferred from how the awaited value is actually used in the body.
-    const literal = mockLiteral(dep.shape, b.local);
-    return dep.awaited
-      ? `${key}: vi.fn(async () => (${literal}))`
-      : `${key}: vi.fn(() => (${literal}))`;
+    const literal = mockLiteral(dep.shape, seed);
+    return dep.awaited ? `vi.fn(async () => (${literal}))` : `vi.fn(() => (${literal}))`;
+  };
+
+  const entry = (b: MergedBinding): string => {
+    const key = b.isDefault ? "default" : b.local;
+    // The factory replaces the whole module, so a pure class-string helper
+    // beside the data exports has to be re-supplied here — synchronously.
+    if (b.pure) return `${key}: ${PURE_UTILITY_STUB}`;
+    // A default-imported dep is still a dep: its calleeRoot is the local
+    // binding name. The old `default: vi.fn()` shortcut resolved undefined —
+    // worse than {} — and, once deps could be enriched, dropped the very
+    // fixture whose presence had suppressed the RSC skip escape.
+    const deps = depsHere.filter((d) => d.calleeRoot === b.local);
+    const dep = deps[0];
+    if (!dep) {
+      if (b.isDefault) return "default: vi.fn()";
+      // Imported and called, but no evidence of how its result is used. {} is a
+      // better stand-in than undefined: it survives member access and only
+      // fails on .length/.map, which is a legible failure rather than a crash.
+      uncertain = true;
+      return `${key}: vi.fn(async () => ({}))`;
+    }
+    // `db.query.users.findMany()` needs the vi.fn at the LEAF of the dotted
+    // path — mocking the root as a function made `.query` undefined and the
+    // spec threw on correct code with no escape (FR-014).
+    const dotted = deps.filter((d) => d.callee !== d.calleeRoot);
+    if (dotted.length > 0) {
+      const tree = dottedDepTree(dotted, depStub);
+      if (tree !== undefined && deps.length === dotted.length) return `${key}: ${tree}`;
+      // Bare + dotted on one binding, or one path prefixing another: a
+      // callable object stub would be inventing semantics. The honest {}
+      // keeps the TODO and the RSC skip escape alive.
+      uncertain = true;
+      return `${key}: vi.fn(async () => ({}))`;
+    }
+    return `${key}: ${depStub(dep, b.local)}`;
   };
 
   const entries = [

@@ -1,7 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { stringifyLike } from "../scaffold/adoptStyle.ts";
-import { type NextjsApiRoute, type NextjsContext, type NextjsRouter, UsageError } from "../types.ts";
+import {
+  type NextjsApiRoute,
+  type NextjsContext,
+  type NextjsRouter,
+  UsageError,
+} from "../types.ts";
 import { walkApiRoutes } from "./apiRoutes.ts";
 
 export async function detectNextjs(root: string): Promise<NextjsContext> {

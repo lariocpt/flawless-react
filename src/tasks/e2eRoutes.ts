@@ -126,7 +126,13 @@ import { defineConfig, devices } from "@playwright/test";
 // for contract-checked runs: FLAWLESS_E2E_BASEURL=http://localhost:4747.
 const baseURL = process.env.FLAWLESS_E2E_BASEURL ?? "http://localhost:${port}";
 // global-setup.ts always (re)writes this file — empty until you wire up login.
-const authState = path.join(__dirname, ".auth.json"); // playwright transpiles configs to CJS
+// __dirname on purpose, with a known limit: in a CJS package (every Next.js
+// default) playwright transpiles this config and __dirname exists; a
+// "type":"module" app loads it as ESM where it does not — and playwright
+// offers no loader-neutral anchor a config can use for use.storageState
+// (relative storageState resolves against the CWD, probed, and import.meta
+// breaks the CJS transpile). Standalone suites never emit this file.
+const authState = path.join(__dirname, ".auth.json");
 
 export default defineConfig({
   testDir: ".",
@@ -165,14 +171,16 @@ import path from "node:path";
 //
 //   const ctx = await request.newContext({ baseURL });
 //   await ctx.post("/api/auth/login", { data: { email, password } });
-//   await ctx.storageState({ path: AUTH_STATE });
+//   await ctx.storageState({ path: authState });
 //
 // flawless-react never overwrites this file.
-const AUTH_STATE = path.join(__dirname, ".auth.json"); // CJS under playwright
-
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(config: { rootDir: string }): Promise<void> {
+  // rootDir is the CONFIG's directory, handed in at runtime — the one anchor
+  // that exists under both module loaders (__dirname is CJS-only and this
+  // file is loaded as ESM in a "type":"module" app).
+  const authState = path.join(config.rootDir, ".auth.json");
   // Empty state so the config's storageState reference always resolves.
-  writeFileSync(AUTH_STATE, JSON.stringify({ cookies: [], origins: [] }));
+  writeFileSync(authState, JSON.stringify({ cookies: [], origins: [] }));
 }
 `;
 }

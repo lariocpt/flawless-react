@@ -15,7 +15,12 @@ import type {
   TodoCounter,
   TodoRecorder,
 } from "../types.ts";
-import { apiRouteFixture, emitModuleMocks, inferredDepReturn } from "./mocks.ts";
+import {
+  apiRouteFixture,
+  dottedMockConflicts,
+  emitModuleMocks,
+  inferredDepReturn,
+} from "./mocks.ts";
 import {
   allocateSpecNames,
   compoundWrappable,
@@ -268,6 +273,12 @@ const projectRoot = path.resolve(configDir, "..");
 
 export default defineConfig({
   root: projectRoot,
+  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
+  // jsx "preserve", which gives vitest's esbuild nothing usable, and every
+  // spec died at render with "React is not defined". The suite pins react
+  // >=18, where the automatic runtime always exists (FR-018 — found the
+  // first time an emitted spec was actually executed in this repo).
+  esbuild: { jsx: "automatic" },
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: [path.join(configDir, "setup.ts")],
@@ -295,6 +306,10 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 `;
   return `${anchor}
 export default defineConfig({
+  // See the colocate branch: a host tsconfig with jsx "preserve" (the
+  // Next.js default) left esbuild on the classic runtime and every render
+  // threw "React is not defined" (FR-018).
+  esbuild: { jsx: "automatic" },
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: ["./setup.ts"],
@@ -1071,9 +1086,14 @@ function uncertainEscape(info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): str
   // join) is coverage, not an admitted gap — its crash must report as a real
   // failure, or the inferred fixture could be wrong forever without anyone
   // seeing red.
-  const uncertain = (info.dataDeps ?? []).some(
-    (d) => (d.uncertain || d.shape.kind === "unknown") && !inferredDepReturn(d, apiRoutes),
-  );
+  const uncertain =
+    (info.dataDeps ?? []).some(
+      (d) => (d.uncertain || d.shape.kind === "unknown") && !inferredDepReturn(d, apiRoutes),
+    ) ||
+    // A dotted-mock conflict falls back to {} even when every dep's shape is
+    // certain — the crash on the missing member is the tool's admitted gap,
+    // not the application's failure.
+    dottedMockConflicts(info.dataDeps ?? []);
   if (!uncertain) return "";
   // t.skip() takes no argument in this vitest major, so the reason goes to the
   // console — losing it entirely would leave a bare skip with no explanation.
@@ -1687,16 +1707,16 @@ function emitPlaywrightTrigger(label: LabelSource): string | undefined {
 }
 
 function browserPlaywrightConfig(): string {
-  return `import path from "node:path";
-import { defineConfig, devices } from "@playwright/test";
+  return `import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.ts",
-  // Anchored to this file. Playwright's default resolves against the directory
-  // the command was typed in, which put traces outside the flawless/ tree the
-  // generated .gitignore covers.
-  outputDir: path.join(__dirname, "test-results"),
+  // Relative, which playwright resolves against THIS FILE (only the unset
+  // default resolves against the invocation directory). Never the CJS
+  // dirname global: a "type":"module" suite is loaded as ESM, where it
+  // does not exist — the whole config died at import (FR-022).
+  outputDir: "test-results",
   // One worker gives the cleanest timings; more give a fast verification run.
   // Budgets only warn, so parallel measurement never fails a run — but it does
   // make the numbers noisier, so CI (where a recorded number usually matters)

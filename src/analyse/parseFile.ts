@@ -393,12 +393,26 @@ function unitFromInitializer(
   }
   if (
     (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) &&
-    looksLikeComponentBody(inner, renderHooks, name)
+    (looksLikeFC || looksLikeComponentBody(inner, renderHooks, name))
   ) {
+    // The props type, most-specific first: a declared `const X: FC<Props>`
+    // (or cast), then the wrapper's own generics (memo<P> / forwardRef<E, P>),
+    // then whatever the inner function's first parameter says. The wrapper
+    // sources were silently dropped before (FR-011) — an empty shape with
+    // empty unresolved records, invisible in every report.
+    const fromParams = propsFromParams(inner);
+    const declared = fcRef?.typeArguments?.[0] ?? unwrapped.propsTypeArg;
+    const propsTypeRef =
+      declared && ts.isTypeReferenceNode(declared) ? declared : fromParams.propsTypeRef;
+    const propsTypeLiteral =
+      declared && ts.isTypeLiteralNode(declared) ? declared : fromParams.propsTypeLiteral;
     return {
       componentName: name,
       bodyNode: inner,
-      ...propsFromParams(inner),
+      ...fromParams,
+      propsTypeNode: declared ?? fromParams.propsTypeNode,
+      propsTypeRef,
+      propsTypeLiteral,
       exportKind: "none",
       isAsync: (inner.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.AsyncKeyword),
       wrappers: unwrapped.wrappers,
@@ -412,8 +426,17 @@ function unitFromInitializer(
 function unwrapWrappers(expr: ts.Expression): {
   wrappers: Array<"memo" | "forwardRef">;
   inner: ts.Expression | undefined;
+  /**
+   * The props type the wrapper calls declare — memo<P>'s first argument,
+   * forwardRef<E, P>'s second. Innermost wins: it sits closest to the
+   * function whose props it types. Dropping these was FR-011 — a
+   * forwardRef<E, Props> component extracted an empty shape with nothing
+   * even recorded as unresolved.
+   */
+  propsTypeArg: ts.TypeNode | undefined;
 } {
   const wrappers: Array<"memo" | "forwardRef"> = [];
+  let propsTypeArg: ts.TypeNode | undefined;
   let current: ts.Expression = expr;
   for (;;) {
     if (!ts.isCallExpression(current)) break;
@@ -425,11 +448,13 @@ function unwrapWrappers(expr: ts.Expression): {
         : undefined;
     if (calleeName !== "memo" && calleeName !== "forwardRef") break;
     wrappers.push(calleeName);
-    const arg = current.arguments[0];
-    if (!arg) return { wrappers, inner: undefined };
-    current = arg;
+    const arg = calleeName === "memo" ? current.typeArguments?.[0] : current.typeArguments?.[1];
+    if (arg) propsTypeArg = arg;
+    const first = current.arguments[0];
+    if (!first) return { wrappers, inner: undefined, propsTypeArg };
+    current = first;
   }
-  return { wrappers, inner: wrappers.length > 0 ? current : undefined };
+  return { wrappers, inner: wrappers.length > 0 ? current : undefined, propsTypeArg };
 }
 
 function propsFromParams(fn: { parameters: ts.NodeArray<ts.ParameterDeclaration> }): {

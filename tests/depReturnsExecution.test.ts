@@ -61,6 +61,31 @@ function compute(): never {
 }
 `;
 
+const DB_PANEL = `import { db } from "./db";
+
+export default async function DbPanel() {
+  const rows = await db.query.users.findMany();
+  return (
+    <ul>
+      {rows.map((r) => (
+        <li key={r.name}>{r.name}</li>
+      ))}
+    </ul>
+  );
+}
+`;
+
+const DB = `export const db = {
+  query: {
+    users: {
+      findMany: async (): Promise<Array<{ name: string }>> => {
+        throw new Error("the real db must never run under jsdom");
+      },
+    },
+  },
+};
+`;
+
 function suitePins(): string[] {
   const pkg = JSON.parse(suitePackageJson("/x/flawless", false)) as {
     dependencies: Record<string, string>;
@@ -101,6 +126,8 @@ describe("annotation-derived dep fixtures, executed", () => {
     writeFileSync(path.join(app, "src", "data.ts"), DATA);
     writeFileSync(path.join(app, "src", "OpaquePanel.tsx"), OPAQUE_PANEL);
     writeFileSync(path.join(app, "src", "opaque.ts"), OPAQUE_DATA);
+    writeFileSync(path.join(app, "src", "DbPanel.tsx"), DB_PANEL);
+    writeFileSync(path.join(app, "src", "db.ts"), DB);
     const outDir = path.join(app, "flawless");
 
     const result = await runCore({
@@ -180,5 +207,16 @@ describe("annotation-derived dep fixtures, executed", () => {
     expect(control.code).toBe(0);
     expect(control.output).toContain("skipped");
     expect(control.output).toContain("data fixture missing");
+
+    // FR-014: a dotted callee's mock must be a nested object with the vi.fn
+    // at the LEAF. The root-as-function mock made db.query undefined and the
+    // spec threw on CORRECT code with no escape (uncertain was false) — a
+    // hard false failure, which this run would reproduce.
+    const dbSpec = readFileSync(path.join(outDir, "unit", "DbPanel.test.tsx"), "utf8");
+    expect(dbSpec).toContain("db: { query: { users: { findMany: vi.fn(");
+    const dotted = await vitest("unit/DbPanel.test.tsx");
+    if (dotted.code !== 0) console.error(dotted.output);
+    expect(dotted.code).toBe(0);
+    expect(dotted.output).not.toContain("skipped");
   }, 120_000);
 });

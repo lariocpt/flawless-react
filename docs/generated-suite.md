@@ -278,7 +278,10 @@ A short user-facing README for the *generated* suite, separate from this repo's 
 
 ### `unit-browser` → `unit/` (or beside the source with `--colocate`)
 
-- **`vitest.config.mts`** — jsdom environment, the project's tsconfig `paths` as
+- **`vitest.config.mts`** — jsdom environment, `esbuild.jsx: "automatic"`
+  pinned in the config itself (a Next.js host's tsconfig says `jsx:
+  "preserve"`, which leaves vitest's esbuild on the classic runtime and every
+  render dies with "React is not defined"), the project's tsconfig `paths` as
   `resolve.alias`, and `resolve.dedupe: ["react", "react-dom"]`. The dedupe is
   not cosmetic: in a workspace where `react` resolves to the repo root and
   `react-dom` to the package, `react-dom/server` sets its hook dispatcher on a

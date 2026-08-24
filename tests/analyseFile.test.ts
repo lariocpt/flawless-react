@@ -113,6 +113,84 @@ describe("analyseFile roots", () => {
   });
 });
 
+describe("wrapper components keep their declared props type (FR-011)", () => {
+  async function analysed(source: string): Promise<import("../src/types.ts").ComponentInfo> {
+    const dir = tmp();
+    const file = path.join(dir, "Widget.tsx");
+    writeFileSync(file, source);
+    const t = await analyse({ entry: file, depth: 0, includeChildren: false });
+    return t.entry;
+  }
+
+  test("forwardRef<E, Props> feeds Props to extraction", async () => {
+    const info = await analysed(`import { forwardRef } from "react";
+
+interface Props {
+  label: string;
+  count: number;
+}
+
+export const Widget = forwardRef<HTMLDivElement, Props>(function Widget({ label, count }, ref) {
+  return (
+    <div ref={ref}>
+      {label}
+      {count}
+    </div>
+  );
+});
+`);
+    expect(info.wrappers).toEqual(["forwardRef"]);
+    expect(info.propsShape).toEqual({ label: "", count: 0 });
+  });
+
+  test("const X: FC<Props> = memo(...) keeps the declared Props", async () => {
+    const info = await analysed(`import { memo } from "react";
+import type { FC } from "react";
+
+interface Props {
+  title: string;
+}
+
+export const Widget: FC<Props> = memo(({ title }) => <div>{title}</div>);
+`);
+    expect(info.wrappers).toEqual(["memo"]);
+    expect(info.propsShape).toEqual({ title: "" });
+  });
+
+  test("memo<Props> generic argument is the props type", async () => {
+    const info = await analysed(`import { memo } from "react";
+
+interface Props {
+  text: string;
+}
+
+export const Widget = memo<Props>((props) => <span>{props.text}</span>);
+`);
+    expect(info.propsShape).toEqual({ text: "" });
+  });
+
+  test("React.-qualified and nested wrappers resolve through the innermost type args", async () => {
+    const info = await analysed(`import * as React from "react";
+
+interface Props {
+  name: string;
+}
+
+export const Widget = React.memo(
+  React.forwardRef<HTMLButtonElement, Props>(function Widget({ name }, ref) {
+    return (
+      <button type="button" ref={ref}>
+        {name}
+      </button>
+    );
+  }),
+);
+`);
+    expect(info.wrappers).toEqual(["memo", "forwardRef"]);
+    expect(info.propsShape).toEqual({ name: "" });
+  });
+});
+
 describe("analyseFile shared context", () => {
   const LEAF = `export function Leaf({ label }: { label: string }) {
   return <em>{label}</em>;
