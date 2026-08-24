@@ -194,11 +194,23 @@ function fixtureValue(
   if (ts.isLiteralTypeNode(node)) return literalTypeValue(node);
 
   if (ts.isUnionTypeNode(node)) {
-    // Only a union of LITERALS has an authoritative first value; `User | null`
-    // would need a choice the type does not make for us.
-    const first = node.types[0];
-    if (!first || !node.types.every((t) => ts.isLiteralTypeNode(t))) return undefined;
-    return ts.isLiteralTypeNode(first) ? literalTypeValue(first) : undefined;
+    // null/undefined arms are DISCOUNTED, not chosen between: the DB-backed
+    // types real apps annotate with are `X | null` throughout (dogfood round
+    // 5's single biggest inference blocker), and the non-null arm's value is
+    // one of the union's own members — type-legal, unlike a guess between
+    // two real alternatives, which still bails below.
+    const arms = node.types.filter(
+      (t) =>
+        t.kind !== ts.SyntaxKind.UndefinedKeyword &&
+        !(ts.isLiteralTypeNode(t) && t.literal.kind === ts.SyntaxKind.NullKeyword),
+    );
+    const first = arms[0];
+    if (!first) return undefined;
+    if (arms.every((t) => ts.isLiteralTypeNode(t))) {
+      return ts.isLiteralTypeNode(first) ? literalTypeValue(first) : undefined;
+    }
+    if (arms.length === 1) return fixtureValue(first, seed, ctx);
+    return undefined;
   }
 
   if (ts.isTypeLiteralNode(node)) return fixtureMembers(node.members, ctx);
