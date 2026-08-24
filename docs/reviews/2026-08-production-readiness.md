@@ -192,3 +192,14 @@ rescore above.
 
 **Weighted total: 56/70 (80%), up from 55/70.** Verdict unchanged: **A− as
 an internal power tool; distribution is the only 1.0 gate.**
+
+
+## Rescore — 2026-08-24 (round 7: B-9 + the r7 review)
+
+| # | Dimension | Was | Now | What moved it |
+|---|---|---|---|---|
+| 3 | Analysis soundness ×2 | 4 | **5** | B-8 and B-9 both shipped adversarially hardened (private-decl shadowing, star-vs-explicit precedence, depth-not-breadth bounds, export enforcement at the root of import-reached lookups), and the frontier is now MEASURED rather than asserted: dogfood r7 attributes every remaining marker to a named cause — `getDb` (unannotatable), dotted callees (FR-014, deferred), `cache()` wrappers (B-10). Nine new tests executed green on a real app on first run. |
+| 4 | Honesty of findings ×2 | 5 | **5** | Held at 5, earned again: the round's own adversarial sweep found four silent-pass paths (unknown task ids, unresolvable `--changed` ref, unparseable files reported clean, a vacuous RSC assertion) and all four were fixed inside the round, each with a control proving the new guard can fail. |
+
+**Weighted total: 57/70 (81%), up from 56/70.** Verdict unchanged: **A− as an
+internal power tool; distribution is the only 1.0 gate.**

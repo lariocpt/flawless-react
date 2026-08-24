@@ -19,6 +19,11 @@ three clusters are 89% of all remaining hand-work.
 | ~~B-6~~ (done, wave 1) | **"Hand-work remaining" table in REPORT.md**: count TODO(flawless) markers per kind at write time so regenerations show the debt burning down | REPORT accounts for all 183 components but says nothing about the 181 TODOs the same run planted | S |
 | ~~B-7~~ (done, wave 1) | Cheap **timing assertion** over tests/fixtures pinning the "half a second" analysis claim as the analyser grows | Claim now carries a dated measurement (2026-08-23, 99 files → 463 ms) but nothing re-checks it | S |
 
+| B-12 | **Emit an e2e setup that fails until filled**: the generated `global-setup.ts` is a hand-fill stub, so route specs assert `status < 500` against a login redirect (which answers 200) and the suite is green before it is real | Round-7 sweep + the `flawless-e2e-load` skill's anti-vacuous probes, which exist precisely because of this shape | M |
+| B-13 | **Keep diagnostics under `--ci`**: `warn()` writes to stderr but is gated on the same flag as `log()`, so the mode built for machines loses "your `--api` flag was ignored" and "skipping unparseable file" | Round-7 sweep, mechanism read at core.ts:170 + cli.ts's `log: !args.json` | S |
+| B-14 | **`--run-tests` with only non-runnable tasks says nothing**: no message, no marker in the `--ci` blob — the caller cannot tell "suites passed" from "no suite ran" | Round-7 sweep; same ambiguity class FR-017 fixed for the affected-run gate | S |
+| B-15 | **Absorb repeated work into the caches**: `parseFile` re-runs component detection per call; `findExportedDecl` re-walks the same barrels per member per component | Round-7 sweep. Measured impact is small today (the B-7 timing pin still holds) — recorded as an opportunity, not a finding | M |
+
 Perf micro-items measured and deliberately NOT taken (recorded so nobody
 re-litigates them): parallelising the analyse loop (~2.5% projected saving —
 sequential is fine); template building (no quadratic behaviour found); process
