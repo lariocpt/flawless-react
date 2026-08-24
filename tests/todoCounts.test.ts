@@ -241,6 +241,35 @@ describe("skipped colocated specs contribute no tallies", () => {
     expect(again.handWork?.map((t) => t.kind)).toEqual(["uninferred-return-shape"]);
     expect(again.handWork?.[0]?.count).toBe(1);
   });
+
+  test("--force over a hand-edited spec keeps it, so its markers must not count", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-kept-edited-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    const first = await runColocated(dir, true);
+    expect(first.handWork?.[0]?.count).toBe(1);
+    const spec = path.join(dir, "src", "Page.flawless.test.tsx");
+    // The user hardened the file; --force now KEEPS it (stamp mismatch), and
+    // the discarded render's marker would be debt against work they own.
+    await Bun.write(spec, `${await Bun.file(spec).text()}// hand-hardened\n`);
+    const rerun = await runColocated(dir, true);
+    expect(rerun.ok).toBe(true);
+    expect(rerun.handWork).toEqual([]);
+    expect(rerun.summary).toContain("hand-edited");
+  });
+
+  test("--force over a pre-stamp spec keeps it, so its markers must not count", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-kept-legacy-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await runColocated(dir, true);
+    const spec = path.join(dir, "src", "Page.flawless.test.tsx");
+    const text = await Bun.file(spec).text();
+    // Strip the stamp line: a spec generated before stamping existed.
+    await Bun.write(spec, text.split("\n").slice(1).join("\n"));
+    const rerun = await runColocated(dir, true);
+    expect(rerun.ok).toBe(true);
+    expect(rerun.handWork).toEqual([]);
+    expect(rerun.summary).toContain("pre-stamp");
+  });
 });
 
 describe("tallies match the written text", () => {
