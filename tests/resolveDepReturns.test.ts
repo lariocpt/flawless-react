@@ -424,6 +424,34 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
     expect(fixtureOf("interface O { name?: string }", "O")).toEqual({ name: "flawless-name" });
   });
 
+  test("null/undefined union arms are discounted — the value is IN the declared union", () => {
+    // The dominant real-app annotation shape (dogfood round 5): DB-backed
+    // types carry X | null members everywhere, and Promise<T | null>
+    // returns. Choosing the non-null arm is not a guess: the value is one
+    // of the union's own members, unlike the restyle-forbidden class.
+    expect(fixtureOf("interface J { scheduled_for: number | null }", "J")).toEqual({
+      scheduled_for: 1,
+    });
+    expect(fixtureOf("interface S { note: string | null }", "S")).toEqual({
+      note: "flawless-note",
+    });
+    expect(fixtureOf("interface U { name: string }", "U | null")).toEqual({
+      name: "flawless-name",
+    });
+    expect(fixtureOf('interface O { tag: "a" | "b" | null }', "O")).toEqual({ tag: "a" });
+    expect(fixtureOf("interface Q { n: number | undefined }", "Q")).toEqual({ n: 1 });
+  });
+
+  test("a union of ONLY null/undefined arms bails — nothing remains to choose", () => {
+    expect(fixtureOf("interface Z { gone: null | undefined }", "Z")).toBeUndefined();
+  });
+
+  test("a union with TWO non-null arms still bails — that would be a choice", () => {
+    expect(
+      fixtureOf("interface A1 { a: string }\ninterface B1 { b: string }", "A1 | B1"),
+    ).toBeUndefined();
+  });
+
   test("an interface with heritage bails (v1) — silently partial would be worse", () => {
     expect(
       fixtureOf("interface B1 { b: string }\ninterface A1 extends B1 { a: string }", "A1"),
