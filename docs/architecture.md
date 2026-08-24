@@ -88,6 +88,7 @@ Walks the resolved `InterfaceDeclaration` or `TypeAliasDeclaration`, or an inlin
 | `ComponentProps<"div">` and friends | curated host-element table | — |
 | `ComponentProps<typeof LocalX>` | resolved through X, one import hop | inherited |
 | `VariantProps<typeof xVariants>` | cva `defaultVariants`, else first option | every option per key |
+| `z.infer<typeof Schema>` alias | schema read syntactically: `z.object` → shape, `z.enum` → first literal, declared `.default`s honoured | enum fields → variant rows |
 | anything else | — | prop name → `unresolvedProps`, type name → `unresolvedTypes` |
 
 An intersection operand that resolves to nothing contributes only its
@@ -315,7 +316,7 @@ The split lets us:
 ## What's intentionally absent
 
 - **No runtime.** The CLI never imports React or Playwright. It does not boot a server (the e2e task *emits* a config that boots the target's dev server; it does not run one itself).
-- **No type checker.** The analyser runs `ts.createSourceFile`, not a full TypeScript program. Imported prop types are chased two hops at most; unions of non-literals and generics other than the ones tabled above land in `unresolvedProps`, and the type names that defeated it land in `unresolvedTypes`.
+- **No type checker.** The analyser runs `ts.createSourceFile`, not a full TypeScript program. Imported prop types are chased two hops at most; unions of non-literals and generics other than the ones tabled above land in `unresolvedProps`, and the type names that defeated it land in `unresolvedTypes`. Zod schemas are read as **syntax**, never executed — `z.infer` resolves for the object/enum/primitive/array/coerce subset (type-invariant refinements ignored), and `.transform`, unions, records and dates bail rather than guess.
 - **No code generation framework.** Templates are string concatenations. Easy to read, easy to diff against generated output, easy to grep.
 
 The consequence is worth stating plainly: every rule that cannot be decided

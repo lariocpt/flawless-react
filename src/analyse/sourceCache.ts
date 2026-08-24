@@ -103,6 +103,12 @@ export function findExportedDecl<T>(
   cache: SourceFileCache,
   resolver: { resolve(spec: string, importer: string): string | undefined } | undefined,
   find: (sf: ts.SourceFile, name: string, viaReexport: boolean) => T | undefined,
+  // For lookups reached through an IMPORT binding, the root file must vouch
+  // only for its exports too: TS never binds a private declaration to an
+  // import, so a private same-named decl in the directly-resolved module
+  // shadowing a star re-export would produce a type-illegal result. Local
+  // export clauses stay permissive — the clause itself vouches.
+  requireExportAtRoot = false,
 ): RelocatedExport<T> | undefined {
   const visited = new Set<string>();
   const walk = (f: string, wanted: string, depth: number): RelocatedExport<T> | undefined => {
@@ -112,7 +118,7 @@ export function findExportedDecl<T>(
     visited.add(key);
     const sf = cache.get(f);
     if (!sf) return undefined;
-    const hit = find(sf, wanted, depth > 0);
+    const hit = find(sf, wanted, depth > 0 || requireExportAtRoot);
     if (hit !== undefined) return { sf, file: f, decl: hit };
 
     const localClauses: ts.NamedExports[] = [];

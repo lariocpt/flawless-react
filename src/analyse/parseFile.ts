@@ -104,7 +104,7 @@ function hasUseClientDirective(sf: ts.SourceFile): boolean {
   return false;
 }
 
-function collectImports(sf: ts.SourceFile): Map<string, ImportBinding> {
+export function collectImports(sf: ts.SourceFile): Map<string, ImportBinding> {
   const out = new Map<string, ImportBinding>();
   for (const stmt of sf.statements) {
     if (!ts.isImportDeclaration(stmt)) continue;
