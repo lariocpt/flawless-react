@@ -80,8 +80,11 @@ pipeline {
                         set -eu
                         cd /w
                         apt-get update >/dev/null
-                        apt-get install -y --no-install-recommends jq zsh nodejs curl ca-certificates >/dev/null
-                        for c in bash zsh jq node curl; do
+                        # git: the --changed tests shell out to `git rev-parse`; the image
+                        # ships without it and one test failed on ENOENT the first time the
+                        # Test stage ever really ran.
+                        apt-get install -y --no-install-recommends jq zsh nodejs curl ca-certificates git >/dev/null
+                        for c in bash zsh jq node curl git; do
                             command -v "$c" >/dev/null || { echo "$c missing after apt install"; exit 1; }
                         done
                         # Fails in a second here rather than 400 tests later, and says why.
