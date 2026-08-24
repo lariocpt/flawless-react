@@ -336,7 +336,12 @@ A short user-facing README for the *generated* suite, separate from this repo's 
     resolved from its non-nullish arms: `Promise<Case[] | null>` yields the
     `Case[]` fixture, because `null`/`undefined` arms are values the type
     already admits, not holes. A union of two *shapes* still bails — the
-    analyser will not pick a side.
+    analyser will not pick a side. The declaration may live in another
+    **workspace package** (`@scope/shared`): the specifier resolves through
+    the repo's workspace map into that package's *source* tree, and barrel
+    re-exports (`export * from`, `export { A as B } from`) are chased to the
+    declaring file. Third-party packages still never resolve — `node_modules`
+    is not walked.
   - `/* inferred from the OpenAPI example for GET /api/… */` — the dep is an
     unannotated wrapper around exactly one `fetch()`, joined to the API spec's
     response example at emit time.
