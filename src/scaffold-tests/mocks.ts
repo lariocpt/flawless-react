@@ -17,7 +17,14 @@
  *             the interaction tests click. Anything not on the list is left real.
  */
 import path from "node:path";
-import type { ComponentInfo, ModuleImportInfo, TodoRecorder } from "../types.ts";
+import type {
+  ComponentInfo,
+  DataDepInfo,
+  ModuleImportInfo,
+  NextjsApiRoute,
+  PropValue,
+  TodoRecorder,
+} from "../types.ts";
 import { mockLiteral } from "./mockValues.ts";
 
 export type MockMode = "client" | "rsc";
@@ -108,11 +115,58 @@ function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key:
  * does not exist, so the mock silently does nothing and the real module loads.
  * Colocated specs happen to be immune; specs under flawless/unit/ are not.
  */
+/**
+ * OpenAPI response example for a fetch shape, when the route table has one.
+ * Shared by the mock emitter (Path B of the dep-return inference) and the
+ * fetch-spec fixtures in templates.ts — one join, one normalisation.
+ */
+export function apiRouteFixture(
+  urlTemplate: string,
+  method: string,
+  apiRoutes: NextjsApiRoute[] | undefined,
+): unknown {
+  if (!apiRoutes) return undefined;
+  const wanted = normalizeApiPath(urlTemplate);
+  for (const r of apiRoutes) {
+    if (normalizeApiPath(r.path) !== wanted) continue;
+    const body = r.responseBodies?.[method.toUpperCase()] ?? r.responseBodies?.GET;
+    if (body !== undefined) return body;
+  }
+  return undefined;
+}
+
+/** Compare /api/x/{id}/y, /api/x/:id/y and /api/x/:buildingId/y as the same shape. */
+export function normalizeApiPath(p: string): string {
+  return p
+    .replace(/\{[^}]+\}/g, ":_")
+    .replace(/:[A-Za-z0-9_]+/g, ":_")
+    .replace(/\/+$/, "");
+}
+
+/**
+ * The fixture an uncertain/unknown dep still gets: the annotation-derived
+ * value the analyser stored, or the OpenAPI example joined here — emit time
+ * is where the route table lives. Undefined means the dep really is a gap:
+ * the {} stub, the TODO and the RSC skip escape all key off that.
+ */
+export function inferredDepReturn(
+  dep: DataDepInfo,
+  apiRoutes?: NextjsApiRoute[],
+): { value: PropValue; provenance: "annotation" | "openapi" } | undefined {
+  if (dep.inferredReturn) return dep.inferredReturn;
+  if (dep.wrapsFetch) {
+    const body = apiRouteFixture(dep.wrapsFetch.path, dep.wrapsFetch.method, apiRoutes);
+    if (body !== undefined) return { provenance: "openapi", value: body as PropValue };
+  }
+  return undefined;
+}
+
 export function emitModuleMocks(
   info: ComponentInfo,
   mode: MockMode,
   specDir?: string,
   todo?: TodoRecorder,
+  apiRoutes?: NextjsApiRoute[],
 ): EmittedMocks {
   const statements: string[] = [];
   const mocked: string[] = [];
@@ -174,7 +228,7 @@ export function emitModuleMocks(
     const group = dataGroups.get(mockSpecifier(mi, specDir));
     if (!group) continue;
     if (group.bindings.length > 0 && group.bindings.every((b) => b.pure)) continue;
-    push(mi, (spec) => dataModuleMock(group, info, spec, todo));
+    push(mi, (spec) => dataModuleMock(group, info, spec, todo, apiRoutes));
   }
 
   return { statements, mocked };
@@ -319,6 +373,7 @@ function dataModuleMock(
   info: ComponentInfo,
   spec: string,
   todo?: TodoRecorder,
+  apiRoutes?: NextjsApiRoute[],
 ): string {
   if (group.bindings.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
 
@@ -342,6 +397,20 @@ function dataModuleMock(
       return `${key}: vi.fn(async () => ({}))`;
     }
     if (dep.uncertain || dep.shape.kind === "unknown") {
+      // Usage said nothing, but the dep's own declaration may have: the
+      // annotation-derived value, or the OpenAPI example for the fetch the
+      // wrapper performs. Only a dep with neither is an admitted gap.
+      const inf = inferredDepReturn(dep, apiRoutes);
+      if (inf) {
+        const provenance =
+          inf.provenance === "annotation"
+            ? `/* inferred from ${dep.callee}'s return annotation */`
+            : `/* inferred from the OpenAPI example for ${dep.wrapsFetch?.method} ${dep.wrapsFetch?.path} */`;
+        const lit = JSON.stringify(inf.value);
+        return dep.awaited
+          ? `${key}: vi.fn(async () => (${lit})) ${provenance}`
+          : `${key}: vi.fn(() => (${lit})) ${provenance}`;
+      }
       uncertain = true;
       return dep.awaited ? `${key}: vi.fn(async () => ({}))` : `${key}: vi.fn(() => ({}))`;
     }

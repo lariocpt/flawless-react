@@ -80,10 +80,10 @@ function isExitCall(expr: ts.Expression, exits: ExitBindings): boolean {
   );
 }
 
-type ActionFn = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+export type ActionFn = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
 /** Exported name → its function node, local declarations resolved in-file. */
-function exportedFunctions(sf: ts.SourceFile): Array<[string, ActionFn]> {
+export function exportedFunctions(sf: ts.SourceFile): Array<[string, ActionFn]> {
   // Every top-level function-ish declaration, exported or not: an export
   // clause (`export { doSave as save }`) points at a local one.
   const locals = new Map<string, ActionFn>();

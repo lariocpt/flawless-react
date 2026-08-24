@@ -17,6 +17,7 @@ import { extractStaticText } from "./extractStaticText.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
+import { resolveDepReturns } from "./resolveDepReturns.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { resolveTagRootTags } from "./resolveTagRootTags.ts";
@@ -196,9 +197,17 @@ async function analyseOne(
     localModes,
   );
   // Data deps and guards only mean something for a server component that
-  // awaits its data; running them elsewhere would be noise.
+  // awaits its data; running them elsewhere would be noise. Deps whose usage
+  // told us nothing get a second chance from their own declaration
+  // (Promise<T> annotation, or a single-fetch body) — see resolveDepReturns.
   const dataDeps = unit.isAsync
-    ? extractDataDeps(unit.bodyNode, parsed.sourceFile, parsed.imports)
+    ? resolveDepReturns(
+        extractDataDeps(unit.bodyNode, parsed.sourceFile, parsed.imports),
+        parsed.imports,
+        absPath,
+        resolver,
+        cache,
+      )
     : [];
   const guards = extractGuards(
     unit.bodyNode,

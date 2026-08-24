@@ -127,6 +127,93 @@ export function extractProps(
   return finalise(partial);
 }
 
+/**
+ * B-1 Path A: a declared type → ONE concrete fixture value, or undefined.
+ *
+ * A narrow wrapper over the same resolveTypeNode machinery the props
+ * extractor uses, anchored at the DECLARING file (`sf`/`file`) so an
+ * interface imported into the dep's own module still resolves. Narrow by
+ * design: any unresolved member or type bails the whole value — a fixture
+ * with holes crashes the component on exactly the field the hole hides,
+ * and a wrong-but-plausible value is worse than the honest {} stub.
+ *
+ * Scalar leaves are restyled to the house mock values (truthy,
+ * recognisable): "" → "flawless-<member>", 0 → 1, false → true. A `T[]`
+ * resolves to a ONE-element array — an empty one would let a spec pass
+ * without ever rendering the row markup it claims to check.
+ */
+export function resolveTypeNodeValue(
+  node: ts.TypeNode,
+  sf: ts.SourceFile,
+  file: string,
+  resolver: ModuleResolver | undefined,
+  cache: SourceFileCache | undefined,
+): PropValue | undefined {
+  const element = arrayElementType(node);
+  if (element) {
+    const el = resolveTypeNodeValue(element, sf, file, resolver, cache);
+    return el === undefined ? undefined : [el];
+  }
+  switch (node.kind) {
+    case ts.SyntaxKind.StringKeyword:
+      return "flawless-value";
+    case ts.SyntaxKind.NumberKeyword:
+      return 1;
+    case ts.SyntaxKind.BooleanKeyword:
+      return true;
+    case ts.SyntaxKind.NullKeyword:
+      return null;
+  }
+  if (!ts.isTypeLiteralNode(node) && !ts.isTypeReferenceNode(node)) return undefined;
+  // A generic instantiation would need type-parameter substitution the
+  // resolver does not do — its members would come back typed T, which is
+  // guessing territory.
+  if (ts.isTypeReferenceNode(node) && (node.typeArguments?.length ?? 0) > 0) return undefined;
+
+  const ctx: PropsResolveCtx = {
+    sf,
+    file,
+    imports: collectImportsSync(sf),
+    resolver,
+    cache,
+    hops: MAX_HOPS,
+    visited: new Set(),
+  };
+  const p = resolveTypeNode(node, ctx);
+  if (p.unresolvedProps.length > 0 || p.unresolvedTypes.length > 0) return undefined;
+  const keys = Object.keys(p.shape);
+  if (keys.length === 0) return undefined;
+  const out: { [k: string]: PropValue } = {};
+  for (const [k, v] of Object.entries(p.shape)) out[k] = restyleFixture(v, k);
+  return out;
+}
+
+function arrayElementType(node: ts.TypeNode): ts.TypeNode | undefined {
+  if (ts.isArrayTypeNode(node)) return node.elementType;
+  if (
+    ts.isTypeReferenceNode(node) &&
+    ts.isIdentifier(node.typeName) &&
+    (node.typeName.text === "Array" || node.typeName.text === "ReadonlyArray")
+  ) {
+    return node.typeArguments?.[0];
+  }
+  return undefined;
+}
+
+/** The synthesised prop defaults ("", 0, false) restyled as mock values. */
+function restyleFixture(value: PropValue, seed: string): PropValue {
+  if (value === "") return `flawless-${seed}`;
+  if (value === 0) return 1;
+  if (value === false) return true;
+  if (Array.isArray(value)) return value.map((v) => restyleFixture(v, seed));
+  if (value !== null && typeof value === "object") {
+    const out: { [k: string]: PropValue } = {};
+    for (const [k, v] of Object.entries(value)) out[k] = restyleFixture(v, k);
+    return out;
+  }
+  return value;
+}
+
 function finalise(p: PartialProps): ExtractedProps {
   // `children` is a boolean capability, never a prop value: propsShape is
   // JSON-stringified into the spec's DEFAULTS and spread, so a `children`
