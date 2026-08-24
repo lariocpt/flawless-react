@@ -153,3 +153,28 @@ story (editor LLMs), or dead (Octomind, Qodo Cover). At 66% weighted
 production-readiness it is production-useful for its own team today and two
 gates (public distribution, an upgrade story for adopted suites) away from
 being honestly recommendable to strangers.**
+
+
+## Rescore — 2026-08-24, after waves 0–5 (PRs #6–#18, dogfood round 5)
+
+The table above is the pre-wave baseline and stays as written. Rescored
+against the same anchors after the implementation waves and dogfood round 5:
+
+| # | Dimension | Was | Now | What moved it |
+|---|---|---|---|---|
+| 1 | Install & runtime story | 2 | **2** | Unchanged by design — public distribution is gate 1, explicitly deferred. CI now genuinely publishes (first green build in the job's history), but only to the LAN planes. |
+| 2 | Emitted-artefact correctness ×2 | 3 | **4** | FR-012/013/014 fixed; executing emitted suites for the first time found and fixed two shipped P1s (jsx "preserve" killing every spec in stock Next hosts; `__dirname` under the ESM loader). Round 5: all five layers green against a fresh seed with zero adjustments. |
+| 3 | Analysis soundness ×2 | 3 | **4** | FR-011 wrapper props fixed; waves 3's inference (server-action returns, dep annotations/OpenAPI, compound families) landed with never-guess bail policies; dogfood TODOs 178→118 with the remainder root-caused to one wall (B-8 workspace types), not scattered gaps. |
+| 4 | Honesty of findings ×2 | 4 | **5** | The held-back reason (FR-011 silent empties) is gone. Since then: provenance stamps, enriched-dep crashes report red instead of hiding behind the skip escape, mock fallbacks and escapes share one predicate, kept scripts recorded durably in REPORT.md. |
+| 5 | Docs accuracy | 4 | **4** | Docs/website/skills re-synced from evidence each wave; still no declared support matrix. |
+| 6 | Error handling & DX | 3 | **4** | Both cited blockers fixed: refresh mode replaces the refusal (FR-028) and `--changed` full-selection runs affected tests (FR-017); migration warnings name their exact escapes and were followed successfully in round 5. |
+| 7 | Test suite & CI rigor | 3 | **4** | All four cited gaps closed (FR-018/021/022/023): real vitest executes an emitted suite, a real chromium runs a browser spec, real crust runs the baseline gate, biome ci gates the tree — 744 tests. Held from 5 by FR-020 (the --ci contract still untested) and a single-LAN CI. |
+| 8 | Performance at scale | 5 | **5** | Unchanged. |
+| 9 | Security of emitted code | 4 | **4** | FR-012 title injection fixed; still no formal threat model. |
+| 10 | Versioning & compat | 2 | **3** | The cited upgrade-story failures are all fixed and were exercised live in round 5: refresh mode, the regenerated host registry (FR-016 migration performed on a real pre-split suite), hash-stamped colocated specs (a 174-spec `--force` clobbered nothing), and script-merge that keeps user commands (FR-034). CI publishes versioned artifacts per build. Still no public semver discipline or support matrix. |
+| 11 | Portability | 3 | **3** | Unchanged — tool CI/distribution still single-LAN. |
+
+**Weighted total: 55/70 (79%), up from 46/70.** Verdict: **A− as an
+internal power tool; distribution is now the only 1.0 gate.** Gate 2
+(the upgrade story) is closed and dogfood-verified; every dimension the
+waves touched moved on evidence that is executed, not read.
