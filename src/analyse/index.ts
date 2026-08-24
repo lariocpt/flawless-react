@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AnalyseOptions, ComponentInfo, ComponentTree, RenderMode } from "../types.ts";
+import { deriveCompoundFamily } from "./compoundFamily.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
 import { extractDataDeps } from "./extractDataDeps.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
@@ -196,6 +197,13 @@ async function analyseOne(
     renderEnv,
     localModes,
   );
+  // A part that cannot mount alone may still name its own wrapper: the family
+  // its file exports. Derived only for compound parts — everything else has
+  // nothing to wrap.
+  const compoundFamily =
+    render.mode === "compound-part"
+      ? deriveCompoundFamily(unit, parsed.components, parsed.imports)
+      : undefined;
   // Data deps and guards only mean something for a server component that
   // awaits its data; running them elsewhere would be noise. Deps whose usage
   // told us nothing get a second chance from their own declaration
@@ -274,6 +282,7 @@ async function analyseOne(
     classNameFlow: flows.className,
     renderMode: render.mode,
     ...(render.note ? { renderNotes: [render.note] } : {}),
+    ...(compoundFamily ? { compoundFamily } : {}),
     ...(logsErrors ? { logsErrors } : {}),
     moduleImports,
   };

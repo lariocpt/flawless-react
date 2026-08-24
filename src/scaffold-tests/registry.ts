@@ -61,6 +61,41 @@ export interface HostEligibility {
 }
 
 /**
+ * Compound families whose Root opens on a prop — the packages where
+ * `<Root open>` is a real, documented state and the wrap is mechanical.
+ * Value-driven families (accordion, tabs, radio-group, toggle-group) are
+ * deliberately absent: their parts mount against a `value` the wrapper
+ * would have to invent, and a wrong wrapper is worse than an honest skip.
+ */
+const OPEN_ROOT_FAMILIES = new Set([
+  "dialog",
+  "alert-dialog",
+  "popover",
+  "dropdown-menu",
+  "select",
+  "tooltip",
+  "hover-card",
+  "context-menu",
+  "menubar",
+  "collapsible",
+]);
+
+/**
+ * Whether a compound part's family can actually wrap it: a Root sibling
+ * exists, the primitive is an open-state family, and non-content parts have
+ * a Content sibling to mount inside. One predicate, consulted by the unit
+ * spec emitter, the host registry and hostEligibility — three call sites
+ * disagreeing on wrappability would strand a part between templates.
+ */
+export function compoundWrappable(info: ComponentInfo): boolean {
+  const family = info.compoundFamily;
+  if (!family) return false;
+  const base = (family.specifier.split("/").pop() ?? "").replace(/^react-/, "");
+  if (!OPEN_ROOT_FAMILIES.has(base)) return false;
+  return family.part === "content" || family.part === "trigger" || family.content !== undefined;
+}
+
+/**
  * Whether a component can be mounted in the browser profiling host.
  *
  * The host is one bundle with one #root: a component that cannot mount there
@@ -80,6 +115,9 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
         reason: "async server component — it awaits data and cannot mount in a browser",
       };
     case "compound-part":
+      // A part whose own file exports an open-state family mounts through
+      // the registry's composed wrapper (hostRegistry's COMPOUND_WRAP).
+      if (compoundWrappable(info)) break;
       return {
         eligible: false,
         reason: info.renderNotes?.[0] ?? "renders a compound part that needs its Root",

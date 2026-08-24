@@ -18,6 +18,7 @@ import type {
 import { apiRouteFixture, emitModuleMocks, inferredDepReturn } from "./mocks.ts";
 import {
   allocateSpecNames,
+  compoundWrappable,
   type FlatComponent,
   flattenTrees,
   synthesiseDefaults,
@@ -906,6 +907,10 @@ test("${name} returns a document root${slotBlock.title}", async () => {
 `;
   }
 
+  if (compoundWrappable(info) && info.compoundFamily) {
+    return compoundPartSpec(info, name, note, importPath, mocks, mockBlock);
+  }
+
   todo?.("compound-root-wrap");
   return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
 ${mockBlock}${emitComponentImport(info, importPath)}
@@ -916,6 +921,64 @@ ${mockBlock}${emitComponentImport(info, importPath)}
 // open state to assert its content.
 test("${name} is exported as a component", () => {
   expect(typeof ${name}).toMatch(/function|object/);
+});
+`;
+}
+
+/**
+ * A compound part whose OWN file exports its family mounts the way call
+ * sites do: the Trigger inside a closed Root (the state where a trigger is
+ * visible), everything else inside <Root open> — with the Content sibling
+ * in between for parts that live inside the popup. Portal content lands
+ * outside the render container, so assertions read baseElement.
+ */
+function compoundPartSpec(
+  info: ComponentInfo,
+  name: string,
+  note: string,
+  importPath: string,
+  mocks: string[],
+  mockBlock: string,
+): string {
+  const family = info.compoundFamily as NonNullable<ComponentInfo["compoundFamily"]>;
+  const wrapNames = [
+    family.root,
+    ...(family.part === "other" && family.content ? [family.content] : []),
+  ].filter((n) => n !== name);
+  const wrapImport =
+    wrapNames.length > 0
+      ? `import { ${wrapNames.join(", ")} } from "${stripTsExt(importPath)}";\n`
+      : "";
+
+  const propsSpread = `{...(DEFAULTS as React.ComponentProps<typeof ${name}>)}`;
+  const child = info.acceptsChildren ? `<span>flawless-slot</span>` : undefined;
+  const partJsx = child
+    ? `<${name} ${propsSpread}>${child}</${name}>`
+    : `<${name} ${propsSpread} />`;
+  const open = family.part === "trigger" ? "" : " open";
+  const wrapped =
+    family.part === "other" && family.content
+      ? `<${family.root}${open}><${family.content}>${partJsx}</${family.content}></${family.root}>`
+      : `<${family.root}${open}>${partJsx}</${family.root}>`;
+
+  const body = child
+    ? `  const { baseElement } = render(${wrapped});
+  expect(baseElement.textContent).toContain("flawless-slot");`
+    : `  expect(() => render(${wrapped})).not.toThrow();`;
+
+  return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
+import { render } from "@testing-library/react";
+import type * as React from "react";
+${mockBlock}${emitComponentImport(info, importPath)}
+${wrapImport}
+// ${name} ${note}
+// Its own file exports the family, so the spec mounts the part the way call
+// sites do instead of skipping. Portal content lands outside the container —
+// assertions read baseElement.
+const DEFAULTS: Record<string, unknown> = ${JSON.stringify(synthesiseDefaults(info))};
+
+test("${name} mounts inside its family wrapper", () => {
+${body}
 });
 `;
 }

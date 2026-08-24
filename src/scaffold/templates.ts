@@ -3,6 +3,7 @@ import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import {
   allocateSpecNames,
+  compoundWrappable,
   flattenTrees,
   functionProps,
   hostEligibility,
@@ -619,13 +620,59 @@ function hostRegistry(flat: FlatComponent[]): string {
   const sorted = [...flat].sort((a, b) =>
     a.specName < b.specName ? -1 : a.specName > b.specName ? 1 : 0,
   );
-  const imports = sorted.map(hostComponentImport).join(NL);
+  // A wrappable compound part mounts through a composed entry: the family
+  // Root (open, unless the part is the Trigger — a trigger's visible state
+  // is a CLOSED root) and the Content sibling around the part itself. The
+  // composition lives HERE, regenerated-side, so a kept main.tsx benefits
+  // from a plain refresh — its ALL spread sees a Component like any other.
+  // Wrapper imports are aliased per entry: the Root is often a registry
+  // component itself, already imported under its own name from this module.
+  const wrappedOf = (c: FlatComponent): NonNullable<ComponentInfo["compoundFamily"]> | undefined =>
+    compoundWrappable(c.info) ? c.info.compoundFamily : undefined;
+  const wrapImports = sorted
+    .map((c) => {
+      const fam = wrappedOf(c);
+      if (!fam) return "";
+      const content =
+        fam.part === "other" && fam.content ? `, ${fam.content} as ${c.specName}__Content` : "";
+      return `import { ${fam.root} as ${c.specName}__Root${content} } from "${c.importPath}";`;
+    })
+    .filter((l) => l !== "")
+    .join(NL);
+  const anyWrapped = wrapImports !== "";
+  const imports = [
+    ...(anyWrapped ? ['import { createElement } from "react";'] : []),
+    sorted.map(hostComponentImport).join(NL),
+    ...(anyWrapped ? [wrapImports] : []),
+  ].join(NL);
 
   // Cast per entry: a component declaring required props is not assignable to
   // the host's loose (props: Record<string, unknown>) => unknown signature, and
   // supplying those props is exactly what the profile spec does at runtime.
   const registry = sorted
-    .map((c) => `  ${JSON.stringify(c.specName)}: ${c.specName} as unknown as Component,`)
+    .map((c) => {
+      const fam = wrappedOf(c);
+      if (!fam) return `  ${JSON.stringify(c.specName)}: ${c.specName} as unknown as Component,`;
+      const inner = `createElement(${c.specName} as never, props as never)`;
+      const chained =
+        fam.part === "other" && fam.content
+          ? `createElement(${c.specName}__Content as never, null, ${inner})`
+          : inner;
+      const rootProps = fam.part === "trigger" ? "null" : "{ open: true } as never";
+      return `  ${JSON.stringify(c.specName)}: ((props: Record<string, unknown>) => createElement(${c.specName}__Root as never, ${rootProps}, ${chained})) as Component,`;
+    })
+    .join(NL);
+
+  const compoundWrap = sorted
+    .map((c) => ({ name: c.specName, fam: wrappedOf(c) }))
+    .filter((e) => e.fam !== undefined)
+    .map(
+      (e) =>
+        `  ${JSON.stringify(e.name)}: ${JSON.stringify({
+          root: e.fam?.root,
+          ...(e.fam?.part === "other" && e.fam.content ? { content: e.fam.content } : {}),
+        })},`,
+    )
     .join(NL);
 
   // Function props cannot cross page.evaluate's structured clone, so a spec's
@@ -668,6 +715,15 @@ ${fnProps}
 /** Ancestors HTML requires around a component's root tag, outermost first. */
 export const WRAP_IN: Record<string, string[]> = {
 ${wrapIn}
+};
+
+/**
+ * Compound parts mounted through a composed family wrapper (the REGISTRY
+ * entry above already applies it) — recorded here so a reader can see WHICH
+ * wrapper a part profile ran inside.
+ */
+export const COMPOUND_WRAP: Record<string, { root: string; content?: string }> = {
+${compoundWrap}
 };
 `;
 }

@@ -36,6 +36,7 @@ const FIXTURES = [
   "NoSubmitForm.tsx", // form with no submit control
   "StatefulPanel.tsx",
   "Card.tsx",
+  "CompoundHeader.tsx", // compound family -> wrapped unit spec + composed registry entry
 ];
 
 const NEXTAPP = path.resolve(__dirname, "fixtures", "nextapp");

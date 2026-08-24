@@ -342,7 +342,18 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   the component's own reads are better testimony than a type annotation.
 - Components that cannot mount standalone — a `<Dialog.Content>` outside its
   Root, a layout returning `<html>` — get a spec that asserts what IS true and
-  states the reason in the file.
+  states the reason in the file. **Compound parts whose own file exports the
+  family** (the shadcn shape: a sibling rendering `<X.Root>` plus a Content
+  sibling) do better: the spec mounts the part the way call sites do — the
+  Trigger inside a closed Root, everything else inside
+  `<Root open><Content>…</Content></Root>` — with portal-aware assertions
+  reading `baseElement`. Only open-state families are wrapped (dialog,
+  alert-dialog, popover, dropdown-menu, select, tooltip, hover-card,
+  context-menu, menubar, collapsible); value-driven families (accordion,
+  tabs) and parts without a same-file Root keep the honest skip and its
+  TODO. The browser host mounts wrapped parts too: the regenerated
+  `host/registry.ts` composes the wrapper per entry and records it in a
+  `COMPOUND_WRAP` table, so a kept `main.tsx` benefits from a plain refresh.
 
 #### Colocated spec stamps
 

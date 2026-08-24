@@ -71,6 +71,7 @@ const FIXTURES = [
   "Card.tsx", // named only → `import { Card } from`
   "StatefulPanel.tsx", // named function declaration, hooks and a child component
   "CheckboxForm.tsx", // default + named, typed form fields
+  "CompoundHeader.tsx", // compound family -> wrapped spec + composed registry entry
 ];
 
 /**
@@ -104,6 +105,17 @@ export declare const afterAll: any;
 export declare const vi: any;
 `,
   "vitest/config": `export declare function defineConfig<T>(c: T): T;\n`,
+  // Explicit members on purpose (rule 2 above): the compound fixture imports
+  // this namespace, and a catch-all stub would make TS2305 unobservable for
+  // the wrapped-spec and composed-registry emission branches.
+  "@radix-ui/react-dialog": `import type * as React from "react";
+export declare const Root: (props: Record<string, unknown>) => React.ReactElement | null;
+export declare const Trigger: (props: Record<string, unknown>) => React.ReactElement | null;
+export declare const Portal: (props: Record<string, unknown>) => React.ReactElement | null;
+export declare const Overlay: (props: Record<string, unknown>) => React.ReactElement | null;
+export declare const Content: (props: Record<string, unknown>) => React.ReactElement | null;
+export declare const Title: (props: Record<string, unknown>) => React.ReactElement | null;
+`,
   "@testing-library/react": `export declare const render: any;
 export declare const screen: any;
 export declare const waitFor: any;
