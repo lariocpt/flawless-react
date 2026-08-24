@@ -18,8 +18,22 @@ const { exitCode, outDir, results, trees } = await runFlawless({
 
 `runFlawless` is the friendly wrapper (`entry`/`tasks`/`out`); `runCore` from
 `core.ts` is the same engine with CLI-shaped names (`pattern`/`taskIds`/
-`outDir`) plus `changed`, `runTests`, `force`, `report`, and `log` (progress
-lines, default false programmatically).
+`outDir`) plus `changed` and `heaps`. Everything else — `runTests`, `force`,
+`report`, `log`, `quiet` — is on **both**.
+
+Two output flags, and they answer different questions:
+
+- **`log`** — may this run write to **stdout**? Off by default programmatically.
+  It gates the progress narration *and* the per-file findings listing. `--json`
+  turns it off because stdout must parse whole.
+- **`quiet`** — should `runCore`'s own diagnostics on **stderr** be suppressed?
+  Off by default, so the warnings **do** speak, even when `log` is off. Pass
+  `quiet: true` only if you route them yourself.
+
+One flag for both is how `--ci` became the mode that lost its warnings.
+`quiet` is deliberately narrow: it silences `runCore`'s `warn()` lines, not
+stderr as a whole — the suite runner's output is routed by a different flag,
+and task-level `console.warn`s have no gate. Redirect fd 2 if you need silence.
 
 ## Contracts
 
@@ -29,7 +43,10 @@ lines, default false programmatically).
   suite run failed (suite outcomes fold into the exit code) · 2 usage error.
 - **`--ci`** = `--no-interactive --json`: stdout is exactly one JSON blob
   `{ exitCode, outDir, results, keptScripts }` and nothing else. Progress goes away entirely; parse
-  the whole stdout, not a line of it.
+  the whole stdout, not a line of it. **stderr still carries diagnostics** —
+  skipped files, an unparseable spec, script collisions, a failed Next.js emit.
+  Capture it: under `--ci` those lines are the only account of work the run
+  quietly dropped.
 - `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error?,
   status? }` — `ok: false` with `error` set is a real task failure.
   `status` ("generated" | "refreshed" | "kept", perf-harness only for now)

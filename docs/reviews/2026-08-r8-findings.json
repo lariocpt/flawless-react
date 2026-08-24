@@ -1,0 +1,27 @@
+{
+  "review": "2026-08 round-8 — findings raised by the per-item two-lens reviews (B-13 … B-15)",
+  "toolBase": "4392f5e",
+  "method": "One correctness lens (read-only) and one mutation-probe pass (isolated worktree, every mutation applied by a script asserting count == 1) after each item's diff was committed. Findings here are only those NOT already covered by the item's own backlog entry. Every entry was reproduced by hand before being recorded; anything that could not be reproduced is recorded as unverified, never as clean.",
+  "severityAnchors": {
+    "P0": "emitted suite broken, silently passes, or lies; or the tool corrupts user files",
+    "P1": "wrong analysis output, docs claim contradicted by code, or a CI gap that lets P0s ship",
+    "P2": "performance, DX, error-message quality, design friction",
+    "P3": "opportunity aligned with the product's spirit"
+  },
+  "findings": [
+    {
+      "id": "FR-041",
+      "severity": "P2",
+      "dimension": "cli",
+      "status": "open",
+      "file": "src/core.ts",
+      "line": 522,
+      "title": "A failure that belongs to no task exits 1 with every result ok:true and no reason in the --ci blob",
+      "claim": "The Next.js emit block sets anyFailed = true and warns, but pushes no TaskResult. Probe: a nextapp copy with .gitignore made a DIRECTORY (so updateGitignore's writeFileSync throws EISDIR from inside core's try) run under `--nextjs <app> --ci --tasks perf-static` gives exitCode 1 with results [('perf-static', True, None)] — a red run whose machine-readable output contains no account of the failure at all. Before B-13 the stderr line was suppressed too, so --ci consumers got exit 1 and total silence. Same shape when suitesGreen is false.",
+      "spirit": "honesty",
+      "foundBy": "B-13 correctness lens (finding E); reproduced by hand before recording",
+      "note": "Not a false pass — the exit code is truthful — which is why this is P2 rather than P1. It is the same disease as B-14 (the blob cannot distinguish states the caller must distinguish), one layer up. README.md was corrected in the B-13 PR to stop claiming 'a red run is readable from the blob alone', which is the honest interim. The fix belongs with B-14's blob contract change."
+    }
+  ],
+  "reportedNotReproduced": []
+}

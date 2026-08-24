@@ -166,8 +166,20 @@ for (const r of results) console.log(r.id, r.ok, r.summary);
 ```
 
 - Never calls `process.exit`; bad input throws `UsageError`.
-- `log` defaults to `false` here (the CLI passes `true`), so nothing is printed
-  unless you ask for it.
+- `log` defaults to `false` here (the CLI passes `true`), so nothing is written
+  to **stdout** unless you ask for it — neither the progress narration nor the
+  per-file findings listing.
+- **Diagnostics are separate.** Warnings — a file the sweep skipped, an
+  unparseable OpenAPI spec, a provider that looks like a server component, a
+  failed Next.js emit — go to **stderr** and are not gated by `log`. Pass
+  `quiet: true` to suppress them, and only do that if you route them somewhere
+  yourself: an embedder that silently swallows "could not parse your spec"
+  reproduces the bug `--ci` had.
+- `quiet` is narrow by design. It silences `runCore`'s own `warn()` lines, not
+  stderr as a whole: the suite runner's output under `--run-tests`/`--changed`
+  (`› bun run flawless:unit`, `failed suites: …`, and the child suites' own
+  streams) is routed by `log`, and task-level `console.warn`s have no gate at
+  all. Redirect fd 2 if you need a genuinely silent process.
 - Also exported: `analyse` (entry → `ComponentTree`), `analyseTree` (the
   perf-static rules as a pure function over a tree), `scaffoldUnitBrowser`,
   `scaffold`, `detectNextjs`, `runCore`, and the shared types.

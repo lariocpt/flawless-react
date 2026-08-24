@@ -37,8 +37,15 @@ export interface RunFlawlessOptions {
   propsOverride?: PropsShape;
   inlineSummary?: boolean;
   runTests?: boolean;
-  /** Progress lines on stdout/stderr (default false for the programmatic API). */
+  /** Progress narration on stdout (default false for the programmatic API). */
   log?: boolean;
+  /**
+   * Suppress diagnostics on stderr (default false — they always speak, even
+   * when `log` is off). An embedder that swallows "could not parse your
+   * OpenAPI spec" has the same bug --ci had; opt out only if you route the
+   * warnings somewhere yourself.
+   */
+  quiet?: boolean;
 }
 
 export async function runFlawless(options: RunFlawlessOptions): Promise<CoreResult> {
@@ -63,6 +70,7 @@ export async function runFlawless(options: RunFlawlessOptions): Promise<CoreResu
     useDefaultExcludes: options.useDefaultExcludes,
     runTests: options.runTests,
     log: options.log ?? false,
+    quiet: options.quiet,
   });
 }
 

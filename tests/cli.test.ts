@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "../src/cli.ts";
@@ -85,6 +85,114 @@ describe("--ci process contract", () => {
       expect(Array.isArray(blob.keptScripts)).toBe(true);
     } finally {
       await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // B-13: --ci is the mode built for machines, and it was the one that lost its
+  // diagnostics. warn() writes to STDERR but was gated on the same predicate as
+  // log(), so `warning: skipping <file>` — a component that silently vanished
+  // from the sweep — was invisible in exactly the mode a scripted caller reads.
+  // The stdout purity --json needs is a statement about stdout, not a vow of
+  // silence, so both halves are pinned in ONE test: split them across two and
+  // the next change re-conflates the gates without either going red.
+  test("a warning reaches stderr while stdout stays exactly one JSON blob", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-warn-"));
+    try {
+      const src = path.join(dir, "src");
+      await mkdir(src, { recursive: true });
+      await writeFile(
+        path.join(src, "Ok.tsx"),
+        "export const Ok = ({ name }: { name: string }) => <div>{name}</div>;\n",
+      );
+      // A value constant, not a component: analyseFile throws, the sweep catches
+      // it, records it as unparseable and warns. The run still succeeds on the
+      // sibling, which is the point — this is the diagnostic for work that was
+      // skipped inside an otherwise green run, the easiest kind to lose.
+      await writeFile(path.join(src, "NotAComponent.tsx"), "export const NOOP = () => null;\n");
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          "src/*.tsx",
+          "--ci",
+          "--tasks",
+          "perf-static",
+          "--no-inline-summary",
+          "--out",
+          "out",
+        ],
+        { cwd: dir, stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(0);
+      // The half that was lost.
+      expect(stderr).toContain("warning: skipping");
+      expect(stderr).toContain("NotAComponent.tsx");
+      // The half it must not cost: still exactly one blob, whole-stdout parsed.
+      const blob = JSON.parse(stdout) as { exitCode: number; results: Array<{ id: string }> };
+      expect(blob.exitCode).toBe(0);
+      expect(blob.results.map((r) => r.id)).toEqual(["perf-static"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // Control for the test above: without a provoking input that string is absent,
+  // so the stderr assertion is reading the diagnostic rather than matching
+  // ambient chatter that a --ci run emits anyway.
+  test("a clean --ci run emits no skip warning — the assertion above can fail", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+    try {
+      const proc = Bun.spawn(
+        ["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--no-inline-summary", "--out", out],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(0);
+      expect(stderr).not.toContain("warning: skipping");
+      expect(() => JSON.parse(stdout)).not.toThrow();
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // The worst of the nine warn sites, and the only one that accompanies
+  // `anyFailed = true`: a Next.js emit that FAILED the run. Under the shared
+  // gate a --ci caller got exit 1 with an EMPTY stderr — the run said it was
+  // broken and refused to say how. Provoked deterministically by making
+  // .gitignore a DIRECTORY, so updateGitignore's writeFileSync throws EISDIR
+  // from inside core's try. (Found by the mutation pass: deleting this warn
+  // call was invisible to all 822 tests.)
+  test("a failed Next.js emit exits 1 and says why on stderr", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-emitfail-"));
+    try {
+      const app = path.join(dir, "app");
+      cpSync(path.resolve(__dirname, "fixtures", "nextapp"), app, { recursive: true });
+      mkdirSync(path.join(app, ".gitignore"));
+      const proc = Bun.spawn(
+        ["bun", BIN, "--nextjs", app, "--ci", "--tasks", "perf-static", "--no-inline-summary"],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("nextjs emit failed");
+      // …and the red run still hands the caller one parseable blob.
+      const blob = JSON.parse(stdout) as { exitCode: number };
+      expect(blob.exitCode).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   }, 30000);
 

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -289,6 +290,53 @@ describe("runFlawless", () => {
     // log defaults to false for the programmatic API.
     expect(sidecars()).toEqual([]);
   });
+
+  // B-13 split warn()'s gate from log()'s, and `quiet` is the deliberate opt-out
+  // the docs offer an embedder. Nothing else in the suite passes it: three
+  // separate mutations that made `quiet: true` a no-op — dropping it from
+  // index.ts's plumbing, ignoring it in core's gate, inverting its default —
+  // survived all 822 tests. A documented flag with no test is a promise, not a
+  // contract. Driven through runFlawless rather than runCore so the plumbing is
+  // covered too, and paired with its own control: the negative assertion below
+  // means nothing unless the same run WITHOUT quiet is shown to be loud.
+  test("quiet:true silences the diagnostic that speaks by default", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-quiet-"));
+    tmpDirs.push(dir);
+    const src = path.join(dir, "src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      path.join(src, "Ok.tsx"),
+      "export const Ok = ({ name }: { name: string }) => <div>{name}</div>;\n",
+    );
+    // A value constant, not a component: the sweep skips it and warns.
+    writeFileSync(path.join(src, "NotAComponent.tsx"), "export const NOOP = () => null;\n");
+
+    const run = async (quiet: boolean | undefined): Promise<string> => {
+      const original = process.stderr.write.bind(process.stderr);
+      let buf = "";
+      process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+        buf += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        await runFlawless({
+          entry: path.join(src, "*.tsx"),
+          out: path.join(dir, quiet === true ? "out-quiet" : "out-loud"),
+          tasks: ["perf-static"],
+          inlineSummary: false,
+          ...(quiet === undefined ? {} : { quiet }),
+        });
+      } finally {
+        process.stderr.write = original;
+      }
+      return buf;
+    };
+
+    // Control: the default is LOUD, even though log defaults to false here.
+    expect(await run(undefined)).toContain("warning: skipping");
+    // The opt-out actually opts out.
+    expect(await run(true)).not.toContain("warning: skipping");
+  }, 30000);
 });
 
 describe("test-script collision detection", () => {

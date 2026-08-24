@@ -66,8 +66,33 @@ export interface CoreOptions {
   /** Extra globs to skip, appended to DEFAULT_EXCLUDES. */
   exclude?: readonly string[];
   useDefaultExcludes?: boolean;
-  /** Interactive confirm already happened (CLI); when false, runTests decides alone. */
+  /**
+   * Everything this run writes to STDOUT — the progress narration AND the
+   * per-file findings listing (`printFindings`). Default on. False is what
+   * --json/--ci and the programmatic API pass: stdout then belongs to the
+   * caller — a JSON blob that must parse whole — so nothing may go there.
+   *
+   * It is NOT a vow of silence. Diagnostics go to stderr and are gated by
+   * `quiet`, which is a separate decision: see below.
+   */
   log?: boolean;
+  /**
+   * Suppress `runCore`'s OWN diagnostics — the `warn()` lines: a skipped file,
+   * an unparseable spec, a script collision, a failed Next.js emit. Default
+   * off, so they always speak, including under --ci.
+   *
+   * Sharing one flag with `log` is how `--ci`, the mode built for machines,
+   * became the mode that lost "warning: skipping <file>" and "could not parse
+   * <path> as OpenAPI JSON — ignoring". Whether stdout is the caller's and
+   * whether the run may report a problem at all are different questions.
+   *
+   * Deliberately narrow, and NOT "silence stderr": the suite runner's own
+   * output (`› bun run flawless:unit`, `failed suites: …`, and every child
+   * suite's streams) is routed by a different flag, and task-level warnings
+   * like perfHarness's migration notice go through `console.warn` with no gate
+   * at all. If you need a fully silent process, redirect fd 2 yourself.
+   */
+  quiet?: boolean;
 }
 
 export interface CoreResult {
@@ -171,8 +196,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const log = (line: string): void => {
     if (opts.log !== false) process.stdout.write(`${line}\n`);
   };
+  // Deliberately NOT `opts.log`: stdout purity and permission to report a
+  // problem are separate decisions (B-13). Gating both on one flag made --ci
+  // silent about work it skipped.
   const warn = (line: string): void => {
-    if (opts.log !== false) process.stderr.write(`${line}\n`);
+    if (opts.quiet !== true) process.stderr.write(`${line}\n`);
   };
 
   let pattern: string | undefined = opts.pattern;
@@ -598,6 +626,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       nextCtx?.root,
       // log:false means stdout belongs to the caller (--json's blob, or a
       // programmatic consumer) — the runner and its children use stderr.
+      //
+      // This argument is NOT opts.quiet, and must never become it. The runner's
+      // `quiet` has the OPPOSITE polarity to CoreOptions.quiet: there it means
+      // "route everything to stderr", here it would mean "say nothing at all".
+      // Wiring opts.quiet into this slot inverts the --json stdout-purity
+      // guarantee (a quiet:false caller would get suite output on stdout, in
+      // front of the blob), and tests/runTests.test.ts drives the runner
+      // directly, so nothing would catch it. Same word, one file apart.
       opts.log !== true,
     );
     testRun = { mode: "affected", green: suitesGreen };
