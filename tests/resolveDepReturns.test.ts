@@ -82,9 +82,10 @@ export async function getUsersDirect() {
 }
 
 export async function getAggregate() {
-  const a = await fetch("/api/users");
-  const b = await fetch("/api/other");
-  return [await a.json(), await b.json()];
+  const extra = await fetch("/api/other");
+  void extra;
+  const res = await fetch("/api/users");
+  return res.json();
 }
 
 export async function getEnvelope() {
@@ -250,6 +251,10 @@ describe("single-fetch wrappers (Path B, recorded for the emit-time join)", () =
   });
 
   test("two fetches are an aggregator, not a wrapper — no recording", async () => {
+    // The fixture RETURNS a fetched json on purpose: with the exactly-one
+    // gate dropped, fetches[0] (/api/other) would be recorded even though
+    // the returned json is the OTHER fetch's — the wrong example joined.
+    // Only the fetch-count gate stands between this shape and that record.
     const deps = await analysedDeps();
     expect(depOf(deps, "getAggregate")?.wrapsFetch).toBeUndefined();
   });
