@@ -19,31 +19,46 @@ import { emptyEnv, initialRenderExpression } from "./renderPath.ts";
 const COMPOUND_PACKAGES = /^@(base-ui|radix-ui|ariakit)(\/|$)/;
 
 const CONTENT_MEMBERS = new Set(["Content", "Popup"]);
+const ROOT_MEMBERS = new Set(["Root", "Provider"]);
 
 export function deriveCompoundFamily(
   unit: ParsedComponentUnit,
   siblings: ParsedComponentUnit[],
   imports: Map<string, ImportBinding>,
 ): ComponentInfo["compoundFamily"] {
-  const own = compoundMembers(unit, imports);
-  const specifier = own[0]?.specifier;
-  // The part must render the package directly; a local-hop part (a wrapper
-  // whose "part-ness" comes from rendering another local part) has no member
-  // of its own to place in the family — v2 territory.
-  if (!specifier) return undefined;
+  const ownAll = compoundMembers(unit, imports);
+  // A package whose Root the unit renders itself is already provided for —
+  // only the UNROOTED members are what made this a compound part, and the
+  // family must be theirs (mirroring extractRenderMode's rootsProvided).
+  const selfRooted = new Set(
+    ownAll.filter((m) => ROOT_MEMBERS.has(m.member)).map((m) => m.specifier),
+  );
+  const unrooted = ownAll.filter((m) => !selfRooted.has(m.specifier));
+  const specifiers = new Set(unrooted.map((m) => m.specifier));
+  // Zero: a local-hop part with no direct member of its own — v2 territory.
+  // Two+: one wrap cannot fix both packages, and wrapping one leaves the
+  // other throwing — the honest skip was the right output.
+  if (specifiers.size !== 1) return undefined;
+  const specifier = [...specifiers][0] as string;
+  const own = unrooted.filter((m) => m.specifier === specifier);
+  // Sub-family members (SubTrigger, SubContent, Sub itself) additionally
+  // need a <Sub> ancestor that Root+Content cannot supply — confirmed red
+  // against real radix dropdown-menu. They stay honest skips.
+  if (own.some((m) => m.member.startsWith("Sub"))) return undefined;
 
   let root: string | undefined;
   let content: string | undefined;
   for (const sibling of siblings) {
-    if (sibling.exportKind === "none") continue;
+    // Named exports only: both emitters import the wrappers by name, and a
+    // named import of a default-only export is TS2305 — in the host registry
+    // it takes the whole bundle down. The unit is never its own wrapper.
+    if (sibling.exportKind !== "named") continue;
+    if (sibling.componentName === unit.componentName) continue;
     const members = compoundMembers(sibling, imports).filter((m) => m.specifier === specifier);
     if (members.length === 0) continue;
-    if (members.some((m) => m.member === "Root" || m.member === "Provider")) {
+    if (members.some((m) => ROOT_MEMBERS.has(m.member))) {
       root ??= sibling.componentName;
-    } else if (
-      sibling.componentName !== unit.componentName &&
-      members.some((m) => CONTENT_MEMBERS.has(m.member))
-    ) {
+    } else if (members.some((m) => CONTENT_MEMBERS.has(m.member))) {
       content ??= sibling.componentName;
     }
   }

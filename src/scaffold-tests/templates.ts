@@ -975,7 +975,7 @@ ${wrapImport}
 // Its own file exports the family, so the spec mounts the part the way call
 // sites do instead of skipping. Portal content lands outside the container —
 // assertions read baseElement.
-const DEFAULTS: Record<string, unknown> = ${JSON.stringify(info.propsShape)};
+const DEFAULTS: Record<string, unknown> = ${JSON.stringify(synthesiseDefaults(info))};
 
 test("${name} mounts inside its family wrapper", () => {
 ${body}

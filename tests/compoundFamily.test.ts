@@ -89,6 +89,169 @@ describe("compoundFamily derivation from the part's own file", () => {
     expect(infos.get("Dialog")?.compoundFamily).toBeUndefined();
   });
 
+  test("Sub-family parts are never wrapped — they need a <Sub> ancestor Root+Content cannot give", async () => {
+    // Confirmed against real @radix-ui/react-dropdown-menu in review:
+    // SubTrigger/SubContent wrapped in <Root open><Content> are RED with
+    // "must be used within MenuSub". They were honest skips before B-2 and
+    // must stay skips.
+    const dir = tmpProject();
+    const file = path.join(dir, "src", "dropdown-menu.tsx");
+    writeFileSync(
+      file,
+      `import * as MenuPrimitive from "@radix-ui/react-dropdown-menu";
+import type * as React from "react";
+
+export function DropdownMenu(props: Record<string, unknown>) {
+  return <MenuPrimitive.Root {...props} />;
+}
+
+export function DropdownMenuContent({ children }: { children?: React.ReactNode }) {
+  return (
+    <MenuPrimitive.Portal>
+      <MenuPrimitive.Content>{children}</MenuPrimitive.Content>
+    </MenuPrimitive.Portal>
+  );
+}
+
+export function DropdownMenuItem({ children }: { children?: React.ReactNode }) {
+  return <MenuPrimitive.Item>{children}</MenuPrimitive.Item>;
+}
+
+export function DropdownMenuSub(props: Record<string, unknown>) {
+  return <MenuPrimitive.Sub {...props} />;
+}
+
+export function DropdownMenuSubTrigger({ children }: { children?: React.ReactNode }) {
+  return <MenuPrimitive.SubTrigger>{children}</MenuPrimitive.SubTrigger>;
+}
+
+export function DropdownMenuSubContent({ children }: { children?: React.ReactNode }) {
+  return <MenuPrimitive.SubContent>{children}</MenuPrimitive.SubContent>;
+}
+`,
+    );
+    const trees = await analyseFile({
+      entry: file,
+      depth: 0,
+      includeChildren: false,
+      roots: "exported",
+    });
+    const infos = new Map(trees.map((t) => [t.entry.componentName, t.entry]));
+    // The plain parts still wrap.
+    expect(infos.get("DropdownMenuItem")?.compoundFamily).toMatchObject({
+      root: "DropdownMenu",
+      content: "DropdownMenuContent",
+    });
+    // The Sub family does not.
+    expect(infos.get("DropdownMenuSub")?.compoundFamily).toBeUndefined();
+    expect(infos.get("DropdownMenuSubTrigger")?.compoundFamily).toBeUndefined();
+    expect(infos.get("DropdownMenuSubContent")?.compoundFamily).toBeUndefined();
+  });
+
+  test("a DEFAULT-exported Root sibling gives no family — the emitters import by name", async () => {
+    // A named import of a default-only export is TS2305, and in the host
+    // registry it takes the WHOLE bundle down, not just this part.
+    const dir = tmpProject();
+    const file = path.join(dir, "src", "defroot.tsx");
+    writeFileSync(
+      file,
+      `import * as DialogPrimitive from "@radix-ui/react-dialog";
+import type * as React from "react";
+
+export default function Dialog(props: Record<string, unknown>) {
+  return <DialogPrimitive.Root {...props} />;
+}
+
+export function DialogContent({ children }: { children?: React.ReactNode }) {
+  return (
+    <DialogPrimitive.Portal>
+      <DialogPrimitive.Content>{children}</DialogPrimitive.Content>
+    </DialogPrimitive.Portal>
+  );
+}
+
+export function DialogHeader({ children }: { children?: React.ReactNode }) {
+  return <DialogPrimitive.Title>{children}</DialogPrimitive.Title>;
+}
+`,
+    );
+    const trees = await analyseFile({
+      entry: file,
+      depth: 0,
+      includeChildren: false,
+      roots: "exported",
+    });
+    const infos = new Map(trees.map((t) => [t.entry.componentName, t.entry]));
+    expect(infos.get("DialogHeader")?.compoundFamily).toBeUndefined();
+  });
+
+  test("a part spanning TWO unrooted packages gets no family — one wrap cannot fix both", async () => {
+    const dir = tmpProject();
+    const file = path.join(dir, "src", "mixed.tsx");
+    writeFileSync(
+      file,
+      `import * as DialogPrimitive from "@radix-ui/react-dialog";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
+import type * as React from "react";
+
+export function Dialog(props: Record<string, unknown>) {
+  return <DialogPrimitive.Root {...props} />;
+}
+
+export function DialogContent({ children }: { children?: React.ReactNode }) {
+  return <DialogPrimitive.Content>{children}</DialogPrimitive.Content>;
+}
+
+export function MixedPart({ children }: { children?: React.ReactNode }) {
+  return (
+    <div>
+      <DialogPrimitive.Title>{children}</DialogPrimitive.Title>
+      <PopoverPrimitive.Anchor />
+    </div>
+  );
+}
+`,
+    );
+    const trees = await analyseFile({
+      entry: file,
+      depth: 0,
+      includeChildren: false,
+      roots: "exported",
+    });
+    const infos = new Map(trees.map((t) => [t.entry.componentName, t.entry]));
+    expect(infos.get("MixedPart")?.compoundFamily).toBeUndefined();
+  });
+
+  test("a self-rooted package does not decide the family, and the unit is never its own root", async () => {
+    // SelfRooted supplies its own popover Root; only the bare dialog Title is
+    // unrooted — and this file exports no dialog Root, so there is no family.
+    const dir = tmpProject();
+    const file = path.join(dir, "src", "selfrooted.tsx");
+    writeFileSync(
+      file,
+      `import * as DialogPrimitive from "@radix-ui/react-dialog";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
+import type * as React from "react";
+
+export function SelfRooted({ children }: { children?: React.ReactNode }) {
+  return (
+    <PopoverPrimitive.Root>
+      <PopoverPrimitive.Trigger>open</PopoverPrimitive.Trigger>
+      <DialogPrimitive.Title>{children}</DialogPrimitive.Title>
+    </PopoverPrimitive.Root>
+  );
+}
+`,
+    );
+    const trees = await analyseFile({
+      entry: file,
+      depth: 0,
+      includeChildren: false,
+      roots: "exported",
+    });
+    expect(trees[0]?.entry.compoundFamily).toBeUndefined();
+  });
+
   test("without an exported Root sibling there is no family — cross-file chasing is v2", async () => {
     const dir = tmpProject();
     const file = path.join(dir, "src", "parts.tsx");
@@ -167,9 +330,10 @@ describe("compound part specs mount inside their family", () => {
     expect(spec).toMatch(/import \{ Dialog, DialogContent \} from "[^"]*dialog"/);
     expect(spec).toContain("<Dialog open>");
     expect(spec).toContain("<DialogContent>");
-    // Portal content lands outside the container — baseElement sees it.
-    expect(spec).toContain("baseElement");
-    expect(spec).toContain("flawless-slot");
+    // Portal content lands outside the container — baseElement sees it. The
+    // full assertion LINE, not the word: the mutation review found the word
+    // alone satisfied by a comment while the assertion read container.
+    expect(spec).toContain('expect(baseElement.textContent).toContain("flawless-slot")');
     expect(spec).not.toContain("is exported as a component");
     expect(spec).not.toContain("TODO(flawless)");
   });
@@ -212,6 +376,19 @@ describe("compound part specs mount inside their family", () => {
     const spec = specFor(part("LoneHeader", undefined));
     expect(spec).toContain("is exported as a component");
     expect(spec).toContain("TODO(flawless)");
+  });
+
+  test("DEFAULTS come from synthesiseDefaults, not raw propsShape", () => {
+    // The client and browser specs learned this the hard way (ProfileForm):
+    // a prop known only through member reads is {} in propsShape, and the
+    // part crashes mapping over undefined. Same synthesis here.
+    const spec = specFor(
+      part("DialogHeader", FAMILY, {
+        unresolvedProps: ["items"],
+        propUsage: [{ propName: "items", member: "map" }] as never,
+      }),
+    );
+    expect(spec).toContain('"items":[]');
   });
 });
 
