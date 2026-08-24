@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -369,6 +369,66 @@ describe("the real runners select exactly the specs the run emitted", () => {
       );
 
       expect(await playwrightSelects(app, path.relative(app, config))).toEqual([]);
+    },
+    CASE_TIMEOUT_MS,
+  );
+});
+
+describe("the emitted unit suite EXECUTES under real vitest (FR-018)", () => {
+  // Everything before this describe LISTS, parses or type-checks the suite;
+  // an assertion-body bug — wrong RTL API, a jsx-runtime hole, a setup.ts
+  // runtime error — passed every one of those and failed only in adopter
+  // repos. The cached suite already carries the full merged devDependency
+  // set (bun add runs a full install), so running it costs one vitest spawn.
+  async function vitestRun(app: string): Promise<{ code: number; output: string }> {
+    const proc = Bun.spawn(["bun", "run", "flawless:unit"], {
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    // Vitest colours its summary even when piped; strip ANSI so the
+    // passed-count assertion reads the text, not the escape codes.
+    // eslint-disable-next-line no-control-regex
+    const plain = (out + err).replace(/\x1b\[[0-9;]*m/g, "");
+    return { code, output: plain };
+  }
+
+  test(
+    "the generated specs run green, with more than zero tests actually passing",
+    async () => {
+      const { app } = await emittedSuite();
+      const run = await vitestRun(app);
+      if (run.code !== 0) console.error(run.output);
+      expect(run.code).toBe(0);
+      const passed = run.output.match(/Tests\s+(\d+) passed/) ?? run.output.match(/(\d+) passed/);
+      expect(passed).not.toBeNull();
+      expect(Number(passed?.[1])).toBeGreaterThan(0);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  test(
+    "guard-the-guard: a deliberately failing spec turns the run red",
+    async () => {
+      const { app, outDir } = await emittedSuite();
+      const bad = path.join(outDir, "unit", "zzzDeliberateFailure.test.tsx");
+      await Bun.write(
+        bad,
+        'import { expect, test } from "vitest";\n\ntest("this spec exists to prove red is reachable", () => {\n  expect(true).toBe(false);\n});\n',
+      );
+      try {
+        const run = await vitestRun(app);
+        expect(run.code).not.toBe(0);
+        expect(run.output).toContain("zzzDeliberateFailure");
+      } finally {
+        // The suite is cached and shared with every other case in this file.
+        rmSync(bad, { force: true });
+      }
     },
     CASE_TIMEOUT_MS,
   );

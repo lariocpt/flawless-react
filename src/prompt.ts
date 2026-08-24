@@ -3,7 +3,12 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { TaskId } from "./types.ts";
 
-interface ClackPrompts {
+/**
+ * The subset of @clack/prompts the flows below touch. Exported so tests can
+ * drive the whole interactive path with a scripted fake (FR-024) — the flows
+ * accept an injected instance and fall back to the real dynamic import.
+ */
+export interface ClackPrompts {
   intro: (msg: string) => void;
   outro: (msg: string) => void;
   text: (opts: {
@@ -42,8 +47,9 @@ export interface InteractivePromptOptions {
 
 export async function promptInteractive(
   opts: InteractivePromptOptions,
+  prompts?: ClackPrompts,
 ): Promise<InteractivePromptResult | undefined> {
-  const p = await clack();
+  const p = prompts ?? (await clack());
   p.intro("flawless-react");
 
   const detectedPattern = await detectDefaultPattern();
@@ -89,8 +95,8 @@ export async function promptInteractive(
   };
 }
 
-export async function confirmRunTests(): Promise<boolean> {
-  const p = await clack();
+export async function confirmRunTests(prompts?: ClackPrompts): Promise<boolean> {
+  const p = prompts ?? (await clack());
   const v = await p.confirm({ message: "Run the generated tests now?", initialValue: false });
   if (p.isCancel(v)) return false;
   return Boolean(v);

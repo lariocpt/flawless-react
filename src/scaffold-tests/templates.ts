@@ -268,6 +268,12 @@ const projectRoot = path.resolve(configDir, "..");
 
 export default defineConfig({
   root: projectRoot,
+  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
+  // jsx "preserve", which gives vitest's esbuild nothing usable, and every
+  // spec died at render with "React is not defined". The suite pins react
+  // >=18, where the automatic runtime always exists (FR-018 — found the
+  // first time an emitted spec was actually executed in this repo).
+  esbuild: { jsx: "automatic" },
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: [path.join(configDir, "setup.ts")],
@@ -295,6 +301,10 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 `;
   return `${anchor}
 export default defineConfig({
+  // See the colocate branch: a host tsconfig with jsx "preserve" (the
+  // Next.js default) left esbuild on the classic runtime and every render
+  // threw "React is not defined" (FR-018).
+  esbuild: { jsx: "automatic" },
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: ["./setup.ts"],
