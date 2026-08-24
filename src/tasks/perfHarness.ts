@@ -60,6 +60,24 @@ export const perfHarness: Task = {
       res.kept.length > 0
         ? `; kept ${res.kept.map((f) => path.relative(path.resolve(ctx.outDir), f)).join(", ")} (delete one to regenerate it)`
         : "";
+    // One-time migration for pre-split suites. writeOnce is absolute (--force
+    // included — budgets.json rests on that promise), so the tool cannot fix
+    // the monolith itself: host/registry.ts was written inert beside it, and
+    // delete-to-regenerate is the escape.
+    const migrationNote = res.preSplitMain
+      ? "; host/main.tsx predates the registry split and cannot mount newly analysed components" +
+        " — delete it and re-run (provider wiring regenerates from --provider), or port your" +
+        ' hand wiring and import "./registry"'
+      : "";
+    if (res.preSplitMain) {
+      console.warn(
+        `[flawless] ${path.join(ctx.outDir, "host/main.tsx")} predates the registry split:` +
+          " it bakes in its own component tables, so newly analysed components cannot mount" +
+          " through it, and no flag may rewrite a write-once file — delete host/main.tsx and" +
+          " re-run (provider wiring regenerates from --provider), or port your hand wiring" +
+          ' and import "./registry".',
+      );
+    }
     return {
       id: "perf-harness",
       ok: true,
@@ -68,8 +86,8 @@ export const perfHarness: Task = {
       status: res.status,
       summary:
         res.status === "refreshed"
-          ? `refreshed perf suite for ${covered}${keptNote}`
-          : `scaffolded perf suite for ${covered}`,
+          ? `refreshed perf suite for ${covered}${keptNote}${migrationNote}`
+          : `scaffolded perf suite for ${covered}${migrationNote}`,
     };
   },
 };

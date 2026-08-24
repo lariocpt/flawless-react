@@ -80,11 +80,15 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     },
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
-    // writeOnce: docs/extending.md tells you to edit this to add providers and
-    // MSW, and nothing can rebuild that wiring from the analysis.
+    // Regenerated (FR-016): a re-run must be able to register newly analysed
+    // components over a kept wrapper.
+    { relPath: "host/registry.ts", content: hostRegistry(flat) },
+    // writeOnce: docs/extending.md tells you to edit this to add providers,
+    // MSW and hand registrations in the ALL spread, and nothing can rebuild
+    // that wiring from the analysis. The tables it reads live in ./registry.
     {
       relPath: "host/main.tsx",
-      content: hostMain(flat, opts.providerImportPath, useMsw),
+      content: hostMain(opts.providerImportPath, useMsw),
       writeOnce: true,
     },
     { relPath: "profile/_helpers.ts", content: helpers() },
@@ -574,13 +578,29 @@ export {};
 `;
 }
 
-function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup = false): string {
-  const imports = flat.map(hostComponentImport).join(NL);
+/**
+ * host/registry.ts — the mechanical mount tables, split out of the write-once
+ * wrapper (FR-016: a kept main.tsx froze the registry with it, so a newly
+ * analysed component's specs could never mount, and no flag could fix it).
+ * Regenerated on every run; hand registrations belong in main.tsx's ALL
+ * spread, which survives.
+ */
+function hostRegistry(flat: FlatComponent[]): string {
+  // Sorted by registry key: emission is byte-identical for a given set of
+  // specNames. (Byte-identity across PERMUTED entry order holds only until a
+  // componentName collision — allocateSpecNames is delivery-order-dependent
+  // in who keeps the bare name; that predates the split and lives upstream.)
+  // Code-unit order (not localeCompare): locale rules interleave cases and
+  // would reorder — churning — every adopted suite's registry on refresh.
+  const sorted = [...flat].sort((a, b) =>
+    a.specName < b.specName ? -1 : a.specName > b.specName ? 1 : 0,
+  );
+  const imports = sorted.map(hostComponentImport).join(NL);
 
   // Cast per entry: a component declaring required props is not assignable to
   // the host's loose (props: Record<string, unknown>) => unknown signature, and
   // supplying those props is exactly what the profile spec does at runtime.
-  const registry = flat
+  const registry = sorted
     .map((c) => `  ${JSON.stringify(c.specName)}: ${c.specName} as unknown as Component,`)
     .join(NL);
 
@@ -588,7 +608,7 @@ function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup =
   // DEFAULTS can never carry one. The component then calls undefined: AuthError
   // renders <Button onClick={reset}> and threw the moment the click landed. The
   // host holds the names and supplies no-ops on this side of the boundary.
-  const fnProps = flat
+  const fnProps = sorted
     .map((c) => ({ name: c.specName, props: functionProps(c.info) }))
     .filter((e) => e.props.length > 0)
     .map((e) => `  ${JSON.stringify(e.name)}: ${JSON.stringify(e.props)},`)
@@ -598,12 +618,37 @@ function hostMain(flat: FlatComponent[], providerImportPath?: string, mswSetup =
   // Rendering <tbody> into the host's #root div made React log "In HTML, <tbody>
   // cannot be a child of <div>", which failed seven table primitives for a
   // warning the harness itself caused.
-  const wrapIn = flat
+  const wrapIn = sorted
     .map((c) => ({ name: c.specName, chain: requiredAncestors(c.info.rootTag) }))
     .filter((e) => e.chain.length > 0)
     .map((e) => `  ${JSON.stringify(e.name)}: ${JSON.stringify(e.chain)},`)
     .join(NL);
 
+  return `// Regenerated on every flawless-react run — derived tables only, so edits
+// here are lost. Hand-registered components belong in main.tsx's ALL spread,
+// which is never overwritten.
+${imports}
+
+/** The loose signature the host mounts through; props arrive at runtime. */
+export type Component = (props: Record<string, unknown>) => unknown;
+
+export const REGISTRY: Record<string, Component> = {
+${registry}
+};
+
+/** Props the component calls, which a serialised props object cannot carry. */
+export const FN_PROPS: Record<string, string[]> = {
+${fnProps}
+};
+
+/** Ancestors HTML requires around a component's root tag, outermost first. */
+export const WRAP_IN: Record<string, string[]> = {
+${wrapIn}
+};
+`;
+}
+
+function hostMain(providerImportPath?: string, mswSetup = false): string {
   const providerImport = providerImportPath
     ? `import AppProvider from ${JSON.stringify(stripTsExt(providerImportPath))};\n`
     : "";
@@ -628,7 +673,11 @@ try {
 import { createElement, Profiler, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { scan } from "react-scan";
-${mswImport}${providerImport}${imports}
+${mswImport}${providerImport}// ./registry last among the app imports: it pulls every component module,
+// and the monolithic host evaluated msw/provider modules FIRST — a component
+// with module-scope code leaning on a provider module's side effects (i18n
+// init, interceptor install) must keep that order across the split.
+import { type Component, FN_PROPS, REGISTRY, WRAP_IN } from "./registry";
 ${mswBoot}
 
 // We measure renders with React's built-in Profiler rather than
@@ -636,24 +685,26 @@ ${mswBoot}
 // classic JSX runtime (\`React.createElement\`), and Bun.build emits JSX via
 // the automatic \`react/jsx-runtime\`. Profiler works with either runtime and
 // across React versions, so the host stays portable.
-type Component = (props: Record<string, unknown>) => unknown;
 
-const REGISTRY: Record<string, Component> = {
-${registry}
+// Every lookup below goes through the ALL_* spreads, never the registry
+// tables directly: ./registry is regenerated on every run, so these spreads
+// are the one place hand-registered entries survive. All three exist for the
+// same reason — a hand-registered component may also need function-prop
+// stubs (functions cannot cross page.evaluate's structured clone) or a
+// wrapper chain, and without its own spread each table would silently drop
+// hand entries on the next regeneration.
+const ALL: Record<string, Component> = {
+  ...REGISTRY /* hand-registered components ride here and survive regeneration */,
 };
-
-/** Props the component calls, which a serialised props object cannot carry. */
-const FN_PROPS: Record<string, string[]> = {
-${fnProps}
+const ALL_FN_PROPS: Record<string, readonly string[]> = {
+  ...FN_PROPS /* hand-registered components' function-prop names ride here */,
 };
-
-/** Ancestors HTML requires around a component's root tag, outermost first. */
-const WRAP_IN: Record<string, string[]> = {
-${wrapIn}
+const ALL_WRAP_IN: Record<string, readonly string[]> = {
+  ...WRAP_IN /* hand-registered components' wrapper chains ride here */,
 };
 
 function withFnProps(name: string, props: Record<string, unknown>): Record<string, unknown> {
-  const names = FN_PROPS[name];
+  const names = ALL_FN_PROPS[name];
   if (!names) return props;
   const out = { ...props };
   for (const p of names) if (out[p] === undefined) out[p] = () => {};
@@ -661,7 +712,7 @@ function withFnProps(name: string, props: Record<string, unknown>): Record<strin
 }
 
 function nest(name: string, tree: ReactNode): ReactNode {
-  const chain = WRAP_IN[name];
+  const chain = ALL_WRAP_IN[name];
   if (!chain) return tree;
   let out = tree;
   for (let i = chain.length - 1; i >= 0; i--) out = createElement(chain[i] as string, null, out);
@@ -746,9 +797,9 @@ declare global {
 }
 
 window.__profile = {
-  list: () => Object.keys(REGISTRY),
+  list: () => Object.keys(ALL),
   async mount(name, props) {
-    const Comp = REGISTRY[name];
+    const Comp = ALL[name];
     if (!Comp) throw new Error("unknown component: " + name);
     activeName = name;
     lastRenderError = undefined;
@@ -774,7 +825,7 @@ window.__profile = {
   },
   async rerender(name, props) {
     if (!activeRoot) throw new Error("mount first");
-    const Comp = REGISTRY[name];
+    const Comp = ALL[name];
     if (!Comp) throw new Error("unknown component: " + name);
     activeRoot.render(
       wrap(
@@ -1382,7 +1433,7 @@ ${runBlock}
 
 - \`budgets.json\` — tighten per-component mount/update budgets. Tests warn (not fail) on breach by default; switch the \`console.warn\` to \`expect(...).toBeLessThan(...)\` to make them hard.
 - \`profile/_helpers.ts\` — add scenarios; e.g. mock data sources before \`mountComponent\`.
-- \`host/main.tsx\` — register additional components by hand in \`REGISTRY\`.
+- \`host/main.tsx\` — hand-register extra components in the \`ALL\` spread. The tables in \`host/registry.ts\` are regenerated on every run, so entries added there are lost.
 
 ## Notes
 

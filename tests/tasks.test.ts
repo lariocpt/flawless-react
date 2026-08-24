@@ -424,6 +424,49 @@ describe("the perf harness respects --force and protects what it cannot rebuild"
     expect(again.summary).toContain("budgets.json");
     expect(again.summary).toContain("host/main.tsx");
     expect(again.summary).toContain("delete");
+    // A post-split main.tsx imports ./registry, so no migration note fires.
+    expect(again.summary).not.toContain("predates the registry split");
+  });
+
+  test("a pre-split monolithic main.tsx gets the registry beside it and the migration warning", async () => {
+    // FR-016 migration: writeOnce is absolute (--force included), so the old
+    // monolith is never rewritten — the run writes host/registry.ts inert
+    // beside it and names the delete-and-re-run escape on both channels.
+    const outDir = tmp("perf-presplit");
+    const trees = [await tree()];
+    await task("perf-harness").run(ctxOf({ outDir, trees }));
+
+    const main = path.join(outDir, "host/main.tsx");
+    const monolith = "// pre-split host: tables baked in, no registry import\n";
+    writeFileSync(main, monolith);
+    rmSync(path.join(outDir, "host/registry.ts"));
+
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const res = await task("perf-harness").run(ctxOf({ outDir, trees }));
+      expect(res.ok).toBe(true);
+      expect(readFileSync(path.join(outDir, "host/registry.ts"), "utf8")).toContain(
+        "export const REGISTRY",
+      );
+      expect(readFileSync(main, "utf8")).toBe(monolith);
+      expect(res.summary).toContain("predates the registry split");
+      expect(res.summary).toContain("delete");
+      expect(res.summary).toContain("./registry");
+      const warned = warnings.join("\n");
+      // The discriminating phrase, not just generic words: a future routine
+      // kept-files warning saying "host/main.tsx … delete … re-run" must not
+      // stand in for the migration warning.
+      expect(warned).toContain("predates the registry split");
+      expect(warned).toContain("host/main.tsx");
+      expect(warned).toContain("delete");
+      expect(warned).toContain("re-run");
+    } finally {
+      console.warn = origWarn;
+    }
   });
 
   test("changed-mode keeps the harness and writes nothing", async () => {

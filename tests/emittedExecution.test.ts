@@ -1088,6 +1088,59 @@ describe("the emitted servers are started, not merely written", () => {
     },
     CASE_TIMEOUT_MS,
   );
+
+  test(
+    "a re-run's new component reaches the served bundle through the kept main.tsx",
+    async () => {
+      // FR-016 end to end: the suite exists, main.tsx is write-once and kept,
+      // and a plain re-scaffold with an added tree must still put the new
+      // component into what /bundle.js serves — via the refreshed registry.ts.
+      const outDir = await emitSuiteTo();
+      await writeReactStubs(outDir);
+      const mainPath = path.join(outDir, "host", "main.tsx");
+      const mainBytes = await Bun.file(mainPath).text();
+
+      const cardTree = await analyse({
+        entry: fixture("Card.tsx"),
+        depth: 0,
+        includeChildren: false,
+      });
+      const toolbarTree = await analyse({
+        entry: fixture("Toolbar.tsx"),
+        depth: 0,
+        includeChildren: false,
+      });
+      const second = await scaffold(cardTree, {
+        outDir,
+        extraTrees: [toolbarTree],
+        variants: 3,
+        force: false,
+        report: false,
+        provider: undefined,
+        apiSpec: undefined,
+      });
+      expect(second.status).toBe("refreshed");
+      expect(await Bun.file(mainPath).text()).toBe(mainBytes);
+
+      const port = freePort();
+      const server = await boot(path.join(outDir, "host", "server.ts"), port, {
+        PORT: String(port),
+      });
+      try {
+        const js = await (await fetch(`${server.base}/bundle.js`)).text();
+        // A string probe, not a mount: react is stubbed here (createRoot is a
+        // no-op), so the honest reachable-signal is the new component's
+        // identifier landing in the bundle main.tsx pulls via ./registry.
+        // Bare, not '"Toolbar"': Bun collapses {"Toolbar": Toolbar} to
+        // shorthand, so the quoted key never survives bundling.
+        expect(js).toContain("Toolbar");
+        expect(js).toContain("Card");
+      } finally {
+        server.kill();
+      }
+    },
+    CASE_TIMEOUT_MS,
+  );
 });
 
 // ---------------------------------------------------------------------------

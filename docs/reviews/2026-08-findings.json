@@ -211,14 +211,15 @@
       "orig": "dogfood-D5",
       "severity": "P1",
       "dimension": "design",
-      "status": "open",
+      "status": "fixed",
       "title": "host/main.tsx is write-once but holds the mount registry — a newly detected component's browser spec can never mount",
       "file": "src/scaffold/templates.ts",
       "line": 88,
       "claim": "Observed live: after the detector fix, Badge's fresh browser spec failed with 'unknown component: Badge' because no tool invocation (not even --force) can add it to the kept host. The registry is mechanical data trapped in a user-owned file.",
       "proposed_fix": "Split the generated registry from the user-owned mount wrapper (registry file regenerated, wrapper write-once), or at minimum warn when emitted specs reference components the existing host does not register.",
       "effort": "M",
-      "spirit": "mechanical"
+      "spirit": "mechanical",
+      "fix": "Registry split: host/registry.ts (regenerated every run, emission sorted by registry key) now carries the component imports + REGISTRY/FN_PROPS/WRAP_IN + the Component type; the write-once host/main.tsx shrank to the wrapper and spreads REGISTRY into ALL, the one extension point where hand registrations survive — every internal lookup goes through ALL. A plain no-force re-run now registers newly analysed components. Pre-split suites (main.tsx without 'from \"./registry\"') get registry.ts written inert beside the monolith plus a console warning and a perf-harness summary line naming the escape: delete host/main.tsx and re-run, or port the hand wiring and import ./registry — writeOnce stays absolute, --force included. Guarded by tests/scaffold.test.ts (added tree lands in registry.ts, main.tsx byte-identical), tests/tasks.test.ts (migration), tests/emittedExecution.test.ts (re-bundled host serves the new component), and the emitted syntax/type sweeps cover host/registry.ts explicitly. (wave 2)"
     },
     {
       "id": "FR-017",

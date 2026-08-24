@@ -226,8 +226,8 @@ A pure function: `renderSuite({ tree, outDir, variants, report }) → RenderedFi
 
 The flat list of components (root + recursed children, deduped) becomes:
 
-- One **import line per component** in `host/main.tsx`, with the path expressed relative to the host directory.
-- One entry in the `REGISTRY` object keyed by component name, so `window.__profile.mount(name, props)` can find them.
+- One **import line per component** in `host/registry.ts`, with the path expressed relative to the host directory.
+- One entry in its `REGISTRY` object keyed by component name, so `window.__profile.mount(name, props)` can find them. The tables (`REGISTRY`, `FN_PROPS`, `WRAP_IN`) live in `host/registry.ts`, which is **regenerated on every run** — the write-once `host/main.tsx` wrapper imports them and spreads `REGISTRY` into its `ALL` map, the one place hand registrations survive regeneration (FR-016).
 - One **spec file per component** at `profile/<Name>.profile.spec.ts` (never `tests/` — a project script reading `bun test tests` would collect them, see generated-suite.md). Each spec bakes its defaults, variants, and hooks list in as literals — no shared fixture file, no implicit coupling.
 
 The host page initialises `react-scan` once at module load, buffers any "unnecessary rerender" events into `scanEvents`, and exposes `mount` / `rerender` / `unmount` / `getRenderInfo` / `getScanEvents` on `window.__profile`. The driver API is deliberately small.
