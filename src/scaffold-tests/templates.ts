@@ -1023,9 +1023,12 @@ function rscSpec(
   const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;
 
   const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
+  // Captured: @testing-library appends its container to document.body on
+  // every render, so asserting on document.body could not fail even when the
+  // component rendered nothing. The container is what this component produced.
   const renderExpr = providerImport
-    ? `render(<AppProvider>{ui}</AppProvider>)`
-    : `render(<>{ui}</>)`;
+    ? `rendered = render(<AppProvider>{ui}</AppProvider>)`
+    : `rendered = render(<>{ui}</>)`;
 
   const callArgs = rscCallArgs(info);
   // A zero-parameter component never calls buildProps, and an unused helper
@@ -1063,6 +1066,9 @@ ${providerLine}${emitComponentImport(info, importPath)}
 // mocked — fill in fixtures to make the assertions meaningful.
 ${propsBlock}
 test("${name} (RSC): resolves, or takes one of its declared guard paths", async (t) => {
+  // Hoisted so the assertion below stays OUTSIDE the try: an assertion
+  // failure must be reported as itself, never swallowed by the guard catch.
+  let rendered: ReturnType<typeof render> | undefined;
   try {
     const ui: React.ReactNode = await ${name}(${callArgs});
     ${renderExpr};
@@ -1074,7 +1080,7 @@ ${uncertainEscape(info, apiRoutes)}    // Not a guard and not an admitted gap: a
     // rather than as a confusing "expected TypeError to match /notFound/".
     throw err;
   }
-  expect(document.body.innerHTML.length).toBeGreaterThan(0);
+  expect(rendered?.container.innerHTML.length ?? 0).toBeGreaterThan(0);
   void screen;
 });
 ${staticTextTests}${guardTests}`;

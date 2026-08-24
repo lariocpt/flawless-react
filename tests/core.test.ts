@@ -194,7 +194,17 @@ describe("runCore", () => {
     // suite until this seam existed). A true end-to-end (git repo with staged
     // component edits + a real playwright run) would re-prove the runner,
     // already pinned in tests/runTests.test.ts, at disproportionate cost.
+    // --changed needs a real checkout: comparing against a ref git cannot
+    // resolve is a false pass, so runCore now refuses it. A one-commit repo
+    // keeps this test about the FR-017 gate rather than about git.
     const outDir = tmpOutDir();
+    for (const args of [
+      ["init", "-q"],
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+    ]) {
+      const proc = Bun.spawn(["git", ...args], { cwd: outDir, stdout: "pipe", stderr: "pipe" });
+      if ((await proc.exited) !== 0) throw new Error(`git ${args[0]} failed in ${outDir}`);
+    }
     const base = {
       pattern: DASHBOARD,
       outDir,

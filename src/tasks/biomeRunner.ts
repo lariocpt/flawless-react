@@ -109,7 +109,14 @@ export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
     const p = d.location?.path;
     if (!p) continue;
     if (!wantedFiles.has(path.resolve(p))) continue;
-    if (opts.categoryPrefix && !d.category?.startsWith(opts.categoryPrefix)) continue;
+    // A file biome could not PARSE produces `parse` diagnostics, which a
+    // category filter ("lint/a11y") dropped on the floor — so an unreadable
+    // file was reported as clean by every sweep. A file the analyser could
+    // not read is never a pass; the diagnostic rides through the filter.
+    const isParseFailure = d.category === "parse" || d.category?.startsWith("parse/");
+    if (!isParseFailure && opts.categoryPrefix && !d.category?.startsWith(opts.categoryPrefix)) {
+      continue;
+    }
     // The sweep runs against a scratch config with only its own rules, so a
     // suppression aimed at the project's full config looks "unused" here.
     // Reporting that would punish the user for answering another task's

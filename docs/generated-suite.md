@@ -447,7 +447,9 @@ spec's example responses, shared by the unit suite (node) and the browser host
 
 The client-safe provider chain, derived from the app-router layout's JSX around
 `{children}`. Non-literal props the layout passed are emitted as
-`TODO(flawless)` comments rather than guessed at. Written once and never
+`TODO(flawless)` comments rather than guessed at. Derived from the layout, so
+`--force` refreshes it when the provider chain changes; `provider.fixtures.ts`
+beside it holds values a human typed and is never
 overwritten.
 
 ### `e2e` → `e2e/`

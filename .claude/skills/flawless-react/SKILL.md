@@ -228,9 +228,12 @@ including types from the repo's own **workspace packages** (`@scope/shared`,
 resolved through the workspace map into the package's source, barrel
 re-exports chased to the declaring file); intersections, host-element props
 (`ComponentProps<"div">`), `ComponentProps<typeof LocalX>` and cva tables all
-resolve. Non-literal unions, `Omit`/`Pick`/`Partial`, `z.infer` aliases and
-anything in `node_modules` do not — the prop lands in `unresolvedProps` and
-the type that defeated it in `unresolvedTypes`.
+resolve. `z.infer`/`z.input` aliases resolve too, by reading the zod schema
+syntactically (object/enum/primitive/array/coerce, `.optional`/`.nullable`/
+`.default`/`.partial`/`.extend`; `.transform`, unions, records and dates
+bail). Non-literal unions, `Omit`/`Pick`/`Partial` and anything in
+`node_modules` do not — the prop lands in `unresolvedProps` and the type that
+defeated it in `unresolvedTypes`.
 
 Mocks come from a component's **own** imports, so one that renders `<Link>` only
 through a child gets no `next/link` mock in its own spec.
