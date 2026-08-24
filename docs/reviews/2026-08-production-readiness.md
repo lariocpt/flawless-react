@@ -178,3 +178,17 @@ against the same anchors after the implementation waves and dogfood round 5:
 internal power tool; distribution is now the only 1.0 gate.** Gate 2
 (the upgrade story) is closed and dogfood-verified; every dimension the
 waves touched moved on evidence that is executed, not read.
+
+
+## Rescore — 2026-08-24 (round 6: FR-020 + B-8 + dogfood)
+
+Only the dimensions that moved; everything else stands as the wave 0–5
+rescore above.
+
+| # | Dimension | Was | Now | What moved it |
+|---|---|---|---|---|
+| 3 | Analysis soundness ×2 | 4 | **4** | B-8 landed (workspace map + barrel relocation, adversarially hardened: private-decl shadow, explicit-over-star precedence, depth-not-breadth bound) — but held at 4 honestly: round 6 disproved the round-5 claim that the TODO remainder was "one wall". Measured per callee it is z.infer members (B-9), client factories, and `cache()`-wrapped exports (B-10) — real inference frontiers, now recorded instead of misattributed. |
+| 7 | Test suite & CI rigor | 4 | **5** | The stated holdback is gone: FR-020 closed the last ledger item (34/34) with the --ci contract pinned subprocess-level, red-run blob and anti-vacuity control included, and mutation probes proved every new assertion bites. 774 tests. The remaining caveat (single-LAN CI) is distribution's gate, scored in #1/#11. |
+
+**Weighted total: 56/70 (80%), up from 55/70.** Verdict unchanged: **A− as
+an internal power tool; distribution is the only 1.0 gate.**
