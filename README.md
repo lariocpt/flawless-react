@@ -96,7 +96,7 @@ In this mode flawless:
 - walks `app/api/**/route.ts` (or `pages/api/**`) and emits `flawless/swagger.json` + `flawless/mocks/handlers.ts` (MSW)
 - wires MSW into the host bundle for Playwright tests **and** into Vitest's setup for jsdom-based unit tests, so the same handlers intercept `fetch` at every layer
 - merges its dev deps (`vitest`, `msw`, `@testing-library/*`, `@playwright/test`, …) into your project's `package.json` as `devDependencies`
-- adds `flawless:unit` / `flawless:perf` / `flawless:browser` scripts so you can `bun run flawless:unit` etc. from your project root
+- adds `flawless:unit` / `flawless:perf` / `flawless:browser` scripts so you can `bun run flawless:unit` etc. from your project root. A `flawless:*` script you have customised survives a re-run: only a value the tool recognises as one of its own past spellings upgrades; anything else is kept and named in the summary and REPORT.md (`> Kept script(s): ...`). Delete the key to take the tool's current command
 - writes the runnable harness to **`<project-root>/flawless/`** — no separate npm project, no duplicated deps
 
 Override the auto-detected app resolver with `--app-resolver <file>` if you have a custom wrapper. The generated `flawless/mocks/handlers.ts` is yours to edit — flawless won't overwrite it once it exists, so swap the empty `HttpResponse.json({})` bodies for realistic fixtures.
@@ -141,7 +141,7 @@ flawless-react <entry.tsx> [options]
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
-With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code (suite failures included), so a red run is readable from the blob alone. Without the flag you get the table and no JSON.
+With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code (suite failures included), so a red run is readable from the blob alone. Without the flag you get the table and no JSON.
 
 ## What gets generated
 

@@ -20,7 +20,11 @@ before touching an adopted suite:
 
 **Exits 0.** Every task — `perf-harness` included — refreshes its derived
 files, rewriting them as a fresh scaffold would (the standalone suite's
-package.json is MERGED — your fields win); write-once files are
+package.json is MERGED — your fields win, and in Next.js mode a
+`flawless:*` script you customised is kept unless its value is one of the
+tool's own spellings — kept keys are listed in REPORT.md as
+`> Kept script(s): ...`, and deleting the key takes the tool's current
+command); write-once files are
 untouched (delete one to get a fresh copy). The perf-harness TaskResult and
 REPORT.md's task row carry a status word: `generated` (fresh out dir),
 `refreshed` (this case), or `kept` (`--changed`, below). Emission is

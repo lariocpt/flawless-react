@@ -332,7 +332,11 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   it came from:
   - `/* inferred from <fn>'s return annotation */` — the dep declares
     `Promise<T>` and `T` resolved completely (any unresolved member bails the
-    whole value; generics bail; `T[]` yields a one-element array).
+    whole value; generics bail; `T[]` yields a one-element array). A union is
+    resolved from its non-nullish arms: `Promise<Case[] | null>` yields the
+    `Case[]` fixture, because `null`/`undefined` arms are values the type
+    already admits, not holes. A union of two *shapes* still bails — the
+    analyser will not pick a side.
   - `/* inferred from the OpenAPI example for GET /api/… */` — the dep is an
     unannotated wrapper around exactly one `fetch()`, joined to the API spec's
     response example at emit time.
@@ -384,6 +388,14 @@ drop out of the run's hand-work tallies — a TODO in a render that was never
 written is not your debt. Note that deleting just the stamp line demotes the
 spec to pre-stamp rather than making it regenerable; the unit of ownership is
 the file.
+
+The same ownership rule covers the `flawless:*` scripts a Next.js-mode run
+merges into your project's `package.json`: a value the tool recognises as one
+of its own spellings (current or past) upgrades in place, while anything else
+is your work — kept, and named in the run summary, REPORT.md
+(`> Kept script(s): ...`), and the `--ci` blob's `keptScripts`. The escape
+hatch is the same too: delete the key and re-run to take the tool's current
+command.
 
 ### `unit-browser` → `browser/<Component>.spec.ts`
 
