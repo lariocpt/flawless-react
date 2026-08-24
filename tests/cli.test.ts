@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -67,14 +67,95 @@ describe("--ci process contract", () => {
       const blob = JSON.parse(stdout) as {
         exitCode: number;
         outDir: string;
-        results: Array<{ id: string }>;
+        results: Array<{ id: string; ok: boolean; summary: string }>;
+        keptScripts: string[];
       };
       expect(blob.exitCode).toBe(0);
-      expect(typeof blob.outDir).toBe("string");
+      // Echoing the tmpdir back proves --out was honored — existence alone is
+      // vacuous here (the test pre-created the dir), and a run that ignored
+      // --out would still have created whatever dir it reported.
+      expect(blob.outDir).toBe(out);
+      expect(existsSync(path.join(blob.outDir, "reports", "summary.json"))).toBe(true);
       expect(blob.results.map((r) => r.id)).toEqual(["perf-static"]);
+      expect(blob.results[0]?.ok).toBe(true);
+      expect(typeof blob.results[0]?.summary).toBe("string");
+      // keptScripts joined the blob in FR-034; empty outside Next.js mode is
+      // fine, but the key itself must ride along or scripted callers branch
+      // on undefined.
+      expect(Array.isArray(blob.keptScripts)).toBe(true);
     } finally {
       await rm(out, { recursive: true, force: true });
     }
+  }, 30000);
+
+  // The same line without --json is the control that proves the whole-stdout
+  // JSON.parse above CAN fail: the human summary table is not JSON, so a
+  // regression that leaks it into a --ci run cannot slip past a vacuous parse.
+  test("without --json the summary table makes JSON.parse throw", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          CARD,
+          "--no-interactive",
+          "--tasks",
+          "perf-static",
+          "--no-inline-summary",
+          "--out",
+          out,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      expect(stdout.length).toBeGreaterThan(0);
+      expect(() => JSON.parse(stdout)).toThrow();
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // A red run must still hand the caller one parseable blob: exit 1 on the
+  // process, the same 1 mirrored inside, and the failing task visible in
+  // results. The cheapest deterministic red is a Next-only task outside
+  // --nextjs mode — no server, no suite run, same code path through main().
+  test("a failing task exits 1 and the blob still parses with exitCode 1", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-"));
+    try {
+      const proc = Bun.spawn(
+        ["bun", BIN, CARD, "--ci", "--tasks", "e2e", "--no-inline-summary", "--out", out],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(1);
+      const blob = JSON.parse(stdout) as {
+        exitCode: number;
+        results: Array<{ id: string; ok: boolean }>;
+        keptScripts: string[];
+      };
+      expect(blob.exitCode).toBe(1);
+      expect(blob.results.find((r) => r.id === "e2e")?.ok).toBe(false);
+      expect(Array.isArray(blob.keptScripts)).toBe(true);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // parseArgs throws before anything reaches stdout, so a scripted caller
+  // piping stdout into JSON.parse sees "" — not half a table — and exit 2
+  // distinguishes "you called it wrong" from "the run went red".
+  test("an unknown flag exits 2 with the message on stderr and stdout empty", async () => {
+    const proc = Bun.spawn(["bun", BIN, CARD, "--ci", "--definitely-not-a-flag"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    expect(await proc.exited).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("unknown flag: --definitely-not-a-flag");
   }, 30000);
 
   test("a usage error exits 2 and leaves stdout empty", async () => {

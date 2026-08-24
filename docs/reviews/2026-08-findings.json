@@ -265,14 +265,15 @@
    "orig": "A4-06",
    "severity": "P2",
    "dimension": "tests",
-   "status": "open",
+   "status": "fixed",
    "title": "The --json/--ci process contract is promised in the README and tested nowhere",
    "file": "tests/cli.test.ts",
-   "line": 17,
+   "line": 49,
    "claim": "No test spawns the CLI with --ci and JSON.parses the whole stdout; one stray log line before the blob would ship unnoticed.",
    "proposed_fix": "Spawn against a fixture with --ci, JSON.parse entire stdout, assert {outDir, results} and exit codes (0 and 2 cases).",
    "effort": "S",
-   "spirit": "honesty"
+   "spirit": "honesty",
+   "fix": "tests/cli.test.ts '--ci process contract': whole-stdout JSON.parse on a green run (blob exitCode 0, outDir exists on disk, results shapes, keptScripts array), a red run (--tasks e2e outside --nextjs: process exit 1, blob still parses, exitCode 1 inside, ok:false result), unknown flag (exit 2, stdout exactly empty, message on stderr), usage error (exit 2, stdout empty), a rejection escaping main() (exit 1, error alone on stderr), and the no---json control proving the parse assertion can fail (summary table throws). Green/usage/rejection cases landed mid-wave-0 in ff40277; the ledger was never updated — the red case, bad-flag subprocess case, keptScripts/outDir-existence assertions, and the anti-vacuity control are round 6."
   },
   {
    "id": "FR-021",
