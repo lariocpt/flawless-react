@@ -161,6 +161,7 @@ async function analyseOne(
     parsed.imports,
     absPath,
     resolver,
+    cache,
   );
   const interactions = extractInteractions(
     unit.bodyNode,

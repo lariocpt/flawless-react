@@ -153,8 +153,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   // The config's include has to cover wherever the colocated specs actually
   // landed — derived from the emitted files, so filtering rules stay in one
   // place. Rendered last for that reason, prepended so it is written first.
-  const colocatedSpecPaths = files.flatMap((f) => (f.absPath ? [f.absPath] : []));
-  files.unshift({ relPath: VITEST_CONFIG, content: vitestConfig(opts, colocatedSpecPaths) });
+  files.unshift({ relPath: VITEST_CONFIG, content: vitestConfig(opts) });
   return files;
 }
 
@@ -216,30 +215,7 @@ function emitComponentImport(info: ComponentInfo, importPath: string): string {
   return `import { ${info.componentName} } from "${stripped}";`;
 }
 
-/**
- * The include globs for colocated specs, derived from where those specs are
- * actually written. Hardcoding "src/**" meant a src-less layout (components/,
- * app/ at the project root) had its specs emitted and never selected — vitest
- * reported "no tests" while everything looked correct.
- *
- * One glob per top-level directory under the project root (the config resolves
- * root as the parent of outDir), sorted and deduped so the emitted config is
- * byte-identical across runs. Falls back to src/** when nothing is derivable.
- */
-function colocateIncludeGlobs(projectRoot: string, colocatedSpecPaths: string[]): string[] {
-  const tops = new Set<string>();
-  for (const p of colocatedSpecPaths) {
-    const rel = path.relative(projectRoot, path.dirname(p));
-    if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
-    tops.add(rel === "" ? "" : (rel.split(path.sep)[0] as string));
-  }
-  const globs = [...tops]
-    .sort()
-    .map((top) => (top === "" ? "*.flawless.test.{ts,tsx}" : `${top}/**/*.flawless.test.{ts,tsx}`));
-  return globs.length > 0 ? globs : ["src/**/*.flawless.test.{ts,tsx}"];
-}
-
-function vitestConfig(opts: UnitBrowserRenderOptions, colocatedSpecPaths: string[]): string {
+function vitestConfig(opts: UnitBrowserRenderOptions): string {
   // Every replacement is resolved against the config's own directory rather
   // than baked in absolute. This file is committed, and the react/react-dom
   // pins in particular pointed into a node_modules path that exists only on the
@@ -273,10 +249,15 @@ function vitestConfig(opts: UnitBrowserRenderOptions, colocatedSpecPaths: string
     // default (.flawless) or any --out pointed vitest at a setup file that does
     // not exist, and it died at startup.
     const outName = path.basename(opts.outDir);
-    const include = [
-      ...colocateIncludeGlobs(path.resolve(opts.outDir, ".."), colocatedSpecPaths),
-      `${outName}/unit/**/*.test.{ts,tsx}`,
-    ];
+    // Root-wide, NOT derived from this run's emitted files: the config is
+    // always rewritten, so a per-run derivation (run 1 over src/**, run 2 over
+    // app/**) left only the latest run's dirs and silently deselected every
+    // previously colocated spec. The same two globs, whatever this run
+    // touched — run-order independent and byte-identical across runs by
+    // construction. Known limit: with --out OUTSIDE the project tree the
+    // config root is the out dir's parent and cannot reach colocated specs in
+    // the source tree — same as before this change, and out of scope here.
+    const include = [`**/*.flawless.test.{ts,tsx}`, `${outName}/unit/**/*.test.{ts,tsx}`];
     return `import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
@@ -290,6 +271,12 @@ ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: [path.join(configDir, "setup.ts")],
     include: [${include.map((g) => JSON.stringify(g)).join(", ")}],
+    // Setting exclude REPLACES vitest's defaults, so the standard set rides
+    // along explicitly: without dist/ here, a build step that copies raw
+    // .flawless.test sources into dist/ would run every spec twice. The
+    // root-wide include reaches all of them; this committed config must be
+    // safe on its own terms.
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.{idea,git,cache,output,temp}/**"],
     globals: true,
   },
 });

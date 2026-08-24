@@ -47,7 +47,16 @@ export function renderReportMarkdown(input: ReportInput): string {
   const root = input.projectRoot ?? input.outDir;
   const rel = (p: string): string => {
     const r = path.relative(root, p);
-    return r.startsWith("..") ? p : r;
+    if (!r.startsWith("..")) return r;
+    // Without --nextjs, root is outDir — but colocated specs live in the
+    // project tree BESIDE it, so they escape. Its parent is the tree both
+    // share; relative to that they stay readable and machine-independent.
+    const rp = path.relative(path.dirname(root), p);
+    if (!rp.startsWith("..")) return rp;
+    // This file is committed: an absolute path is forbidden because it names
+    // one machine's checkout and churns `git status` on every other. A path
+    // outside even the parent degrades to its basename instead.
+    return path.basename(p);
   };
 
   const flat = flattenTrees(input.trees);
@@ -164,12 +173,22 @@ export function renderReportMarkdown(input: ReportInput): string {
   // explicit "none", or an explicit "not measured" — because a silently absent
   // table reads as zero debt, and on the dogfood app the truth was 181 markers.
   const measured = input.results.filter((r) => r.handWork !== undefined);
-  lines.push("## Hand-work remaining", "");
+  lines.push(
+    "## Hand-work remaining",
+    "",
+    // Fixed line, present in every state: the counters live in the unit/browser
+    // emitters only, and claiming more is how this section lied about scope.
+    // Ledger: tally the other layers' markers too, then widen this claim.
+    "Counted for the unit/browser layer only — the e2e, load and provider files",
+    "carry their own `TODO(flawless)` markers, not counted here.",
+    "",
+  );
   if (measured.length === 0) {
     lines.push(
-      "Not measured — this run did not include the `unit-browser` task, whose",
-      "emitters are what plant `TODO(flawless)` markers. Absence of a table here",
-      "is absence of measurement, not absence of debt.",
+      // "did not include the task" was false when the task ran and threw; this
+      // wording is true in both states.
+      "Not measured — the `unit-browser` task did not report a count (not selected, or it failed).",
+      "Absence of a table here is absence of measurement, not absence of debt.",
       "",
     );
   } else {

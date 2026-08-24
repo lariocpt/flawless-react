@@ -158,10 +158,15 @@ export function ${name}() {
       shared,
     );
 
-    // Each entry must fetch the leaf THROUGH the shared cache…
-    expect(seenLeafParses.length).toBeGreaterThanOrEqual(2);
-    // …and receive the SAME parsed object — one parse for the corpus, not one
-    // per entry (FR-032: card.tsx parsed 237x in the dogfood sweep).
+    // Each entry must fetch the leaf THROUGH the shared cache — TWICE: once
+    // resolving <Leaf> as a tag target (what host element does it render?),
+    // once analysing it as a child. A count below 4 means one of those hops
+    // parsed the file on its own, invisibly to this probe: resolveTagRootTags
+    // did exactly that, re-parsing every tag target once per entry.
+    expect(seenLeafParses.length).toBeGreaterThanOrEqual(4);
+    // …and every fetch must receive the SAME parsed object — one parse for the
+    // corpus, not one per entry (FR-032: card.tsx parsed 237x in the dogfood
+    // sweep).
     for (const sf of seenLeafParses) expect(sf).toBe(seenLeafParses[0] as object);
   });
 });

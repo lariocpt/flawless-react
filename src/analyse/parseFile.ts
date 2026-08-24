@@ -179,16 +179,24 @@ function collectModuleImports(
       continue;
     }
     const names: string[] = [];
+    // Aligned with `names`; consumers key decisions (like the pure-utility mock
+    // exemption) on the module-side name, which aliasing hides from `names`.
+    const importedNames: string[] = [];
     let hasDefault = false;
     if (clause.name) {
       names.push(clause.name.text);
+      importedNames.push(clause.name.text);
       hasDefault = true;
     }
     if (clause.namedBindings) {
       if (ts.isNamedImports(clause.namedBindings)) {
-        for (const el of clause.namedBindings.elements) names.push(el.name.text);
+        for (const el of clause.namedBindings.elements) {
+          names.push(el.name.text);
+          importedNames.push((el.propertyName ?? el.name).text);
+        }
       } else if (ts.isNamespaceImport(clause.namedBindings)) {
         names.push(clause.namedBindings.name.text);
+        importedNames.push(clause.namedBindings.name.text);
       }
     }
     const isTypeOnly =
@@ -197,6 +205,7 @@ function collectModuleImports(
     out.push({
       specifier,
       names,
+      importedNames,
       kind: names.some((n) => jsxRoots.has(n)) ? "component" : "value",
       isTypeOnly,
       hasDefault,

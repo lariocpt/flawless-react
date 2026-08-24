@@ -266,6 +266,8 @@ describe("renderUnitBrowser async server components", () => {
     expect(src).toContain('vi.mock("@/lib/db"');
   });
 
+  const PURE_STUB = 'vi.fn((...args: unknown[]) => args.filter(Boolean).join(" "))';
+
   test("a module mixing cn with a data export is still mocked", () => {
     const files = renderUnitBrowser({
       trees: [
@@ -280,7 +282,112 @@ describe("renderUnitBrowser async server components", () => {
       outDir: OUT,
       variants: 3,
     });
-    expect(contentOf(files, "unit/Page.test.tsx")).toContain('vi.mock("@/lib/utils"');
+    const src = contentOf(files, "unit/Page.test.tsx");
+    expect(src).toContain('vi.mock("@/lib/utils"');
+    // The mock must not drop `cn`: the module factory replaces EVERY export, so
+    // omitting it is "cn is not a function" at render — and the generic async
+    // stub is just as wrong ("[object Promise]" as className).
+    expect(src).toContain(`cn: ${PURE_STUB}`);
+    expect(src).toContain("getUser: vi.fn(async () => ({}))");
+  });
+
+  test("a second statement importing data does not defeat the first statement's cn exemption", () => {
+    // collectModuleImports emits one ModuleImportInfo per import STATEMENT.
+    // Per-statement exemption let `import { getUser } from "@/lib/utils"` mock
+    // the whole module without a cn export.
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [
+              moduleImport({ specifier: "@/lib/utils", names: ["cn"], importedNames: ["cn"] }),
+              moduleImport({
+                specifier: "@/lib/utils",
+                names: ["getUser"],
+                importedNames: ["getUser"],
+              }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    const src = contentOf(files, "unit/Page.test.tsx");
+    const mocks = src.match(/vi\.mock\("@\/lib\/utils".*/g) ?? [];
+    expect(mocks).toHaveLength(1);
+    expect(mocks[0]).toContain(`cn: ${PURE_STUB}`);
+    expect(mocks[0]).toContain("getUser: vi.fn(async () => ({}))");
+    expect(mocks[0]).not.toContain("cn: vi.fn(async");
+  });
+
+  test("an aliased pure import (cn as cx) is exempt by its IMPORTED name", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [
+              moduleImport({ specifier: "@/lib/utils", names: ["cx"], importedNames: ["cn"] }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    expect(contentOf(files, "unit/Page.test.tsx")).not.toContain('vi.mock("@/lib/utils"');
+  });
+
+  test("in a mixed module an aliased pure binding is stubbed sync under its LOCAL name", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [
+              moduleImport({
+                specifier: "@/lib/utils",
+                names: ["cx", "getUser"],
+                importedNames: ["cn", "getUser"],
+              }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    const src = contentOf(files, "unit/Page.test.tsx");
+    // vi.mock factories key exports by the module's names, but the stub must be
+    // reachable where the component calls it — and it must return a string.
+    expect(src).toContain(`cx: ${PURE_STUB}`);
+    expect(src).not.toContain("cx: vi.fn(async");
+    expect(src).toContain("getUser: vi.fn(async () => ({}))");
+  });
+
+  test("a module kept pure across several statements still gets no mock", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [
+              moduleImport({ specifier: "@/lib/utils", names: ["cn"], importedNames: ["cn"] }),
+              moduleImport({ specifier: "@/lib/utils", names: ["cx"], importedNames: ["clsx"] }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    expect(contentOf(files, "unit/Page.test.tsx")).not.toContain('vi.mock("@/lib/utils"');
   });
 
   test("RSC spec wraps the resolved tree in the provider when one is given", () => {
@@ -383,7 +490,7 @@ describe("renderUnitBrowser colocate", () => {
     expect(cfg).toContain("root: projectRoot");
     expect(cfg).toContain('path.join(configDir, "setup.ts")');
     expect(cfg).toContain(
-      'include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
+      'include: ["**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
     );
   });
 
@@ -405,11 +512,12 @@ describe("renderUnitBrowser colocate", () => {
     expect(cfg).not.toContain('"flawless/unit');
   });
 
-  test("include globs cover specs colocated outside src/ (src-less layout)", () => {
-    // The include was hardcoded to src/** — a project keeping components under
-    // <root>/components or <root>/app got its specs emitted and never selected.
+  test("the root-wide include matches specs under src/, components/, and app/ alike", () => {
+    // The include used to be derived per top-level directory from THIS run's
+    // emitted files. The root-wide glob covers every layout in one form.
     const files = renderUnitBrowser({
       trees: [
+        tree(comp("Button", { filePath: `${SRC}/ui/Button.tsx`, exportKind: "named" })),
         tree(comp("Card", { filePath: "/proj/components/Card.tsx", exportKind: "default" })),
         tree(comp("Header", { filePath: "/proj/app/nav/Header.tsx", exportKind: "named" })),
       ],
@@ -421,22 +529,38 @@ describe("renderUnitBrowser colocate", () => {
     const match = cfg.match(/include: (\[[^\]]*\])/);
     expect(match).not.toBeNull();
     const include = JSON.parse(match?.[1] ?? "[]") as string[];
-    // Every colocated spec the run emits is covered by some include glob,
-    // relative to the project root the config resolves (parent of outDir).
-    for (const f of files) {
-      if (!f.absPath) continue;
-      const rel = path.relative("/proj", f.absPath);
-      expect(
-        include.some((g) => new Bun.Glob(g).match(rel)),
-        `${rel} matched by ${JSON.stringify(include)}`,
-      ).toBe(true);
+    expect(include[0]).toBe("**/*.flawless.test.{ts,tsx}");
+    const rootWide = new Bun.Glob(include[0] as string);
+    const colocated = files.filter((f) => f.absPath);
+    expect(colocated.length).toBe(3);
+    for (const f of colocated) {
+      const rel = path.relative("/proj", f.absPath as string);
+      expect(rootWide.match(rel), `${rel} matched by ${include[0]}`).toBe(true);
     }
-    // Deterministic: sorted and deduped ahead of the outDir's own unit glob.
-    const derived = include.slice(0, -1);
-    expect(derived).toEqual([...new Set(derived)].sort());
   });
 
-  test("include falls back to src/** when nothing colocated is derivable", () => {
+  test("two runs over disjoint spec dirs emit byte-identical include lists", () => {
+    // vitest.config.mts is always rewritten. Deriving the include from THIS
+    // run's files meant run 1 over src/** followed by run 2 over app/** left a
+    // config selecting only app/**, silently deselecting run 1's specs. The
+    // include must not depend on which files this particular run touched.
+    const includeOf = (filePath: string): string => {
+      const files = renderUnitBrowser({
+        trees: [tree(comp("Card", { filePath, exportKind: "default" }))],
+        outDir: OUT,
+        variants: 3,
+        colocate: true,
+      });
+      const match = contentOf(files, "vitest.config.mts").match(/include: \[[^\]]*\]/);
+      expect(match).not.toBeNull();
+      return match?.[0] ?? "";
+    };
+    expect(includeOf(`${SRC}/deep/Card.tsx`)).toBe(includeOf("/proj/app/nav/Card.tsx"));
+  });
+
+  test("include keeps the root-wide form when nothing is colocated this run", () => {
+    // Nothing derivable used to mean a src/** fallback — wrong root for a
+    // src-less project, and different bytes than a run that emitted specs.
     const files = renderUnitBrowser({
       trees: [tree(comp("Hidden", { exportKind: "none" }))],
       outDir: OUT,
@@ -445,7 +569,32 @@ describe("renderUnitBrowser colocate", () => {
     });
     const cfg = contentOf(files, "vitest.config.mts");
     expect(cfg).toContain(
-      'include: ["src/**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
+      'include: ["**/*.flawless.test.{ts,tsx}", "flawless/unit/**/*.test.{ts,tsx}"]',
+    );
+  });
+
+  test("node_modules is excluded explicitly, and the exclude is load-bearing", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Card"))],
+      outDir: OUT,
+      variants: 3,
+      colocate: true,
+    });
+    const cfg = contentOf(files, "vitest.config.mts");
+    const match = cfg.match(/include: (\[[^\]]*\])/);
+    const include = JSON.parse(match?.[1] ?? "[]") as string[];
+    // The emitted include DOES match spec-shaped paths under node_modules and
+    // dist, so the exclude line is load-bearing — remove it and a dependency
+    // shipping *.flawless.test.* files (or a build step copying raw specs
+    // into dist/) runs inside the user's suite.
+    expect(
+      include.some((g) => new Bun.Glob(g).match("node_modules/pkg/dist/x.flawless.test.ts")),
+    ).toBe(true);
+    expect(include.some((g) => new Bun.Glob(g).match("dist/x.flawless.test.ts"))).toBe(true);
+    // Setting exclude replaces vitest's defaults, so the standard set must
+    // ride along explicitly.
+    expect(cfg).toContain(
+      'exclude: ["**/node_modules/**", "**/dist/**", "**/.{idea,git,cache,output,temp}/**"]',
     );
   });
 

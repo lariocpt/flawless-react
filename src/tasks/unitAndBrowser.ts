@@ -52,6 +52,10 @@ export const unitAndBrowser: Task = {
       todos,
     };
     const { written, skipped } = await scaffoldUnitBrowser(scaffoldOptions);
+    // Tallying happened while rendering, but a skipped colocated spec's render
+    // was discarded — its markers were never written this run, and may name
+    // TODOs the user already resolved in the file the writer kept.
+    for (const kept of skipped) todos.drop(kept);
     // flattenTrees, not a raw walk: the same component appears in as many trees
     // as there are pages rendering it, and counting the walk reported "unit
     // tests for 606 component(s)" against an app the report itself says has 181.

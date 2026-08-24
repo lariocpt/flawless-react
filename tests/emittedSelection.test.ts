@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { cp, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { grepForRoutes } from "../src/changed.ts";
 import { runCore } from "../src/core.ts";
 import { suitePackageJson } from "../src/scaffold-tests/index.ts";
 
@@ -69,6 +70,26 @@ function emittedSuite(): Promise<Suite> {
   suitePromise ??= (async (): Promise<Suite> => {
     const app = path.join(await mkdtemp(path.join(tmpdir(), "flawless-select-")), "app");
     await cp(fixture("nextapp"), app, { recursive: true });
+    // The fixture home page renders nothing clickable, so its e2e spec would
+    // carry only the load test — and the grep-selection case would then pass
+    // against a one-test spec without proving anything about the second one.
+    // One locatable click makes the emitted spec carry BOTH tests.
+    await Bun.write(
+      path.join(app, "src", "app", "page.tsx"),
+      `"use client";
+
+export default function HomePage() {
+  return (
+    <main>
+      home
+      <button type="button" onClick={() => undefined}>
+        Reload
+      </button>
+    </main>
+  );
+}
+`,
+    );
     const outDir = path.join(app, "flawless");
 
     await runCore({
@@ -122,12 +143,22 @@ function specsOnDisk(dir: string, match: RegExp): string[] {
     .sort();
 }
 
-/** Ask playwright what it would run, without running it. */
-async function playwrightSelects(app: string, config: string): Promise<string[]> {
-  const proc = Bun.spawn(
-    ["bunx", "playwright", "test", "--config", config, "--list", "--reporter=json"],
-    { cwd: app, stdout: "pipe", stderr: "pipe" },
-  );
+interface ListedSuite {
+  title?: string;
+  file?: string;
+  suites?: ListedSuite[];
+  specs?: Array<{ title?: string }>;
+}
+
+/** Run `--list --reporter=json` and hand back the suite tree; undefined = empty selection. */
+async function playwrightListJson(
+  app: string,
+  config: string,
+  grep?: string,
+): Promise<ListedSuite[] | undefined> {
+  const args = ["bunx", "playwright", "test", "--config", config, "--list", "--reporter=json"];
+  if (grep !== undefined) args.push("--grep", grep);
+  const proc = Bun.spawn(args, { cwd: app, stdout: "pipe", stderr: "pipe" });
   const [out, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -142,17 +173,48 @@ async function playwrightSelects(app: string, config: string): Promise<string[]>
   if (code !== 0 && !noTests) {
     throw new Error(`playwright --list failed for ${config}:\n${stderr}\n${out}`);
   }
-  if (noTests) return [];
+  if (noTests) return undefined;
+  return (JSON.parse(out) as { suites?: ListedSuite[] }).suites;
+}
 
+/** Ask playwright what it would run, without running it. */
+async function playwrightSelects(app: string, config: string): Promise<string[]> {
+  const suites = await playwrightListJson(app, config);
   const files = new Set<string>();
-  const walk = (suites: Array<{ file?: string; suites?: unknown }> | undefined): void => {
-    for (const s of suites ?? []) {
+  const walk = (list: ListedSuite[] | undefined): void => {
+    for (const s of list ?? []) {
       if (typeof s.file === "string") files.add(s.file);
-      walk(s.suites as Array<{ file?: string }> | undefined);
+      walk(s.suites);
     }
   };
-  walk((JSON.parse(out) as { suites?: Array<{ file?: string }> }).suites);
+  walk(suites);
   return [...files].sort();
+}
+
+/**
+ * The FULL title path of every test a config+grep selects, joined with " › ".
+ * Full, because Playwright matches --grep against describe and test titles
+ * together — a leaf-title view could not tell "selected via its describe" from
+ * "selected via its own text", which is exactly what the grep case asserts.
+ */
+async function playwrightSelectedTitles(
+  app: string,
+  config: string,
+  grep?: string,
+): Promise<string[]> {
+  const suites = await playwrightListJson(app, config, grep);
+  const titles: string[] = [];
+  const walk = (list: ListedSuite[] | undefined, prefix: string[]): void => {
+    for (const s of list ?? []) {
+      const next = s.title ? [...prefix, s.title] : prefix;
+      for (const spec of s.specs ?? []) {
+        if (typeof spec.title === "string") titles.push([...next, spec.title].join(" › "));
+      }
+      walk(s.suites, next);
+    }
+  };
+  walk(suites, []);
+  return titles.sort();
 }
 
 /** The same question for vitest, invoked the way `flawless:unit` invokes it. */
@@ -243,6 +305,30 @@ describe("the real runners select exactly the specs the run emitted", () => {
       expect(onDisk.length).toBeGreaterThan(0);
 
       expect(await playwrightSelects(app, "flawless/e2e/playwright.config.ts")).toEqual(onDisk);
+    },
+    CASE_TIMEOUT_MS,
+  );
+
+  test(
+    "the --changed e2e grep selects a route's interaction test, not only its load test",
+    async () => {
+      const { app } = await emittedSuite();
+      const config = "flawless/e2e/playwright.config.ts";
+      const RENDER = "renders without console or page errors";
+      const INTERACT = "basic interactions from analysis stay error-free";
+
+      // Ungrepped first: the spec must carry both tests, or the grep assertion
+      // below would pass against a one-test spec without checking anything.
+      const all = await playwrightSelectedTitles(app, config);
+      expect(all.some((t) => t.includes(RENDER))).toBe(true);
+      expect(all.some((t) => t.includes(INTERACT))).toBe(true);
+
+      // The exact pattern a --changed run builds for this route. The second
+      // test names no route in its own title, so only the full title path —
+      // which playwright matches --grep against — can keep it selected.
+      const selected = await playwrightSelectedTitles(app, config, grepForRoutes(["/"]));
+      expect(selected.some((t) => t.includes(RENDER))).toBe(true);
+      expect(selected.some((t) => t.includes(INTERACT))).toBe(true);
     },
     CASE_TIMEOUT_MS,
   );

@@ -216,7 +216,7 @@ function routeSpec(
   // TypeScript cannot see that, and every navigation would otherwise be an error.
   const urlExpr = dynamic ? `routeUrl(ROUTE_TEMPLATE) as string` : JSON.stringify(route.urlPath);
   const skipLine = dynamic
-    ? `\n  test.skip(\n    ROUTE === undefined,\n    \`no id fixture for ${route.urlPath} — fill ${underOutDir(rel, "e2e/params.json")}\`,\n  );`
+    ? `\n    test.skip(\n      ROUTE === undefined,\n      \`no id fixture for ${route.urlPath} — fill ${underOutDir(rel, "e2e/params.json")}\`,\n    );`
     : "";
 
   // Up to 3 interactions harvested from the page's component tree.
@@ -231,14 +231,14 @@ function routeSpec(
       // has no drivable target here either.
       const dispatch = emitPlaywrightDispatch(c.click.event, locator, { tag: c.click.tag });
       if (!dispatch) return "";
-      return `  // from <${c.component}> analysis
-  {
-    const target = ${locator};
-    if (await target.count() > 0 && await target.first().isVisible()) {
-      ${dispatch.replace(locator, `${locator}.first()`)};
-      await page.waitForTimeout(150);
-    }
-  }`;
+      return `    // from <${c.component}> analysis
+    {
+      const target = ${locator};
+      if (await target.count() > 0 && await target.first().isVisible()) {
+        ${dispatch.replace(locator, `${locator}.first()`)};
+        await page.waitForTimeout(150);
+      }
+    }`;
     })
     .filter((s) => s !== "")
     .join("\n");
@@ -248,32 +248,38 @@ function routeSpec(
 ${paramLines}
 const ROUTE = ${urlExpr};
 
-test("GET ${route.urlPath} renders without console or page errors", async ({ page }) => {${skipLine}
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+// The route rides on the describe: playwright matches --grep against the
+// space-joined full title path, so a --changed run's "\\bGET <route> " pattern
+// (grepForRoutes) must select EVERY test in this file — a route embedded in
+// only one test's own title left the others invisible to a narrowed run.
+test.describe("GET ${route.urlPath}", () => {
+  test("renders without console or page errors", async ({ page }) => {${skipLine}
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (m) => {
+      if (m.type() === "error") errors.push(m.text());
+    });
+    const resp = await page.goto(ROUTE);
+    expect(resp, "navigation returned a response").toBeTruthy();
+    expect(resp?.status(), "no 5xx").toBeLessThan(500);
+    await page.waitForLoadState("networkidle");
+    expect(errors).toEqual([]);
   });
-  const resp = await page.goto(ROUTE);
-  expect(resp, "navigation returned a response").toBeTruthy();
-  expect(resp?.status(), "no 5xx").toBeLessThan(500);
-  await page.waitForLoadState("networkidle");
-  expect(errors).toEqual([]);
-});
 ${
   clicks.length > 0
     ? `
-test("basic interactions from analysis stay error-free", async ({ page }) => {${skipLine}
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(ROUTE);
-  await page.waitForLoadState("networkidle");
+  test("basic interactions from analysis stay error-free", async ({ page }) => {${skipLine}
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(ROUTE);
+    await page.waitForLoadState("networkidle");
 ${interactionBody}
-  expect(errors).toEqual([]);
-});
+    expect(errors).toEqual([]);
+  });
 `
     : ""
-}`;
+}});
+`;
 }
 
 interface HarvestedClick {

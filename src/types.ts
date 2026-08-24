@@ -329,6 +329,12 @@ export interface ModuleImportInfo {
   specifier: string;
   /** Local names bound by this declaration (default + named + namespace). */
   names: string[];
+  /**
+   * Module-side export name per entry of `names`: `import { cn as cx }` records
+   * "cn" where `names` records "cx". Default and namespace entries repeat the
+   * local name — they have no module-side name.
+   */
+  importedNames?: string[];
   /** "component" iff any local name is used as a JSX tag root in the file. */
   kind: "component" | "value";
   isTypeOnly: boolean;
@@ -508,18 +514,16 @@ export type TodoRecorder = (kind: TodoKind) => void;
  * silently the moment a template is reworded.
  */
 export class TodoCounter {
-  private byKind = new Map<TodoKind, { count: number; exemplar: string }>();
+  // Keyed by the file each recorder was bound to: tallying happens at RENDER
+  // time, but a renderer's output is not necessarily written (colocated specs
+  // are kept when they exist and --force is off), so the writer must be able
+  // to retract a whole file's tallies without touching the others'.
+  private byFile = new Map<string, Map<TodoKind, number>>();
 
   add(kind: TodoKind, exemplar: string): void {
-    const row = this.byKind.get(kind);
-    if (!row) {
-      this.byKind.set(kind, { count: 1, exemplar });
-      return;
-    }
-    row.count += 1;
-    // Lexicographically smallest, so the exemplar — and REPORT.md with it — is
-    // byte-identical however the trees happened to be ordered.
-    if (exemplar < row.exemplar) row.exemplar = exemplar;
+    const perKind = this.byFile.get(exemplar) ?? new Map<TodoKind, number>();
+    perKind.set(kind, (perKind.get(kind) ?? 0) + 1);
+    this.byFile.set(exemplar, perKind);
   }
 
   /** A recorder bound to one emitted file, for threading through templates. */
@@ -527,9 +531,32 @@ export class TodoCounter {
     return (kind) => this.add(kind, file);
   }
 
+  /**
+   * Forget everything tallied into `file`. For the writer that decided not to
+   * write it: markers in a discarded render are not debt, and may name TODOs
+   * the user already resolved in the file that was kept.
+   */
+  drop(file: string): void {
+    this.byFile.delete(file);
+  }
+
   /** Sorted by kind: this lands verbatim in a committed, deterministic file. */
   toTallies(): TodoTally[] {
-    return [...this.byKind.entries()]
+    const byKind = new Map<TodoKind, { count: number; exemplar: string }>();
+    for (const [file, perKind] of this.byFile) {
+      for (const [kind, count] of perKind) {
+        const row = byKind.get(kind);
+        if (!row) {
+          byKind.set(kind, { count, exemplar: file });
+          continue;
+        }
+        row.count += count;
+        // Lexicographically smallest, so the exemplar — and REPORT.md with it —
+        // is byte-identical however the trees happened to be ordered.
+        if (file < row.exemplar) row.exemplar = file;
+      }
+    }
+    return [...byKind.entries()]
       .map(([kind, r]) => ({ kind, count: r.count, exemplar: r.exemplar }))
       .sort((a, b) => (a.kind < b.kind ? -1 : 1));
   }

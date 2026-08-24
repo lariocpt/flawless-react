@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
@@ -38,9 +39,10 @@ function comp(name: string, extra: Partial<ComponentInfo> = {}): ComponentInfo {
 const tree = (entry: ComponentInfo): ComponentTree => ({ entry, children: [] });
 
 /** An RSC whose awaited dep's return shape the analyser admits it cannot infer. */
-const opaqueRsc = (name = "Page"): ComponentTree =>
+const opaqueRsc = (name = "Page", filePath?: string): ComponentTree =>
   tree(
     comp(name, {
+      ...(filePath ? { filePath } : {}),
       isAsync: true,
       renderMode: "rsc",
       exportKind: "default",
@@ -193,5 +195,104 @@ describe("the unit-browser task surfaces the tallies", () => {
     expect(res.ok).toBe(true);
     expect(res.handWork?.map((t) => t.kind)).toEqual(["uninferred-return-shape"]);
     expect(res.handWork?.[0]?.count).toBe(1);
+  });
+});
+
+describe("skipped colocated specs contribute no tallies", () => {
+  // Tallying happens during render, but the writer keeps an existing colocated
+  // spec when --force is off — so any tally from a kept file describes markers
+  // the run never wrote, including TODOs the user has already resolved.
+  const runColocated = (dir: string, force: boolean): ReturnType<typeof unitAndBrowser.run> =>
+    unitAndBrowser.run({
+      trees: [opaqueRsc("Page", path.join(dir, "src", "Page.tsx"))],
+      outDir: path.join(dir, "flawless"),
+      variants: 3,
+      heaps: "stress",
+      force,
+      report: false,
+      provider: undefined,
+      apiSpec: undefined,
+      inlineSummary: false,
+      nextjs: undefined,
+      colocate: true,
+      selectedTasks: ["unit-browser"],
+    } as RunContext);
+
+  test("a no-force rerun over an existing spec must not count its markers", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-skip-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    const first = await runColocated(dir, true);
+    expect(first.ok).toBe(true);
+    expect(first.handWork?.[0]?.count).toBe(1);
+    const spec = path.join(dir, "src", "Page.flawless.test.tsx");
+    expect(existsSync(spec)).toBe(true);
+    // The user resolves the TODO in place; the rerun keeps their file.
+    await Bun.write(spec, (await Bun.file(spec).text()).replaceAll("TODO(flawless)", "resolved"));
+    const rerun = await runColocated(dir, false);
+    expect(rerun.ok).toBe(true);
+    expect(rerun.handWork).toEqual([]);
+  });
+
+  test("--force rewrites the spec, so its markers count again", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-force-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await runColocated(dir, true);
+    const again = await runColocated(dir, true);
+    expect(again.handWork?.map((t) => t.kind)).toEqual(["uninferred-return-shape"]);
+    expect(again.handWork?.[0]?.count).toBe(1);
+  });
+});
+
+describe("tallies match the written text", () => {
+  test("the handWork sum equals the TODO(flawless) occurrences across the files the run wrote", async () => {
+    // The ONLY test allowed to grep for the marker. It exists precisely to
+    // catch an emit site that plants the text without tallying, or tallies
+    // without planting — the drift the emission-site counters cannot see.
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-sum-"));
+    const res = await unitAndBrowser.run({
+      trees: [
+        opaqueRsc(),
+        tree(
+          comp("Menu", {
+            interactions: {
+              clicks: [
+                {
+                  event: "onClick",
+                  tag: "MenuTrigger",
+                  label: { kind: "none" },
+                  hints: {},
+                  binding: { kind: "local", localName: "open" },
+                },
+              ],
+              forms: [],
+            },
+          }),
+        ),
+        tree(
+          comp("Search", {
+            interactions: { clicks: [], forms: [{ submit: undefined, fields: [], hints: {} }] },
+          }),
+        ),
+      ],
+      outDir: dir,
+      variants: 3,
+      heaps: "stress",
+      force: true,
+      report: false,
+      provider: undefined,
+      apiSpec: undefined,
+      inlineSummary: false,
+      nextjs: undefined,
+      selectedTasks: undefined,
+    } as RunContext);
+    expect(res.ok).toBe(true);
+    let written = 0;
+    for (const f of res.outputs) {
+      if (!existsSync(f)) continue;
+      written += (await Bun.file(f).text()).split("TODO(flawless)").length - 1;
+    }
+    const tallied = (res.handWork ?? []).reduce((n, t) => n + t.count, 0);
+    expect(written).toBeGreaterThan(0);
+    expect(tallied).toBe(written);
   });
 });

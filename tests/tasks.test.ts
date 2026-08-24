@@ -217,7 +217,12 @@ describe("e2e task", () => {
     expect(spec).toContain("const ROUTE = routeUrl(ROUTE_TEMPLATE) as string;");
     expect(spec).toContain("test.skip(");
     expect(spec).toContain("fill flawless/e2e/params.json");
-    expect(spec).toContain("GET /things/[id] renders without console or page errors");
+    // The route rides on the DESCRIBE so grepForRoutes' "\bGET <route> "
+    // pattern selects both tests via the full title path — embedded in one
+    // test's own title, a --changed grep dropped the interaction test.
+    expect(spec).toContain('test.describe("GET /things/[id]", () => {');
+    expect(spec).toContain('test("renders without console or page errors"');
+    expect(spec).toContain('test("basic interactions from analysis stay error-free"');
 
     const paramsJson = path.join(outDir, "e2e", "params.json");
     const paramsHelper = path.join(outDir, "e2e", "params.ts");

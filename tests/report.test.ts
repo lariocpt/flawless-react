@@ -140,6 +140,68 @@ describe("Hand-work remaining", () => {
   test("the section is byte-identical across calls", () => {
     expect(renderReportMarkdown(withHandWork)).toBe(renderReportMarkdown(withHandWork));
   });
+
+  test("the section states its scope in every state: unit/browser only, other layers uncounted", () => {
+    // e2eRoutes, loadPipes and providerWrapper plant markers no counter sees;
+    // copy claiming unit-browser's emitters "are what plant" them was false.
+    for (const results of [
+      [task("unit-browser", { handWork } as never)],
+      [task("unit-browser", { handWork: [] } as never)],
+      [task("unit-browser")],
+    ]) {
+      const md = renderReportMarkdown({ ...INPUT, results });
+      expect(md).toContain("unit/browser layer");
+      expect(md).toContain("carry their own `TODO(flawless)` markers, not counted here");
+    }
+  });
+
+  test("an absent count is not reported as an unselected task", () => {
+    // The task ran and failed: handWork is just as absent as when it was not
+    // selected, so the copy must be true in both states.
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [task("unit-browser", { ok: false, error: "boom" })],
+    });
+    expect(md).toContain("did not report a count (not selected, or it failed)");
+    expect(md).not.toContain("did not include the `unit-browser` task");
+  });
+
+  test("a colocated exemplar beside outDir renders relative even without a project root", () => {
+    // Non-Next colocate: no projectRoot, so root falls back to outDir while the
+    // exemplar sits in the sibling src/ tree — the old fallback printed it
+    // absolute into a committed file.
+    const md = renderReportMarkdown({
+      ...INPUT,
+      projectRoot: undefined,
+      results: [
+        task("unit-browser", {
+          handWork: [
+            {
+              kind: "compound-root-wrap",
+              count: 4,
+              exemplar: "/proj/src/dialog.flawless.test.tsx",
+            },
+          ],
+        } as never),
+      ],
+    });
+    expect(md).toContain("| `compound-root-wrap` | 4 | `src/dialog.flawless.test.tsx` |");
+    expect(md).not.toContain("/proj");
+  });
+
+  test("an exemplar outside even outDir's parent degrades to a basename, never absolute", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      projectRoot: undefined,
+      results: [
+        task("unit-browser", {
+          handWork: [{ kind: "other", count: 1, exemplar: "/elsewhere/menu.spec.ts" }],
+        } as never),
+      ],
+    });
+    expect(md).toContain("| `other` | 1 | `menu.spec.ts` |");
+    expect(md).not.toContain("/elsewhere");
+  });
 });
 
 describe("a partial run says so", () => {
