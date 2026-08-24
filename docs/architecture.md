@@ -61,12 +61,21 @@ unwrapped and listed in `promiseProps` so specs can re-wrap them.
 Module resolution for the analyser: relative specifiers, plus tsconfig `paths`
 aliases with full `extends` chains (arrays, bare `@tsconfig/*` specifiers,
 cycle-guarded) and `baseUrl`. Without this, `@/`-style imports — the norm in
-Next.js projects — make every child tree come back empty. Bare package
-specifiers deliberately resolve to `undefined`: `node_modules` is never walked.
+Next.js projects — make every child tree come back empty. After a
+paths/baseUrl miss (or with no tsconfig at all), a bare specifier is tried
+against the monorepo's **workspace map**: the nearest `package.json` with a
+`workspaces` field (or `pnpm-workspace.yaml`) names the member packages, and
+a matching `@scope/pkg` or `@scope/pkg/subpath` resolves into that package's
+**source** tree (`src/` probed first) — never its `exports`/`main`/`types`
+dist mappings, which are routinely stale and have no function bodies to read.
+Only literal dirs and single-star globs (`packages/*`) are honoured; anything
+fancier is skipped, because `undefined` is the bail-safe direction. Bare
+THIRD-PARTY specifiers still deliberately resolve to `undefined`:
+`node_modules` is never walked, even when a glob names it.
 
 ### extractProps.ts
 
-Walks the resolved `InterfaceDeclaration` or `TypeAliasDeclaration`, or an inline type literal on the first parameter. Same-file types resolve directly; an imported `Props` type is chased **two hops** through `resolveModule` (`MAX_HOPS` in `extractProps.ts`, and still no type checker). Every member's declaration site is recorded in `propPositions` so findings can point at the prop rather than line 1. For each `PropertySignature`, the type node is mapped:
+Walks the resolved `InterfaceDeclaration` or `TypeAliasDeclaration`, or an inline type literal on the first parameter. Same-file types resolve directly; an imported `Props` type is chased **two hops** through `resolveModule` (`MAX_HOPS` in `extractProps.ts`, and still no type checker). When the resolved module is a barrel that only *re-exports* the name (`export * from`, `export { A as B } from`), the chase to the declaring file rides `findExportedDecl` in `sourceCache.ts` — a visited-set-bounded walk that does **not** consume the hop budget, or component → barrel → types file would exhaust it before a single member resolved. Every member's declaration site is recorded in `propPositions` so findings can point at the prop rather than line 1. For each `PropertySignature`, the type node is mapped:
 
 | Source type | Default | Variants |
 | --- | --- | --- |
@@ -171,10 +180,11 @@ Three lookups that are facts about HTML rather than inferences about the app:
 ### walkChildren.ts
 
 Walks the JSX in the component body and collects uppercase tags that resolve to
-a project-local module through `resolveModule` — relative paths **and**
-tsconfig aliases. It also handles member tags (`<UI.Badge/>`, resolved to the
-`Badge` export of the namespace's module), namespace imports, and components
-declared in the same file. Type-only imports and bare package specifiers are
+a project-local module through `resolveModule` — relative paths, tsconfig
+aliases, **and** the repo's own workspace packages. It also handles member tags
+(`<UI.Badge/>`, resolved to the `Badge` export of the namespace's module),
+namespace imports, and components declared in the same file. Type-only imports
+and bare third-party specifiers (anything the workspace map does not name) are
 skipped.
 
 ### index.ts (the orchestrator)

@@ -50,8 +50,9 @@ export async function resolveTagRootTags(
     const binding = imports.get(tag);
     if (!binding || binding.isTypeOnly) continue;
     const target = resolver.resolve(binding.specifier, fromPath);
-    // Bare package specifiers resolve to undefined by design — node_modules is
-    // never walked, so a third-party <Button> stays unknown rather than guessed.
+    // Bare THIRD-PARTY specifiers resolve to undefined by design (workspace
+    // packages resolve to their source since B-8) — node_modules is never
+    // walked, so a third-party <Button> stays unknown rather than guessed.
     if (!target) continue;
     try {
       const parsed = await parseFile(target, cache);

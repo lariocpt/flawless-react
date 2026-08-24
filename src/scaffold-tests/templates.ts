@@ -109,9 +109,18 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   for (const c of specTargets)
     perFile.set(c.info.filePath, (perFile.get(c.info.filePath) ?? 0) + 1);
 
+  // The emitted vitest config roots at the outDir's parent; a component
+  // whose source lives OUTSIDE that root (a workspace-resolved child in a
+  // sibling package) cannot colocate — the config could never run the spec,
+  // while the sibling's own test glob WOULD, under the wrong setup. Those
+  // fall back to in-outDir placement.
+  const configRoot = path.dirname(path.resolve(opts.outDir));
+
   for (const c of specTargets) {
     const specName = specNames.get(c) as string;
-    if (opts.colocate) {
+    const colocatable =
+      opts.colocate && !path.relative(configRoot, path.resolve(c.info.filePath)).startsWith("..");
+    if (colocatable) {
       const srcDir = path.dirname(c.info.filePath);
       const base = path.basename(c.info.filePath).replace(/\.(tsx|jsx|ts|js)$/, "");
       // Multi-component files get one spec per component (card.CardHeader....)
