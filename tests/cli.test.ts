@@ -164,6 +164,76 @@ describe("--ci process contract", () => {
     }
   }, 30000);
 
+  // B-14: --run-tests asks for suites to RUN. When every selected task is one
+  // that generates no runnable suite, the branch that would run them simply
+  // never fires — no message, and a blob byte-identical to a green suite run.
+  // Exit 0 that means "the suites passed" and exit 0 that means "no suite ran"
+  // are the two states FR-017 was fixed to separate, and this is the same
+  // ambiguity one flag over. Both halves pinned: the run SAYS so on stderr, and
+  // the blob CARRIES it, because a scripted caller reads only one of the two.
+  test("--run-tests with nothing runnable says so, on both channels", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-norun-"));
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          CARD,
+          "--ci",
+          "--tasks",
+          "a11y",
+          "--run-tests",
+          "--no-inline-summary",
+          "--out",
+          out,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(0);
+      // Says so, and names the ids that WOULD have run something — a bare
+      // "nothing ran" leaves the caller to guess what to select instead.
+      expect(stderr).toContain("--run-tests");
+      for (const id of ["perf-harness", "unit-browser", "e2e"]) {
+        expect(stderr).toContain(id);
+      }
+      // Carries it. `mode` distinguishes this exit 0 from a green suite run.
+      const blob = JSON.parse(stdout) as {
+        exitCode: number;
+        testRun?: { mode: string; reason?: string };
+      };
+      expect(blob.exitCode).toBe(0);
+      expect(blob.testRun?.mode).toBe("none");
+      expect(typeof blob.testRun?.reason).toBe("string");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // Control for the test above: without --run-tests nothing was ASKED for, so
+  // there is nothing to report and testRun stays absent. Without this, a
+  // `testRun: {mode:"none"}` emitted unconditionally would satisfy the test
+  // above while telling every caller their suites never ran.
+  test("no --run-tests means no testRun key at all — nothing was asked for", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-notask-"));
+    try {
+      const proc = Bun.spawn(
+        ["bun", BIN, CARD, "--ci", "--tasks", "a11y", "--no-inline-summary", "--out", out],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      expect(code).toBe(0);
+      const blob = JSON.parse(stdout) as { testRun?: unknown };
+      expect(blob.testRun).toBeUndefined();
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
   // The worst of the nine warn sites, and the only one that accompanies
   // `anyFailed = true`: a Next.js emit that FAILED the run. Under the shared
   // gate a --ci caller got exit 1 with an EMPTY stderr — the run said it was
@@ -171,7 +241,7 @@ describe("--ci process contract", () => {
   // .gitignore a DIRECTORY, so updateGitignore's writeFileSync throws EISDIR
   // from inside core's try. (Found by the mutation pass: deleting this warn
   // call was invisible to all 822 tests.)
-  test("a failed Next.js emit exits 1 and says why on stderr", async () => {
+  test("a failed Next.js emit exits 1 and says why on stderr AND in the blob", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-emitfail-"));
     try {
       const app = path.join(dir, "app");
@@ -189,10 +259,40 @@ describe("--ci process contract", () => {
       expect(code).toBe(1);
       expect(stderr).toContain("nextjs emit failed");
       // …and the red run still hands the caller one parseable blob.
-      const blob = JSON.parse(stdout) as { exitCode: number };
+      const blob = JSON.parse(stdout) as {
+        exitCode: number;
+        results: Array<{ ok: boolean }>;
+        errors?: string[];
+      };
       expect(blob.exitCode).toBe(1);
+      // FR-041. This is the shape that made the blob unreadable: every task
+      // reports ok, so `results` cannot explain the 1. Assert BOTH — that the
+      // all-ok shape is still what happens, and that `errors` now carries the
+      // account. Without the first half, a future change that started marking a
+      // task failed would leave this test green while `errors` quietly went
+      // empty and nothing noticed.
+      expect(blob.results.every((r) => r.ok)).toBe(true);
+      expect(blob.errors?.some((e) => e.includes("nextjs emit failed"))).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // The other half of FR-041's contract: `errors` is absent on a clean run, so
+  // a caller can branch on its presence. An always-present empty array would
+  // satisfy the test above and tell every consumer nothing.
+  test("a clean run carries no errors key", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-noerr-"));
+    try {
+      const proc = Bun.spawn(
+        ["bun", BIN, CARD, "--ci", "--tasks", "perf-static", "--no-inline-summary", "--out", out],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      expect(code).toBe(0);
+      expect((JSON.parse(stdout) as { errors?: unknown }).errors).toBeUndefined();
+    } finally {
+      await rm(out, { recursive: true, force: true });
     }
   }, 30000);
 

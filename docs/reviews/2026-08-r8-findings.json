@@ -1,5 +1,5 @@
 {
-  "review": "2026-08 round-8 — findings raised by the per-item two-lens reviews (B-13 … B-15)",
+  "review": "2026-08 round-8 \u2014 findings raised by the per-item two-lens reviews (B-13 \u2026 B-15)",
   "toolBase": "4392f5e",
   "method": "One correctness lens (read-only) and one mutation-probe pass (isolated worktree, every mutation applied by a script asserting count == 1) after each item's diff was committed. Findings here are only those NOT already covered by the item's own backlog entry. Every entry was reproduced by hand before being recorded; anything that could not be reproduced is recorded as unverified, never as clean.",
   "severityAnchors": {
@@ -13,14 +13,15 @@
       "id": "FR-041",
       "severity": "P2",
       "dimension": "cli",
-      "status": "open",
+      "status": "fixed",
       "file": "src/core.ts",
       "line": 522,
       "title": "A failure that belongs to no task exits 1 with every result ok:true and no reason in the --ci blob",
-      "claim": "The Next.js emit block sets anyFailed = true and warns, but pushes no TaskResult. Probe: a nextapp copy with .gitignore made a DIRECTORY (so updateGitignore's writeFileSync throws EISDIR from inside core's try) run under `--nextjs <app> --ci --tasks perf-static` gives exitCode 1 with results [('perf-static', True, None)] — a red run whose machine-readable output contains no account of the failure at all. Before B-13 the stderr line was suppressed too, so --ci consumers got exit 1 and total silence. Same shape when suitesGreen is false.",
+      "claim": "The Next.js emit block sets anyFailed = true and warns, but pushes no TaskResult. Probe: a nextapp copy with .gitignore made a DIRECTORY (so updateGitignore's writeFileSync throws EISDIR from inside core's try) run under `--nextjs <app> --ci --tasks perf-static` gives exitCode 1 with results [('perf-static', True, None)] \u2014 a red run whose machine-readable output contains no account of the failure at all. Before B-13 the stderr line was suppressed too, so --ci consumers got exit 1 and total silence. Same shape when suitesGreen is false.",
       "spirit": "honesty",
       "foundBy": "B-13 correctness lens (finding E); reproduced by hand before recording",
-      "note": "Not a false pass — the exit code is truthful — which is why this is P2 rather than P1. It is the same disease as B-14 (the blob cannot distinguish states the caller must distinguish), one layer up. README.md was corrected in the B-13 PR to stop claiming 'a red run is readable from the blob alone', which is the honest interim. The fix belongs with B-14's blob contract change."
+      "note": "Not a false pass \u2014 the exit code is truthful \u2014 which is why this is P2 rather than P1. It is the same disease as B-14 (the blob cannot distinguish states the caller must distinguish), one layer up. README.md was corrected in the B-13 PR to stop claiming 'a red run is readable from the blob alone', which is the honest interim. The fix belongs with B-14's blob contract change.",
+      "fix": "CoreResult gained `errors: string[]` \u2014 failures belonging to no task, so `results` cannot carry them. The Next.js emit catch now pushes its message there as well as warning, and the --ci blob emits `errors` when non-empty (omitted on a clean run, so a caller can branch on presence). Landed with B-14, which changes the same blob contract for the same reason: the exit code must be explicable, not merely correct. Pinned in tests/cli.test.ts with BOTH halves asserted \u2014 that every task still reports ok (the shape that made the blob unreadable) and that `errors` carries the account \u2014 plus a clean-run control proving the key is absent."
     }
   ],
   "reportedNotReproduced": []

@@ -220,10 +220,55 @@ describe("runCore", () => {
     expect(perf?.ok).toBe(true);
     expect(perf?.status).toBe("kept");
     expect(perf?.outputs).toEqual([]);
-    // The affected run FIRED in the kept state — the gate opened.
-    expect(second.testRun?.mode).toBe("affected");
-    expect(second.testRun?.green).toBe(true);
+    // The affected run FIRED in the kept state — the gate opened. Narrowed
+    // rather than optional-chained: since B-14 made testRun a union, `mode`
+    // alone no longer implies `green` exists, and reading it through `?.` on
+    // the wrong arm would be undefined rather than a failure.
+    const run = second.testRun;
+    expect(run?.mode).toBe("affected");
+    if (run?.mode !== "affected" && run?.mode !== "generated") {
+      throw new Error(`expected a suite run, got ${JSON.stringify(run)}`);
+    }
+    expect(run.green).toBe(true);
   });
+
+  // B-14's control. The new branch reports mode:"none" when a run was asked for
+  // and nothing could run it; this proves the branch did not swallow the real
+  // one — a REAL --run-tests still reports "generated". Cheap on purpose: an
+  // empty node_modules skips the runner's `bun install`, and `bun run test:perf`
+  // fails in milliseconds with 127 because `playwright` is not on PATH (bun run
+  // resolves, it does not auto-install the way bunx would). ~40 ms, no network,
+  // and it exercises the red-suite path into exitCode at the same time.
+  test("a real --run-tests reports mode:generated — even when the suite goes red", async () => {
+    const outDir = tmpOutDir();
+    mkdirSync(path.join(outDir, "node_modules"), { recursive: true });
+    const saved = process.env.FLAWLESS_SKIP_BROWSER_INSTALL;
+    process.env.FLAWLESS_SKIP_BROWSER_INSTALL = "1";
+    try {
+      const result = await runCore({
+        pattern: DASHBOARD,
+        outDir,
+        taskIds: ["perf-harness"],
+        runTests: true,
+        log: false,
+        quiet: true,
+        inlineSummary: false,
+      });
+      const run = result.testRun;
+      expect(run?.mode).toBe("generated");
+      if (run?.mode !== "generated") throw new Error(`expected generated, got ${run?.mode}`);
+      // The suite genuinely ran and genuinely failed — so this is not a
+      // vacuous "generated" from a branch that never invoked the runner.
+      expect(run.green).toBe(false);
+      expect(result.exitCode).toBe(1);
+      // …and a red SUITE is not a failed task: results stay ok, which is
+      // exactly why testRun has to ride in the blob for the caller to see it.
+      expect(result.results.every((r) => r.ok)).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.FLAWLESS_SKIP_BROWSER_INSTALL;
+      else process.env.FLAWLESS_SKIP_BROWSER_INSTALL = saved;
+    }
+  }, 60000);
 
   test("a genuinely failing task still exits 1 over a kept-or-refreshed harness", async () => {
     // The honesty floor: nothing that failed maps to 0. e2e without --nextjs is

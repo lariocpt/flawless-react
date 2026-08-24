@@ -83,6 +83,15 @@ export async function runGeneratedTests(
     say(`\nfailed suites: ${failed.join(", ")}\n`);
     return false;
   }
+  // "all generated suites passed" over an empty plan is a false pass in
+  // waiting. Unreachable through runCore today — `standalone` is only true
+  // outside Next.js mode, where the one task that plans nothing standalone
+  // (e2e) has already failed and blocked this call — but the claim is written
+  // here, not there, and the next caller need not preserve that accident.
+  if (scripts.length === 0) {
+    say(`\nno generated suite matched the selected task(s): ${selectedTasks.join(", ")}\n`);
+    return true;
+  }
   say("\nall generated suites passed\n");
   return true;
 }

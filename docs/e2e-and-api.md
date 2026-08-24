@@ -166,6 +166,12 @@ for (const r of results) console.log(r.id, r.ok, r.summary);
 ```
 
 - Never calls `process.exit`; bad input throws `UsageError`.
+- `exitCode` says *whether* the run was clean, never *why*. `results` names a
+  failed task, `testRun` says what the test-run phase did — including
+  `{ mode: "none", reason }` when `runTests`/`changed` was asked for and no
+  selected task generates a runnable suite — and `errors` carries failures
+  belonging to no task at all. Treating exit 0 as "the suites passed" is the
+  mistake `testRun` exists to prevent.
 - `log` defaults to `false` here (the CLI passes `true`), so nothing is written
   to **stdout** unless you ask for it — neither the progress narration nor the
   per-file findings listing.
