@@ -145,11 +145,12 @@ describe("runCore", () => {
   test("changed-mode keeps the harness, so the affected-run gate cannot trip", async () => {
     // FR-017's fix is indirect: the !anyFailed gate on the affected run stays,
     // and a full selection now passes it because a kept harness is ok:true
-    // rather than a manufactured failure. Proving the gate opens at this level
-    // (perf-harness kept + exit 0) plus the runner behaviours already pinned in
-    // tests/runTests.test.ts covers the path; a true end-to-end would need a
-    // git repo with staged component edits plus a real playwright run, which
-    // re-proves the runner at disproportionate cost.
+    // rather than a manufactured failure. testRun is the load-bearing
+    // assertion here — exit 0 alone is equally consistent with the affected
+    // branch never executing (a mutation reinstating FR-017 passed the whole
+    // suite until this seam existed). A true end-to-end (git repo with staged
+    // component edits + a real playwright run) would re-prove the runner,
+    // already pinned in tests/runTests.test.ts, at disproportionate cost.
     const outDir = tmpOutDir();
     const base = {
       pattern: DASHBOARD,
@@ -165,6 +166,9 @@ describe("runCore", () => {
     expect(perf?.ok).toBe(true);
     expect(perf?.status).toBe("kept");
     expect(perf?.outputs).toEqual([]);
+    // The affected run FIRED in the kept state — the gate opened.
+    expect(second.testRun?.mode).toBe("affected");
+    expect(second.testRun?.green).toBe(true);
   });
 
   test("a genuinely failing task still exits 1 over a kept-or-refreshed harness", async () => {
@@ -183,6 +187,16 @@ describe("runCore", () => {
     expect(second.exitCode).toBe(1);
     expect(second.results.find((r) => r.id === "perf-harness")?.ok).toBe(true);
     expect(second.results.find((r) => r.id === "e2e")?.ok).toBe(false);
+
+    // The kept variant of the honesty floor: --changed with a real failure
+    // still exits 1, and the failure BLOCKS the affected run (the gate's
+    // other half — running tests over a half-failed generation would report
+    // green against artefacts that were never produced).
+    const kept = await runCore({ ...base, changed: true });
+    expect(kept.exitCode).toBe(1);
+    expect(kept.results.find((r) => r.id === "perf-harness")?.status).toBe("kept");
+    expect(kept.results.find((r) => r.id === "e2e")?.ok).toBe(false);
+    expect(kept.testRun).toBeUndefined();
   });
 
   test("inlineSummary:false leaves no <Component>.flawless.json beside the source", async () => {

@@ -28,7 +28,7 @@ lines, default false programmatically).
 - **CLI exit codes:** 0 clean · 1 a task failed OR a `--run-tests`/`--changed`
   suite run failed (suite outcomes fold into the exit code) · 2 usage error.
 - **`--ci`** = `--no-interactive --json`: stdout is exactly one JSON blob
-  `{ outDir, results }` and nothing else. Progress goes away entirely; parse
+  `{ exitCode, outDir, results }` and nothing else. Progress goes away entirely; parse
   the whole stdout, not a line of it.
 - `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error?,
   status? }` — `ok: false` with `error` set is a real task failure.
@@ -80,6 +80,9 @@ outputs, throw only for genuine failure, and make `ok` mean what it says.
 - Never scrape the human console output — use `--ci` or the API's `results`.
 - Never run Next.js mode from an arbitrary cwd without pinning it: the
   package.json merge follows the resolved root, wherever that is.
-- Never treat `exitCode: 1` as "the tool crashed" — read `results[].error`.
-  It is always a real failure now: a re-run over an existing suite refreshes
-  the harness and exits 0 (no refusal guard any more).
+- Never treat `exitCode: 1` as "the tool crashed". Two distinct causes: a
+  task failed (`results[].error` names it) or a `--run-tests`/`--changed`
+  suite run went red — in the suite case every `results[]` entry is `ok:true`
+  and the outcome lives in `exitCode` and `CoreResult.testRun` ({mode:
+  "affected"|"generated", green}), not in any error field. A re-run over an
+  existing suite is not a failure: it refreshes the harness and exits 0.

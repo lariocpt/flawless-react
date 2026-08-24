@@ -11,7 +11,7 @@ before touching an adopted suite:
 
 | Category | Files | On re-run | Under `--force` |
 | --- | --- | --- | --- |
-| Write-once | `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`, `e2e/global-setup.ts`, `mocks/handlers.ts` | kept | **kept** |
+| Write-once | `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`, `e2e/global-setup.ts`, `mocks/handlers.ts`, `mock/routes.ts` | kept | **kept** |
 | Merge-kept | `e2e/params.json`, `load/routes.pipes` | kept | **merged** — your edits, rates, commented pipes survive |
 | Colocated specs | `src/**/*.flawless.test.tsx` | kept | **overwritten** |
 | Everything else | out-dir specs, configs, generated prose, REPORT.md, sidecars | rewritten | rewritten |
@@ -19,13 +19,14 @@ before touching an adopted suite:
 ## The no-force run over an existing suite
 
 **Exits 0.** Every task — `perf-harness` included — refreshes its derived
-files, rewriting them exactly as a fresh scaffold would; write-once files are
+files, rewriting them as a fresh scaffold would (the standalone suite's
+package.json is MERGED — your fields win); write-once files are
 untouched (delete one to get a fresh copy). The perf-harness TaskResult and
 REPORT.md's task row carry a status word: `generated` (fresh out dir),
 `refreshed` (this case), or `kept` (`--changed`, below). Emission is
 deterministic, so a same-version refresh usually diffs nothing; after a tool
 upgrade expect the derived files — and the version banner on the suite's
-`playwright.config.ts` first line — to move. An exit 1 now always means a real
+`playwright.config.ts` first line — to move. An exit 1 means a real
 failure, never the old harness refusal (that was findings FR-028, fixed).
 
 ## `--force` and the clobber drill
@@ -53,7 +54,9 @@ run is still gated on no task having failed, but a kept harness is a success,
 so any task selection — the full seven included — reaches the affected tests:
 
 ```bash
-flawless-react "src/**/*.tsx" --nextjs . --changed --no-interactive
+flawless-react "src/**/*.tsx" --nextjs . --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load --changed --no-interactive
+# --tasks matters: bare --no-interactive defaults to perf-harness ALONE, and
+# a harness-only selection has no unit/e2e suites for the affected run to run.
 ```
 
 `--changed --force` regenerates: an explicit force outranks the keep. Suite

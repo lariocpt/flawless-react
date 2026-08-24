@@ -233,7 +233,7 @@
       "proposed_fix": "In changed-mode, treat an existing harness as the normal case (skip scaffold instead of throwing), or run affected tests despite the refusal and say so.",
       "effort": "M",
       "spirit": "mechanical",
-      "fix": "changed-mode treats an existing harness as the normal case: perf-harness passes keepExisting and the scaffold writes nothing (status \"kept\", summary names the generating version from the marker banner). The !anyFailed gate stays and now only blocks on real failures, so a full task selection reaches the affected run. Guarded by tests/core.test.ts (kept + exit 0) with the runner behaviour pinned in tests/runTests.test.ts."
+      "fix": "Kept harness is ok:true so the !anyFailed gate opens with any selection; CoreResult.testRun {mode, green} is the seam proving the affected run FIRED (a mutation reinstating the bug passed 591 tests until that seam existed). (wave 2)"
     },
     {
       "id": "FR-018",
@@ -451,6 +451,20 @@
       "claim": "--depth/--variants silently default where siblings throw 'requires a value'; bad --props JSON surfaces a bare engine message.",
       "spirit": "mechanical",
       "fix": "--depth/--variants throw 'requires a value'; --props errors name the flag. (wave 1)"
+    },
+    {
+      "id": "FR-034",
+      "orig": "wave2-review",
+      "severity": "P3",
+      "dimension": "design",
+      "status": "open",
+      "title": "package.json script merge follows the current run's flags over an adopted suite",
+      "file": "src/core.ts",
+      "line": 369,
+      "claim": "The flawless:* script merge is driven by THIS run's flags, so a --changed run without --colocate over a colocate-generated suite flips flawless:unit's command while 'keeping' the harness. Pre-existing merge semantics, newly reachable now that changed-mode runs do not fail.",
+      "proposed_fix": "Derive script-affecting flags from the suite's own on-disk state (colocate detectable from the vitest config's include) rather than the invocation, or refuse to narrow scripts in changed mode.",
+      "effort": "S",
+      "spirit": "ownership"
     }
   ]
 }
