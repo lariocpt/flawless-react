@@ -2,6 +2,7 @@ import ts from "typescript";
 import type { DataDepInfo } from "../types.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
 import { resolveTypeNodeValue } from "./extractProps.ts";
+import { ownReturns } from "./ownReturns.ts";
 import type { ImportBinding } from "./parseFile.ts";
 import type { ModuleResolver } from "./resolveModule.ts";
 import { exportedFunctions } from "./serverActionReturns.ts";
@@ -40,6 +41,11 @@ export function resolveDepReturns(
     if (!binding || binding.isTypeOnly || binding.kind === "namespace") return dep;
     const target = resolver.resolve(binding.specifier, file);
     if (!target) return dep;
+    // A "use server" module's mock is serverActionMock's channel, and it
+    // never reads dataDeps — enriching a dep here would suppress the RSC
+    // skip escape for a fixture that is never emitted, turning the honest
+    // skip into a false RED that blames the application.
+    if (cache.hasPrologueDirective(target, "use server")) return dep;
     const sf = cache.get(target);
     if (!sf) return dep;
     const wanted =
@@ -62,8 +68,76 @@ export function resolveDepReturns(
     const fetches = extractFetchCalls(fn.body, sf);
     const f = fetches[0];
     if (!f || fetches.length !== 1) return dep;
+    // The wrapper must RETURN the fetched json — an envelope unwrapper
+    // (`return envelope.data`) or a side-effect fetch would join an OpenAPI
+    // example to a value the function never returns, false-pass capable for
+    // a shape-tolerant component.
+    if (!returnsFetchedJson(fn)) return dep;
     return { ...dep, wrapsFetch: { method: f.method.toUpperCase(), path: f.urlTemplate } };
   });
+}
+
+/**
+ * True iff the wrapper's single return IS the fetch response's json():
+ * `return res.json()` / `return await res.json()` where `res` was bound to
+ * (an awaited) fetch; `const data = await res.json(); return data;`; or the
+ * direct `return (await fetch(...)).json()`. Anything else — a second
+ * return, a transformed value, a different binding — is not a wrapper.
+ */
+function returnsFetchedJson(fn: { body?: ts.Node }): boolean {
+  const body = fn.body;
+  if (!body) return false;
+  // A concise arrow body IS the single return expression.
+  const returns = ts.isBlock(body)
+    ? ownReturns(body).map((r) => r.expression)
+    : [body as ts.Expression];
+  if (returns.length !== 1 || returns[0] === undefined) return false;
+
+  // Bindings: `const res = await fetch(...)` and `const data = await res.json()`.
+  const fetchVars = new Set<string>();
+  const jsonVars = new Set<string>();
+  if (ts.isBlock(body)) {
+    for (const stmt of body.statements) {
+      if (!ts.isVariableStatement(stmt)) continue;
+      for (const decl of stmt.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+        const init = unwrapAwait(decl.initializer);
+        if (isFetchCall(init)) fetchVars.add(decl.name.text);
+        else if (isJsonCallOn(init, fetchVars)) jsonVars.add(decl.name.text);
+      }
+    }
+  }
+
+  const expr = unwrapAwait(returns[0]);
+  if (ts.isIdentifier(expr)) return jsonVars.has(expr.text);
+  return isJsonCallOn(expr, fetchVars);
+}
+
+function unwrapAwait(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(e)) e = e.expression;
+    else if (ts.isAwaitExpression(e)) e = e.expression;
+    else return e;
+  }
+}
+
+function isFetchCall(expr: ts.Expression): boolean {
+  return (
+    ts.isCallExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "fetch"
+  );
+}
+
+/** `<receiver>.json()` where the receiver is a fetch binding or a fetch call. */
+function isJsonCallOn(expr: ts.Expression, fetchVars: Set<string>): boolean {
+  if (!ts.isCallExpression(expr) || expr.arguments.length !== 0) return false;
+  const callee = expr.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "json") return false;
+  const receiver = unwrapAwait(callee.expression);
+  if (ts.isIdentifier(receiver)) return fetchVars.has(receiver.text);
+  return isFetchCall(receiver);
 }
 
 function promiseTypeArg(type: ts.TypeNode | undefined): ts.TypeNode | undefined {

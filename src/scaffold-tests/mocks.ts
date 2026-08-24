@@ -143,6 +143,13 @@ export function normalizeApiPath(p: string): string {
     .replace(/\/+$/, "");
 }
 
+// Source interpolated into an emitted block comment: a star-slash inside it
+// (a literal * in a fetch path, say) would close the comment early and leave
+// the tail as broken code in the generated spec.
+function commentSafe(text: string): string {
+  return text.split("*/").join("* /");
+}
+
 /**
  * The fixture an uncertain/unknown dep still gets: the annotation-derived
  * value the analyser stored, or the OpenAPI example joined here — emit time
@@ -387,9 +394,13 @@ function dataModuleMock(
     // The factory replaces the whole module, so a pure class-string helper
     // beside the data exports has to be re-supplied here — synchronously.
     if (b.pure) return `${key}: ${PURE_UTILITY_STUB}`;
-    if (b.isDefault) return "default: vi.fn()";
+    // A default-imported dep is still a dep: its calleeRoot is the local
+    // binding name. The old `default: vi.fn()` shortcut resolved undefined —
+    // worse than {} — and, once deps could be enriched, dropped the very
+    // fixture whose presence had suppressed the RSC skip escape.
     const dep = depsHere.find((d) => d.calleeRoot === b.local);
     if (!dep) {
+      if (b.isDefault) return "default: vi.fn()";
       // Imported and called, but no evidence of how its result is used. {} is a
       // better stand-in than undefined: it survives member access and only
       // fails on .length/.map, which is a legible failure rather than a crash.
@@ -404,8 +415,8 @@ function dataModuleMock(
       if (inf) {
         const provenance =
           inf.provenance === "annotation"
-            ? `/* inferred from ${dep.callee}'s return annotation */`
-            : `/* inferred from the OpenAPI example for ${dep.wrapsFetch?.method} ${dep.wrapsFetch?.path} */`;
+            ? `/* inferred from ${commentSafe(dep.callee)}'s return annotation */`
+            : `/* inferred from the OpenAPI example for ${commentSafe(`${dep.wrapsFetch?.method} ${dep.wrapsFetch?.path}`)} */`;
         const lit = JSON.stringify(inf.value);
         return dep.awaited
           ? `${key}: vi.fn(async () => (${lit})) ${provenance}`

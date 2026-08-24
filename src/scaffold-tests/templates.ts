@@ -170,7 +170,7 @@ function renderUnitFile(
     : undefined;
   const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
   if (mode === "compound-part" || mode === "document-root") {
-    return constrainedSpec(c, importPath, providerImport, mode, specDir, todo);
+    return constrainedSpec(c, importPath, providerImport, mode, specDir, todo, opts.apiRoutes);
   }
   return mode === "rsc"
     ? rscSpec(c, importPath, providerImport, specDir, todo, opts.apiRoutes)
@@ -841,6 +841,7 @@ function constrainedSpec(
   mode: "compound-part" | "document-root",
   specDir?: string,
   todo?: TodoRecorder,
+  apiRoutes?: NextjsApiRoute[],
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -850,7 +851,7 @@ function constrainedSpec(
   // Importing the module runs its module scope, so "server-only" and
   // next/font/* throw at collection time even for a spec that only asserts the
   // export exists. These specs emitted no mocks at all until now.
-  const mocks = emitModuleMocks(info, "rsc", specDir, todo).statements;
+  const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
