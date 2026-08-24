@@ -5,6 +5,7 @@ import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { AliasEntry } from "../scaffold-tests/templates.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
+import { TodoCounter } from "../types.ts";
 
 export const unitAndBrowser: Task = {
   id: "unit-browser",
@@ -27,7 +28,16 @@ export const unitAndBrowser: Task = {
     // would hand the user a suite that cannot start.
     const browserSpecs =
       ctx.selectedTasks === undefined || ctx.selectedTasks.includes("perf-harness");
-    const { written, skipped } = await scaffoldUnitBrowser({
+    // Tallies the TODO(flawless) markers the templates plant, counted at each
+    // emission site — never by grepping the emitted text (see TodoCounter).
+    // The collector travels inside the options object: scaffoldUnitBrowser
+    // hands that object to renderUnitBrowser verbatim, whose options type
+    // declares `todos`. Built as a variable, not an inline literal, so the
+    // extra property passes the excess-property check; todoCounts.test.ts pins
+    // the passthrough end to end, because a rebuild of the object anywhere on
+    // the path would silently drop the counter and report zero debt.
+    const todos = new TodoCounter();
+    const scaffoldOptions = {
       browserSpecs,
       trees: ctx.trees,
       outDir: ctx.outDir,
@@ -39,7 +49,9 @@ export const unitAndBrowser: Task = {
       colocate: ctx.colocate,
       force: ctx.force,
       apiRoutes: ctx.nextjs?.apiRoutes,
-    });
+      todos,
+    };
+    const { written, skipped } = await scaffoldUnitBrowser(scaffoldOptions);
     // flattenTrees, not a raw walk: the same component appears in as many trees
     // as there are pages rendering it, and counting the walk reported "unit
     // tests for 606 component(s)" against an app the report itself says has 181.
@@ -57,6 +69,7 @@ export const unitAndBrowser: Task = {
       outputs: written,
       findings: [],
       summary: `unit tests for ${names.length} component(s): ${names.join(", ")}${skippedNote}${browserNote}`,
+      handWork: todos.toTallies(),
     };
   },
 };

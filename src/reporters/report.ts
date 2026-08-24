@@ -1,6 +1,6 @@
 import path from "node:path";
 import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
-import type { ComponentTree, TaskResult } from "../types.ts";
+import type { ComponentTree, TaskResult, TodoKind } from "../types.ts";
 import { VERSION } from "../version.ts";
 
 /**
@@ -155,6 +155,53 @@ export function renderReportMarkdown(input: ReportInput): string {
     );
   }
   lines.push("");
+
+  // --- hand-work remaining --------------------------------------------------
+  // The one adoption-cost number the component table cannot show: how many
+  // TODO(flawless) markers the emitters planted, and of what kind. Counted at
+  // the emission sites (TodoCounter), never recovered from the emitted text.
+  // The section is ALWAYS present, in one of three states — a table, an
+  // explicit "none", or an explicit "not measured" — because a silently absent
+  // table reads as zero debt, and on the dogfood app the truth was 181 markers.
+  const measured = input.results.filter((r) => r.handWork !== undefined);
+  lines.push("## Hand-work remaining", "");
+  if (measured.length === 0) {
+    lines.push(
+      "Not measured — this run did not include the `unit-browser` task, whose",
+      "emitters are what plant `TODO(flawless)` markers. Absence of a table here",
+      "is absence of measurement, not absence of debt.",
+      "",
+    );
+  } else {
+    const byKind = new Map<TodoKind, { count: number; exemplar: string }>();
+    for (const r of measured) {
+      for (const t of r.handWork ?? []) {
+        const row = byKind.get(t.kind);
+        if (!row) byKind.set(t.kind, { count: t.count, exemplar: t.exemplar });
+        else {
+          row.count += t.count;
+          if (t.exemplar < row.exemplar) row.exemplar = t.exemplar;
+        }
+      }
+    }
+    if (byKind.size === 0) {
+      lines.push("none — no TODO markers were emitted.", "");
+    } else {
+      lines.push(
+        "Each `TODO(flawless)` marker is a place where a spec needs a human: a",
+        "fixture, an addressable target, or an assertion the source could not",
+        "support statically. Search the marker to find every site of a kind.",
+        "",
+        "| Kind | Markers | Example spec |",
+        "| --- | ---: | --- |",
+      );
+      for (const kind of [...byKind.keys()].sort()) {
+        const row = byKind.get(kind) as { count: number; exemplar: string };
+        lines.push(`| \`${kind}\` | ${row.count} | \`${rel(row.exemplar)}\` |`);
+      }
+      lines.push("");
+    }
+  }
 
   // --- skips ---------------------------------------------------------------
   lines.push("## Not covered, and why", "");

@@ -17,7 +17,7 @@
  *             the interaction tests click. Anything not on the list is left real.
  */
 import path from "node:path";
-import type { ComponentInfo, ModuleImportInfo } from "../types.ts";
+import type { ComponentInfo, ModuleImportInfo, TodoRecorder } from "../types.ts";
 import { mockLiteral } from "./mockValues.ts";
 
 export type MockMode = "client" | "rsc";
@@ -65,6 +65,7 @@ export function emitModuleMocks(
   info: ComponentInfo,
   mode: MockMode,
   specDir?: string,
+  todo?: TodoRecorder,
 ): EmittedMocks {
   const statements: string[] = [];
   const mocked: string[] = [];
@@ -105,7 +106,7 @@ export function emitModuleMocks(
       continue;
     }
     if (mi.isServerAction) {
-      push(mi, (spec) => serverActionMock(mi, spec));
+      push(mi, (spec) => serverActionMock(mi, spec, todo));
       continue;
     }
 
@@ -114,7 +115,7 @@ export function emitModuleMocks(
     if (mi.kind !== "value") continue;
     if (MOCK_SKIP.test(mi.specifier)) continue;
     if (importsOnlyPureUtilities(mi)) continue;
-    push(mi, (spec) => dataModuleMock(mi, info, spec));
+    push(mi, (spec) => dataModuleMock(mi, info, spec, todo));
   }
 
   return { statements, mocked };
@@ -194,17 +195,23 @@ function fontMock(mi: ModuleImportInfo, spec: string): string {
  * state` — undefined would crash the first render. vi.fn() is a real function,
  * so `action.bind(null, id)` in the JSX still works.
  */
-function serverActionMock(mi: ModuleImportInfo, spec: string): string {
+function serverActionMock(mi: ModuleImportInfo, spec: string, todo?: TodoRecorder): string {
   if (mi.names.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
   const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
   const entries = named.map((n) => `${n}: vi.fn(async () => ({}))`);
   if (mi.hasDefault) entries.unshift("default: vi.fn(async () => ({}))");
+  todo?.("server-action-stub");
   return `// TODO(flawless): server action stubbed — give it a realistic return value.
 vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
 }
 
 /** A project-local module a server component reads data from. */
-function dataModuleMock(mi: ModuleImportInfo, info: ComponentInfo, spec: string): string {
+function dataModuleMock(
+  mi: ModuleImportInfo,
+  info: ComponentInfo,
+  spec: string,
+  todo?: TodoRecorder,
+): string {
   if (mi.names.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
 
   const named = mi.hasDefault ? mi.names.slice(1) : mi.names;
@@ -232,6 +239,9 @@ function dataModuleMock(mi: ModuleImportInfo, info: ComponentInfo, spec: string)
   });
 
   if (mi.hasDefault) entries.unshift("default: vi.fn()");
+  // One marker (and one tally) per module mock, however many of its bindings
+  // were uninferrable — the marker is what the reader answers, not the binding.
+  if (uncertain) todo?.("uninferred-return-shape");
   const note = uncertain
     ? "// TODO(flawless): some return shapes could not be inferred — give them fixtures.\n"
     : "";

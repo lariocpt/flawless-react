@@ -477,6 +477,64 @@ export interface Finding {
   source: TaskId;
 }
 
+/**
+ * What kind of hand-work a planted TODO(flawless) marker asks for. The three
+ * named-and-frequent kinds plus the two structural ones; everything else the
+ * templates plant (missing assertions, undrivable forms, guarded interactions)
+ * is "other" — on the dogfood app ~89% of markers fell in three kinds, which is
+ * exactly the adoption-cost distribution the report needs to show.
+ */
+export type TodoKind =
+  | "uninferred-return-shape"
+  | "compound-root-wrap"
+  | "server-action-stub"
+  | "unaddressable-target"
+  | "other";
+
+export interface TodoTally {
+  kind: TodoKind;
+  count: number;
+  /** One emitted spec carrying such a marker — absolute; the report relativises. */
+  exemplar: string;
+}
+
+/** Records one marker of `kind` into the file the recorder was bound to. */
+export type TodoRecorder = (kind: TodoKind) => void;
+
+/**
+ * Tallies TODO(flawless) markers AT THE EMISSION SITES, as each one is planted.
+ * These numbers must never be derived by grepping the emitted text: the marker
+ * wording is presentation and changes freely, so a text-based count breaks
+ * silently the moment a template is reworded.
+ */
+export class TodoCounter {
+  private byKind = new Map<TodoKind, { count: number; exemplar: string }>();
+
+  add(kind: TodoKind, exemplar: string): void {
+    const row = this.byKind.get(kind);
+    if (!row) {
+      this.byKind.set(kind, { count: 1, exemplar });
+      return;
+    }
+    row.count += 1;
+    // Lexicographically smallest, so the exemplar — and REPORT.md with it — is
+    // byte-identical however the trees happened to be ordered.
+    if (exemplar < row.exemplar) row.exemplar = exemplar;
+  }
+
+  /** A recorder bound to one emitted file, for threading through templates. */
+  for(file: string): TodoRecorder {
+    return (kind) => this.add(kind, file);
+  }
+
+  /** Sorted by kind: this lands verbatim in a committed, deterministic file. */
+  toTallies(): TodoTally[] {
+    return [...this.byKind.entries()]
+      .map(([kind, r]) => ({ kind, count: r.count, exemplar: r.exemplar }))
+      .sort((a, b) => (a.kind < b.kind ? -1 : 1));
+  }
+}
+
 export interface TaskResult {
   id: TaskId;
   ok: boolean;
@@ -484,6 +542,13 @@ export interface TaskResult {
   findings: Finding[];
   summary: string;
   error?: string;
+  /**
+   * Per-kind counts of the TODO(flawless) markers this task's emitters planted.
+   * Optional and set only by unit-browser: the report distinguishes "measured,
+   * zero" (empty array) from "never measured" (absent), so no other task is
+   * widened by it.
+   */
+  handWork?: TodoTally[];
 }
 
 export interface RunContext {

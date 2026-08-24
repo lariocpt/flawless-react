@@ -12,6 +12,8 @@ import type {
   NextjsApiRoute,
   PropsShape,
   StateInfo,
+  TodoCounter,
+  TodoRecorder,
 } from "../types.ts";
 import { emitModuleMocks } from "./mocks.ts";
 import {
@@ -73,6 +75,13 @@ export interface UnitBrowserRenderOptions {
    * run — the caller passes false when perf-harness isn't part of the run.
    */
   browserSpecs?: boolean;
+  /**
+   * Collector for the TODO(flawless) markers these templates plant, mutated as
+   * each marker is emitted (TodoCounter in types.ts says why never by grep).
+   * It rides the options object through scaffoldUnitBrowser unchanged, so the
+   * unit-browser task can hand the tallies to the run report.
+   */
+  todos?: TodoCounter;
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
@@ -103,17 +112,27 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       // so they don't overwrite each other.
       const stem =
         (perFile.get(c.info.filePath) ?? 1) > 1 ? `${base}.${c.info.componentName}` : base;
+      const absPath = path.join(srcDir, `${stem}.flawless.test.tsx`);
       files.push({
         relPath: `unit/${specName}.test.tsx`,
-        absPath: path.join(srcDir, `${stem}.flawless.test.tsx`),
+        absPath,
         skipIfExists: true,
-        content: renderUnitFile(c, opts, srcDir, `./${base}`),
+        content: renderUnitFile(c, opts, srcDir, `./${base}`, opts.todos?.for(absPath)),
       });
     } else {
       const fromDir = path.resolve(opts.outDir, "unit");
+      // The recorder is bound to the path the writer will use, so a tally's
+      // exemplar names the spec that actually carries the marker.
+      const target = path.join(fromDir, `${specName}.test.tsx`);
       files.push({
         relPath: `unit/${specName}.test.tsx`,
-        content: renderUnitFile(c, opts, fromDir, toRel(fromDir, c.info.filePath)),
+        content: renderUnitFile(
+          c,
+          opts,
+          fromDir,
+          toRel(fromDir, c.info.filePath),
+          opts.todos?.for(target),
+        ),
       });
     }
   }
@@ -124,9 +143,10 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       // Only components that mount standalone can be driven in the browser host.
       if (mode !== "client") continue;
       const specName = specNames.get(c) as string;
+      const target = path.join(path.resolve(opts.outDir), "browser", `${specName}.spec.ts`);
       files.push({
         relPath: `browser/${specName}.spec.ts`,
-        content: browserSpec(c, specName),
+        content: browserSpec(c, specName, opts.todos?.for(target)),
       });
     }
   }
@@ -143,6 +163,7 @@ function renderUnitFile(
   opts: UnitBrowserRenderOptions,
   specDir: string,
   importPath: string,
+  todo?: TodoRecorder,
 ): string {
   const providerImport = opts.provider ? toImportPath(specDir, opts.provider) : undefined;
   const mocksImport = opts.mswSetup
@@ -150,11 +171,20 @@ function renderUnitFile(
     : undefined;
   const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
   if (mode === "compound-part" || mode === "document-root") {
-    return constrainedSpec(c, importPath, providerImport, mode, specDir);
+    return constrainedSpec(c, importPath, providerImport, mode, specDir, todo);
   }
   return mode === "rsc"
-    ? rscSpec(c, importPath, providerImport, specDir)
-    : unitSpec(c, opts.variants, importPath, providerImport, mocksImport, opts.apiRoutes, specDir);
+    ? rscSpec(c, importPath, providerImport, specDir, todo)
+    : unitSpec(
+        c,
+        opts.variants,
+        importPath,
+        providerImport,
+        mocksImport,
+        opts.apiRoutes,
+        specDir,
+        todo,
+      );
 }
 
 function toRel(fromDir: string, absFile: string): string {
@@ -389,6 +419,7 @@ function unitSpec(
   mocksImport: string | undefined,
   apiRoutes: NextjsApiRoute[] | undefined,
   specDir?: string,
+  todo?: TodoRecorder,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -412,15 +443,16 @@ function unitSpec(
         allHandlers,
         firstClickTrigger(info),
         info.renderGuarded === true,
+        todo,
       )
     : emitFallbackHandlerTests(name, info.propsShape, info.unresolvedProps);
 
-  const stateTests = emitStateTests(name, info);
+  const stateTests = emitStateTests(name, info, todo);
   const staticTextTests = emitStaticTextTests(name, info, "unit");
   const effectFetches = (info.fetchCalls ?? []).filter((f) => f.inEffect);
   const fetchTests =
     mocksImport && effectFetches.length > 0
-      ? emitFetchTests(name, info, effectFetches, apiRoutes, firstClickTrigger(info))
+      ? emitFetchTests(name, info, effectFetches, apiRoutes, firstClickTrigger(info), todo)
       : "";
 
   const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
@@ -453,7 +485,7 @@ function unitSpec(
   // Client specs emitted no mocks at all until now, so a component importing
   // next/navigation or calling a server action through useActionState blew up on
   // import. Allowlist only — see mocks.ts for why a blanket mock is wrong here.
-  const mocks = emitModuleMocks(info, "client", specDir).statements;
+  const mocks = emitModuleMocks(info, "client", specDir, todo).statements;
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   return `import { describe, test, expect, vi, beforeEach } from "vitest";
@@ -619,7 +651,7 @@ test("${name}: every \`${key}\` option renders a distinct class list", () => {
 // State-derived tests
 // ---------------------------------------------------------------------------
 
-function emitStateTests(name: string, info: ComponentInfo): string {
+function emitStateTests(name: string, info: ComponentInfo, todo?: TodoRecorder): string {
   const states = (info.state ?? []).filter((s) => s.kind !== "useRef");
   if (states.length === 0) return "";
 
@@ -658,6 +690,7 @@ test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")
       if (!selector) continue;
       const dispatch = emitVitestDispatch(click.event, selector, { tag: click.tag });
       if (!dispatch) continue;
+      todo?.("other");
       parts.push(`
 test("${name}: ${click.event} via ${call.enclosingName} → ${s.setterName ?? s.varName} updates", async () => {
   const { container } = renderTarget();
@@ -716,10 +749,17 @@ function emitFetchTests(
   fetches: FetchCallInfo[],
   apiRoutes: NextjsApiRoute[] | undefined,
   trigger: string | undefined,
+  todo?: TodoRecorder,
 ): string {
   const triggerLines = trigger
     ? `\n    // Effects can be gated behind UI state — fire the first detected click.\n    ${trigger}`
     : "";
+  // Every marker below goes through this helper so the tally and the emitted
+  // text cannot drift apart when a scenario is added or removed.
+  const todoLine = (text: string): string => {
+    todo?.("other");
+    return `// TODO(flawless): ${text}`;
+  };
   const propNames = new Set([...Object.keys(info.propsShape), ...info.unresolvedProps]);
   const parts: string[] = [];
   for (const f of fetches) {
@@ -730,7 +770,7 @@ function emitFetchTests(
     const fixtureComment =
       fixture !== undefined
         ? "// Fixture from the project's OpenAPI spec examples."
-        : "// TODO(flawless): no example found in the API spec — replace {} with a realistic fixture.";
+        : todoLine("no example found in the API spec — replace {} with a realistic fixture.");
 
     // URL holes that are props default to "" and would collapse a path
     // segment (/api/x//y never matches :param) — render with real values.
@@ -750,7 +790,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     const { container } = renderTarget(${renderArg});
     void container;${triggerLines}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
-    // TODO(flawless): assert rendered content derived from FIXTURE.
+    ${todoLine("assert rendered content derived from FIXTURE.")}
   });
 
   test("stays stable while the response is delayed (loading state)", async () => {
@@ -759,7 +799,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     const { container } = renderTarget(${renderArg});
     void container;${triggerLines}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
-    // TODO(flawless): assert the loading indicator while the response is pending.
+    ${todoLine("assert the loading indicator while the response is pending.")}
   });
 
   test("survives a 500 without crashing (error state)", async () => {
@@ -768,7 +808,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     const { container } = renderTarget(${renderArg});
     void container;${triggerLines}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
-    // TODO(flawless): assert the error-state UI.
+    ${todoLine("assert the error-state UI.")}
   });
 
   test("renders the empty state for an empty payload", async () => {
@@ -777,7 +817,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     const { container } = renderTarget(${renderArg});
     void container;${triggerLines}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
-    // TODO(flawless): assert the empty-state copy.
+    ${todoLine("assert the empty-state copy.")}
   });
 });`);
   }
@@ -832,6 +872,7 @@ function constrainedSpec(
   providerImport: string | undefined,
   mode: "compound-part" | "document-root",
   specDir?: string,
+  todo?: TodoRecorder,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -841,7 +882,7 @@ function constrainedSpec(
   // Importing the module runs its module scope, so "server-only" and
   // next/font/* throw at collection time even for a spec that only asserts the
   // export exists. These specs emitted no mocks at all until now.
-  const mocks = emitModuleMocks(info, "rsc", specDir).statements;
+  const mocks = emitModuleMocks(info, "rsc", specDir, todo).statements;
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
@@ -896,6 +937,7 @@ test("${name} returns a document root${slotBlock.title}", async () => {
 `;
   }
 
+  todo?.("compound-root-wrap");
   return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
 ${mockBlock}${emitComponentImport(info, importPath)}
 
@@ -914,13 +956,14 @@ function rscSpec(
   importPath: string,
   providerImport: string | undefined,
   specDir?: string,
+  todo?: TodoRecorder,
 ): string {
   const info = c.info;
   const name = info.componentName;
   const propsLiteral = JSON.stringify(info.propsShape);
   const promiseProps = info.promiseProps ?? [];
 
-  const mocks = emitModuleMocks(info, "rsc", specDir).statements;
+  const mocks = emitModuleMocks(info, "rsc", specDir, todo).statements;
 
   const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
   const renderExpr = providerImport
@@ -1116,6 +1159,7 @@ function emitInteractionTests(
   allHandlers: string[],
   trigger: string | undefined,
   renderGuarded = false,
+  todo?: TodoRecorder,
 ): string {
   // `if (!user) return null` with an unresolvable `user` means the component may
   // render nothing at all at the props a spec can synthesise. The JSX below the
@@ -1123,6 +1167,7 @@ function emitInteractionTests(
   // fixture the tool cannot build — so the interaction tests say that instead of
   // failing on an element that was never going to mount.
   if (renderGuarded) {
+    todo?.("other");
     return `
 test.skip("${name}: interactions need a fixture — an early return may render nothing", () => {
   // TODO(flawless): give the prop its guard tests (see the component's first
@@ -1137,12 +1182,12 @@ test.skip("${name}: interactions need a fixture — an early return may render n
     if (!click) continue;
     // Later interactions often live behind UI state the first click opens.
     const prelude = i !== firstClickIdx && trigger ? trigger : undefined;
-    parts.push(emitClickTest(name, click, allHandlers, i, prelude));
+    parts.push(emitClickTest(name, click, allHandlers, i, prelude, todo));
   }
   for (let i = 0; i < info.forms.length; i++) {
     const form = info.forms[i];
     if (!form) continue;
-    parts.push(emitFormTest(name, form, allHandlers, i));
+    parts.push(emitFormTest(name, form, allHandlers, i, todo));
   }
   if (parts.length === 0) {
     parts.push(`// no interactions detected — render-only smoke is above.`);
@@ -1156,6 +1201,7 @@ function emitClickTest(
   allHandlers: string[],
   idx: number,
   prelude?: string,
+  todo?: TodoRecorder,
 ): string {
   const labelDesc = describeClickLabel(click);
   const selector = emitVitestSelector(click);
@@ -1165,6 +1211,7 @@ function emitClickTest(
     // source identifies this element. Say which; the previous fallback queried
     // the component NAME as a CSS selector, matched nothing, clicked null and
     // passed.
+    todo?.("unaddressable-target");
     return `
 test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — ${describeUnlocatable(click)}", () => {
   // TODO(flawless): give <${click.tag}> a data-testid, an aria-label or literal
@@ -1239,7 +1286,13 @@ function describeClickLabel(c: ClickHandler): string {
   return `the ${c.tag}`;
 }
 
-function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: number): string {
+function emitFormTest(
+  name: string,
+  form: FormInfo,
+  allHandlers: string[],
+  idx: number,
+  todo?: TodoRecorder,
+): string {
   const fillSteps: string[] = [];
   const valueAsserts: string[] = [];
   for (const field of form.fields) {
@@ -1254,6 +1307,7 @@ function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: 
   // rather than hunting for a button whose wording matches a list of verbs.
   const submitTarget = emitVitestSubmit(form);
   if (!submitTarget) {
+    todo?.("other");
     return `test.skip("${name} form #${idx} — no submit control in the markup", () => {
   // TODO(flawless): the form declares no <button type="submit">, so nothing here
   // identifies how it is submitted. Add one (or an onSubmit handler on a named
@@ -1261,6 +1315,7 @@ function emitFormTest(name: string, form: FormInfo, allHandlers: string[], idx: 
 });`;
   }
   if (form.submitControl?.disabled) {
+    todo?.("other");
     return `test.skip("${name} form #${idx} — its submit control is disabled at these props", () => {
   // TODO(flawless): the button's \`disabled\` expression is true at DEFAULTS.
   // Supply props that enable it and this becomes a real submit test.
@@ -1321,7 +1376,7 @@ test("${name} invokes ${p} when first button clicked (fallback)", async () => {
 // Browser specs
 // ---------------------------------------------------------------------------
 
-function browserSpec(c: FlatComponent, specName: string): string {
+function browserSpec(c: FlatComponent, specName: string, todo?: TodoRecorder): string {
   // The registry key, not the component name: two components called Card live
   // under different keys in the perf host, and mounting by the bare name drove
   // the wrong one.
@@ -1345,14 +1400,18 @@ function browserSpec(c: FlatComponent, specName: string): string {
   // that is the submit control, and clicking it runs an action. The reason
   // wording comes from the same helper the profile suite skips with, and it
   // goes in the title because the skip is decided here, at scaffold time.
-  const interactionTests = interactions
-    ? emitBrowserInteractionTests(interactions, guarded)
-    : `
+  let interactionTests: string;
+  if (interactions) {
+    interactionTests = emitBrowserInteractionTests(interactions, guarded, todo);
+  } else {
+    todo?.("other");
+    interactionTests = `
 test.skip(\`\${NAME}: click — ${titleSafe(emitPlaywrightClickTarget(interactions).reason ?? "no clickable target could be derived")}\`, () => {
   // TODO(flawless): the mount smoke above is the only claim the source
   // supports. If this component is interactive, name the control — a
   // data-testid, an aria-label or literal text — and regenerate.
 });`;
+  }
 
   // An error boundary logs what it caught, by design. Failing it for that is the
   // harness marking a component wrong for meeting its contract — so the console
@@ -1399,6 +1458,7 @@ ${interactionTests}
 function emitBrowserInteractionTests(
   info: NonNullable<ComponentInfo["interactions"]>,
   guarded = false,
+  todo?: TodoRecorder,
 ): string {
   const parts: string[] = [];
   /** For a guarded component, nothing on screen is a legitimate outcome. */
@@ -1419,6 +1479,7 @@ function emitBrowserInteractionTests(
       // detected and could not be addressed, which is a different fact and the
       // one worth reporting.
       const why = titleSafe(describeUnlocatable(click));
+      todo?.("unaddressable-target");
       parts.push(`
 test.skip(\`\${NAME}: ${click.event} on ${labelDesc} #${i} — ${why}\`, () => {
   // TODO(flawless): give it a data-testid, an aria-label or literal text.
@@ -1490,6 +1551,7 @@ test(\`\${NAME}: ${click.event} on ${labelDesc} #${i} fires without error\`, asy
     }
     const submitTarget = emitPlaywrightSubmit(form);
     if (!submitTarget) {
+      todo?.("other");
       parts.push(`
 test.skip(\`\${NAME}: form #${i} — no submit control in the markup\`, () => {
   // TODO(flawless): nothing in the form's JSX declares how it submits. The old
@@ -1503,6 +1565,7 @@ test.skip(\`\${NAME}: form #${i} — no submit control in the markup\`, () => {
     // "no submit control" here would send someone looking for a button that is
     // plainly in the file.
     if (form.submitControl?.disabled) {
+      todo?.("other");
       parts.push(`
 test.skip(\`\${NAME}: form #${i} — its submit control is disabled at these props\`, () => {
   // TODO(flawless): the button's \`disabled\` expression is true at the props

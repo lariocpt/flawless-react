@@ -94,6 +94,54 @@ describe("renderReportMarkdown", () => {
   });
 });
 
+describe("Hand-work remaining", () => {
+  const handWork = [
+    { kind: "uninferred-return-shape", count: 9, exemplar: "/proj/flawless/unit/page.test.tsx" },
+    { kind: "compound-root-wrap", count: 4, exemplar: "/proj/src/dialog.flawless.test.tsx" },
+    { kind: "other", count: 2, exemplar: "/proj/flawless/browser/menu.spec.ts" },
+  ];
+  const withHandWork = {
+    ...INPUT,
+    results: [task("unit-browser", { handWork } as never)],
+  };
+
+  test("renders one sorted row per TODO kind with a repo-relative exemplar", () => {
+    const md = renderReportMarkdown(withHandWork);
+    expect(md).toContain("## Hand-work remaining");
+    expect(md).toContain("| `compound-root-wrap` | 4 | `src/dialog.flawless.test.tsx` |");
+    expect(md).toContain("| `other` | 2 | `flawless/browser/menu.spec.ts` |");
+    expect(md).toContain("| `uninferred-return-shape` | 9 | `flawless/unit/page.test.tsx` |");
+    // Sorted by kind, not by count or arrival order — the file is committed and
+    // must not churn when the same debt is tallied in a different order.
+    expect(md.indexOf("| `compound-root-wrap` |")).toBeLessThan(md.indexOf("| `other` |"));
+    expect(md.indexOf("| `other` |")).toBeLessThan(md.indexOf("| `uninferred-return-shape` |"));
+    expect(md).not.toContain("/proj/");
+  });
+
+  test("zero markers is an explicit none, not a missing table", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [task("unit-browser", { handWork: [] } as never)],
+    });
+    expect(md).toContain("## Hand-work remaining");
+    expect(md).toContain("none — no TODO markers were emitted");
+    expect(md).not.toContain("| Kind |");
+  });
+
+  test("a run that never measured hand-work says so instead of implying zero", () => {
+    // INPUT's unit-browser result carries no handWork at all — an absent
+    // measurement must not read as an absent debt.
+    const md = renderReportMarkdown(INPUT);
+    expect(md).toContain("## Hand-work remaining");
+    expect(md).toContain("Not measured");
+    expect(md).not.toContain("none — no TODO markers were emitted");
+  });
+
+  test("the section is byte-identical across calls", () => {
+    expect(renderReportMarkdown(withHandWork)).toBe(renderReportMarkdown(withHandWork));
+  });
+});
+
 describe("a partial run says so", () => {
   const ALL = ["perf-harness", "unit-browser", "perf-static", "a11y", "react-rules", "e2e", "load"];
 
