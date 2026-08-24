@@ -241,6 +241,71 @@ describe("skipped colocated specs contribute no tallies", () => {
     expect(again.handWork?.map((t) => t.kind)).toEqual(["uninferred-return-shape"]);
     expect(again.handWork?.[0]?.count).toBe(1);
   });
+
+  test("--force over a hand-edited spec keeps it, so its markers must not count", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-kept-edited-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    const first = await runColocated(dir, true);
+    expect(first.handWork?.[0]?.count).toBe(1);
+    const spec = path.join(dir, "src", "Page.flawless.test.tsx");
+    // The user hardened the file; --force now KEEPS it (stamp mismatch), and
+    // the discarded render's marker would be debt against work they own.
+    await Bun.write(spec, `${await Bun.file(spec).text()}// hand-hardened\n`);
+    const rerun = await runColocated(dir, true);
+    expect(rerun.ok).toBe(true);
+    expect(rerun.handWork).toEqual([]);
+    // The kept note must precede the component list: REPORT.md truncates each
+    // task summary at 120 chars, and the name list runs to thousands — a note
+    // appended after it would exist only in summary.json and stdout.
+    expect(rerun.summary).toMatch(/^unit tests for 1 component\(s\) \(1 hand-edited/);
+  });
+
+  test("--force over a pre-stamp spec keeps it, so its markers must not count", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-kept-legacy-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await runColocated(dir, true);
+    const spec = path.join(dir, "src", "Page.flawless.test.tsx");
+    const text = await Bun.file(spec).text();
+    // Strip the stamp line: a spec generated before stamping existed.
+    await Bun.write(spec, text.split("\n").slice(1).join("\n"));
+    const rerun = await runColocated(dir, true);
+    expect(rerun.ok).toBe(true);
+    expect(rerun.handWork).toEqual([]);
+    expect(rerun.summary).toMatch(/^unit tests for 1 component\(s\) \(1 pre-stamp/);
+  });
+
+  test("the kept listing caps at 10 paths and says how many more there are", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-kept-cap-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    const names = Array.from({ length: 12 }, (_, i) => `Page${String(i + 1).padStart(2, "0")}`);
+    const runTwelve = (force: boolean): ReturnType<typeof unitAndBrowser.run> =>
+      unitAndBrowser.run({
+        trees: names.map((n) => opaqueRsc(n, path.join(dir, "src", `${n}.tsx`))),
+        outDir: path.join(dir, "flawless"),
+        variants: 3,
+        heaps: "stress",
+        force,
+        report: false,
+        provider: undefined,
+        apiSpec: undefined,
+        inlineSummary: false,
+        nextjs: undefined,
+        colocate: true,
+        selectedTasks: ["unit-browser"],
+      } as RunContext);
+    await runTwelve(true);
+    for (const n of names) {
+      const spec = path.join(dir, "src", `${n}.flawless.test.tsx`);
+      await Bun.write(spec, `${await Bun.file(spec).text()}// hand-hardened\n`);
+    }
+    const rerun = await runTwelve(true);
+    expect(rerun.summary).toContain("12 hand-edited or reformatted colocated spec(s) kept");
+    expect(rerun.summary).toContain("Page01.flawless.test.tsx");
+    expect(rerun.summary).toContain("Page10.flawless.test.tsx");
+    expect(rerun.summary).not.toContain("Page11.flawless.test.tsx");
+    expect(rerun.summary).toContain("+2 more");
+    expect(rerun.handWork).toEqual([]);
+  });
 });
 
 describe("tallies match the written text", () => {

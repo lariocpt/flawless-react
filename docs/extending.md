@@ -93,11 +93,17 @@ Merge-preserving under `--force` — regenerated, but never at the cost of what 
 Kept without `--force`, regenerated with it:
 
 - `flawless/e2e/<route>.spec.ts` — route specs.
-- Colocated `*.flawless.test.tsx` specs written by `--colocate`.
+- Colocated `*.flawless.test.tsx` specs written by `--colocate` — with one more
+  guard: each one opens with a `// @flawless-generated sha256:…` stamp hashing
+  the rest of the file, and `--force` only rewrites a spec whose stamp still
+  matches. A hand-edited spec (stamp mismatch) and a spec from before stamping
+  existed (no stamp) are both kept and listed in the run summary; delete such a
+  file to regenerate it. See the full matrix in
+  [generated-suite.md](generated-suite.md#colocated-spec-stamps).
 
 **Everything else is regenerated, and that is deliberate** (the write-once set above being the whole exception list)**.** A frozen file never receives a later version's improvement — which is exactly what happened to `flawless/load/README.md`, stranded without the rule that `LOAD_BASE` must point at a production build. Generated prose (`load/README.md`, `e2e/README.md`, `mocks/README.md`), boilerplate (`mocks/browser.ts`, `mocks/node.ts`), every config, and the component specs inside the out dir are all refreshed. To keep a hand-hardened component spec, use `--colocate`.
 
-A re-run is never refused. The perf harness tracks its own lifecycle off the suite's `playwright.config.ts` (its first line records the flawless-react version that wrote it): a fresh out dir is **generated**, a re-run over an existing suite is **refreshed** — every derived file rewritten as a fresh scaffold would, write-once files untouched, exit 0 — and a `--changed` run **keeps** the harness entirely, writing nothing, so the affected-test run happens with any task selection. One consequence of the registry split: a refresh rewrites `host/registry.ts`, so newly analysed components mount through the kept `main.tsx` without any hand edit. A pre-split `main.tsx` (no `./registry` import) cannot benefit — the run warns and names the one-time escape: delete it and re-run, or port your wiring onto an import of `./registry`. `--force` still means "regenerate what a plain re-run keeps" (colocated specs, e2e route specs, the provider wrapper) and outranks `--changed`'s keep. Unit/browser/e2e derived specs inside the out dir are rewritten on any re-run, which is why hand-hardened component specs belong in `--colocate` mode; REPORT.md's task row says which of generated/refreshed/kept a run was.
+A re-run is never refused. The perf harness tracks its own lifecycle off the suite's `playwright.config.ts` (its first line records the flawless-react version that wrote it): a fresh out dir is **generated**, a re-run over an existing suite is **refreshed** — every derived file rewritten as a fresh scaffold would, write-once files untouched, exit 0 — and a `--changed` run **keeps** the harness entirely, writing nothing, so the affected-test run happens with any task selection. One consequence of the registry split: a refresh rewrites `host/registry.ts`, so newly analysed components mount through the kept `main.tsx` without any hand edit. A pre-split `main.tsx` (no `./registry` import) cannot benefit — the run warns and names the one-time escape: delete it and re-run, or port your wiring onto an import of `./registry`. `--force` still means "regenerate what a plain re-run keeps" (colocated specs, e2e route specs, the provider wrapper) and outranks `--changed`'s keep — except that a colocated spec whose provenance stamp no longer matches its body is a file you worked on, and is kept even then. Unit/browser/e2e derived specs inside the out dir are rewritten on any re-run, which is why hand-hardened component specs belong in `--colocate` mode; REPORT.md's task row says which of generated/refreshed/kept a run was.
 
 ## Run only what an edit affects
 
@@ -157,7 +163,7 @@ const VARIANTS = [
 ] as Array<Record<string, unknown>>;
 ```
 
-Edit-time concern: a spec inside the out dir is rewritten on every regeneration, `--force` or not — the tool is the source of *initial* truth and keeps improving what it emits. If you want a spec to survive, pass `--colocate`: those are written beside your source and kept unless you `--force`. (Earlier advice here said "don't `--force` after you've started editing"; that protected nothing, because the perf harness regenerated regardless.)
+Edit-time concern: a spec inside the out dir is rewritten on every regeneration, `--force` or not — the tool is the source of *initial* truth and keeps improving what it emits. If you want a spec to survive, pass `--colocate`: those are written beside your source, kept without `--force`, and — once you edit one — kept under `--force` too, because the stamp on its first line no longer matches the body. (Earlier advice here said "don't `--force` after you've started editing"; that protected nothing, because the perf harness regenerated regardless.)
 
 ## Run a specific spec or test
 

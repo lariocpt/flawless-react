@@ -51,11 +51,12 @@ export const unitAndBrowser: Task = {
       apiRoutes: ctx.nextjs?.apiRoutes,
       todos,
     };
-    const { written, skipped } = await scaffoldUnitBrowser(scaffoldOptions);
-    // Tallying happened while rendering, but a skipped colocated spec's render
+    const { written, skipped, keptEdited, keptLegacy } = await scaffoldUnitBrowser(scaffoldOptions);
+    // Tallying happened while rendering, but a kept colocated spec's render
     // was discarded — its markers were never written this run, and may name
-    // TODOs the user already resolved in the file the writer kept.
-    for (const kept of skipped) todos.drop(kept);
+    // TODOs the user already resolved in the file the writer kept. All three
+    // kept buckets discard their render, so all three retract their tallies.
+    for (const kept of [...skipped, ...keptEdited, ...keptLegacy]) todos.drop(kept);
     // flattenTrees, not a raw walk: the same component appears in as many trees
     // as there are pages rendering it, and counting the walk reported "unit
     // tests for 606 component(s)" against an app the report itself says has 181.
@@ -64,15 +65,34 @@ export const unitAndBrowser: Task = {
       skipped.length > 0
         ? ` (${skipped.length} colocated spec(s) kept — rerun with --force to regenerate)`
         : "";
+    // Paths relative to where the user reads the summary from, capped so one
+    // big app can't turn the summary line into a wall of text.
+    const rel = (p: string): string => path.relative(projectRoot ?? process.cwd(), p) || p;
+    const listKept = (paths: string[]): string => {
+      const shown = paths.slice(0, 10).map(rel).join(", ");
+      return paths.length > 10 ? `${shown}, +${paths.length - 10} more` : shown;
+    };
+    const editedNote =
+      keptEdited.length > 0
+        ? ` (${keptEdited.length} hand-edited or reformatted colocated spec(s) kept — delete to regenerate: ${listKept(keptEdited)})`
+        : "";
+    const legacyNote =
+      keptLegacy.length > 0
+        ? ` (${keptLegacy.length} pre-stamp colocated spec(s) kept — delete to regenerate: ${listKept(keptLegacy)})`
+        : "";
     const browserNote = browserSpecs
       ? ""
       : " (browser specs skipped — add perf-harness to the task list for the host they need)";
+    // Notes before the name list: REPORT.md truncates each task summary at
+    // 120 chars and the component list runs to thousands — a note appended
+    // after it would exist only in summary.json and stdout, and the kept
+    // listing is the one part of this line a user must act on.
     return {
       id: "unit-browser",
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit tests for ${names.length} component(s): ${names.join(", ")}${skippedNote}${browserNote}`,
+      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
     };
   },

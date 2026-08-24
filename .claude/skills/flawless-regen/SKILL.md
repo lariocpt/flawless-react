@@ -1,6 +1,6 @@
 ---
 name: flawless-regen
-description: Regenerate a flawless-react suite safely — the generated/refreshed/kept lifecycle, what a re-run rewrites vs keeps, --force's merge and clobber semantics, --changed's affected-test narrowing, and proving a run happened via result JSON + REPORT.md rather than stdout. Use before any regeneration over an adopted suite, after upgrading the tool, or when a --changed run appears to have done nothing.
+description: Regenerate a flawless-react suite safely — the generated/refreshed/kept lifecycle, what a re-run rewrites vs keeps, --force's merge semantics and the colocated-spec provenance stamp, --changed's affected-test narrowing, and proving a run happened via result JSON + REPORT.md rather than stdout. Use before any regeneration over an adopted suite, after upgrading the tool, or when a --changed run appears to have done nothing.
 ---
 
 # Regenerating a flawless suite
@@ -13,7 +13,7 @@ before touching an adopted suite:
 | --- | --- | --- | --- |
 | Write-once | `budgets.json`, `host/main.tsx` (wrapper only — the `host/registry.ts` beside it regenerates), `provider.fixtures.ts`, `e2e/global-setup.ts`, `mocks/handlers.ts`, `mock/routes.ts` | kept | **kept** |
 | Merge-kept | `e2e/params.json`, `load/routes.pipes` | kept | **merged** — your edits, rates, commented pipes survive |
-| Colocated specs | `src/**/*.flawless.test.tsx` | kept | **overwritten** |
+| Colocated specs | `src/**/*.flawless.test.tsx` | kept | **stamp-checked** — untouched refreshed; edited or pre-stamp kept and listed |
 | Everything else | out-dir specs, configs, generated prose, REPORT.md, sidecars | rewritten | rewritten |
 
 ## The no-force run over an existing suite
@@ -29,20 +29,30 @@ upgrade expect the derived files — and the version banner on the suite's
 `playwright.config.ts` first line — to move. An exit 1 means a real
 failure, never the old harness refusal (that was findings FR-028, fixed).
 
-## `--force` and the clobber drill
+## `--force` and the colocated stamp
 
-`--force` rebuilds the harness and overwrites every colocated spec — it cannot
-tell a hand-hardened spec from an untouched one. The drill:
+Every colocated spec opens with a provenance stamp —
+`// @flawless-generated sha256:<hex16> flawless-react@<version>` — hashing
+everything below the line (recomputed after the run's style pass, so a
+formatted spec still reads as untouched). `--force` uses it as the verdict:
 
-1. Commit (or stash) before forcing.
-2. Force-run, then `git diff --name-only -- '*[.]flawless.test.tsx'`.
-3. `git checkout` the specs you had hardened; keep the regenerated versions of
-   untouched ones (they may legitimately track source changes you made).
-4. Expect new spec files for components the analyser newly detected — their
-   browser specs mount through `host/registry.ts`, which the same run
-   refreshed; hand registrations live in `main.tsx`'s `ALL` spread and
-   survive (see flawless-unit-browser). A pre-split `main.tsx` (no
-   `./registry` import) triggers the run's migration warning instead.
+- stamp matches body → **rewritten** (this is the refresh you asked for);
+- stamp mismatch → you edited or reformatted it: **kept**, listed in the
+  summary as hand-edited;
+- no stamp (generated pre-stamp, or the line was deleted) → **kept**, listed
+  as pre-stamp.
+
+The escape hatch for both kept cases is the same: delete the file and re-run.
+Kept files also drop out of `handWork` tallies — their discarded render's
+TODOs are not your debt. Still commit (or stash) before forcing: the stamp
+protects hand-edited specs, but the rewrite of untouched ones is exactly what
+you're asking for, and a diff you can read beats trusting any tool.
+
+Expect new spec files for components the analyser newly detected — their
+browser specs mount through `host/registry.ts`, which the same run refreshed;
+hand registrations live in `main.tsx`'s `ALL` spread and survive (see
+flawless-unit-browser). A pre-split `main.tsx` (no `./registry` import)
+triggers the run's migration warning instead.
 
 ## `--changed`
 
@@ -77,7 +87,8 @@ Never take stdout as evidence — write evidence to files and check the disk:
 - REPORT.md is rewritten every run — a missing REPORT.md diff means the run
   did not happen or ran somewhere else.
 - `git status --porcelain` in the target must match the expected touch surface
-  for the run kind (tiny for no-force, colocated-wide for `--force`).
+  for the run kind (tiny for no-force; `--force` touches the untouched
+  colocated specs, while the ones you hardened stay out of the diff).
 - Another session may be working the same repos: check `git log -1` against
   what you last saw before attributing a surprise diff to the tool.
 
@@ -91,9 +102,15 @@ report it rather than hand-formatting generated output.
 
 ## Never
 
-- Never `--force` an adopted suite with uncommitted hand-hardened specs.
+- Never `--force` an adopted suite with uncommitted work — the stamp keeps
+  hand-edited colocated specs, but e2e route specs and the provider wrapper
+  have no such guard, and a committed baseline is what makes any rewrite
+  reviewable.
+- Never hand-delete a spec's stamp line to "claim" it — that demotes the file
+  to pre-stamp (kept but nagged about); the file is already yours the moment
+  you edit the body.
 - Never read a mid-session change to the target app as proof your run
   executed — only your own result file plus the REPORT.md diff counts.
 - Never reach for `--force` on a plain refresh — a no-force re-run already
-  rewrites every derived file, and `--force` adds only the colocated/e2e-spec
-  overwrite. Decide whether you want that clobber before asking for it.
+  rewrites every derived file, and `--force` adds only the untouched-colocated
+  /e2e-spec rewrite. Decide whether you want that before asking for it.

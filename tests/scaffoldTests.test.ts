@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { scaffoldUnitBrowser } from "../src/scaffold-tests/index.ts";
+import { hashBody, STAMP_RE, splitStamp } from "../src/scaffold-tests/stamp.ts";
 import type { ComponentInfo, ComponentTree } from "../src/types.ts";
 
 const dirs: string[] = [];
@@ -217,30 +218,95 @@ describe("scaffoldUnitBrowser colocate", () => {
     expect(existsSync(path.join(outDir, "browser", "Card.spec.ts"))).toBe(true);
   });
 
-  test("force overwrites an existing colocated spec", async () => {
-    const root = tmpRoot();
-    const outDir = path.join(root, "flawless");
-    const src = path.join(root, "src");
-    mkdirSync(src, { recursive: true });
-
-    const cardSpec = path.join(src, "Card.flawless.test.tsx");
-    writeFileSync(cardSpec, "// flawless-sentinel: keep this file\n");
-
-    const { written, skipped } = await scaffoldUnitBrowser({
-      trees: [tree(comp("Card", path.join(src, "Card.tsx")))],
-      outDir,
+  // The --force decision matrix. Colocated specs are the only skipIfExists
+  // files, and the stamp is what lets --force tell "generated, untouched"
+  // from "someone worked on this" — so each verdict is pinned here against
+  // the writer's four result buckets.
+  const colocateScaffold = (root: string, force: boolean): ReturnType<typeof scaffoldUnitBrowser> =>
+    scaffoldUnitBrowser({
+      trees: [tree(comp("Card", path.join(root, "src", "Card.tsx")))],
+      outDir: path.join(root, "flawless"),
       variants: 2,
       colocate: true,
-      force: true,
+      force,
       skipInnerPackageJson: true,
     });
 
-    expect(skipped).toEqual([]);
-    expect(written).toContain(cardSpec);
+  test("a new colocated spec is written stamped; in-outDir files never are", async () => {
+    const root = tmpRoot();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    const res = await colocateScaffold(root, false);
+
+    const cardSpec = path.join(root, "src", "Card.flawless.test.tsx");
+    expect(res.written).toContain(cardSpec);
+    expect(res.keptEdited).toEqual([]);
+    expect(res.keptLegacy).toEqual([]);
     const text = readFileSync(cardSpec, "utf8");
-    expect(text).not.toContain("flawless-sentinel");
-    expect(text).toContain("Card renders at defaults without crashing");
-    expect(text).toContain('import Card from "./Card";');
+    expect(STAMP_RE.test(text)).toBe(true);
+    const { hash, body } = splitStamp(text);
+    expect(hash).toBe(hashBody(body));
+    expect(body).toContain("Card renders at defaults without crashing");
+    // The regenerated set is identified by rewriting it, not by stamping it.
+    expect(STAMP_RE.test(readFileSync(path.join(root, "flawless", "setup.ts"), "utf8"))).toBe(
+      false,
+    );
+  });
+
+  test("force + untouched stamp → rewritten", async () => {
+    const root = tmpRoot();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    await colocateScaffold(root, false);
+    const cardSpec = path.join(root, "src", "Card.flawless.test.tsx");
+
+    const res = await colocateScaffold(root, true);
+    expect(res.written).toContain(cardSpec);
+    expect(res.skipped).toEqual([]);
+    expect(res.keptEdited).toEqual([]);
+    expect(res.keptLegacy).toEqual([]);
+    expect(STAMP_RE.test(readFileSync(cardSpec, "utf8"))).toBe(true);
+  });
+
+  test("force + edited body → kept byte-identical in keptEdited", async () => {
+    const root = tmpRoot();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    await colocateScaffold(root, false);
+    const cardSpec = path.join(root, "src", "Card.flawless.test.tsx");
+    writeFileSync(cardSpec, `${readFileSync(cardSpec, "utf8")}// hand-hardened\n`);
+    const edited = readFileSync(cardSpec, "utf8");
+
+    const res = await colocateScaffold(root, true);
+    expect(res.keptEdited).toEqual([cardSpec]);
+    expect(res.keptLegacy).toEqual([]);
+    expect(res.written).not.toContain(cardSpec);
+    expect(res.skipped).toEqual([]);
+    expect(readFileSync(cardSpec, "utf8")).toBe(edited);
+  });
+
+  test("force + no stamp → kept byte-identical in keptLegacy", async () => {
+    const root = tmpRoot();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    const cardSpec = path.join(root, "src", "Card.flawless.test.tsx");
+    const legacy = "// flawless-sentinel: a spec from before stamping existed\n";
+    writeFileSync(cardSpec, legacy);
+
+    const res = await colocateScaffold(root, true);
+    expect(res.keptLegacy).toEqual([cardSpec]);
+    expect(res.keptEdited).toEqual([]);
+    expect(res.written).not.toContain(cardSpec);
+    expect(readFileSync(cardSpec, "utf8")).toBe(legacy);
+  });
+
+  test("no force + exists → skipped without classification, kept lists empty", async () => {
+    const root = tmpRoot();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    await colocateScaffold(root, false);
+    const cardSpec = path.join(root, "src", "Card.flawless.test.tsx");
+    writeFileSync(cardSpec, `${readFileSync(cardSpec, "utf8")}// hand-hardened\n`);
+
+    const res = await colocateScaffold(root, false);
+    expect(res.skipped).toEqual([cardSpec]);
+    expect(res.keptEdited).toEqual([]);
+    expect(res.keptLegacy).toEqual([]);
   });
 
   test("multi-component files colocate one spec per component", async () => {

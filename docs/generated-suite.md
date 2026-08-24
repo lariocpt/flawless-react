@@ -319,6 +319,33 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   Root, a layout returning `<html>` — get a spec that asserts what IS true and
   states the reason in the file.
 
+#### Colocated spec stamps
+
+Specs written beside your sources by `--colocate` open with a provenance stamp:
+
+```
+// @flawless-generated sha256:<hex16> flawless-react@<version>
+```
+
+`<hex16>` is the first 16 hex characters of the sha256 of everything below the
+line, computed after the run's style pass — so the stamp names the bytes the
+project's own formatter left on disk, not the raw template. It is how `--force`
+tells "still exactly what we generated" from "someone worked on this":
+
+| State on disk | plain re-run | `--force` |
+| --- | --- | --- |
+| no spec yet | written, stamped | written, stamped |
+| stamp matches body | kept | **rewritten** (refreshed) |
+| stamp mismatch (you edited or reformatted it) | kept | kept, listed as hand-edited |
+| no stamp line (pre-stamp, or you deleted it) | kept | kept, listed as pre-stamp |
+
+Both kept-under-`--force` cases are named in the run summary with the same
+escape hatch: **delete the file and re-run to regenerate it**. Kept files also
+drop out of the run's hand-work tallies — a TODO in a render that was never
+written is not your debt. Note that deleting just the stamp line demotes the
+spec to pre-stamp rather than making it regenerable; the unit of ownership is
+the file.
+
 ### `unit-browser` → `browser/<Component>.spec.ts`
 
 Playwright specs that drive the perf host rather than jsdom, for the same

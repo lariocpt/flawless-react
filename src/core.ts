@@ -16,6 +16,7 @@ import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporte
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
+import { restampGenerated } from "./scaffold-tests/stamp.ts";
 import { NEXT_SCRIPT, VITEST_CONFIG } from "./suiteScripts.ts";
 import { findTask, TASKS } from "./tasks/index.ts";
 import type {
@@ -501,6 +502,17 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     if (adopted.warning) warn(`style: ${adopted.warning}`);
   } catch (err) {
     warn(`style adoption failed (non-fatal): ${(err as Error).message}`);
+  }
+  // Second phase of the colocated-spec stamps: the writer stamped the raw
+  // render, and the style pass above may just have reformatted those bytes —
+  // leaving stamps that would classify every untouched spec as hand-edited on
+  // the next --force. Restamp AFTER (and regardless of) style adoption; when
+  // the formatter didn't run or didn't change a file this is a no-op, and
+  // restampGenerated ignores everything that doesn't open with a stamp line.
+  try {
+    await restampGenerated(writtenFiles);
+  } catch (err) {
+    warn(`stamp refresh failed (non-fatal): ${(err as Error).message}`);
   }
 
   const runnableSelected = selected.some(

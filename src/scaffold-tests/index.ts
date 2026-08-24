@@ -4,6 +4,7 @@ import path from "node:path";
 import { mergePackageJson } from "../packageJson.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute } from "../types.ts";
+import { classifyStamped, stamp } from "./stamp.ts";
 import { type AliasEntry, renderUnitBrowser } from "./templates.ts";
 
 export interface ScaffoldUnitBrowserOptions {
@@ -26,6 +27,10 @@ export interface ScaffoldUnitBrowserResult {
   written: string[];
   /** Colocated spec targets left untouched because they already exist (no --force). */
   skipped: string[];
+  /** Colocated specs --force kept because their stamp no longer matches the body. */
+  keptEdited: string[];
+  /** Colocated specs --force kept because they carry no stamp at all (pre-stamp). */
+  keptLegacy: string[];
 }
 
 export async function scaffoldUnitBrowser(
@@ -37,14 +42,35 @@ export async function scaffoldUnitBrowser(
   const files = renderUnitBrowser(opts);
   const written: string[] = [];
   const skipped: string[] = [];
+  const keptEdited: string[] = [];
+  const keptLegacy: string[] = [];
   for (const f of files) {
     const abs = f.absPath ?? path.join(outDir, f.relPath);
-    if (f.skipIfExists && !opts.force && existsSync(abs)) {
-      skipped.push(abs);
-      continue;
+    if (f.skipIfExists && existsSync(abs)) {
+      if (!opts.force) {
+        skipped.push(abs);
+        continue;
+      }
+      // --force refreshes what is still exactly ours and keeps everything a
+      // human may have worked on. "Ours" is what the stamp proves; a file
+      // from before stamping existed can't prove it either way, so it is
+      // kept too and reported separately (delete it to regenerate).
+      const verdict = classifyStamped(await readFile(abs, "utf8"));
+      if (verdict === "edited") {
+        keptEdited.push(abs);
+        continue;
+      }
+      if (verdict === "stampless") {
+        keptLegacy.push(abs);
+        continue;
+      }
     }
     await mkdir(path.dirname(abs), { recursive: true });
-    await Bun.write(abs, f.content);
+    // Only colocated specs (the skipIfExists set) are stamped: the in-outDir
+    // files are identified by being rewritten every run, not by provenance.
+    // This stamp hashes the raw render; core.ts restamps after the host
+    // project's formatter has had its turn.
+    await Bun.write(abs, f.skipIfExists ? stamp(f.content) : f.content);
     written.push(abs);
   }
 
@@ -67,7 +93,7 @@ export async function scaffoldUnitBrowser(
     await writeSuitePackageJson(outDir, opts.browserSpecs !== false);
     written.push(path.join(outDir, "package.json"));
   }
-  return { written, skipped };
+  return { written, skipped, keptEdited, keptLegacy };
 }
 
 /**

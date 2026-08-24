@@ -72,10 +72,15 @@ prevent.
 ## Placement and survival
 
 Colocated specs (`--colocate`, `<file>.flawless.test.tsx` beside the source)
-are kept on re-runs and OVERWRITTEN by `--force` — the tool cannot tell a
-hand-hardened spec from an untouched one, so after any `--force` diff the
-colocated specs and `git checkout` the ones you hardened. Specs inside the out
-dir are rewritten on any re-run; never hand-harden those.
+are kept on re-runs, and their first line is a provenance stamp —
+`// @flawless-generated sha256:<hex16> flawless-react@<version>`, hashing the
+rest of the file. `--force` rewrites a spec only while that stamp still
+matches; the moment you hand-harden one, the mismatch protects it (kept and
+listed in the summary as hand-edited). Leave the stamp line alone when
+editing: deleting it does not make the file regenerable, it just reclassifies
+it as pre-stamp — the body edit already marks the file as yours, and the
+delete-the-whole-file escape hatch is how you hand a spec back to the tool.
+Specs inside the out dir are rewritten on any re-run; never hand-harden those.
 
 Run them with `bun run flawless:unit` (the emitted vitest config selects both
 `src/**/*.flawless.test.*` and `flawless/unit/**`). A project script that is a
@@ -110,5 +115,7 @@ included. (This was findings ledger FR-016, fixed by the registry split.)
 - Never delete a reasoned `test.skip` or replace it with a hollow assertion.
 - Never mock `cn`/`clsx` away entirely (classes vanish) or mock UI components.
 - Never hand-harden a spec inside the out dir — colocate it first.
+- Never delete a colocated spec's stamp line casually — that demotes the file
+  to pre-stamp; edit the body and let the stamp mismatch protect it.
 - Never trust a green run whose fixtures are empty casts: fill, then assert
   the fixture content reaches the DOM.
