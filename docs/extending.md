@@ -28,7 +28,7 @@ ensureRoot().render(
 );
 ```
 
-If different components need different providers, factor the wrapping into a `wrap(name, element)` helper and let the registry entries declare which wrapper they need.
+If different components need different providers, factor the wrapping into a `wrap(name, element)` helper keyed on the component name. Keep all of this in `main.tsx`: the tables in `host/registry.ts` are regenerated on every run, so per-component wiring written there is lost. To register a component the analyser cannot see, add it to `main.tsx`'s `ALL` spread (`const ALL = { ...REGISTRY, MyComponent }`) — every lookup goes through `ALL`, and the spread survives regeneration.
 
 ## Mock data sources
 
@@ -80,7 +80,7 @@ Protected under every flag, including `--force`:
 
 - `flawless/budgets.json` — thresholds you tightened to an observed p95. A regenerated default silently un-tightens the gate.
 - `flawless/mock/routes.ts` — the OpenAPI-derived fixture bodies you hand-edited. Write-once since its header promises exactly that: after updating the API spec, delete the file and re-run to regenerate it.
-- `flawless/host/main.tsx` — the providers and MSW wiring you added by hand (see above). Nothing can rebuild it from the analysis.
+- `flawless/host/main.tsx` — the providers, MSW wiring and hand registrations in the `ALL` spread (see above). Nothing can rebuild those from the analysis. The mount tables beside it (`host/registry.ts`) are derived, regenerate on every run, and are how a plain re-run registers newly analysed components over the kept wrapper.
 - `flawless/provider.fixtures.ts` — the typed holes for your store's initial state.
 - `flawless/e2e/global-setup.ts` — where you wire up login.
 - `flawless/mocks/handlers.ts` — the response bodies are yours to fill in.
@@ -97,7 +97,7 @@ Kept without `--force`, regenerated with it:
 
 **Everything else is regenerated, and that is deliberate** (the write-once set above being the whole exception list)**.** A frozen file never receives a later version's improvement — which is exactly what happened to `flawless/load/README.md`, stranded without the rule that `LOAD_BASE` must point at a production build. Generated prose (`load/README.md`, `e2e/README.md`, `mocks/README.md`), boilerplate (`mocks/browser.ts`, `mocks/node.ts`), every config, and the component specs inside the out dir are all refreshed. To keep a hand-hardened component spec, use `--colocate`.
 
-A re-run is never refused. The perf harness tracks its own lifecycle off the suite's `playwright.config.ts` (its first line records the flawless-react version that wrote it): a fresh out dir is **generated**, a re-run over an existing suite is **refreshed** — every derived file rewritten as a fresh scaffold would, write-once files untouched, exit 0 — and a `--changed` run **keeps** the harness entirely, writing nothing, so the affected-test run happens with any task selection. `--force` still means "regenerate what a plain re-run keeps" (colocated specs, e2e route specs, the provider wrapper) and outranks `--changed`'s keep. Unit/browser/e2e derived specs inside the out dir are rewritten on any re-run, which is why hand-hardened component specs belong in `--colocate` mode; REPORT.md's task row says which of generated/refreshed/kept a run was.
+A re-run is never refused. The perf harness tracks its own lifecycle off the suite's `playwright.config.ts` (its first line records the flawless-react version that wrote it): a fresh out dir is **generated**, a re-run over an existing suite is **refreshed** — every derived file rewritten as a fresh scaffold would, write-once files untouched, exit 0 — and a `--changed` run **keeps** the harness entirely, writing nothing, so the affected-test run happens with any task selection. One consequence of the registry split: a refresh rewrites `host/registry.ts`, so newly analysed components mount through the kept `main.tsx` without any hand edit. A pre-split `main.tsx` (no `./registry` import) cannot benefit — the run warns and names the one-time escape: delete it and re-run, or port your wiring onto an import of `./registry`. `--force` still means "regenerate what a plain re-run keeps" (colocated specs, e2e route specs, the provider wrapper) and outranks `--changed`'s keep. Unit/browser/e2e derived specs inside the out dir are rewritten on any re-run, which is why hand-hardened component specs belong in `--colocate` mode; REPORT.md's task row says which of generated/refreshed/kept a run was.
 
 ## Run only what an edit affects
 

@@ -1129,10 +1129,12 @@ describe("the emitted servers are started, not merely written", () => {
       try {
         const js = await (await fetch(`${server.base}/bundle.js`)).text();
         // A string probe, not a mount: react is stubbed here (createRoot is a
-        // no-op), so the honest reachable-signal is the new registry key and
-        // its import landing in the bundle main.tsx pulls via ./registry.
-        expect(js).toContain('"Toolbar"');
-        expect(js).toContain('"Card"');
+        // no-op), so the honest reachable-signal is the new component's
+        // identifier landing in the bundle main.tsx pulls via ./registry.
+        // Bare, not '"Toolbar"': Bun collapses {"Toolbar": Toolbar} to
+        // shorthand, so the quoted key never survives bundling.
+        expect(js).toContain("Toolbar");
+        expect(js).toContain("Card");
       } finally {
         server.kill();
       }

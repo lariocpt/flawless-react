@@ -64,7 +64,7 @@ Workers are pinned to 1 under CI, because the host serves one component at a tim
 
 ## `host/server.ts`
 
-A tiny `Bun.serve` that builds `host/main.tsx` once via `Bun.build({ target: "browser" })` and serves three routes: `/` (the HTML shell), `/bundle.js` (the built ESM), and `404` for everything else.
+A tiny `Bun.serve` that builds `host/main.tsx` once via `Bun.build({ target: "browser" })` — the bundle pulls `host/registry.ts` in through main's `./registry` import — and serves three routes: `/` (the HTML shell), `/bundle.js` (the built ESM), and `404` for everything else.
 
 The build runs **at startup**, not per request, so test runs hit a hot bundle. If you're iterating on `main.tsx` you can either restart the server manually or replace the one-shot build with a `Bun.build` watcher.
 
@@ -76,12 +76,22 @@ Two lines that matter: a `<div id="root">` and a `<script type="module" src="/bu
 
 **Edit when**: you need a different root element ID, a CSS reset, or extra DOM your component depends on (e.g. a portal target).
 
+## `host/registry.ts`
+
+The mechanical mount tables, one import line per analysed component plus three exported objects — **regenerated on every run**, which is how a newly analysed component's profile and browser specs find it: a plain no-force re-run refreshes this file even though `main.tsx` beside it is kept.
+
+- **`REGISTRY`** maps component names to imported components, populated from the analysed `ComponentTree`.
+- **`FN_PROPS`** — props the component calls. A spec's props reach the page through `page.evaluate`'s structured clone, which drops functions silently, so `mount` supplies a no-op for each named prop the incoming object does not define. Without it a component like `error.tsx`'s `<Button onClick={reset}>` throws the instant the click lands.
+- **`WRAP_IN`** — the ancestors HTML requires around a component's root tag. `<TableBody>` renders `<tbody>`, which is only valid inside a `<table>`; mounting it straight into `#root` makes React log *"In HTML, `tbody` cannot be a child of `div`"*, and the browser spec then fails the component for a warning the harness caused. `mount` nests the element through the chain.
+
+**Edit never** — the next run rewrites it byte-for-byte from the analysis. Hand registrations go in `host/main.tsx`'s `ALL` spread, which survives.
+
 ## `host/main.tsx`
 
-This is the heart of the runtime. Three things happen here:
+The write-once wrapper — the user-owned half of the split. Three things happen here:
 
 1. **react-scan is initialised once at module load**. It buffers any `unnecessary: true` render events into a `scanEvents` array.
-2. A **`REGISTRY`** maps component names to imported components. The CLI populates this from the analysed `ComponentTree`.
+2. The tables are imported from `./registry` and `REGISTRY` is spread into **`ALL`** — `const ALL: Record<string, Component> = { ...REGISTRY /* hand-registered components ride here */ }`. Every internal lookup goes through `ALL`, so an entry you add to the spread mounts exactly like a generated one and survives every regeneration.
 3. **`window.__profile`** is exposed for the Playwright driver:
 
 ```ts
@@ -98,14 +108,11 @@ window.__profile = {
 
 `mount` wraps the user's component in React's built-in `<Profiler id={name} onRender={...}>` and renders it via `activeRoot.render(...)`. Each render fires `onRender`, which appends to the `renderCount[name]` / `renderTime[name]` dictionaries. `rerender` re-issues the render and waits one `requestAnimationFrame` for React to commit.
 
-Two lookup tables sit beside `REGISTRY`, both populated at scaffold time:
-
-- **`FN_PROPS`** — props the component calls. A spec's props reach the page through `page.evaluate`'s structured clone, which drops functions silently, so `mount` supplies a no-op for each named prop the incoming object does not define. Without it a component like `error.tsx`'s `<Button onClick={reset}>` throws the instant the click lands.
-- **`WRAP_IN`** — the ancestors HTML requires around a component's root tag. `<TableBody>` renders `<tbody>`, which is only valid inside a `<table>`; mounting it straight into `#root` makes React log *"In HTML, `tbody` cannot be a child of `div`"*, and the browser spec then fails the component for a warning the harness caused. `mount` nests the element through the chain.
-
 `mount` also carries the error React swallowed. `createRoot` is given an `onUncaughtError` handler, so a component that throws during render reports *what* it threw rather than the generic "did not render within 5000ms".
 
-**Edit when**: you want to wrap components in a provider (React Router, theme, query client, store) — prefer the `--provider <file>` flag at scaffold time, which threads your wrapper through `mount` / `rerender` for you. You can also expose additional helpers on `window.__profile` if your tests need them.
+**Edit when**: you want to wrap components in a provider (React Router, theme, query client, store) — prefer the `--provider <file>` flag at scaffold time, which threads your wrapper through `mount` / `rerender` for you. You can also hand-register components in the `ALL` spread, or expose additional helpers on `window.__profile` if your tests need them.
+
+**Pre-split suites**: a `main.tsx` generated before the registry split carries the tables baked in and no `./registry` import, so newly analysed components can never mount through it. Write-once is absolute — no flag rewrites it, `--force` included — so the run writes `host/registry.ts` inert beside it and warns. The escape is one-time: delete `host/main.tsx` and re-run (provider wiring regenerates from `--provider`), or port your hand wiring into a wrapper that imports `./registry`.
 
 ## `profile/_helpers.ts`
 

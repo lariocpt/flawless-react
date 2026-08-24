@@ -18,6 +18,14 @@ export interface ScaffoldResult {
    * version", never substitute its own.
    */
   existingVersion?: string;
+  /**
+   * host/main.tsx predates the registry split (no `from "./registry"` import),
+   * so the kept wrapper never sees newly analysed components. writeOnce is
+   * absolute — `--force` included — so the caller must name the escape:
+   * delete host/main.tsx and re-run, or port the hand wiring onto an import
+   * of ./registry. host/registry.ts is still written, inert beside it.
+   */
+  preSplitMain?: boolean;
 }
 
 /** The generated-by banner the marker file carries; parseExistingVersion reads it back. */
@@ -53,6 +61,12 @@ export async function scaffold(
   }
 
   await mkdir(outDir, { recursive: true });
+
+  // Checked before the write loop only for clarity — the file is writeOnce, so
+  // the loop below could not change the verdict either way.
+  const mainPath = path.join(outDir, "host", "main.tsx");
+  const preSplitMain =
+    existsSync(mainPath) && !(await Bun.file(mainPath).text()).includes('from "./registry"');
 
   const providerImportPath = opts.provider ? toHostRelImport(outDir, opts.provider) : undefined;
   const mockRoutes = opts.apiSpec ? extractRoutes(await loadApiSpec(opts.apiSpec)) : undefined;
@@ -92,7 +106,7 @@ export async function scaffold(
     if (f.executable) await chmod(abs, 0o755);
     written.push(abs);
   }
-  return { written, kept, status: suiteExists ? "refreshed" : "generated" };
+  return { written, kept, status: suiteExists ? "refreshed" : "generated", preSplitMain };
 }
 
 export { renderSuite } from "./templates.ts";

@@ -85,12 +85,21 @@ to `bun test tests`.
 ## Browser specs and the host registry
 
 Browser specs mount through `flawless/host/` and exist only when both
-`unit-browser` and `perf-harness` ran. The host's `main.tsx` is **write-once
-and holds the component registry** — when the analyser learns to see a new
-component (or you add one), its fresh browser spec fails with
-`unknown component: <Name>` until you add the import and the `REGISTRY` entry
-to `host/main.tsx` by hand. No flag regenerates that file; this is a known
-design gap (findings ledger FR-016).
+`unit-browser` and `perf-harness` ran. The mount tables (`REGISTRY`,
+`FN_PROPS`, `WRAP_IN`) live in `host/registry.ts`, which **regenerates on
+every run** — a newly analysed component arrives via a plain no-force re-run,
+nothing to hand-edit. The write-once `host/main.tsx` is only the wrapper
+(polyfills, provider, MSW, the profiling machinery); components you register
+by hand go in its `ALL` spread (`const ALL = { ...REGISTRY, /* yours */ }`),
+which every lookup goes through and which survives regeneration.
+
+`unknown component: <Name>` on a current suite means the re-run has not
+happened yet — re-run the tool. On a pre-split suite (a `main.tsx` with no
+`from "./registry"` import) it needs the one-time migration the run's warning
+names: delete `host/main.tsx` and re-run (provider wiring regenerates from
+`--provider`), or port the hand wiring into a wrapper that imports
+`./registry`. No flag rewrites `main.tsx` — write-once is absolute, `--force`
+included. (This was findings ledger FR-016, fixed by the registry split.)
 
 ## Never
 

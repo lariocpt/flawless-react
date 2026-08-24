@@ -11,7 +11,7 @@ before touching an adopted suite:
 
 | Category | Files | On re-run | Under `--force` |
 | --- | --- | --- | --- |
-| Write-once | `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`, `e2e/global-setup.ts`, `mocks/handlers.ts`, `mock/routes.ts` | kept | **kept** |
+| Write-once | `budgets.json`, `host/main.tsx` (wrapper only — the `host/registry.ts` beside it regenerates), `provider.fixtures.ts`, `e2e/global-setup.ts`, `mocks/handlers.ts`, `mock/routes.ts` | kept | **kept** |
 | Merge-kept | `e2e/params.json`, `load/routes.pipes` | kept | **merged** — your edits, rates, commented pipes survive |
 | Colocated specs | `src/**/*.flawless.test.tsx` | kept | **overwritten** |
 | Everything else | out-dir specs, configs, generated prose, REPORT.md, sidecars | rewritten | rewritten |
@@ -38,9 +38,11 @@ tell a hand-hardened spec from an untouched one. The drill:
 2. Force-run, then `git diff --name-only -- '*[.]flawless.test.tsx'`.
 3. `git checkout` the specs you had hardened; keep the regenerated versions of
    untouched ones (they may legitimately track source changes you made).
-4. Expect new spec files for components the analyser newly detected — and
-   remember their browser specs need a hand-added `host/main.tsx` registry
-   entry (see flawless-unit-browser).
+4. Expect new spec files for components the analyser newly detected — their
+   browser specs mount through `host/registry.ts`, which the same run
+   refreshed; hand registrations live in `main.tsx`'s `ALL` spread and
+   survive (see flawless-unit-browser). A pre-split `main.tsx` (no
+   `./registry` import) triggers the run's migration warning instead.
 
 ## `--changed`
 
