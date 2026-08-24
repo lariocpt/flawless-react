@@ -155,12 +155,17 @@ export function renderReportMarkdown(input: ReportInput): string {
       "",
     );
   }
-  lines.push("| Task | Files written | Findings | Summary |", "| --- | ---: | ---: | --- |");
+  lines.push(
+    "| Task | Files written | Findings | Status | Summary |",
+    "| --- | ---: | ---: | --- | --- |",
+  );
   for (const r of input.results) {
     // The full component list in a task summary runs to thousands of characters.
     const summary = r.summary.length > 120 ? `${r.summary.slice(0, 117)}…` : r.summary;
     lines.push(
-      `| \`${r.id}\` | ${r.outputs.length} | ${r.findings.length} | ${summary.replace(/\|/g, "\\|")} |`,
+      // An em dash, not an empty cell: only perf-harness reports a lifecycle
+      // status today, and an empty cell reads as a rendering bug.
+      `| \`${r.id}\` | ${r.outputs.length} | ${r.findings.length} | ${r.status ?? "—"} | ${summary.replace(/\|/g, "\\|")} |`,
     );
   }
   lines.push("");

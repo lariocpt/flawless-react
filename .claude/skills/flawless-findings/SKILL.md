@@ -18,8 +18,8 @@ Regenerated every run; it describes the LAST run, not the suite on disk. The
 components table accounts for every component in exactly one render-mode row
 (client / rsc / compound-part / document-root / null) split by mountable or
 not; "Not covered, and why" names each gap; the task table records what that
-run wrote — including refusals ("task threw" for perf-harness without
-`--force` is the harness guard, not breakage). A file count is not coverage.
+run wrote, with a Status column saying where perf-harness sat in the suite
+lifecycle (generated / refreshed / kept). A file count is not coverage.
 
 ## Triage order
 

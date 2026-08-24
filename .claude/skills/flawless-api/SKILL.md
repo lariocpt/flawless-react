@@ -30,9 +30,12 @@ lines, default false programmatically).
 - **`--ci`** = `--no-interactive --json`: stdout is exactly one JSON blob
   `{ outDir, results }` and nothing else. Progress goes away entirely; parse
   the whole stdout, not a line of it.
-- `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error? }`
-  — `ok: false` with `error` set is how a task refusal (e.g. the perf-harness
-  no-force guard) reports itself.
+- `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error?,
+  status? }` — `ok: false` with `error` set is a real task failure.
+  `status` ("generated" | "refreshed" | "kept", perf-harness only for now)
+  says where the run sat in the suite lifecycle: a re-run over an existing
+  suite is ok:true + "refreshed", and a `--changed` run keeps the harness
+  (ok:true, "kept", outputs empty) rather than regenerating it.
 - `reproCommand` semantics: REPORT.md's repro line is rebuilt from options,
   relative paths only, defaults omitted — two identical runs produce the same
   line byte-for-byte, so run from the project root with relative inputs if you
@@ -77,5 +80,6 @@ outputs, throw only for genuine failure, and make `ok` mean what it says.
 - Never scrape the human console output — use `--ci` or the API's `results`.
 - Never run Next.js mode from an arbitrary cwd without pinning it: the
   package.json merge follows the resolved root, wherever that is.
-- Never treat `exitCode: 1` as "the tool crashed" — read `results[].error`;
-  a harness refusal over an existing suite is the documented guard.
+- Never treat `exitCode: 1` as "the tool crashed" — read `results[].error`.
+  It is always a real failure now: a re-run over an existing suite refreshes
+  the harness and exits 0 (no refusal guard any more).

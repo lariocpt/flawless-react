@@ -304,6 +304,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     nextjs: nextCtx,
     colocate: opts.colocate ?? false,
     selectedTasks: taskIds,
+    // Changed-mode reaches the tasks so perf-harness can keep an existing
+    // suite instead of churning it — the affected-run gate below stays on
+    // !anyFailed, and a kept harness is not a failure.
+    ...(opts.changed === undefined ? {} : { changed: opts.changed }),
   };
 
   const results: TaskResult[] = [];

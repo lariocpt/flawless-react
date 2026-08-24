@@ -127,7 +127,7 @@ flawless-react <entry.tsx> [options]
 | `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. Read by `perf-harness`, and by the MSW emit under `--nextjs` — it does nothing for a `--tasks unit-browser` run outside Next.js mode. |
 | `--colocate` | off | Write unit specs beside their source as `<name>.flawless.test.tsx`. Existing colocated specs are kept unless `--force` — they're the ones you hand-harden. |
 | `--ci` | off | Shorthand for `--no-interactive --json`. |
-| `--force` | off | Overwrite an existing output directory (and regenerate colocated specs). |
+| `--force` | off | Regenerate the files a plain re-run keeps: colocated specs, e2e route specs, the derived provider wrapper. A re-run already refreshes the out-dir harness; write-once files are never touched under any flag. |
 | `--report` | off | Emit `scripts/report.mjs` so `bun run report` aggregates run output into a markdown summary. |
 | `--tasks <ids>` | `perf-harness` | Comma-separated subset of `perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`. Omitting it does **not** run all seven — a non-interactive run with no `--tasks` runs `perf-harness` alone. In a TTY you get the checkbox menu instead, with `perf-harness` and `perf-static` preselected. |
 | `--roots <mode>` | `primary` | `exported` emits one tree per *exported* component — what a whole-app sweep needs, since a shadcn `card.tsx` exports seven of them. |

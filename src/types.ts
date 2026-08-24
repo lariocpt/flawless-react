@@ -455,6 +455,11 @@ export interface ScaffoldOptions {
   variants: number;
   heaps?: HeapMode;
   force: boolean;
+  /**
+   * Leave an existing suite exactly as it is (status "kept", nothing written).
+   * Set by perf-harness in changed-mode; ignored when no suite exists yet.
+   */
+  keepExisting?: boolean;
   report: boolean;
   provider: string | undefined;
   apiSpec: string | undefined;
@@ -570,6 +575,13 @@ export interface TaskResult {
   summary: string;
   error?: string;
   /**
+   * Where this run sat in the suite's lifecycle: "generated" (fresh outDir),
+   * "refreshed" (existing suite, derived files rewritten), "kept" (existing
+   * suite left untouched — changed-mode). Set only by perf-harness for now;
+   * other tasks may adopt it. Absent means the task makes no such distinction.
+   */
+  status?: "generated" | "refreshed" | "kept";
+  /**
    * Per-kind counts of the TODO(flawless) markers this task's emitters planted.
    * Optional and set only by unit-browser: the report distinguishes "measured,
    * zero" (empty array) from "never measured" (absent), so no other task is
@@ -594,6 +606,12 @@ export interface RunContext {
   colocate?: boolean;
   /** Every task id selected for this run, so tasks can honour cross-task deps. */
   selectedTasks?: TaskId[];
+  /**
+   * The run is changed-mode (`--changed [REF]`; true = HEAD). The perf-harness
+   * task keeps an existing suite untouched under it: changed narrows the run,
+   * never churns generation.
+   */
+  changed?: string | true;
 }
 
 export interface Task {

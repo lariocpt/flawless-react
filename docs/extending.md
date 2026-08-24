@@ -1,6 +1,6 @@
 # Extending a generated suite
 
-The output of `flawless-react` is **your test code**, not a black box. Re-running the CLI with the same `--out` refuses to rebuild the perf harness unless you pass `--force` — but the other tasks regenerate their derived files on any re-run, and a handful of files stay yours even under `--force` (see below). The whole point of the tool is to skip the boilerplate, then hand you something you can shape to your project.
+The output of `flawless-react` is **your test code**, not a black box. Re-running the CLI with the same `--out` refreshes every derived file — the perf harness included — exactly as a fresh scaffold would write it, and a handful of files stay yours under every flag (see below). The whole point of the tool is to skip the boilerplate, then hand you something you can shape to your project.
 
 This document covers the patterns we've found work well.
 
@@ -96,7 +96,7 @@ Kept without `--force`, regenerated with it:
 
 **Everything else is regenerated, and that is deliberate.** A frozen file never receives a later version's improvement — which is exactly what happened to `flawless/load/README.md`, stranded without the rule that `LOAD_BASE` must point at a production build. Generated prose (`load/README.md`, `e2e/README.md`, `mocks/README.md`), boilerplate (`mocks/browser.ts`, `mocks/node.ts`), every config, and the component specs inside the out dir are all refreshed. To keep a hand-hardened component spec, use `--colocate`.
 
-The refusal guards the perf harness only: its scaffold checks for the suite's own `playwright.config.ts` and throws without `--force` (the run then exits 1 while other selected tasks still refresh their derived files). A `--tasks` selection without `perf-harness` is never refused — unit/browser/e2e derived specs inside the out dir are rewritten on any re-run, which is why hand-hardened component specs belong in `--colocate` mode.
+There is no refusal any more. The perf harness tracks its own lifecycle off the suite's `playwright.config.ts` (its first line records the flawless-react version that wrote it): a fresh out dir is **generated**, a re-run over an existing suite is **refreshed** — every derived file rewritten exactly as a fresh scaffold would, write-once files untouched, exit 0 — and a `--changed` run **keeps** the harness entirely, writing nothing, so the affected-test run happens with any task selection. `--force` still means "regenerate what a plain re-run keeps" (colocated specs, e2e route specs, the provider wrapper) and outranks `--changed`'s keep. Unit/browser/e2e derived specs inside the out dir are rewritten on any re-run, which is why hand-hardened component specs belong in `--colocate` mode; REPORT.md's task row says which of generated/refreshed/kept a run was.
 
 ## Run only what an edit affects
 

@@ -225,14 +225,15 @@
       "orig": "dogfood-D6",
       "severity": "P1",
       "dimension": "design",
-      "status": "open",
+      "status": "fixed",
       "title": "--changed with the full task selection silently skips the affected-test run on an adopted suite",
       "file": "src/core.ts",
       "line": 494,
       "claim": "perf-harness's no-force refusal sets anyFailed, and the affected run is gated on !anyFailed — so the flag's primary use case (fast loop over an existing suite) runs nothing unless the user knows to narrow --tasks. Observed live in dogfood iteration 4.",
       "proposed_fix": "In changed-mode, treat an existing harness as the normal case (skip scaffold instead of throwing), or run affected tests despite the refusal and say so.",
       "effort": "M",
-      "spirit": "mechanical"
+      "spirit": "mechanical",
+      "fix": "changed-mode treats an existing harness as the normal case: perf-harness passes keepExisting and the scaffold writes nothing (status \"kept\", summary names the generating version from the marker banner). The !anyFailed gate stays and now only blocks on real failures, so a full task selection reaches the affected run. Guarded by tests/core.test.ts (kept + exit 0) with the runner behaviour pinned in tests/runTests.test.ts."
     },
     {
       "id": "FR-018",
@@ -376,14 +377,15 @@
       "orig": "dogfood-D1",
       "severity": "P2",
       "dimension": "design",
-      "status": "open",
+      "status": "fixed",
       "title": "No minimal upgrade path: a no-force run over an adopted suite always exits 1",
       "file": "src/scaffold/index.ts",
       "line": 17,
       "claim": "perf-harness hard-refuses without --force, so refreshing derived files costs exit 1 ('task threw' committed into REPORT.md), and --force is the only harness refresh — which also clobbers hand-hardened colocated specs.",
       "proposed_fix": "A refresh mode between nothing and --force: regenerate derived files, keep the harness, exit 0 with an explicit 'harness kept (N runs old)' line.",
       "effort": "M",
-      "spirit": "ownership"
+      "spirit": "ownership",
+      "fix": "scaffold/index.ts no longer throws: an existing suite is REFRESHED (derived files rewritten as a fresh scaffold would, writeOnce files kept, exit 0, TaskResult status \"refreshed\"); the marker playwright.config.ts now carries a generated-by version banner. Guarded by tests/scaffold.test.ts + tests/tasks.test.ts + tests/core.test.ts (second run exits 0)."
     },
     {
       "id": "FR-029",
