@@ -341,7 +341,10 @@ A short user-facing README for the *generated* suite, separate from this repo's 
     the repo's workspace map into that package's *source* tree, and barrel
     re-exports (`export * from`, `export { A as B } from`) are chased to the
     declaring file. Third-party packages still never resolve — `node_modules`
-    is not walked.
+    is not walked. A member typed by a `z.infer` alias resolves by reading
+    the zod schema's initializer as **syntax** (enums yield their first
+    literal, declared `.default`s are honoured); `.transform` or any
+    unrecognised construct bails the whole fixture rather than guess.
   - `/* inferred from the OpenAPI example for GET /api/… */` — the dep is an
     unannotated wrapper around exactly one `fetch()`, joined to the API spec's
     response example at emit time.

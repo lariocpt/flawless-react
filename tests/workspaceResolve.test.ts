@@ -534,3 +534,133 @@ export default function Page() {
     expect(existsSync(path.join(root, "apps/web/src/Card.flawless.test.tsx"))).toBe(true);
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// B-9 × B-8: a zod schema DECLARED in the workspace package, re-exported
+// through the star barrel, feeding a z.infer member of a shared interface.
+
+const ZOD_SCHEMAS = `import { z } from "zod";
+
+export const RoleSchema = z.enum(["host", "cohost", "guest"]);
+export type Role = z.infer<typeof RoleSchema>;
+
+const InternalId = z.string().uuid();
+export const ParticipantSchema = z.object({
+  id: InternalId,
+  role: RoleSchema,
+  attended: z.coerce.boolean().default(false),
+});
+export type ParticipantInput = z.infer<typeof ParticipantSchema>;
+
+export const TransformedSchema = z.string().transform((s) => s.length);
+export type Transformed = z.infer<typeof TransformedSchema>;
+`;
+
+const ZOD_TYPES = `import type { Role, Transformed } from "./zod-schemas";
+
+export interface Participant {
+  name: string;
+  role: Role;
+}
+
+export interface Poisoned {
+  name: string;
+  score: Transformed;
+}
+`;
+
+const ZOD_API = `import type { Participant, Poisoned } from "./zod-types";
+
+export async function fetchParticipants(): Promise<Participant[]> {
+  return [];
+}
+
+export async function fetchPoisoned(): Promise<Poisoned[]> {
+  return [];
+}
+`;
+
+describe("zod schemas through the workspace barrel", () => {
+  async function zodDeps() {
+    const { root } = monorepo({ workspaces: BOTH });
+    write(root, "packages/shared/src/zod-schemas.ts", ZOD_SCHEMAS);
+    write(root, "packages/shared/src/zod-types.ts", ZOD_TYPES);
+    write(root, "packages/shared/src/zod-api.ts", ZOD_API);
+    write(
+      root,
+      "packages/shared/src/index.ts",
+      `export * from "./zod-schemas";\nexport * from "./zod-types";\nexport * from "./zod-api";\n${SHARED_BARREL}`,
+    );
+    const entry = writeComponent(
+      root,
+      `import { fetchParticipants, fetchPoisoned } from "@scope/shared";
+
+function opaque(x: unknown): string {
+  return String(x);
+}
+
+export default async function Card() {
+  const people = await fetchParticipants();
+  const poisoned = await fetchPoisoned();
+  return <div>{opaque(people)}{opaque(poisoned)}</div>;
+}
+`,
+    );
+    const info = await analysedEntry(entry);
+    return info.dataDeps ?? [];
+  }
+
+  test("an interface member typed by a barrel-re-exported z.enum alias enriches the dep", async () => {
+    const deps = await zodDeps();
+    const dep = deps.find((d) => d.callee === "fetchParticipants");
+    expect(dep?.inferredReturn).toEqual({
+      provenance: "annotation",
+      value: [{ name: "flawless-name", role: "host" }],
+    });
+  });
+
+  test("a .transform-typed member keeps the WHOLE interface bailed — bail-on-any-hole through the chain", async () => {
+    const deps = await zodDeps();
+    const dep = deps.find((d) => d.callee === "fetchPoisoned");
+    expect(dep?.inferredReturn).toBeUndefined();
+  });
+
+  test("a z.infer alias used directly as the annotation arg resolves through the barrel", async () => {
+    const { root } = monorepo({ workspaces: BOTH });
+    write(root, "packages/shared/src/zod-schemas.ts", ZOD_SCHEMAS);
+    write(root, "packages/shared/src/index.ts", `export * from "./zod-schemas";\n${SHARED_BARREL}`);
+    write(
+      root,
+      "apps/web/src/lib.ts",
+      `import type { ParticipantInput } from "@scope/shared";
+
+export async function loadOne(): Promise<ParticipantInput> {
+  throw new Error("never runs under analysis");
+}
+`,
+    );
+    const entry = writeComponent(
+      root,
+      `import { loadOne } from "./lib";
+
+function opaque(x: unknown): string {
+  return String(x);
+}
+
+export default async function Card() {
+  const one = await loadOne();
+  return <div>{opaque(one)}</div>;
+}
+`,
+    );
+    // The annotation lives in the app's own lib, but its alias is imported
+    // from the workspace package — the z.infer chase crosses the barrel.
+    const info = await analysedEntry(entry);
+    const dep = (info.dataDeps ?? []).find((d) => d.callee === "loadOne");
+    expect(dep?.inferredReturn?.value).toEqual({
+      id: "flawless-id",
+      role: "host",
+      attended: false,
+    });
+  });
+});

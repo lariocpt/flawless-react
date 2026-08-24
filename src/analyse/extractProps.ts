@@ -6,6 +6,12 @@ import type { ImportBinding } from "./parseFile.ts";
 import { posOf } from "./pos.ts";
 import type { ModuleResolver } from "./resolveModule.ts";
 import { findExportedDecl, type SourceFileCache } from "./sourceCache.ts";
+import {
+  asZodInferRef,
+  resolveZodSchemaConst,
+  type ZodSchemaResult,
+  zodResultToValue,
+} from "./zodSchema.ts";
 
 export interface ExtractedProps {
   propsShape: PropsShape;
@@ -216,6 +222,14 @@ function fixtureValue(
   if (ts.isTypeLiteralNode(node)) return fixtureMembers(node.members, ctx);
 
   if (ts.isTypeReferenceNode(node)) {
+    // B-9: z.infer<typeof Schema> / z.input — read the schema's own AST.
+    // Once the reference is provably zod's, a resolution failure is a real
+    // bail, never a fall-through to the generic guards below.
+    const zi = asZodInferRef(node, ctx.imports);
+    if (zi) {
+      const r = resolveZodSchemaConst(zi.schemaName, seed, ctx);
+      return r === undefined ? undefined : zodResultToValue(r);
+    }
     // A generic instantiation would need type-parameter substitution.
     if ((node.typeArguments?.length ?? 0) > 0) return undefined;
     if (!ts.isIdentifier(node.typeName)) return undefined;
@@ -350,7 +364,7 @@ function resolveTypeNode(node: ts.TypeNode, ctx: PropsResolveCtx): PartialProps 
   }
 
   if (ts.isTypeLiteralNode(node)) {
-    return walkMembers(node.members, ctx.sf, "literal");
+    return walkMembers(node.members, ctx, "literal");
   }
 
   if (ts.isTypeReferenceNode(node)) {
@@ -499,6 +513,29 @@ function resolveTypeReference(node: ts.TypeReferenceNode, ctx: PropsResolveCtx):
 
   if (head === "VariantProps") {
     return resolveVariantProps(node, ctx);
+  }
+
+  // B-9: props typed AS a z.infer alias (inline here, or an alias RHS via
+  // resolveTypeDecl). A z.object schema IS a props shape; its enum fields
+  // are variant axes with the first literal as the default. A non-object
+  // result stays a bail — props must be object-shaped, and inventing a
+  // wrapper would be a guess — keeping the "z.infer" unresolvedTypes label.
+  const zi = asZodInferRef(node, ctx.imports);
+  if (zi) {
+    const r = resolveZodSchemaConst(zi.schemaName, "props", ctx);
+    if (r?.kind === "object") {
+      const p = emptyPartial();
+      for (const f of r.fields) {
+        p.shape[f.name] = f.value;
+        p.origin[f.name] = "interface";
+        p.propPositions[f.name] = f.pos;
+        if (f.options) p.variantOptions[f.name] = f.options;
+      }
+      return p;
+    }
+    const p = emptyPartial();
+    p.unresolvedTypes.push(entityNameText(node.typeName));
+    return p;
   }
 
   // A local interface / type alias.
@@ -847,11 +884,67 @@ function resolveTypeDecl(
       }
     }
   }
-  parts.push(walkMembers(decl.members, ctx.sf, "interface"));
+  parts.push(walkMembers(decl.members, ctx, "interface"));
   return mergePartials(parts);
 }
 
 /** An `extends` entry is a call-ish node; reuse it as a type reference. */
+/**
+ * A member's type as a zod schema result: the reference is z.infer directly,
+ * or a named alias (local or imported, barrel-chased) whose RHS is z.infer
+ * under the DECLARING file's imports. undefined for everything else — the
+ * member falls through to mapType and behaves exactly as before B-9.
+ */
+function zodMemberSchema(
+  t: ts.TypeReferenceNode,
+  seed: string,
+  ctx: PropsResolveCtx,
+): ZodSchemaResult | undefined {
+  const direct = asZodInferRef(t, ctx.imports);
+  if (direct) return resolveZodSchemaConst(direct.schemaName, seed, ctx);
+
+  if (!ts.isIdentifier(t.typeName) || (t.typeArguments?.length ?? 0) > 0) return undefined;
+  const name = t.typeName.text;
+
+  const aliasRef = (
+    decl: ts.InterfaceDeclaration | ts.TypeAliasDeclaration,
+  ): ts.TypeReferenceNode | undefined =>
+    ts.isTypeAliasDeclaration(decl) && ts.isTypeReferenceNode(decl.type) ? decl.type : undefined;
+
+  const local = findTypeDecl(ctx.sf, name);
+  if (local) {
+    const rhs = aliasRef(local);
+    if (!rhs) return undefined;
+    const zi = asZodInferRef(rhs, ctx.imports);
+    return zi ? resolveZodSchemaConst(zi.schemaName, seed, ctx) : undefined;
+  }
+
+  const binding = ctx.imports.get(name);
+  if (!binding || ctx.hops <= 0 || !ctx.cache) return undefined;
+  const target = ctx.resolver?.resolve(binding.specifier, ctx.file);
+  if (!target) return undefined;
+  const located = findExportedDecl(
+    target,
+    binding.importedName ?? name,
+    ctx.cache,
+    ctx.resolver,
+    findExportedTypeDecl,
+  );
+  if (!located) return undefined;
+  const rhs = aliasRef(located.decl);
+  if (!rhs) return undefined;
+  const declImports = collectImportsSync(located.sf);
+  const zi = asZodInferRef(rhs, declImports);
+  if (!zi) return undefined;
+  return resolveZodSchemaConst(zi.schemaName, seed, {
+    ...ctx,
+    sf: located.sf,
+    file: located.file,
+    imports: declImports,
+    hops: ctx.hops - 1,
+  });
+}
+
 function asTypeNode(t: ts.ExpressionWithTypeArguments): ts.TypeNode | undefined {
   const expr = t.expression;
   if (!ts.isIdentifier(expr) && !ts.isPropertyAccessExpression(expr)) return undefined;
@@ -860,7 +953,7 @@ function asTypeNode(t: ts.ExpressionWithTypeArguments): ts.TypeNode | undefined 
 
 function walkMembers(
   members: ts.NodeArray<ts.TypeElement>,
-  sf: ts.SourceFile,
+  ctx: PropsResolveCtx,
   origin: MemberOrigin,
 ): PartialProps {
   const p = emptyPartial();
@@ -872,7 +965,7 @@ function walkMembers(
     // key survives emission. Computed/numeric/private names stay out.
     if (!ts.isIdentifier(m.name) && !ts.isStringLiteral(m.name)) continue;
     const name = m.name.text;
-    p.propPositions[name] = posOf(m, sf);
+    p.propPositions[name] = posOf(m, ctx.sf);
     const t = m.type;
     if (!t) {
       p.unresolvedProps.push(name);
@@ -891,6 +984,20 @@ function walkMembers(
       }
       p.unresolvedProps.push(name);
       continue;
+    }
+
+    // B-9: a member typed as a z.infer alias (directly, or via a named
+    // alias whose RHS is one) resolves from the schema — enum fields become
+    // variant axes. Undefined = not zod OR zod-bailed; both fall through to
+    // mapType, which lands unresolved for named types exactly as before.
+    if (ts.isTypeReferenceNode(t)) {
+      const zr = zodMemberSchema(t, name, ctx);
+      if (zr) {
+        p.shape[name] = zodResultToValue(zr);
+        p.origin[name] = origin;
+        if (zr.kind === "enum") p.variantOptions[name] = zr.values;
+        continue;
+      }
     }
 
     const r = mapType(t);

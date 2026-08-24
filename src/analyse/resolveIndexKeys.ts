@@ -5,9 +5,11 @@ import type { PropValue } from "../types.ts";
  * Values for props whose type could not be resolved, recovered from how the
  * component indexes with them.
  *
- * `currentStatus: JobStatus` where `JobStatus = z.infer<typeof Schema>` is
- * genuinely unresolvable without a type checker, so it arrives as undefined and
- * `ALLOWED_TRANSITIONS[currentStatus].length` throws before anything renders.
+ * `currentStatus: JobStatus` where `JobStatus = z.infer<typeof Schema>`
+ * resolves since B-9 when the schema is syntactic (zodSchema.ts); this module
+ * is the fallback for schemas that bail (.transform, unions, custom), where
+ * the prop arrives undefined and `ALLOWED_TRANSITIONS[currentStatus].length`
+ * throws before anything renders.
  * But the same file usually declares a lookup keyed by exactly that union:
  *
  *   const STATUS_LABEL: Record<JobStatus, string> = { requested: "Requested", … };
