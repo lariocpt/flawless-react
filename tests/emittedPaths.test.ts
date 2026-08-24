@@ -191,3 +191,35 @@ describe("no emitted file names the machine that generated it", () => {
 function fixture(rel: string): string {
   return path.resolve(__dirname, "fixtures", rel);
 }
+
+describe("standalone emissions never use __dirname", () => {
+  test("every suite and unit file is loader-neutral", async () => {
+    // A "type":"module" suite is loaded as ESM, where __dirname does not
+    // exist: the browser config died at import and the profile spec's heap
+    // writer threw mid-run (FR-022, found on first real execution). Relative
+    // config paths and the runtime FullConfig.rootDir are the loader-neutral
+    // anchors. The e2e emitter is exempt BY LOCATION, not by grace: its
+    // config needs an absolute use.storageState (cwd-relative otherwise) and
+    // only ever lands in Next.js projects, where playwright's CJS transpile
+    // defines __dirname — it never ships in a standalone suite.
+    const tree = await analyse({
+      entry: fixture("actions/PostForm.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const files = [
+      ...renderSuite({ tree, outDir: `${SENTINEL}/app/flawless`, variants: 3, report: true }),
+      ...renderUnitBrowser({
+        trees: [tree],
+        outDir: `${SENTINEL}/app/flawless`,
+        variants: 3,
+        browserSpecs: true,
+      }),
+    ];
+    expect(files.length).toBeGreaterThan(5);
+    for (const f of files) {
+      if (!/\.(m?tsx?)$/.test(f.relPath)) continue;
+      expect(f.content.includes("__dirname"), `${f.relPath} uses __dirname`).toBe(false);
+    }
+  });
+});

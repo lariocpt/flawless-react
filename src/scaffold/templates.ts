@@ -357,10 +357,12 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./profile",
-  // Anchored to this file, not to the directory the command was typed in.
-  // Playwright's default put traces in <app>/test-results/ while the .gitignore
-  // the tool writes covers flawless/test-results/ — 347MB of untracked output.
-  outputDir: path.join(__dirname, "test-results"),
+  // Relative, which playwright resolves against THIS FILE — not the directory
+  // the command was typed in (only the unset default does that; it once put
+  // 347MB of traces in <app>/test-results/ outside the emitted .gitignore).
+  // Never the CJS dirname global: a "type":"module" suite loads this config
+  // as ESM, where it does not exist and the whole config dies at import.
+  outputDir: "test-results",
   // One worker gives the cleanest timings; more give a fast verification run.
   // Budgets only warn, so parallel measurement never fails a run — but it does
   // make the numbers noisier, so CI (where a recorded number usually matters)
@@ -378,8 +380,8 @@ export default defineConfig({
   // inside a base64 zip blob.
   reporter: [
     ["list"],
-    ["json", { outputFile: path.join(__dirname, "test-results", "results.json") }],
-    ["html", { open: "never", outputFolder: path.join(__dirname, "playwright-report") }],
+    ["json", { outputFile: "test-results/results.json" }],
+    ["html", { open: "never", outputFolder: "playwright-report" }],
   ],
   preserveOutput: "always",
   use: {
@@ -427,13 +429,13 @@ function hostServer(
     .map(([abs, stub]) => {
       // A name the analyser resolved returns the action's real literal; the
       // rest keep the {} stand-in the comment above justifies.
-      const valueOf = (n: string): string =>
+      const stubValue = (n: string): string =>
         stub.returns[n] === undefined ? "{}" : JSON.stringify(stub.returns[n]);
       const body = stub.names
         .map((n) =>
           n === "default"
-            ? `export default async () => (${valueOf(n)});`
-            : `export const ${n} = async () => (${valueOf(n)});`,
+            ? `export default async () => (${stubValue(n)});`
+            : `export const ${n} = async () => (${stubValue(n)});`,
         )
         .join("\n");
       // Relative to this file, resolved back to absolute when the map is built.
@@ -1130,13 +1132,13 @@ function slug(s: string): string {
 }
 
 async function persistSnapshot(buf: Buffer, label: string, testInfo: TestInfo): Promise<string> {
-  // Resolve from THIS FILE, not from CWD. Resolving from cwd was meant to keep
-  // the path independent of Playwright's rootDir resolution; what it actually
-  // did was make it depend on the directory the command was typed in. Run via
-  // the generated \`flawless:perf\` script that is the app root, so snapshots
-  // landed in <app>/heaps/ while the .gitignore the tool writes covers
-  // flawless/heaps/ — 566MB of untracked binaries in someone's repo.
-  const dir = path.resolve(__dirname, "..", HEAPS_DIR);
+  // Anchored to the CONFIG's directory via the runtime FullConfig — the one
+  // anchor that exists under both loaders. The CJS dirname global resolved
+  // from this file once (until "type":"module" suites loaded specs as ESM),
+  // and cwd before that put 566MB of snapshots in <app>/heaps/ outside the
+  // emitted .gitignore. The config sits at the suite root, so rootDir IS the
+  // out dir.
+  const dir = path.join(testInfo.config.rootDir, HEAPS_DIR);
   await mkdir(dir, { recursive: true });
   const specBase = slug(path.basename(testInfo.file).replace(/\\.spec\\.ts$/, ""));
   const title = slug(testInfo.title);

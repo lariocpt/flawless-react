@@ -21,9 +21,7 @@ describe("analyse wall-clock", () => {
       } catch (err) {
         // Non-detection fixtures (NoopConstant.tsx) throw by design; the sweep
         // tolerates exactly the error core.ts tolerates, nothing else.
-        if (
-          !(err instanceof Error && err.message.includes("could not locate a React component"))
-        ) {
+        if (!(err instanceof Error && err.message.includes("could not locate a React component"))) {
           throw err;
         }
       }

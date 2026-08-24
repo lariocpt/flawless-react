@@ -393,7 +393,7 @@ describe("the emitted unit suite EXECUTES under real vitest (FR-018)", () => {
     ]);
     // Vitest colours its summary even when piped; strip ANSI so the
     // passed-count assertion reads the text, not the escape codes.
-    // eslint-disable-next-line no-control-regex
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI needs the escape byte
     const plain = (out + err).replace(/\x1b\[[0-9;]*m/g, "");
     return { code, output: plain };
   }

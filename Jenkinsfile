@@ -71,12 +71,17 @@ pipeline {
                     # /usr/local/bun-node-fallback-bin is last in PATH, so the apt node wins.
                     # Those tests fail rather than skip when an interpreter is missing: a
                     # skipped zsh case in CI is how the env.sh bug survived the first time.
-                    CID=$(docker create -w /w oven/bun:1 sh -c '
+                    # --add-host: sibling containers cannot resolve LAN DNS, and
+                    # tests/crustGate.test.ts (FR-021) needs the crust binary that the apps
+                    # plane on this host serves. FLAWLESS_CI_BROWSER=1 arms the one gated
+                    # real-browser case (FR-022).
+                    CID=$(docker create -w /w --add-host apps.in.drlario.org:host-gateway \
+                        -e FLAWLESS_CI_BROWSER=1 oven/bun:1 sh -c '
                         set -eu
                         cd /w
                         apt-get update >/dev/null
-                        apt-get install -y --no-install-recommends jq zsh nodejs >/dev/null
-                        for c in bash zsh jq node; do
+                        apt-get install -y --no-install-recommends jq zsh nodejs curl ca-certificates >/dev/null
+                        for c in bash zsh jq node curl; do
                             command -v "$c" >/dev/null || { echo "$c missing after apt install"; exit 1; }
                         done
                         # Fails in a second here rather than 400 tests later, and says why.
@@ -85,9 +90,22 @@ pipeline {
                             echo "the emitted .mjs would not really be checked — install a real node"
                             exit 1
                         }
+                        # crust from the apps plane, the same install a fleet machine uses —
+                        # failing HERE, loudly, is the point: the baseline gate stayed a
+                        # comment for as long as running it was optional (FR-021).
+                        curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- crust
+                        cp "$HOME/.local/bin/crust" /usr/local/bin/crust
+                        crust --version
                         bun install --frozen-lockfile
+                        # A real chromium for the gated browser case (FR-022).
+                        bunx playwright install --with-deps chromium >/dev/null
                         bun test
                         bunx tsc --noEmit
+                        # The gate package.json declares and CI never ran (FR-023): biome ci
+                        # lints AND format-checks the whole tree, which the pre-commit
+                        # lint-staged hook only does for staged files — five shipped errors
+                        # proved the difference the day this line was added.
+                        bunx biome ci .
                     ')
                     trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
                     docker cp "$PWD/." "$CID:/w" >/dev/null

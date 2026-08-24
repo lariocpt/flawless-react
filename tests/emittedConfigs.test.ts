@@ -232,8 +232,13 @@ describe("the emitted playwright configs select the specs the same run wrote", (
     const testDir = path.resolve(outDir, cfg.testDir as string);
     expect(existsSync(testDir), `${cfg.testDir} exists`).toBe(true);
     expect(existsSync(path.join(testDir, "Toolbar.profile.spec.ts"))).toBe(true);
-    // Traces and the json reporter stay inside the suite rather than the repo root.
-    expect(path.resolve(cfg.outputDir as string).startsWith(outDir)).toBe(true);
+    // Traces and the json reporter stay inside the suite rather than the repo
+    // root — as a RELATIVE path, which playwright resolves against the config
+    // file in both module systems. An absolute __dirname anchor died at
+    // import under the "type":"module" ESM loader (FR-022).
+    expect(path.isAbsolute(cfg.outputDir as string)).toBe(false);
+    expect((cfg.outputDir as string).startsWith("..")).toBe(false);
+    expect(path.resolve(outDir, cfg.outputDir as string).startsWith(outDir)).toBe(true);
   });
 
   test("the e2e config's webServer.cwd is the project root, not an absolute stranger", async () => {

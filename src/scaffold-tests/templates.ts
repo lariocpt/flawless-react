@@ -1697,16 +1697,16 @@ function emitPlaywrightTrigger(label: LabelSource): string | undefined {
 }
 
 function browserPlaywrightConfig(): string {
-  return `import path from "node:path";
-import { defineConfig, devices } from "@playwright/test";
+  return `import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
   testMatch: "*.spec.ts",
-  // Anchored to this file. Playwright's default resolves against the directory
-  // the command was typed in, which put traces outside the flawless/ tree the
-  // generated .gitignore covers.
-  outputDir: path.join(__dirname, "test-results"),
+  // Relative, which playwright resolves against THIS FILE (only the unset
+  // default resolves against the invocation directory). Never the CJS
+  // dirname global: a "type":"module" suite is loaded as ESM, where it
+  // does not exist — the whole config died at import (FR-022).
+  outputDir: "test-results",
   // One worker gives the cleanest timings; more give a fast verification run.
   // Budgets only warn, so parallel measurement never fails a run — but it does
   // make the numbers noisier, so CI (where a recorded number usually matters)
