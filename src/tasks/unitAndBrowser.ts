@@ -83,12 +83,16 @@ export const unitAndBrowser: Task = {
     const browserNote = browserSpecs
       ? ""
       : " (browser specs skipped — add perf-harness to the task list for the host they need)";
+    // Notes before the name list: REPORT.md truncates each task summary at
+    // 120 chars and the component list runs to thousands — a note appended
+    // after it would exist only in summary.json and stdout, and the kept
+    // listing is the one part of this line a user must act on.
     return {
       id: "unit-browser",
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit tests for ${names.length} component(s): ${names.join(", ")}${skippedNote}${editedNote}${legacyNote}${browserNote}`,
+      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
     };
   },

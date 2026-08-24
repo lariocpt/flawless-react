@@ -120,6 +120,29 @@ describe("restampGenerated", () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
+  test("restamping a CRLF-converted file writes a CRLF stamp line, never mixed EOLs", async () => {
+    // A host biome with formatter.lineEnding "crlf" converts the whole file —
+    // stamp line included — after the provisional LF stamp was written. The
+    // restamp must follow the body's convention or every --force run hands the
+    // project's own formatter a mixed-EOL file to churn straight back.
+    const dir = tmpDir();
+    const file = path.join(dir, "spec.test.tsx");
+    const crlfBody = BODY.replaceAll("\n", "\r\n");
+    writeFileSync(
+      file,
+      `// @flawless-generated sha256:${hashBody(BODY)} flawless-react@1.2.3\r\n${crlfBody}`,
+    );
+    expect(await restampGenerated([file])).toBe(1);
+    const text = readFileSync(file, "utf8");
+    const firstLine = text.slice(0, text.indexOf("\n") + 1);
+    expect(firstLine.endsWith("\r\n")).toBe(true);
+    const { hash, version, body } = splitStamp(text);
+    expect(body).toBe(crlfBody);
+    expect(hash).toBe(hashBody(crlfBody));
+    expect(version).toBe("1.2.3");
+    expect(classifyStamped(text)).toBe("untouched");
+  });
+
   test("ignores stampless files and missing paths — callers pass mixed lists", async () => {
     const dir = tmpDir();
     const plain = path.join(dir, "plain.ts");

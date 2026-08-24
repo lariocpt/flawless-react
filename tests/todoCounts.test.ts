@@ -254,7 +254,10 @@ describe("skipped colocated specs contribute no tallies", () => {
     const rerun = await runColocated(dir, true);
     expect(rerun.ok).toBe(true);
     expect(rerun.handWork).toEqual([]);
-    expect(rerun.summary).toContain("hand-edited");
+    // The kept note must precede the component list: REPORT.md truncates each
+    // task summary at 120 chars, and the name list runs to thousands — a note
+    // appended after it would exist only in summary.json and stdout.
+    expect(rerun.summary).toMatch(/^unit tests for 1 component\(s\) \(1 hand-edited/);
   });
 
   test("--force over a pre-stamp spec keeps it, so its markers must not count", async () => {
@@ -268,7 +271,40 @@ describe("skipped colocated specs contribute no tallies", () => {
     const rerun = await runColocated(dir, true);
     expect(rerun.ok).toBe(true);
     expect(rerun.handWork).toEqual([]);
-    expect(rerun.summary).toContain("pre-stamp");
+    expect(rerun.summary).toMatch(/^unit tests for 1 component\(s\) \(1 pre-stamp/);
+  });
+
+  test("the kept listing caps at 10 paths and says how many more there are", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-kept-cap-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    const names = Array.from({ length: 12 }, (_, i) => `Page${String(i + 1).padStart(2, "0")}`);
+    const runTwelve = (force: boolean): ReturnType<typeof unitAndBrowser.run> =>
+      unitAndBrowser.run({
+        trees: names.map((n) => opaqueRsc(n, path.join(dir, "src", `${n}.tsx`))),
+        outDir: path.join(dir, "flawless"),
+        variants: 3,
+        heaps: "stress",
+        force,
+        report: false,
+        provider: undefined,
+        apiSpec: undefined,
+        inlineSummary: false,
+        nextjs: undefined,
+        colocate: true,
+        selectedTasks: ["unit-browser"],
+      } as RunContext);
+    await runTwelve(true);
+    for (const n of names) {
+      const spec = path.join(dir, "src", `${n}.flawless.test.tsx`);
+      await Bun.write(spec, `${await Bun.file(spec).text()}// hand-hardened\n`);
+    }
+    const rerun = await runTwelve(true);
+    expect(rerun.summary).toContain("12 hand-edited or reformatted colocated spec(s) kept");
+    expect(rerun.summary).toContain("Page01.flawless.test.tsx");
+    expect(rerun.summary).toContain("Page10.flawless.test.tsx");
+    expect(rerun.summary).not.toContain("Page11.flawless.test.tsx");
+    expect(rerun.summary).toContain("+2 more");
+    expect(rerun.handWork).toEqual([]);
   });
 });
 

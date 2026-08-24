@@ -65,7 +65,14 @@ export async function restampGenerated(paths: string[]): Promise<number> {
     if (hash === undefined || version === undefined) continue;
     const fresh = hashBody(body);
     if (fresh === hash) continue;
-    await writeFile(p, `// @flawless-generated sha256:${fresh} flawless-react@${version}\n${body}`);
+    // The stamp line follows the body's own line-ending convention: a host
+    // formatter set to CRLF converted the whole file, and writing "\n" here
+    // would hand that formatter a mixed-EOL file to churn straight back.
+    const eol = body.includes("\r\n") ? "\r\n" : "\n";
+    await writeFile(
+      p,
+      `// @flawless-generated sha256:${fresh} flawless-react@${version}${eol}${body}`,
+    );
     restamped++;
   }
   return restamped;
