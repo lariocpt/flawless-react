@@ -141,9 +141,11 @@ flawless-react <entry.tsx> [options]
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
-With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code (suite failures included), so a red run is readable from the blob alone. Without the flag you get the table and no JSON.
+With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code, suite failures included. Without the flag you get the table and no JSON.
 
 Suppressing stdout is not a vow of silence: **diagnostics still reach stderr under `--ci`** — a file the sweep skipped, an unparseable OpenAPI spec, a test-script collision, a failed Next.js emit. Those are the lines an unattended caller most needs, and they used to share the flag that silenced the table.
+
+Capture stderr as well as parsing stdout. Most red runs are readable from the blob alone — a failed task is `ok: false` with its `error` set — but not all of them are: a failure that belongs to no task, such as a Next.js emit that threw, sets `exitCode: 1` while every entry in `results` still says `ok: true`, and the only account of what went wrong is the stderr line.
 
 ## What gets generated
 

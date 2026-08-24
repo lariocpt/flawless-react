@@ -18,11 +18,22 @@ const { exitCode, outDir, results, trees } = await runFlawless({
 
 `runFlawless` is the friendly wrapper (`entry`/`tasks`/`out`); `runCore` from
 `core.ts` is the same engine with CLI-shaped names (`pattern`/`taskIds`/
-`outDir`) plus `changed`, `runTests`, `force`, `report`, `log` (progress
-narration on **stdout**, default false programmatically) and `quiet`
-(diagnostics on **stderr**, default false — they speak even when `log` is off).
-The two are separate on purpose: one flag for both is how `--ci` became the
-mode that lost its warnings.
+`outDir`) plus `changed` and `heaps`. Everything else — `runTests`, `force`,
+`report`, `log`, `quiet` — is on **both**.
+
+Two output flags, and they answer different questions:
+
+- **`log`** — may this run write to **stdout**? Off by default programmatically.
+  It gates the progress narration *and* the per-file findings listing. `--json`
+  turns it off because stdout must parse whole.
+- **`quiet`** — should `runCore`'s own diagnostics on **stderr** be suppressed?
+  Off by default, so the warnings **do** speak, even when `log` is off. Pass
+  `quiet: true` only if you route them yourself.
+
+One flag for both is how `--ci` became the mode that lost its warnings.
+`quiet` is deliberately narrow: it silences `runCore`'s `warn()` lines, not
+stderr as a whole — the suite runner's output is routed by a different flag,
+and task-level `console.warn`s have no gate. Redirect fd 2 if you need silence.
 
 ## Contracts
 
