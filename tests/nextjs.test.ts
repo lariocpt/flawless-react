@@ -445,6 +445,25 @@ describe("merging into the target project's package.json", () => {
     expect(result.keptScripts).toEqual(["flawless:load"]);
   });
 
+  test("a RECOGNIZED older tool spelling upgrades — only unrecognized values are kept", async () => {
+    // The keep rule alone froze the reverse direction: an adopter generated
+    // without --colocate holds the tool's own `--root` spelling; re-running
+    // WITH --colocate must upgrade it to the --config form, or --run-tests
+    // executes the stale command and never runs the colocated specs it just
+    // generated. A value the tool itself once wrote is tool-owned.
+    const dir = pkgDir({ scripts: { "flawless:unit": "vitest run --root flawless" } });
+    const result = await mergeIntoNextPackageJson(
+      dir,
+      {},
+      {},
+      { "flawless:unit": "vitest run --config flawless/vitest.config.mts" },
+      { "flawless:unit": ["vitest run --root flawless"] },
+    );
+    const after = read(dir).scripts as Record<string, string>;
+    expect(after["flawless:unit"]).toBe("vitest run --config flawless/vitest.config.mts");
+    expect(result.keptScripts).toEqual([]);
+  });
+
   test("an identical script value is not reported as kept — nothing was at stake", async () => {
     const dir = pkgDir({ scripts: { "flawless:unit": "vitest run --root flawless" } });
     const result = await mergeIntoNextPackageJson(

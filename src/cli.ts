@@ -389,7 +389,12 @@ export async function main(argv: string[]): Promise<void> {
     // shell plumbing around $?.
     process.stdout.write(
       `${JSON.stringify(
-        { exitCode: result.exitCode, outDir: result.outDir, results: result.results },
+        {
+          exitCode: result.exitCode,
+          outDir: result.outDir,
+          results: result.results,
+          keptScripts: result.keptScripts,
+        },
         null,
         2,
       )}\n`,

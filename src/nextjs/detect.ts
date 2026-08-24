@@ -160,6 +160,13 @@ export async function mergeIntoNextPackageJson(
   deps: Record<string, string>,
   devDeps: Record<string, string>,
   scripts: Record<string, string>,
+  /**
+   * Per key: OTHER command spellings this tool itself emits or once emitted
+   * (the --root vs --config forms of flawless:unit, say). An existing value
+   * on this list is tool-owned and upgrades; only a value the tool does not
+   * recognize is someone's work and kept.
+   */
+  toolSpellings: Record<string, readonly string[]> = {},
 ): Promise<{ keptScripts: string[] }> {
   const pkgPath = path.join(nextRoot, "package.json");
   const fs = require("node:fs") as typeof import("node:fs");
@@ -194,7 +201,11 @@ export async function mergeIntoNextPackageJson(
     const merged = { ...(pkg.scripts ?? {}) };
     for (const [name, cmd] of Object.entries(scripts)) {
       const existing = merged[name];
-      if (existing !== undefined && existing !== cmd) {
+      if (
+        existing !== undefined &&
+        existing !== cmd &&
+        !(toolSpellings[name] ?? []).includes(existing)
+      ) {
         keptScripts.push(name);
         continue;
       }

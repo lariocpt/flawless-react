@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { detectTestScriptCollisions, runCore, UsageError } from "../src/core.ts";
@@ -36,6 +45,40 @@ beforeAll(() => {
 afterAll(() => {
   removeSidecars();
   for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("kept scripts reach every durable surface", () => {
+  test("a customized flawless:* script lands in CoreResult and REPORT.md, not just stdout", async () => {
+    // The FR-034 keep alone was stdout-only — suppressed under --ci/--json
+    // and programmatic runs, the exact modes an agent refreshes in. The
+    // fact a script was kept must survive in the artifacts the regen
+    // doctrine says to trust.
+    const root = mkdtempSync(path.join(os.tmpdir(), "flawless-kept-scripts-"));
+    tmpDirs.push(root);
+    cpSync(path.resolve(__dirname, "fixtures", "nextapp"), root, { recursive: true });
+    const pkgPath = path.join(root, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    pkg.scripts = { ...(pkg.scripts ?? {}), "flawless:load": "crust --env-file custom -c 'x'" };
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
+    const result = await runCore({
+      pattern: path.join(root, "src", "app", "page.tsx"),
+      outDir: path.join(root, "flawless"),
+      taskIds: ["unit-browser", "load"],
+      nextjs: root,
+      log: false,
+      inlineSummary: false,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.keptScripts).toEqual(["flawless:load"]);
+    const report = readFileSync(path.join(root, "flawless", "REPORT.md"), "utf8");
+    expect(report).toContain("Kept script(s): flawless:load");
+    // And the recognized-spelling upgrade must NOT be reported: the app's
+    // own dev script is untouched territory entirely.
+    expect(result.keptScripts).not.toContain("dev");
+  });
 });
 
 describe("runCore", () => {

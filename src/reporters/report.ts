@@ -41,6 +41,12 @@ export interface ReportInput {
   command?: string;
   /** Every task id the tool has, so a partial run can say that it was partial. */
   allTaskIds?: readonly string[];
+  /**
+   * flawless:* scripts kept because their package.json value is not one the
+   * tool recognizes as its own. In here — the committed artifact — because
+   * the run's log line is invisible under --ci and programmatic use.
+   */
+  keptScripts?: readonly string[];
 }
 
 export function renderReportMarkdown(input: ReportInput): string {
@@ -126,6 +132,15 @@ export function renderReportMarkdown(input: ReportInput): string {
         : "Every file it was pointed at yielded at least one component."),
     "",
   );
+
+  if ((input.keptScripts ?? []).length > 0) {
+    lines.push(
+      `> Kept script(s): ${(input.keptScripts ?? []).join(", ")} — their package.json ` +
+        "commands are not ones this tool version writes, so they were left in place. " +
+        "Delete a key to take the tool's current command.",
+      "",
+    );
+  }
 
   if (unparseable.length > 0) {
     lines.push("### Files no component could be read from", "");
