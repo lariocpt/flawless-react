@@ -31,19 +31,25 @@ function write(root: string, rel: string, content: string): string {
   return abs;
 }
 
-const SHARED_TYPES = `export interface CardProps {
+// Meta lives in its OWN file: resolving Thing spends one cross-file hop and
+// Meta the second, so the chain works only if barrel relocation charges NO
+// hop of its own — the exact budget rule a mutation probe found untested.
+const SHARED_TYPES = `import type { Meta } from "./meta";
+
+export interface CardProps {
   title: string;
   count: number;
-}
-
-export interface Meta {
-  kind: "a" | "b";
 }
 
 export interface Thing {
   id: number;
   label: string | null;
   meta: Meta;
+}
+`;
+
+const SHARED_META = `export interface Meta {
+  kind: "a" | "b";
 }
 `;
 
@@ -84,6 +90,7 @@ function monorepo(opts: MonorepoOpts = {}): { root: string; importer: string } {
   write(root, "packages/shared/package.json", JSON.stringify({ name: "@scope/shared" }));
   write(root, "packages/shared/src/index.ts", SHARED_BARREL);
   write(root, "packages/shared/src/types.ts", SHARED_TYPES);
+  write(root, "packages/shared/src/meta.ts", SHARED_META);
   write(root, "packages/shared/src/api.ts", SHARED_API);
   write(root, "packages/shared/src/loop-a.ts", LOOP_A);
   write(root, "packages/shared/src/loop-b.ts", LOOP_B);
@@ -191,6 +198,14 @@ describe("ModuleResolver: workspace packages", () => {
     expect(resolver.resolve("react", importer)).toBeUndefined();
   });
 
+  test("a LITERAL node_modules/<pkg> glob is refused too — the no-star branch has its own guard", () => {
+    const { root, importer } = monorepo({ workspaces: ["node_modules/react"] });
+    write(root, "node_modules/react/package.json", JSON.stringify({ name: "react" }));
+    write(root, "node_modules/react/index.ts", "export const notReal = 1;\n");
+    const resolver = new ModuleResolver();
+    expect(resolver.resolve("react", importer)).toBeUndefined();
+  });
+
   test("a package whose src probe misses stays undefined — dist is never followed", () => {
     const { root, importer } = monorepo({ workspaces: BOTH });
     write(
@@ -200,6 +215,9 @@ describe("ModuleResolver: workspace packages", () => {
     );
     write(root, "packages/built/dist/index.js", "module.exports = {};\n");
     write(root, "packages/built/dist/index.d.ts", "export declare const x: number;\n");
+    // A probeable .ts in dist pins the refusal as a DECISION, not a side
+    // effect of probeModuleFile's extension-blindness (mutation-probe find).
+    write(root, "packages/built/dist/index.ts", "export const x = 1;\n");
     const resolver = new ModuleResolver();
     expect(resolver.resolve("@scope/built", importer)).toBeUndefined();
   });
