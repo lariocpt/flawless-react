@@ -311,3 +311,58 @@ describe("a dotted-mock conflict still gets the RSC skip escape", () => {
     expect(spec).toContain("data fixture missing");
   });
 });
+
+/**
+ * A path an emitted file hands the reader must be a path that exists.
+ *
+ * The <Component>.flawless.json sidecar carries a `reports` map, and two of its
+ * three entries named `reports/<Component>.a11y.json` and
+ * `reports/<Component>.react-rules.json` — files no run has ever written, because
+ * both of those tasks are SWEEPS that emit one aggregate for the whole run. The
+ * sidecar had no test at all, so the wrong names survived every round and were
+ * then copied into the published docs, which is how the website came to promise
+ * per-component a11y reports.
+ *
+ * Checked against a real run rather than against the constants, so that renaming
+ * an aggregate without updating the pointer fails here.
+ */
+describe("the inline sidecar points at files that exist", () => {
+  test("every path in a sidecar's reports map was actually written", async () => {
+    const dir = await tmpDir();
+    const app = path.join(dir, "app");
+    await Bun.$`cp -r ${path.join(import.meta.dir, "fixtures", "nextapp")} ${app}`.quiet();
+    const proc = Bun.spawn(
+      [
+        "bun",
+        path.join(import.meta.dir, "..", "src", "bin.ts"),
+        path.join(app, "src/app/**/page.tsx"),
+        "--nextjs",
+        app,
+        "--ci",
+        "--tasks",
+        "perf-static,a11y,react-rules",
+      ],
+      { stdout: "pipe", stderr: "pipe", cwd: dir },
+    );
+    await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+
+    const found = (await Bun.$`find ${app} -name ${"*.flawless.json"}`.quiet().text())
+      .trim()
+      .split("\n");
+    // Without this the test passes by finding no sidecar to check.
+    expect(found.filter(Boolean).length).toBeGreaterThan(0);
+
+    const missing: string[] = [];
+    for (const sidecar of found) {
+      const body = JSON.parse(await Bun.file(sidecar).text()) as {
+        reports: Record<string, string>;
+      };
+      expect(Object.keys(body.reports).length).toBeGreaterThan(0);
+      for (const [key, target] of Object.entries(body.reports)) {
+        if (!(await Bun.file(target).exists())) missing.push(`${key} -> ${target}`);
+      }
+    }
+    expect(missing.join("\n")).toBe("");
+  });
+});
