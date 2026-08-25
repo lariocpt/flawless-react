@@ -1,0 +1,52 @@
+{
+  "review": "2026-08 round-9 — findings raised while porting crust's prose guard (tests/docsLint.test.ts, tests/skillsDocs.test.ts, the website's lint-examples.mjs)",
+  "toolBase": "cfd33b4",
+  "method": "Not a review pass. These are the defects the new documentation guard found on its first run, plus what verifying them turned up. Every entry was reproduced by running the tool over tests/fixtures/nextapp and inspecting the emitted files — none is reasoned-only. The guard itself was mutation-probed: six drifts were introduced one at a time (each applied by a script asserting match count == 1, reverted after), the unmutated baseline was run first and printed, and all six were caught; survivors: 0.",
+  "severityAnchors": {
+    "P0": "emitted suite broken, silently passes, or lies; or the tool corrupts user files",
+    "P1": "wrong analysis output, docs claim contradicted by code, or a CI gap that lets P0s ship",
+    "P2": "performance, DX, error-message quality, design friction",
+    "P3": "opportunity aligned with the product's spirit"
+  },
+  "findings": [
+    {
+      "id": "FR-048",
+      "severity": "P1",
+      "dimension": "emitted-artefacts",
+      "status": "fixed",
+      "file": "src/reporters/findings.ts",
+      "line": 105,
+      "title": "Two thirds of the inline sidecar's reports map pointed at files no run has ever written",
+      "claim": "<Component>.flawless.json carries a 'reports' map so a reader can jump from the summary to the full report. It named reports/<Component>.a11y.json and reports/<Component>.react-rules.json. Neither is ever created: both tasks are SWEEPS that write one aggregate for the whole run — src/tasks/a11yScan.ts:15 aggregateFile 'a11y.json', src/tasks/eslintReactRules.ts:14 'react-rules.json'. Only perfStatic was correct. Reproduced: a --tasks perf-static,a11y,react-rules run over tests/fixtures/nextapp gives a sidecar whose a11y and reactRules paths do not exist (perfStatic does), while reports/ holds a11y.json, react-rules.json, <C>.perf-static.json and summary.json.",
+      "spirit": "A pointer to a file that was never written is a quiet lie in an artefact whose whole job is to be believed. It also propagated: the published website documented per-component a11y and react-rules reports, and the shapes it listed for them were the perf-static shape, because the docs were written from this field.",
+      "foundBy": "the new docs guard — check G, 'emitted artefact paths named in prose are really emitted'",
+      "note": "The sidecar had no test of any kind, which is why the wrong names survived every previous round.",
+      "fix": "The aggregate basenames are now exported (A11Y_REPORT, REACT_RULES_REPORT) and the sidecar composes from them, so renaming an aggregate cannot leave the pointer behind. Regression test in tests/emittedPaths.test.ts asserts every path in every sidecar's reports map exists after a real run; probed by reverting the fix (match count == 1) and confirming it reddens."
+    },
+    {
+      "id": "FR-049",
+      "severity": "P2",
+      "dimension": "emitted-artefacts",
+      "status": "open",
+      "file": "src/reporters/findings.ts",
+      "line": 104,
+      "title": "The inline sidecar stores ABSOLUTE report paths, in a file that is committed",
+      "claim": "The same reports map holds machine-rooted paths — '/tmp/tmp.X/app/flawless/reports/HomePage.perf-static.json' in the fixture run. <Component>.flawless.json is written next to the analysed source, so it lands in the user's repository and is committed like any other generated file. src/emitPaths.ts exists precisely to stop this ('an absolute path in one names the machine that produced it'), and tests/emittedPaths.test.ts enforces it for everything else the tool writes.",
+      "spirit": "Same class as the three defects emitPaths.ts's header records, in the one emitted file its sentinel sweep does not cover.",
+      "foundBy": "reading the sidecar while reproducing FR-048",
+      "note": "Not fixed here: changing the field to a relative path is a contract change for anything already consuming the sidecar, and is wider than the piece of work that found it. Deliberately left for a decision rather than folded in.",
+      "fix": ""
+    }
+  ],
+  "reportedNotReproduced": [],
+  "docsDriftFixed": [
+    "README.md — the CLI reference table omitted --app-resolver, -h/--help and -V/--version: three of 26 flags absent from a table presented as the reference.",
+    "website src/pages/docs/cli.mdx — the table headed 'Every flag flawless-react accepts' omitted --roots, --exclude, --no-default-excludes and --ci for a whole release.",
+    "website cli.mdx, index.mdx, quickstart.mdx, generated-suite.mdx — all four documented per-component a11y and react-rules reports (FR-048's downstream), and generated-suite.mdx additionally gave both of them the perf-static field shape instead of their real one."
+  ],
+  "gapsNotTaken": [
+    "`bun run <script>` names in prose are not checked. Three kinds appear — this repo's, the generated suite's, and the dogfood app's — and only an allowlist could tell them apart, which would rot faster than the claims it guarded. Stated in the test header rather than left implicit.",
+    "The website lint checks examples and the flag table. It does not check emitted artefact paths, which would need it to run a generation; the repo-side check G covers that surface for the repo's own prose only.",
+    "This repo has no AGENTS.md or CLAUDE.md, though the round-9 review prompt tells a reviewer to start with one. docs/architecture.md is the nearest thing and now carries the guard's entry point."
+  ]
+}

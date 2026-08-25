@@ -124,6 +124,7 @@ flawless-react <entry.tsx> [options]
 | `--include-children` | `true` | Walk transitive child components. Pass `--include-children=false` to skip. |
 | `--props '<json>'` | none | Override the synthesized default props. Merged on top of the static-parse result. |
 | `--provider <file>` | none | Path to a `.tsx` file that default-exports a wrapper component. The host renders every mounted component inside it — use this for Redux, React Query, theming, or any other context-based store. |
+| `--app-resolver <file>` | auto-detected under `--nextjs` | Alias for `--provider` in Next.js mode. Overrides the wrapper derived from `app/layout.tsx` or `pages/_app.tsx`; the file must default-export a wrapper component. |
 | `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. Read by `perf-harness`, and by the MSW emit under `--nextjs` — it does nothing for a `--tasks unit-browser` run outside Next.js mode. |
 | `--colocate` | off | Write unit specs beside their source as `<name>.flawless.test.tsx`. Existing colocated specs are kept unless `--force` — they're the ones you hand-harden. Each opens with a `// @flawless-generated sha256:…` stamp so `--force` can tell an untouched spec from one you edited. |
 | `--ci` | off | Shorthand for `--no-interactive --json`. |
@@ -138,6 +139,8 @@ flawless-react <entry.tsx> [options]
 | `--json` | off | Print the machine-readable run result to stdout. |
 | `--no-inline-summary` | off | Skip the per-component `<Component>.flawless.json` sidecars. |
 | `--swagger-url <url>` | auto-probe under `--nextjs` | Fetch the OpenAPI spec over HTTP instead of reading a file. `off` disables the probe entirely. Only consulted in `--nextjs` mode; outside it the value is parsed and never read. |
+| `-h, --help` | — | Print the flag reference above and exit 0. |
+| `-V, --version` | — | Print the version and exit 0. |
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
