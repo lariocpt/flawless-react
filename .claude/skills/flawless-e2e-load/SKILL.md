@@ -20,12 +20,41 @@ bun run dev:web                                          # app on :3001
 bun run flawless:e2e
 ```
 
-`flawless/e2e/global-setup.ts` signs in as the seeded user and persists
-`storageState` to `e2e/.auth.json`. It **throws if login lands back on
-/login** — that throw is an anti-vacuous guard, not a bug. When it fires, the
-seed drifted (wrong user, wrong password, unseeded DB); fix the seed, never
-the guard. Override credentials with `FLAWLESS_E2E_EMAIL` / `_PASSWORD` /
-`_BASEURL`.
+`flawless/e2e/global-setup.ts` is where you sign in as the seeded user and
+persist `storageState` to `e2e/.auth.json`. **What the tool emits is a stub**
+that writes an empty state (so the config's `storageState` always resolves) plus
+a worked example — it is never overwritten, `--force` included, because it is
+yours once you touch it.
+
+A hand-filled setup should **throw if login lands back on /login**: that throw
+is an anti-vacuous guard, not a bug. When it fires the seed drifted (wrong user,
+wrong password, unseeded DB); fix the seed, never the guard.
+
+You are not relying on remembering that, though. **Every emitted route spec
+asserts it landed on the route it asked for** — both the render test and the
+interaction test — so an unauthenticated suite fails naming its escapes instead
+of quietly testing the login screen. Until the hook is filled, REPORT.md's
+hand-work table says so; the check is byte-identity against the stub, so it
+clears the moment you edit the file.
+
+**What that assertion does and does not catch**, because an overclaim here is
+the same bug wearing a different hat. It catches redirects that CHANGE THE URL
+and have landed by the time the spec looks — a server 3xx, and a client-side
+navigation that completes before `networkidle` settles. It does **not** catch a
+middleware *rewrite* that serves the login page at the requested path, a 401
+body, or a redirect that fires later than the spec waited. A 401 usually still
+reds the spec, but through the console-error check, not this one.
+
+A route that redirects **on purpose** (a default sub-tab, a locale landing)
+would otherwise fail forever. Record the real destination in
+`flawless/e2e/params.json` under `landing`, keyed by route template:
+
+```json
+{ "landing": { "/dash": "/dash/overview" } }
+```
+
+Put it there, not in the spec: `--force` regenerates specs and leaves
+`params.json` alone. Override the base URL with `FLAWLESS_E2E_BASEURL`.
 
 Dynamic segments come from `flawless/e2e/params.json` (write-once, merge-kept):
 `defaults` filled with seeded UUIDs, per-route overrides optional. A blank id
@@ -53,6 +82,10 @@ bun run flawless:load
   exports silently stay empty and 2/3 of the pipes measure the 404 handler.
 
 ## The anti-vacuous probes — run BEFORE the pipes
+
+These are for the **load** pipes. The e2e specs now carry their own landing
+assertion; a load pipe has nothing of the kind, and `crust` will happily report
+a fast, green p95 for 500 redirects to a login page.
 
 ```bash
 echo "$LOAD_ID"                                   # must be non-empty
