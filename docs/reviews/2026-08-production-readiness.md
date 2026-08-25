@@ -203,3 +203,47 @@ an internal power tool; distribution is the only 1.0 gate.**
 
 **Weighted total: 57/70 (81%), up from 56/70.** Verdict unchanged: **A− as an
 internal power tool; distribution is the only 1.0 gate.**
+
+
+## Rescore — 2026-08-25 (round 8: B-12/B-13/B-14 + dogfood r8)
+
+Only the dimension that moved; everything else stands as the round-7 rescore
+above.
+
+**Arithmetic correction first.** The round-7 total is wrong: it says 57/70, but
+the scores in its own table sum to **58**. Recomputed from the anchors (14
+weighted units × 5 = 70; dimensions 2, 3 and 4 count double), the original 46,
+the waves-0–5 55 and the round-6 56 all reconcile exactly — only round 7's
+total does not. It was a slip in addition, not a scoring change. A scorecard
+whose printed arithmetic does not add up is the same species of defect this
+project spends its rounds removing, so it is corrected here rather than
+quietly carried.
+
+| # | Dimension | Was | Now | What moved it |
+|---|---|---|---|---|
+| 2 | Emitted-artefact correctness ×2 | 4 | **5** | The last emitted layer that could be **green while meaning nothing** is closed. Route specs asserted a response, `status() < 500` and a clean console — all three true of a login screen, and since `global-setup.ts` ships as a hand-fill stub, that was the DEFAULT state of a freshly generated suite, not an edge case. Every spec now asserts it landed on the route it asked for, in both emitted tests. Proven by EXECUTION, not by reading the emitted text — which is the point, because reading it is what let this survive: a chromium runs the emitted spec against a server that 302s to `/login`, red before the hook is filled and green after. Then confirmed on a real app: dogfood r8's 31 route specs produced exactly **one** failure, and it was a TRUE redirect (`/` → `/dashboard` for an authenticated visitor), with the other 30 untouched; swapping in the shipped stub made a dashboard spec fail that had passed for months. |
+
+**Weighted total: 60/70 (86%), up from a corrected 58/70.** Verdict unchanged:
+**A− as an internal power tool; distribution is the only 1.0 gate.**
+
+Deliberately **not** moved:
+
+- **#4 Honesty of findings (5)** — held at 5 and earned again rather than
+  raised, since 5 is the ceiling. Round 8's reviews found three false passes
+  beyond the item that prompted them: two runners announcing "all suites
+  passed" having spawned nothing (FR-042 reachable through plain `--changed`,
+  FR-043 through an `--out` directory that happened to hold a `package.json`),
+  and a claim in the round's own PR body that one of them was unreachable. All
+  fixed inside the round, each with a control.
+- **#5 Docs accuracy (4)** — this round corrected real drift (a skill
+  describing a `throw` the tool never emitted, the blob field set, the
+  website's `--run-tests` gating and exit-code table, and a JSDoc that
+  contradicted itself two lines later). That restores accuracy; it does not
+  raise the ceiling while there is still no declared support matrix.
+- **#7 Test suite & CI rigor (5)** — already at 5. Round 8 added a second
+  gated browser-execution test and a `roots:"exported"` timing bound the mode
+  never had, but the single-LAN CI caveat is scored in #1/#11.
+- **#8 Performance at scale (5)** — B-15 measured the three proposed analysis
+  caches and **declined** them: per-tree cost is flat at 0.308 ms across a 4×
+  change in tree count, so the work is linear. Nothing moved because nothing
+  needed to.
