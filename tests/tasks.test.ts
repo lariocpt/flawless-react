@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
+import { globalSetupStubForTest } from "../src/tasks/e2eRoutes.ts";
 import { ALL_TASK_IDS, findTask, TASKS } from "../src/tasks/index.ts";
 import type {
   ComponentTree,
@@ -164,6 +165,9 @@ describe("unit-browser task", () => {
   });
 });
 
+// Update DELIBERATELY, and read the test below before you do.
+const EXPECTED_STUB_SHA256 = "b43628cafe7c279c1288796dc3bb1c89659bd80f3c6ff7330d494bab1bc29e74";
+
 describe("e2e task", () => {
   test("without a Next.js context → ok false", async () => {
     const outDir = tmp("e2e-nonext");
@@ -215,6 +219,39 @@ describe("e2e task", () => {
     expect(readFileSync(setupPath, "utf8")).toContain("by a person");
   });
 
+  // S2/F, the coupling nobody could see. The tally fires on BYTE-IDENTITY with
+  // globalSetupStub(), and the stub file is never overwritten — so the day
+  // anyone edits the stub's text (a typo fix in its comment is enough), every
+  // already-generated, never-filled suite stops being reported as unfilled.
+  // That is "green before it is real" restored by an upgrade.
+  //
+  // Every other test writes and reads the stub inside one version, so
+  // same-version identity was pinned and cross-version identity was not. This
+  // pins the bytes themselves: if you are changing them deliberately, update
+  // the expected digest AND accept that existing suites go quiet.
+  test("the auth stub's bytes are pinned — changing them retires the tally for existing suites", () => {
+    const stub = globalSetupStubForTest();
+    const digest = new Bun.CryptoHasher("sha256").update(stub).digest("hex");
+    expect(digest).toBe(EXPECTED_STUB_SHA256);
+    // The two facts the tally depends on, asserted rather than assumed:
+    // deterministic (no dates, ports or paths interpolated) …
+    expect(globalSetupStubForTest()).toBe(stub);
+    // … and still carrying the marker the report's prose refers to.
+    expect(stub).toContain("TODO(flawless)");
+  });
+
+  // S5. The guard that stops a suite with no route specs from reporting an
+  // auth hook as hand-work. Removing it left every test green.
+  test("no page routes means no auth hand-work — there is no suite to authenticate", async () => {
+    const nextjs = nextProject("next dev -p 3123");
+    const outDir = path.join(nextjs.root, "flawless");
+    // A component tree that is not a page: the task emits a config and no specs.
+    const result = await task("e2e").run(ctxOf({ outDir, trees: [await toolbarTree()], nextjs }));
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain("no analysed entry is an app-router page.tsx");
+    expect(result.handWork).toEqual([]);
+  });
+
   test("emits a port-aware config, global setup, README and one spec per page", async () => {
     const nextjs = nextProject("next dev -p 3123");
     // Under the project root, like a real run. Pointed at an unrelated tmpdir
@@ -251,7 +288,25 @@ describe("e2e task", () => {
     // Ids come from the shared fixture, not a const per spec. The old form
     // defaulted to "REPLACE_WITH_SEEDED_ID", navigated to a URL that 404s, and
     // reported the tool's missing fixture as an application bug.
-    expect(spec).toContain('import { routeUrl } from "./params";');
+    expect(spec).toContain('import { expectedLanding, routeUrl } from "./params";');
+    // B-12. The landing assertion, in BOTH emitted tests — the interaction one
+    // is the more dangerous of the two unasserted, because every harvested
+    // click is visibility-guarded and silently no-ops on a login page.
+    expect(spec.match(/await assertOnRoute\(page\);/g)?.length).toBe(2);
+    expect(spec).toContain("expectedLanding(ROUTE_KEY,");
+    // The escape the failure message offers must name the file that SURVIVES
+    // --force. Naming the spec itself would be advice --force deletes.
+    expect(spec).toContain("flawless/e2e/params.json");
+    expect(spec).toContain("survives --force, this spec does not");
+    // A cheap-net BACKSTOP, and only that. The real proof is execution
+    // (tests/e2eExecution.test.ts) — reading a spec is what let this bug
+    // survive in the first place. But that test is gated on
+    // FLAWLESS_CI_BROWSER, and the mutation pass showed the ungated suite
+    // could not see the assertion deleted, weakened to toBeTruthy, or turned
+    // into a self-comparison. These lines cost nothing and mean the whole
+    // correctness half is not one unset environment variable from unguarded.
+    expect(spec).toContain("const landed = normalisePath(new URL(page.url()).pathname);");
+    expect(spec).toContain(").toBe(wanted);");
     expect(spec).toContain("const ROUTE = routeUrl(ROUTE_TEMPLATE) as string;");
     expect(spec).toContain("test.skip(");
     expect(spec).toContain("fill flawless/e2e/params.json");
@@ -266,6 +321,9 @@ describe("e2e task", () => {
     const paramsHelper = path.join(outDir, "e2e", "params.ts");
     for (const p of [paramsJson, paramsHelper]) expect(existsSync(p)).toBe(true);
     expect(JSON.parse(readFileSync(paramsJson, "utf8"))).toEqual({
+      // `landing` ships empty and is never written by the tool — only carried.
+      // Present in the file so the knob is discoverable where it is used.
+      landing: {},
       defaults: { id: "" },
       routes: { "/things/[id]": { id: "" } },
     });

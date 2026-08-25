@@ -180,6 +180,18 @@ export default defineConfig({
 `;
 }
 
+/**
+ * Exported for tests ONLY, to pin the bytes.
+ *
+ * The B-12 hand-work tally fires on byte-identity with this string, and this
+ * file is never overwritten once emitted — so editing the text here retires
+ * the tally for every already-generated, never-filled suite. That coupling is
+ * invisible from either side; tests/tasks.test.ts makes it fail loudly.
+ */
+export function globalSetupStubForTest(): string {
+  return globalSetupStub();
+}
+
 function globalSetupStub(): string {
   return `import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -211,7 +223,12 @@ Route-level Playwright specs against the real \`next dev\` server (port ${port})
 
 - Seed the database first (whatever your repo uses — e.g. \`bun run db:reset\`).
 - Dynamic segments read env vars: \`FLAWLESS_E2E_ID=<seeded-id> bun run flawless:e2e\`.
-- Auth: fill in \`global-setup.ts\` (never overwritten).
+- Auth: fill in \`global-setup.ts\` (never overwritten). Until you do, every
+  spec fails on its landing assertion rather than testing your login page —
+  an unauthenticated route redirects there and it answers 200.
+- A route that redirects ON PURPOSE: record where it really ends up in
+  \`params.json\` under \`landing\`, e.g. \`{"landing": {"/dash": "/dash/overview"}}\`.
+  Not in the spec — \`--force\` rewrites specs and leaves this file alone.
 
 ## Contract-checked runs (crust)
 
@@ -236,9 +253,12 @@ function routeSpec(
   // navigated to a URL that 404s — so an unfilled fixture was reported as an
   // application bug, thirty times over.
   const dynamic = route.params.length > 0;
+  // expectedLanding is imported by EVERY spec, dynamic or not: the redirect
+  // assertion needs its override, and a static route is exactly as likely to
+  // redirect on purpose as a parameterised one.
   const paramLines = dynamic
-    ? `import { routeUrl } from "./params";\n\nconst ROUTE_TEMPLATE = ${JSON.stringify(route.urlPath)};`
-    : "";
+    ? `import { expectedLanding, routeUrl } from "./params";\n\nconst ROUTE_TEMPLATE = ${JSON.stringify(route.urlPath)};`
+    : `import { expectedLanding } from "./params";`;
   // `as string` after the skip below: test.skip() ends the test at runtime but
   // TypeScript cannot see that, and every navigation would otherwise be an error.
   const urlExpr = dynamic ? `routeUrl(ROUTE_TEMPLATE) as string` : JSON.stringify(route.urlPath);
@@ -270,14 +290,45 @@ function routeSpec(
     .filter((s) => s !== "")
     .join("\n");
 
-  return `import { test, expect } from "@playwright/test";
+  return `import { test, expect, type Page } from "@playwright/test";
 
 ${paramLines}
 const ROUTE = ${urlExpr};
+const ROUTE_KEY = ${JSON.stringify(route.urlPath)};
 
 /** Trailing slashes are not a difference: "/items/" and "/items" are one route. */
 function normalisePath(p: string): string {
   return p.replace(/\\/+$/, "") || "/";
+}
+
+/**
+ * Assert the browser is on the route this spec asked for.
+ *
+ * Without it the spec's other claims — a response came back, status < 500, a
+ * clean console — are all true of a LOGIN SCREEN: an unauthenticated request to
+ * a protected page redirects, and the login page answers 200.
+ *
+ * Scope, stated precisely because the failure mode here is an overclaim: this
+ * catches redirects that CHANGE THE URL and have landed by the time it runs —
+ * a server 3xx, and a client-side navigation that completes before the caller's
+ * await does. It does NOT catch a middleware rewrite that serves the login page
+ * at the requested path, a 401 body, or a redirect that fires later than the
+ * caller waited. Call it after whatever settle the caller needs.
+ */
+async function assertOnRoute(page: Page): Promise<void> {
+  const landed = normalisePath(new URL(page.url()).pathname);
+  const wanted = normalisePath(
+    expectedLanding(ROUTE_KEY, new URL(ROUTE, "http://flawless.invalid").pathname),
+  );
+  expect(
+    landed,
+    \`navigation left the route: asked for \\\`\${wanted}\\\`, landed on \\\`\${landed}\\\`. \` +
+      \`If this is an auth wall, authenticate in ${underOutDir(rel, "e2e/global-setup.ts")} — \` +
+      \`an unauthenticated request redirects to a login page, which answers 200, so the \` +
+      \`status check above cannot see it. If the redirect is what this route is SUPPOSED \` +
+      \`to do, record the destination in ${underOutDir(rel, "e2e/params.json")} under \` +
+      \`"landing": { "\${ROUTE_KEY}": "\${landed}" } — that file survives --force, this spec does not.\`,
+  ).toBe(wanted);
 }
 
 // The route rides on the describe: playwright matches --grep against the
@@ -295,20 +346,7 @@ test.describe("GET ${route.urlPath}", () => {
     expect(resp, "navigation returned a response").toBeTruthy();
     expect(resp?.status(), "no 5xx").toBeLessThan(500);
     await page.waitForLoadState("networkidle");
-    // B-12: assert we are ON the route we asked for. An unauthenticated request
-    // to a protected page redirects to a login screen, which answers 200 — so
-    // every check above passes while this spec tests somebody else's form.
-    // Read after networkidle so a client-side router.push counts as a redirect
-    // too, not just a server 302.
-    const landed = normalisePath(new URL(page.url()).pathname);
-    const wanted = normalisePath(new URL(ROUTE, "http://flawless.invalid").pathname);
-    expect(
-      landed,
-      \`navigation left the route: asked for \\\`\${wanted}\\\`, landed on \\\`\${landed}\\\`. \` +
-        \`A redirect to a login page answers 200, so the status check above cannot see it. \` +
-        \`Authenticate in ${underOutDir(rel, "e2e/global-setup.ts")}, or change this \` +
-        \`expectation if the redirect is what the route is supposed to do.\`,
-    ).toBe(wanted);
+    await assertOnRoute(page);
     expect(errors).toEqual([]);
   });
 ${
@@ -319,6 +357,11 @@ ${
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto(ROUTE);
     await page.waitForLoadState("networkidle");
+    // Same check as above, and it carries more weight here: every harvested
+    // click is guarded by count()/isVisible(), so on a login screen this test
+    // does NOTHING and then reports an empty error list — a green claim about
+    // work that never happened.
+    await assertOnRoute(page);
 ${interactionBody}
     expect(errors).toEqual([]);
   });
@@ -385,19 +428,30 @@ export async function writeParams(
   interface ParamsFile {
     defaults: Record<string, string>;
     routes: Record<string, Record<string, string>>;
+    /**
+     * Route template -> the path that route is SUPPOSED to end on, for pages
+     * that redirect on purpose (a default sub-tab, a locale landing). Never
+     * written by the tool, only carried: the emitted spec's landing assertion
+     * reads it, and this file survives --force while the spec does not.
+     */
+    landing: Record<string, string>;
   }
-  let existing: ParamsFile = { defaults: {}, routes: {} };
+  let existing: ParamsFile = { defaults: {}, routes: {}, landing: {} };
   if (existsSync(file)) {
     try {
       const parsed = JSON.parse(await readFile(file, "utf8")) as Partial<ParamsFile>;
-      existing = { defaults: parsed.defaults ?? {}, routes: parsed.routes ?? {} };
+      existing = {
+        defaults: parsed.defaults ?? {},
+        routes: parsed.routes ?? {},
+        landing: parsed.landing ?? {},
+      };
     } catch {
       // A hand-edited file with a syntax error must not be silently replaced.
       throw new Error(`${file} is not valid JSON — fix or delete it and re-run`);
     }
   }
 
-  const next: ParamsFile = { defaults: {}, routes: {} };
+  const next: ParamsFile = { defaults: {}, routes: {}, landing: {} };
   const allParams = new Set<string>();
   for (const p of pages) for (const name of p.route.params) allParams.add(name);
   // Every id already in the file, blank ones included.
@@ -445,6 +499,12 @@ export async function writeParams(
     next.routes[p.route.urlPath] = sortKeys(row);
   }
   next.routes = sortKeys(next.routes);
+  // Carried verbatim, never invented and never pruned. The tool has no way to
+  // know a route redirects on purpose — that is the user telling it something —
+  // so an entry here is hand-work, and hand-work in this file is the one thing
+  // --force must not touch. Written even when empty, so the knob is visible in
+  // the file rather than only in the README.
+  next.landing = sortKeys(existing.landing);
 
   const body = `${JSON.stringify(next, null, 2)}\n`;
   if (existsSync(file) && (await readFile(file, "utf8")) === body) return false;
@@ -518,6 +578,8 @@ function paramsHelper(): string {
 type ParamsFile = {
   defaults: Record<string, string>;
   routes: Record<string, Record<string, string>>;
+  /** Route template -> the path that route is SUPPOSED to end on. */
+  landing?: Record<string, string>;
 };
 
 const FIXTURE = params as ParamsFile;
@@ -530,6 +592,18 @@ export function param(route: string, name: string): string | undefined {
   const fallback = FIXTURE.defaults[name];
   if (fallback) return fallback;
   return process.env.FLAWLESS_E2E_ID || undefined;
+}
+
+/**
+ * Where this route is expected to end up, which is normally the route itself.
+ *
+ * A page that deliberately redirects — a default sub-tab, a locale landing —
+ * would otherwise fail the landing assertion forever. Record the real
+ * destination here rather than editing the spec: specs are regenerated by
+ * --force, this file is not.
+ */
+export function expectedLanding(route: string, fallback: string): string {
+  return FIXTURE.landing?.[route] ?? fallback;
 }
 
 /** The template with every [param] / [...param] filled in, or undefined. */

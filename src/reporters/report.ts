@@ -1,6 +1,6 @@
 import path from "node:path";
 import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
-import type { ComponentTree, TaskResult, TodoKind } from "../types.ts";
+import type { ComponentTree, TaskId, TaskResult, TodoKind } from "../types.ts";
 import { VERSION } from "../version.ts";
 
 /**
@@ -192,30 +192,45 @@ export function renderReportMarkdown(input: ReportInput): string {
   // The section is ALWAYS present, in one of three states — a table, an
   // explicit "none", or an explicit "not measured" — because a silently absent
   // table reads as zero debt, and on the dogfood app the truth was 181 markers.
-  const measured = input.results.filter((r) => r.handWork !== undefined);
-  lines.push(
-    "## Hand-work remaining",
-    "",
-    // Fixed line, present in every state. Widened deliberately in B-12: the
-    // e2e task now reports one tally of its own (the auth stub, still
-    // unfilled), so "unit/browser only" became false the moment it did. The
-    // claim still names exactly what is counted and what is not — the scope
-    // sentence is load-bearing, and the way this section once lied was by
-    // outliving the set of emitters that feed it.
-    "Counted for the unit/browser layer, plus the e2e suite's auth hook — the",
-    "load and provider files carry their own `TODO(flawless)` markers, not",
-    "counted here.",
-    "",
+  // Which tasks can feed this section at all. Named once, and the copy below is
+  // BUILT from who actually reported — B-12 added e2e as a second contributor
+  // and a single global "measured / not measured" split immediately started
+  // lying in both directions: an e2e-only run with a filled hook printed
+  // "none — no TODO markers were emitted" (implying unit-browser measured zero
+  // when it never ran), and a unit-browser-only run claimed the e2e auth hook
+  // was counted. The scope sentence outliving the set of emitters behind it is
+  // exactly how this section lied before.
+  const CONTRIBUTING: readonly TaskId[] = ["unit-browser", "e2e"];
+  const nameList = (ids: readonly TaskId[]): string =>
+    ids.length === 1
+      ? `\`${ids[0]}\``
+      : `${ids
+          .slice(0, -1)
+          .map((i) => `\`${i}\``)
+          .join(", ")} and \`${ids[ids.length - 1]}\``;
+  const reported = CONTRIBUTING.filter((id) =>
+    input.results.some((r) => r.id === id && r.handWork !== undefined),
   );
-  if (measured.length === 0) {
+  const silent = CONTRIBUTING.filter((id) => !reported.includes(id));
+  const measured = input.results.filter((r) => r.handWork !== undefined);
+  lines.push("## Hand-work remaining", "");
+  if (reported.length === 0) {
     lines.push(
       // "did not include the task" was false when the task ran and threw; this
       // wording is true in both states.
-      "Not measured — the `unit-browser` task did not report a count (not selected, or it failed).",
+      `Not measured — ${nameList(CONTRIBUTING)} did not report a count (not selected, or it failed).`,
       "Absence of a table here is absence of measurement, not absence of debt.",
       "",
     );
   } else {
+    lines.push(
+      `Counted for ${nameList(reported)} — the load and provider files carry their`,
+      "own `TODO(flawless)` markers, not counted here." +
+        (silent.length > 0
+          ? ` ${nameList(silent)} did not report a count (not selected, or it failed), so this is not a total.`
+          : ""),
+      "",
+    );
     const byKind = new Map<TodoKind, { count: number; exemplar: string }>();
     for (const r of measured) {
       for (const t of r.handWork ?? []) {
@@ -228,14 +243,14 @@ export function renderReportMarkdown(input: ReportInput): string {
       }
     }
     if (byKind.size === 0) {
-      lines.push("none — no TODO markers were emitted.", "");
+      lines.push(`none — ${nameList(reported)} emitted no TODO markers.`, "");
     } else {
       lines.push(
         "Each `TODO(flawless)` marker is a place where a spec needs a human: a",
         "fixture, an addressable target, or an assertion the source could not",
         "support statically. Search the marker to find every site of a kind.",
         "",
-        "| Kind | Markers | Example spec |",
+        "| Kind | Markers | Example file |",
         "| --- | ---: | --- |",
       );
       for (const kind of [...byKind.keys()].sort()) {

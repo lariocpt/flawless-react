@@ -148,8 +148,41 @@ describe("Hand-work remaining", () => {
       results: [task("unit-browser", { handWork: [] } as never)],
     });
     expect(md).toContain("## Hand-work remaining");
-    expect(md).toContain("none — no TODO markers were emitted");
+    expect(md).toContain("emitted no TODO markers");
     expect(md).not.toContain("| Kind |");
+  });
+
+  // The cross-task hole B-12 opened, and that every test in this block missed
+  // because they all drive `unit-browser` alone. Once e2e also reported
+  // handWork, "did anyone measure?" became a per-task question: an e2e-only run
+  // whose hook is filled reports [], which made `measured` non-empty, which
+  // printed "none — no TODO markers were emitted" for a run where unit-browser
+  // never executed. That is the precise thing the "not measured" state exists
+  // to prevent — a silently absent table reading as zero debt.
+  test("one contributor reporting zero does not speak for the one that never ran", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [task("e2e", { handWork: [] } as never)],
+    });
+    // It may say none — but only for the task that actually measured…
+    expect(md).toContain("`e2e` emitted no TODO markers");
+    // …and it must say that the other contributor did not report at all.
+    expect(md).toContain("`unit-browser` did not report a count");
+    expect(md).toContain("so this is not a total");
+    // The old global wording would have claimed the whole run was clean.
+    expect(md).not.toContain("none — no TODO markers were emitted.");
+  });
+
+  // The same drift in the other direction: a unit-browser-only run must not
+  // claim the e2e auth hook was counted, because e2e did not run.
+  test("the scope names who reported, not every task that could have", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [task("unit-browser", { handWork } as never)],
+    });
+    expect(md).toContain("Counted for `unit-browser`");
+    expect(md).toContain("`e2e` did not report a count");
+    expect(md).not.toContain("plus the e2e suite's auth hook");
   });
 
   test("a run that never measured hand-work says so instead of implying zero", () => {
@@ -158,7 +191,38 @@ describe("Hand-work remaining", () => {
     const md = renderReportMarkdown(INPUT);
     expect(md).toContain("## Hand-work remaining");
     expect(md).toContain("Not measured");
-    expect(md).not.toContain("none — no TODO markers were emitted");
+    // Both contributors named, so the reader knows the whole section is blind
+    // and not that one task happened to be clean.
+    expect(md).toContain("`unit-browser` and `e2e` did not report a count");
+    expect(md).not.toContain("emitted no TODO markers");
+  });
+
+  // S1, the join nobody made. The scope sentence was pinned and the e2e task's
+  // tally was pinned, but nothing asserted the tally REACHES the rendered
+  // markdown — so narrowing the aggregation to `r.id === "unit-browser"`
+  // silently discarded every e2e tally while the copy still advertised it.
+  // The string "e2e-auth-unfilled" appeared in three source files and no
+  // report test at all.
+  test("an e2e tally reaches the table, not just the task result", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("unit-browser", { handWork } as never),
+        task("e2e", {
+          handWork: [
+            { kind: "e2e-auth-unfilled", count: 1, exemplar: "/proj/flawless/e2e/global-setup.ts" },
+          ],
+        } as never),
+      ],
+    });
+    expect(md).toContain("| `e2e-auth-unfilled` | 1 | `flawless/e2e/global-setup.ts` |");
+    // Both contributors reported, so nothing is missing and the copy says so.
+    expect(md).toContain("Counted for `unit-browser` and `e2e`");
+    expect(md).not.toContain("did not report a count");
+    expect(md).not.toContain("so this is not a total");
+    // The unit-browser rows are still there — aggregation across tasks, not
+    // replacement of one by the other.
+    expect(md).toContain("| `uninferred-return-shape` | 9 |");
   });
 
   test("the section is byte-identical across calls", () => {
@@ -180,11 +244,15 @@ describe("Hand-work remaining", () => {
       [task("unit-browser")],
     ]) {
       const md = renderReportMarkdown({ ...INPUT, results });
-      expect(md).toContain("unit/browser layer, plus the e2e suite's auth hook");
-      expect(md).toContain("`TODO(flawless)` markers, not");
-      expect(md).toContain("counted here");
-      // The superseded sentence must not survive alongside the new one.
+      // Every state names the tasks it speaks for — either as the ones that
+      // reported, or as the ones that did not. What must never happen is a
+      // number with no statement of whose debt it is.
+      expect(md).toMatch(/Counted for `unit-browser`|did not report a count/);
+      expect(md).toContain("`e2e`");
+      // The superseded sentence must not survive: it named a FIXED set of
+      // emitters, which is the drift this section keeps re-learning.
       expect(md).not.toContain("Counted for the unit/browser layer only");
+      expect(md).not.toContain("plus the e2e suite's auth hook");
     }
   });
 

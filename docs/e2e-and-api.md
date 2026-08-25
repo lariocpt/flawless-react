@@ -59,12 +59,30 @@ green having tested one login screen.
 
 Two things close it, and neither is a flag you can forget:
 
-- **Every spec asserts the landing.** After `networkidle` it compares the final
-  pathname against the route it navigated to (trailing slashes normalised). The
-  failure names both ways out: authenticate in `global-setup.ts`, or change the
-  expectation if the redirect is what the route is supposed to do. Reading after
-  `networkidle` means a client-side `router.push` counts as a redirect too, not
-  only a server 302.
+- **Every spec asserts the landing** — the render test and the interaction test
+  both, since a login page swallows every visibility-guarded click and then
+  reports a clean error list. After `networkidle` it compares the final pathname
+  against the route it navigated to, trailing slashes normalised.
+
+  **Scope, stated precisely, because an overclaim here is the same bug wearing a
+  different hat.** It catches redirects that *change the URL* and have landed by
+  the time the spec looks: a server 3xx, and a client-side navigation that
+  completes before `networkidle` settles. It does **not** catch a middleware
+  *rewrite* that serves the login page at the requested path, a 401 body, or a
+  redirect that fires later than the spec waited. (A 401 usually still reds the
+  spec — through the console-error check, not this one.)
+
+  A route that redirects **on purpose** — a default sub-tab, a locale landing —
+  would otherwise fail forever. Record the real destination in `params.json`
+  under `landing`, keyed by route template:
+
+  ```json
+  { "landing": { "/dash": "/dash/overview" } }
+  ```
+
+  There, and not in the spec: `--force` regenerates specs and leaves
+  `params.json` alone, so an expectation recorded in the spec is advice the next
+  regeneration deletes.
 - **REPORT.md says the hook is still a stub.** The e2e task reports it as
   hand-work when the on-disk `global-setup.ts` is byte-identical to what it
   emits — identity, not a grep for the TODO marker, so filling the file in while
