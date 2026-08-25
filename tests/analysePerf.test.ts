@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { analyse, analyseFile, createAnalyseSharedContext } from "../src/analyse/index.ts";
+import type { ComponentTree } from "../src/types.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
 
@@ -113,12 +114,23 @@ describe('analyse wall-clock, roots:"exported"', () => {
       }
 
       const shared = createAnalyseSharedContext();
+      // Spy on the SHARED cache, counted DURING the run. Removing the shared
+      // context (a fresh one per entry) is otherwise invisible: it costs ~16%,
+      // which no timing bound loose enough to be stable can catch. This sees it
+      // structurally — a fresh context per entry means these files are never
+      // touched at all.
+      const seen = new Set<string>();
+      const realGet = shared.cache.get.bind(shared.cache);
+      shared.cache.get = (file: string) => {
+        seen.add(file);
+        return realGet(file);
+      };
       const start = performance.now();
-      const trees = [];
+      const trees: ComponentTree[] = [];
       for (const entry of entries) {
         trees.push(
           ...(await analyseFile(
-            { entry, depth: 3, includeChildren: true, roots: "exported" },
+            { entry, depth: KIDS, includeChildren: true, roots: "exported" },
             shared,
           )),
         );
@@ -131,15 +143,32 @@ describe('analyse wall-clock, roots:"exported"', () => {
       // measured the bail path while looking perfectly reasonable. The second
       // had no children, so the subtree re-walk was never exercised.
       expect(trees.length).toBe(FILES * ROOTS);
+      // The corpus is the shape the comment claims: a WIDE barrel, and one
+      // shared cache spanning every entry. Narrowing ARMS or handing each entry
+      // its own context both left this test green before these two lines.
+      expect(ARMS).toBeGreaterThanOrEqual(40);
+      expect(seen.size).toBeGreaterThan(FILES);
+      const depthBelow = (t: (typeof trees)[number]): number =>
+        t.children.length === 0 ? 0 : 1 + Math.max(...t.children.map(depthBelow));
       for (const t of trees) {
         expect(Object.keys(t.entry.propsShape ?? {}).length).toBe(4);
-        expect(t.children.length).toBeGreaterThan(0);
+        // The WHOLE chain, not merely one child. The review found
+        // `children.length > 0` proves ONE level, so a chain of 1 and a
+        // `depth: 1` that stops the recursion both passed while the comment
+        // claimed a 3-deep walk. That walk is what this block exists to bound.
+        // A LITERAL 3, deliberately not `KIDS`: comparing against the corpus
+        // constant lets a shrunken corpus move the goalposts along with it, so
+        // `KIDS = 1` would still "pass" a test whose comment promises a 3-deep
+        // walk. The number here is the claim; the corpus has to meet it.
+        expect(depthBelow(t)).toBe(3);
       }
 
-      // ~25 ms measured 2026-08-25 for this corpus (64 trees, 40-arm barrel,
-      // 3-deep child chain). The bound catches an accidental O(n^2), not a
-      // regression of a few milliseconds.
-      expect(elapsed).toBeLessThan(2000);
+      // ~55 ms measured 2026-08-25 for this corpus (64 trees, 40-arm barrel,
+      // 3-deep chain). 10x, not the 80x it was: the old 2000 ms bound survived
+      // deleting the shared parse cache entirely — the one mechanism
+      // analyse/index.ts credits for making a wide sweep affordable — so it
+      // could not fail for anything short of a corpus 50x this size.
+      expect(elapsed).toBeLessThan(600);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

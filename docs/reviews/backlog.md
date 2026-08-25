@@ -30,36 +30,52 @@ sequential is fine); template building (no quadratic behaviour found); process
 spawns (a full 7-task run spawns exactly 3 children — the per-file-spawn fear
 is already fixed and guarded by a comment at biomeSweep.ts:89).
 
-**B-15's three caches, measured 2026-08-25 and declined.** Driven through
-`analyseFile({roots: "exported"})` — the mode `--roots exported` uses and the
-one the B-7 pin cannot see, because `analyse()` hard-forces `roots: "primary"`
-(`analyse/index.ts:49`). Corpus: a named props interface per component imported
-through a wide star barrel, plus a child chain every root renders.
+**B-15's three caches, measured 2026-08-25 and declined — on the third set of
+numbers, because the first two were wrong.** The decision stands; the evidence
+behind it was rebuilt after review, and what was rebuilt is recorded here
+because the wrong version was more persuasive than the right one.
 
-| Scale (100 files, 60-arm barrel, 3-deep children) | trees | median | per tree |
-|---|---|---|---|
-| 2 roots/file | 200 | 61.8 ms | 0.309 ms |
-| 8 roots/file | 800 | 246.0 ms | 0.308 ms |
+**The number that decides it** is the real app, which is the measurement the
+first pass never took despite it being on the same machine.
+`mybodycorpai/apps/web`, `roots: "exported"`, depth 3 — 273 files, 174 trees:
+**163 ms warm, 251 ms cold**. A prototype of the two memos, built during
+review, buys **~1.14× there (−18 ms)** with byte-identical analysis output.
+Eighteen milliseconds, on a run whose generated suite takes minutes to execute,
+is not worth an invalidation hazard. That is the whole argument.
 
-- **Per-tree cost is flat across a 4x change in tree count — linear, not
-  quadratic.** The R x (R-1) sibling loop and the per-root subtree re-walk do
-  not dominate anything.
-- **Subtree depth is free**: 1 -> 10 levels moves the total by 4 ms. `depth`
-  bounds it and the shared parse cache absorbs the repeats.
-- **Barrel breadth is the only dimension that bites**, and the entire prize is
-  ~30 ms at a pathological 320-arm barrel (13.2 ms at 20 arms, 43.2 ms at 320,
-  with the tree count fixed). A realistic 60-arm barrel: a few ms.
-- `--roots exported` is **opt-in** (`cli.ts:123` defaults to `primary`), so even
-  these numbers overstate a default run.
+**What was measured wrong the first time**, all three of these having been
+re-run:
 
-Against a run whose generated suite takes minutes to execute, and an
-invalidation hazard the round-7 shadowing bug (`2613f8b`) already demonstrated —
-the memo key must carry the EFFECTIVE `viaReexport`, not the outer
-`requireExportAtRoot` — a cache here buys nothing and costs the next reader.
+| First claim | Why it was wrong | Actual |
+|---|---|---|
+| "depth 1→10 moves the total by 4 ms" | the harness passed a literal `depth: 3`, so KIDS=6 and KIDS=10 walked the same 3 levels | 17.4 → 27.8 ms once depth follows the chain |
+| "per-tree cost is flat ⇒ linear, not quadratic" | two adjacent points (R=2, R=8) in the flattest part of the curve | per-tree rises 0.309 → **0.442** from R=8 to R=32; the R+1 `parseFile` re-detection term is real and superlinear |
+| "the whole barrel prize is ~30 ms at 320 arms; a realistic 60-arm barrel, a few ms" | measured at FILES=6 and reported as an absolute ceiling; the redundancy scales with FILES × ARMS and the two were never crossed | at FILES=100, ARMS 40 → 320 costs **214.6 → 696.3 ms** |
+
+So the redundant work is not only real, it is **superlinear in roots-per-file
+and grows with barrel breadth × file count**. It simply does not cost anything
+*on the shapes that exist today*: the flagship consumer sits at 174 trees over
+273 files with a modest barrel, where the memos are worth 18 ms.
+
+**When to revisit**, since the ceiling is no longer being claimed: a
+shadcn-sized generated barrel (hundreds of arms) in a repo with hundreds of
+component files. That is the shape where the prototype showed multiples, not
+percentages. Re-measure there before assuming this decision still holds.
+
+One argument that was made and does **not** apply: "the memo key must carry the
+EFFECTIVE `viaReexport`". That is a hazard for memoising *inside* `walk()`. For
+the top-level `findExportedDecl` result the recursion always passes
+`viaReexport = true` below the root (`sourceCache.ts:122`), so
+`requireExportAtRoot` is the only varying input and keying on it is sufficient.
+The prototype passed every `2613f8b` shadowing regression. The reason to
+decline is the 18 ms, not a hazard that is not there.
 
 Two corpus mistakes are recorded because they are the reusable part: inline
 `{ shape: T }` annotations **bail** (`propsShape: {}`, `unresolvedProps`), so a
 corpus built on them measures the bail path while the timings look perfectly
 reasonable; and a corpus with no child components never exercises the per-root
-subtree re-walk at all. `tests/analysePerf.test.ts` asserts against both before
-it trusts its own number.
+subtree re-walk at all. `tests/analysePerf.test.ts` asserts against both, plus
+the walked depth, the barrel breadth and the shared cache actually being shared
+— five structural guards, each probed and proven to fire. The synthetic corpus
+is also ~3× lighter per tree than the real app (0.31 vs 0.94 ms), so its
+absolute numbers are not a scale claim about anything.
