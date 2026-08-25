@@ -704,6 +704,10 @@ export interface CliArgs {
   roots: RootMode;
   exclude: string[];
   useDefaultExcludes: boolean;
+  /** `--help` was asked for. parseArgs reports it; main() prints and exits. */
+  help: boolean;
+  /** `-V`/`--version` was asked for. Same split as `help`. */
+  version: boolean;
 }
 
 export type NextjsRouter = "app" | "pages";

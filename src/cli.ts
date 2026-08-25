@@ -4,7 +4,9 @@
 // inside main(), after parseArgs and its fast paths have had their chance to
 // exit. UsageError comes from types.ts, a leaf, precisely so this file never
 // needs core.ts at load time.
+import { FLAG_NAMES, renderHelp } from "./cliFlags.ts";
 import type { CoreResult } from "./core.ts";
+import { flawlessArgv, stripTrailingComment } from "./docLine.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
 import {
@@ -16,70 +18,6 @@ import {
   UsageError,
 } from "./types.ts";
 import { VERSION } from "./version.ts";
-
-const HELP = `flawless-react — multi-task quality kit for React components
-
-Usage:
-  flawless-react <entry-or-glob> [options]
-  flawless-react                       (interactive menu)
-
-Positional:
-  <entry-or-glob>      A .tsx file path or a glob (e.g. "src/**/*.tsx").
-                       Each matched file is analysed as its own entry component.
-
-Options:
-  --out <dir>            Output directory (default: ./.flawless)
-  --tasks <csv>          Comma-separated task ids to run (skip the interactive menu).
-                         Available: perf-harness, unit-browser, perf-static, a11y,
-                         react-rules, e2e, load
-  --roots <mode>         primary (default) analyses each file's main component;
-                         exported emits a tree per exported component, which is what a
-                         whole-app sweep needs (a shadcn card.tsx exports 7 of them).
-  --exclude <glob>       Skip matching files (repeatable). Appended to the defaults,
-                         which already skip *.flawless.test.*, *.test.*, *.spec.*,
-                         *.stories.*, *.d.ts, node_modules, .next, dist, build,
-                         coverage, flawless/. A non-default --out is NOT excluded.
-  --no-default-excludes  Drop those defaults (then a glob can match generated specs).
-  --colocate             Emit unit specs beside the analysed sources as
-                         <name>.flawless.test.tsx (existing colocated specs are kept
-                         unless --force). The flawless/ dir keeps config + mocks.
-  --ci                   Shorthand for --no-interactive --json.
-  --no-interactive       Never prompt; require a positional (or --nextjs). Without
-                         --tasks the run does perf-harness alone.
-  --run-tests            After generating, run the produced test suites.
-  --no-inline-summary    Don't drop <Component>.flawless.json next to each source file.
-  --json                 Print machine-readable JSON summary to stdout.
-  --nextjs [<path>]      Treat <path> (or cwd) as a Next.js project: detect router style,
-                         emit MSW handlers + swagger from app/api or pages/api, auto-set the
-                         app resolver from app/layout.tsx or pages/_app.tsx, merge generated
-                         deps into the project's package.json (devDependencies) and place
-                         everything under <nextRoot>/flawless/.
-  --app-resolver <file>  Override the auto-detected Next.js app resolver (alias for --provider
-                         in Next.js mode; the file must default-export a wrapper component).
-  --swagger-url <url>    Fetch an OpenAPI spec from a live URL (e.g.
-                         http://localhost:3000/api/docs from next-swagger-doc) and prefer it
-                         over static AST inference. In --nextjs mode the default URL above is
-                         tried automatically with a short timeout; pass --swagger-url to
-                         force a specific URL or skip the auto-try via --swagger-url=off.
-  --depth N              Levels of locally-imported children to follow (default 3)
-  --variants N           Variant rows per component (default 5)
-  --changed [REF]        After generating, run only the specs affected by files
-                         changed since REF (default HEAD) — including e2e routes
-                         whose page renders a changed component
-  --heaps MODE           V8 heap snapshots in the profile suite:
-                         off | stress (default) | all. A snapshot is tens of MB
-                         and one is taken either side of every scenario
-  --include-children     Walk children (default true). Pass --include-children=false to skip.
-  --props '<json>'       Override the synthesised default props for the first entry.
-  --provider <file>      Path to a .tsx file default-exporting a Provider wrapper.
-  --api <spec>           Path to an OpenAPI/Swagger spec; scaffolds a mock server.
-  --force                Also regenerate what a re-run keeps: colocated specs,
-                         e2e route specs, the derived provider wrapper.
-                         (A plain re-run already refreshes the out-dir harness.)
-  --report               Emit scripts/report.mjs to aggregate run output.
-  -h, --help             Show this help.
-  -V, --version          Show version.
-`;
 
 const VALID_TASK_IDS: ReadonlySet<TaskId> = new Set<TaskId>([
   "perf-harness",
@@ -123,6 +61,8 @@ export function parseArgs(argv: string[]): CliArgs {
   let roots: RootMode = "primary";
   const exclude: string[] = [];
   let useDefaultExcludes = true;
+  let help = false;
+  let version = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -236,11 +176,15 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (a === "--report") {
       report = true;
     } else if (a === "-h" || a === "--help") {
-      process.stdout.write(HELP);
-      process.exit(0);
+      // `break`, not a return: --help used to process.exit(0) right here, so
+      // everything after it went unread and the post-loop validation never ran.
+      // Both are preserved deliberately — `--depth=-1 --help` printed help then,
+      // and prints help now, rather than becoming a usage error.
+      help = true;
+      break;
     } else if (a === "-V" || a === "--version") {
-      process.stdout.write(`flawless-react ${VERSION}\n`);
-      process.exit(0);
+      version = true;
+      break;
     } else if (a.startsWith("--")) {
       throw new Error(`unknown flag: ${a}`);
     } else if (entry === undefined) {
@@ -250,8 +194,10 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  if (!Number.isFinite(depth) || depth < 0) throw new Error(`--depth must be >= 0`);
-  if (!Number.isFinite(variants) || variants < 0) throw new Error(`--variants must be >= 0`);
+  if (!help && !version) {
+    if (!Number.isFinite(depth) || depth < 0) throw new Error(`--depth must be >= 0`);
+    if (!Number.isFinite(variants) || variants < 0) throw new Error(`--variants must be >= 0`);
+  }
 
   return {
     entry,
@@ -279,6 +225,8 @@ export function parseArgs(argv: string[]): CliArgs {
     roots,
     exclude,
     useDefaultExcludes,
+    help,
+    version,
   };
 }
 
@@ -307,13 +255,116 @@ function parseTaskList(s: string): TaskId[] {
   return ids;
 }
 
+export interface LineProblem {
+  line: string;
+  problem: string;
+}
+
+export interface CheckReport {
+  /** flawless-react invocations examined, whether or not they parsed. */
+  checked: number;
+  /** Lines that invoke something else. Not a failure, but see the note below. */
+  skipped: number;
+  problems: LineProblem[];
+}
+
+/**
+ * Parse every documented flawless-react invocation in `text` without running it.
+ *
+ * The lint for shipped examples. Parsing is pure — parseArgs opens no file and
+ * spawns nothing — so an example naming ./src/Dashboard.tsx or a seeded database
+ * checks clean on a machine that has neither.
+ *
+ * `checked === 0` is reported, never smoothed over. A run that examined nothing
+ * and said "ok" is the exact false pass this tool exists to eliminate, and it is
+ * the likeliest failure of a doc lint: the extractor breaks, no line survives to
+ * be checked, and the gate stays green while the docs rot behind it.
+ */
+export function checkLines(text: string): CheckReport {
+  const report: CheckReport = { checked: 0, skipped: 0, problems: [] };
+  for (const raw of text.split("\n")) {
+    const line = stripTrailingComment(raw).trim();
+    if (line === "" || line.startsWith("#")) continue;
+    let argv: string[] | null;
+    try {
+      argv = flawlessArgv(line);
+    } catch (err) {
+      report.checked++;
+      report.problems.push({ line, problem: (err as Error).message });
+      continue;
+    }
+    if (argv === null) {
+      report.skipped++;
+      continue;
+    }
+    report.checked++;
+    try {
+      parseArgs(argv);
+    } catch (err) {
+      report.problems.push({ line, problem: (err as Error).message });
+    }
+  }
+  return report;
+}
+
 export async function main(argv: string[]): Promise<void> {
+  // Two parse-only surfaces, ahead of parseArgs and well ahead of the core
+  // graph. They exist for consumers that CANNOT import this module: the website
+  // repo keeps hand-copied examples and a "every flag flawless-react accepts"
+  // table, and its CI can run the published binary even though it can have no
+  // opinion about this source tree. Both must stay clear of core.ts, or --help
+  // and --check start paying for the TypeScript compiler (FR-031).
+  if (argv[0] === "--flags") {
+    if (argv.length > 1) {
+      process.stderr.write("--flags takes no arguments\n");
+      process.exit(2);
+    }
+    process.stdout.write(`${FLAG_NAMES.join("\n")}\n`);
+    process.exit(0);
+  }
+  if (argv[0] === "--check") {
+    if (argv.length < 2) {
+      process.stderr.write("--check requires a line to check\n");
+      process.exit(2);
+    }
+    // Several operands are joined rather than rejected: a caller feeding a whole
+    // doc page one block per argument is the normal shape, and an unquoted line
+    // would otherwise be silently truncated to its first word.
+    const report = checkLines(argv.slice(1).join("\n"));
+    for (const p of report.problems) {
+      process.stderr.write(`${p.problem}\n  in: ${p.line}\n`);
+    }
+    if (report.problems.length > 0) process.exit(1);
+    if (report.checked === 0) {
+      process.stderr.write(
+        `--check found no flawless-react invocation in ${report.skipped} line(s)\n`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write(
+      `ok: ${report.checked} invocation(s) parse (${report.skipped} line(s) skipped)\n`,
+    );
+    process.exit(0);
+  }
+
   let args: CliArgs;
   try {
     args = parseArgs(argv);
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n`);
     process.exit(2);
+  }
+
+  // Printed here rather than inside parseArgs, so that parsing a documented
+  // line stays a pure function call. It used to process.exit(0) mid-loop, which
+  // meant no test — and no lint — could parse `flawless-react --help` in-process.
+  if (args.help) {
+    process.stdout.write(renderHelp());
+    process.exit(0);
+  }
+  if (args.version) {
+    process.stdout.write(`flawless-react ${VERSION}\n`);
+    process.exit(0);
   }
 
   let pattern = args.entry;
