@@ -208,11 +208,237 @@ describe("--ci process contract", () => {
       };
       expect(blob.exitCode).toBe(0);
       expect(blob.testRun?.mode).toBe("none");
-      expect(typeof blob.testRun?.reason).toBe("string");
+      // The REASON, not just its type. A mutation that blanked it to "" while
+      // leaving the stderr line intact survived the whole suite: every content
+      // assertion was against stderr, and the --ci caller this field exists for
+      // reads only stdout. The blob must stand on its own.
+      expect(blob.testRun?.reason).toContain("--run-tests");
+      expect(blob.testRun?.reason).toContain("a11y");
+      for (const id of ["perf-harness", "unit-browser", "e2e"]) {
+        expect(blob.testRun?.reason).toContain(id);
+      }
     } finally {
       await rm(out, { recursive: true, force: true });
     }
   }, 30000);
+
+  // S-1/S-2. B-14 claims "--run-tests/--changed"; only --run-tests was pinned.
+  // Deleting `|| opts.changed !== undefined` from the guard left all 830 tests
+  // green, and hardcoding the flag name in the message survived too — so a
+  // --changed run could tell the caller to fix a flag they never passed.
+  test("--changed with nothing runnable says so too, and names --changed", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-changed-"));
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          CARD,
+          "--ci",
+          "--tasks",
+          "a11y",
+          "--changed",
+          "--no-inline-summary",
+          "--out",
+          out,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(0);
+      const blob = JSON.parse(stdout) as { testRun?: { mode: string; reason?: string } };
+      expect(blob.testRun?.mode).toBe("none");
+      // The flag the caller actually passed, on both channels.
+      expect(blob.testRun?.reason).toContain("--changed");
+      expect(blob.testRun?.reason).not.toContain("--run-tests");
+      expect(stderr).toContain("--changed");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // S-4. `green` — the field that separates "exit 0 because the suites passed"
+  // from "exit 1 because they went red" — was asserted only on CoreResult
+  // in-process. A mutation that forwarded ONLY the mode:"none" arm to the blob
+  // and dropped {mode,green} entirely left every test green: the FR-017 pair
+  // itself, unpinned at the very layer the fix exists for.
+  //
+  // S-6 rides along. `e2e` was in RUNNABLE_TASK_IDS but no test ever made e2e
+  // the task that opened the gate — dropping it from the constant reddened only
+  // a stderr string match. Here it opens the gate behaviourally.
+  //
+  // Cheap the same way core.test.ts's control is: node_modules exists so the
+  // runner skips `bun install`, the browser install is skipped by env, and
+  // `bun run flawless:e2e` exits 127 because playwright is not on PATH.
+  test("a red generated suite reaches the blob as mode:generated, green:false", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-redsuite-"));
+    try {
+      const app = path.join(dir, "app");
+      cpSync(path.resolve(__dirname, "fixtures", "nextapp"), app, { recursive: true });
+      mkdirSync(path.join(app, "node_modules"), { recursive: true });
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          "--nextjs",
+          app,
+          "--ci",
+          "--tasks",
+          "e2e",
+          "--run-tests",
+          "--no-inline-summary",
+        ],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...process.env, FLAWLESS_SKIP_BROWSER_INSTALL: "1" },
+        },
+      );
+      const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      const blob = JSON.parse(stdout) as {
+        exitCode: number;
+        results: Array<{ id: string; ok: boolean }>;
+        testRun?: { mode: string; green?: boolean };
+      };
+      // e2e made runnableSelected true, so a suite really was planned and run.
+      expect(blob.testRun?.mode).toBe("generated");
+      // It went red, and that is what folded into the exit code — while every
+      // task still reports ok, which is why `green` has to be in the blob.
+      expect(blob.testRun?.green).toBe(false);
+      expect(blob.exitCode).toBe(1);
+      expect(code).toBe(1);
+      expect(blob.results.every((r) => r.ok)).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  // FR-043, the one my own PR body got wrong. I claimed the empty-plan path was
+  // unreachable through runCore because `standalone` meant "outside Next.js
+  // mode". It does not — it is existsSync(outDir/package.json). Point --out at
+  // any directory holding one (a leftover standalone suite, a package root) and
+  // Next.js mode takes the standalone plan, where e2e plans nothing at all.
+  // On main this invocation printed "all generated suites passed" and the blob
+  // read {mode:"generated", green:true} for a run that spawned zero suites.
+  test("an empty generated plan reports mode:none, not a green suite run", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-emptyplan-"));
+    try {
+      const app = path.join(dir, "app");
+      cpSync(path.resolve(__dirname, "fixtures", "nextapp"), app, { recursive: true });
+      const out = path.join(dir, "out");
+      mkdirSync(out, { recursive: true });
+      // The whole trigger, in one line: an --out dir that happens to be a package.
+      await writeFile(path.join(out, "package.json"), JSON.stringify({ name: "leftover" }));
+      mkdirSync(path.join(out, "node_modules"), { recursive: true });
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          "--nextjs",
+          app,
+          "--ci",
+          "--tasks",
+          "e2e",
+          "--run-tests",
+          "--no-inline-summary",
+          "--out",
+          out,
+        ],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...process.env, FLAWLESS_SKIP_BROWSER_INSTALL: "1" },
+        },
+      );
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      const blob = JSON.parse(stdout) as { testRun?: { mode: string; reason?: string } };
+      // Not "generated": that arm is a promise that suites ran.
+      expect(blob.testRun?.mode).toBe("none");
+      expect(blob.testRun?.reason).toContain("no generated suite matched");
+      // And the sentence that used to be a lie is gone from both streams.
+      expect(stderr).not.toContain("all generated suites passed");
+      expect(stdout).not.toContain("all generated suites passed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 120000);
+
+  // FR-044. --changed is checked first, so passing both silently ran the narrow
+  // set and dropped the full suite the caller also asked for.
+  test("--changed and --run-tests together says which one won", async () => {
+    const out = await mkdtemp(path.join(tmpdir(), "flawless-ci-bothflags-"));
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          CARD,
+          "--ci",
+          "--tasks",
+          "a11y",
+          "--changed",
+          "--run-tests",
+          "--no-inline-summary",
+          "--out",
+          out,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(stderr).toContain("both given");
+      // …and stdout is still exactly one blob.
+      expect(() => JSON.parse(stdout)).not.toThrow();
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // FR-045. `load` DOES generate a runnable artefact and declares the
+  // flawless:load script in the same run — telling the user it "generates no
+  // suite" is a claim that contradicts what the binary just wrote to disk.
+  // Next.js mode on purpose: `load` fails outside it ("not a Next.js run"),
+  // which sets anyFailed and correctly suppresses the branch entirely.
+  test("the reason does not tell a --tasks load user their pipes are not a suite", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-ci-load-"));
+    try {
+      const app = path.join(dir, "app");
+      cpSync(path.resolve(__dirname, "fixtures", "nextapp"), app, { recursive: true });
+      const proc = Bun.spawn(
+        [
+          "bun",
+          BIN,
+          "--nextjs",
+          app,
+          "--ci",
+          "--tasks",
+          "load",
+          "--run-tests",
+          "--no-inline-summary",
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      const blob = JSON.parse(stdout) as { testRun?: { mode: string; reason?: string } };
+      expect(blob.testRun?.mode).toBe("none");
+      // Names the script the SAME run just declared, instead of claiming the
+      // artefact it just wrote is not a suite.
+      expect(blob.testRun?.reason).toContain("flawless:load");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60000);
 
   // Control for the test above: without --run-tests nothing was ASKED for, so
   // there is nothing to report and testRun stays absent. Without this, a

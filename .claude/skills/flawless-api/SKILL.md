@@ -49,14 +49,19 @@ and task-level `console.warn`s have no gate. Redirect fd 2 if you need silence.
   **stderr still carries diagnostics** — skipped files, an unparseable spec,
   script collisions, a failed Next.js emit. Capture it: those lines are the only
   account of work the run quietly dropped.
-- **Never read exit 0 as "the suites passed."** Read `testRun`:
-  - absent → no run was asked for;
-  - `{ mode: "generated" | "affected", green }` → suites ran, `green` is what
-    folded into `exitCode`;
-  - `{ mode: "none", reason }` → a run WAS asked for and nothing selected could
-    produce one (only `perf-harness`, `unit-browser` and `e2e` generate a
-    runnable suite). This is the exit-0-that-tested-nothing case; the `reason`
-    names the ids to select instead.
+- **Never read exit 0 as "the suites passed."** Read `testRun`. The invariant:
+  `mode: "none"` **if and only if** zero suites executed, so `green` never
+  appears on a phase that ran nothing.
+  - `{ mode: "generated" | "affected", green }` → suites really RAN; `green` is
+    what folded into `exitCode`;
+  - `{ mode: "none", reason }` → **nothing ran**, and `reason` says which of the
+    three causes it was: no selected task generates a suite `--run-tests`
+    executes (only `perf-harness`, `unit-browser` and `e2e` do — `load` emits
+    pipes you run with `bun run flawless:load`), nothing was affected, or the
+    selected tasks plan no run for the work that was;
+  - absent → the run never REACHED the test-run phase. That is NOT "no run was
+    asked for": a request blocked by a failed task is also absent, exits 1, and
+    is explained by `results`. Read absent as "look elsewhere" (FR-046).
 - **`errors`** carries failures belonging to no task, so `results` cannot show
   them — a Next.js emit that threw sets `exitCode: 1` with every task `ok: true`.
   Omitted on a clean run, so branch on its presence.

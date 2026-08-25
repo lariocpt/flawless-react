@@ -220,16 +220,23 @@ describe("runCore", () => {
     expect(perf?.ok).toBe(true);
     expect(perf?.status).toBe("kept");
     expect(perf?.outputs).toEqual([]);
-    // The affected run FIRED in the kept state — the gate opened. Narrowed
-    // rather than optional-chained: since B-14 made testRun a union, `mode`
-    // alone no longer implies `green` exists, and reading it through `?.` on
-    // the wrong arm would be undefined rather than a failure.
+    // The affected run FIRED in the kept state — the gate opened. What it
+    // REPORTS changed deliberately under FR-042: nothing was affected here, so
+    // zero suites executed, and mode now means what it says. "affected" is a
+    // promise that specs ran; this run ran none, so it reports "none" with the
+    // reason. The old assertion (mode:"affected", green:true) was the exact
+    // ambiguity B-14 exists to remove — green because everything passed, and
+    // green because nothing happened, wearing the same shape.
     const run = second.testRun;
-    expect(run?.mode).toBe("affected");
-    if (run?.mode !== "affected" && run?.mode !== "generated") {
-      throw new Error(`expected a suite run, got ${JSON.stringify(run)}`);
+    if (run?.mode !== "none") {
+      throw new Error(
+        `expected mode:"none" for a run that spawned nothing, got ${JSON.stringify(run)}`,
+      );
     }
-    expect(run.green).toBe(true);
+    expect(run.reason).toContain("nothing affected");
+    // …and the gate is still proven to have opened, which is what FR-017 hid:
+    // absent would mean the branch never executed at all.
+    expect(second.testRun).toBeDefined();
   });
 
   // B-14's control. The new branch reports mode:"none" when a run was asked for

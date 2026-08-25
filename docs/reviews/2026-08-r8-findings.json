@@ -1,5 +1,5 @@
 {
-  "review": "2026-08 round-8 \u2014 findings raised by the per-item two-lens reviews (B-13 \u2026 B-15)",
+  "review": "2026-08 round-8 — findings raised by the per-item two-lens reviews (B-13 … B-15)",
   "toolBase": "4392f5e",
   "method": "One correctness lens (read-only) and one mutation-probe pass (isolated worktree, every mutation applied by a script asserting count == 1) after each item's diff was committed. Findings here are only those NOT already covered by the item's own backlog entry. Every entry was reproduced by hand before being recorded; anything that could not be reproduced is recorded as unverified, never as clean.",
   "severityAnchors": {
@@ -17,11 +17,76 @@
       "file": "src/core.ts",
       "line": 522,
       "title": "A failure that belongs to no task exits 1 with every result ok:true and no reason in the --ci blob",
-      "claim": "The Next.js emit block sets anyFailed = true and warns, but pushes no TaskResult. Probe: a nextapp copy with .gitignore made a DIRECTORY (so updateGitignore's writeFileSync throws EISDIR from inside core's try) run under `--nextjs <app> --ci --tasks perf-static` gives exitCode 1 with results [('perf-static', True, None)] \u2014 a red run whose machine-readable output contains no account of the failure at all. Before B-13 the stderr line was suppressed too, so --ci consumers got exit 1 and total silence. Same shape when suitesGreen is false.",
+      "claim": "The Next.js emit block sets anyFailed = true and warns, but pushes no TaskResult. Probe: a nextapp copy with .gitignore made a DIRECTORY (so updateGitignore's writeFileSync throws EISDIR from inside core's try) run under `--nextjs <app> --ci --tasks perf-static` gives exitCode 1 with results [('perf-static', True, None)] — a red run whose machine-readable output contains no account of the failure at all. Before B-13 the stderr line was suppressed too, so --ci consumers got exit 1 and total silence. Same shape when suitesGreen is false.",
       "spirit": "honesty",
       "foundBy": "B-13 correctness lens (finding E); reproduced by hand before recording",
-      "note": "Not a false pass \u2014 the exit code is truthful \u2014 which is why this is P2 rather than P1. It is the same disease as B-14 (the blob cannot distinguish states the caller must distinguish), one layer up. README.md was corrected in the B-13 PR to stop claiming 'a red run is readable from the blob alone', which is the honest interim. The fix belongs with B-14's blob contract change.",
-      "fix": "CoreResult gained `errors: string[]` \u2014 failures belonging to no task, so `results` cannot carry them. The Next.js emit catch now pushes its message there as well as warning, and the --ci blob emits `errors` when non-empty (omitted on a clean run, so a caller can branch on presence). Landed with B-14, which changes the same blob contract for the same reason: the exit code must be explicable, not merely correct. Pinned in tests/cli.test.ts with BOTH halves asserted \u2014 that every task still reports ok (the shape that made the blob unreadable) and that `errors` carries the account \u2014 plus a clean-run control proving the key is absent."
+      "note": "Not a false pass — the exit code is truthful — which is why this is P2 rather than P1. It is the same disease as B-14 (the blob cannot distinguish states the caller must distinguish), one layer up. README.md was corrected in the B-13 PR to stop claiming 'a red run is readable from the blob alone', which is the honest interim. The fix belongs with B-14's blob contract change.",
+      "fix": "CoreResult gained `errors: string[]` — failures belonging to no task, so `results` cannot carry them. The Next.js emit catch now pushes its message there as well as warning, and the --ci blob emits `errors` when non-empty (omitted on a clean run, so a caller can branch on presence). Landed with B-14, which changes the same blob contract for the same reason: the exit code must be explicable, not merely correct. Pinned in tests/cli.test.ts with BOTH halves asserted — that every task still reports ok (the shape that made the blob unreadable) and that `errors` carries the account — plus a clean-run control proving the key is absent."
+    },
+    {
+      "id": "FR-042",
+      "severity": "P0",
+      "dimension": "cli",
+      "status": "fixed",
+      "file": "src/runner/runTests.ts",
+      "line": 223,
+      "title": "runAffectedTests asserts \"all affected suites passed\" over an empty plan, having spawned nothing",
+      "claim": "The early-out guard required runs.length === 0 AND components.length === 0 AND routes.length === 0. When the plan is empty but either affected set is non-empty, control fell through the (empty) spawn loop to say(\"all affected suites passed\") and return true. runCore then recorded testRun {mode:\"affected\", green:true} and exited 0. Strictly worse than the silence B-14 fixed beside it: this is a positive assertion of a pass.",
+      "repro": "Two plain routes, both confirmed end-to-end through runCore with every test:* script poisoned to exit 1 (so green proves nothing spawned): (a) --changed --tasks e2e where the edited component sits on no page route (components>0, routes=0); (b) --changed --tasks perf-harness where the only affected work is a route (components=0, routes>0). Both printed \"all affected suites passed\", exitCode 0, testRun {\"mode\":\"affected\",\"green\":true}.",
+      "fix": "Both runners return SuiteRunOutcome {ran, green, reason?} instead of a bare boolean; the guard is now runs.length === 0 alone, with the two affected sets deciding only which sentence to say. core.ts checks ran === 0 BEFORE reading green and maps it to testRun {mode:\"none\", reason}. Invariant: mode \"affected\"/\"generated\" is a promise that suites executed; `green` never appears on a phase that ran nothing.",
+      "foundBy": "correctness lens (finding A) and independently by the session while probing FR-043; both reproduced"
+    },
+    {
+      "id": "FR-043",
+      "severity": "P1",
+      "dimension": "cli",
+      "status": "fixed",
+      "file": "src/runner/runTests.ts",
+      "line": 86,
+      "title": "The zero-plan runGeneratedTests path is reachable, and the B-14 PR body claimed it was not",
+      "claim": "B-14 added a zero-plan message describing itself as defensive — \"unreachable through runCore today\" because standalone is only true outside Next.js mode. That reasoning was wrong. `standalone` is existsSync(outDir/package.json), not a Next.js-mode test, so an --out directory that happens to hold a package.json puts a Next.js run on the standalone plan, where planGeneratedRuns([\"e2e\"], true) returns []. On main this invocation printed \"all generated suites passed\"; after B-14 it printed the honest line but the blob still read {mode:\"generated\", green:true} for a run that spawned zero suites.",
+      "repro": "runCore({nextjs: root, outDir: <dir containing package.json>, taskIds:[\"e2e\"], runTests:true}) -> stdout exitCode 0, testRun {\"mode\":\"generated\",\"green\":true}, zero suites spawned.",
+      "fix": "Zero-plan check moved ahead of the spawn loop and returns {ran:0, reason}; core maps ran===0 to mode \"none\". The stale unreachability comment is replaced with the refutation and its mechanism. Pinned end-to-end in tests/cli.test.ts and at the runner level in tests/runTests.test.ts (both were entirely untested — deleting the guard reddened nothing).",
+      "foundBy": "correctness lens (finding C) — refutes a claim made in the session's own PR body"
+    },
+    {
+      "id": "FR-044",
+      "severity": "P2",
+      "dimension": "cli",
+      "status": "fixed",
+      "file": "src/core.ts",
+      "line": 636,
+      "title": "--changed silently overrides --run-tests when both are given",
+      "claim": "The affected branch is tested first, so passing both flags runs only the narrowed set and drops the full generated suite the caller also asked for, with no message on either channel.",
+      "repro": "--tasks perf-harness --changed --run-tests --ci -> exit 0, testRun {\"mode\":\"affected\",\"green\":true}; the generated suites never ran.",
+      "fix": "warn() naming which flag won and how to get the other. The precedence is defensible; choosing it in silence is not.",
+      "foundBy": "correctness lens (finding B, second half)"
+    },
+    {
+      "id": "FR-045",
+      "severity": "P1",
+      "dimension": "docs",
+      "status": "fixed",
+      "file": "src/core.ts",
+      "line": 690,
+      "title": "The no-suite reason tells a --tasks load user their generated pipes are not a suite",
+      "claim": "B-14's new message said none of the selected tasks \"generates one\". For `load` that contradicts what the same runCore call just wrote to disk: it emits routes.pipes and declares the flawless:load script to run them. --run-tests simply does not execute load pipes.",
+      "repro": "runCore({nextjs: root, taskIds:[\"load\"], runTests:true}) emitted params.json/routes.pipes/env.sh/README.md and declared flawless:load, while telling the user load generates no suite.",
+      "fix": "The reason now says load pipes are a suite --run-tests does not execute, and names `bun run flawless:load`.",
+      "foundBy": "correctness lens (finding E)"
+    },
+    {
+      "id": "FR-046",
+      "severity": "P2",
+      "dimension": "docs",
+      "status": "fixed",
+      "file": "src/core.ts",
+      "line": 106,
+      "title": "An absent testRun is documented as \"no run was asked for\", which is false when a failed task blocked the phase",
+      "claim": "CoreResult's JSDoc and the flawless-api skill both said absent means nothing was requested. --run-tests with a failing task also yields absent (the !anyFailed guard), so a consumer following the published rule cannot tell the two apart — in the one field added to remove that class of ambiguity. The same JSDoc also contradicted itself, saying both \"absent means nothing was ever requested\" and \"deliberately NOT set when a task failed\".",
+      "repro": "--ci --tasks e2e,a11y --run-tests -> exit 1, results [e2e ok:false, a11y ok:true], no testRun key.",
+      "fix": "Absent is documented as \"the run never reached the test-run phase — look at results\", in core.ts, README.md, the skill (both copies) and the website.",
+      "foundBy": "correctness lens (finding D)"
     }
   ],
   "reportedNotReproduced": []

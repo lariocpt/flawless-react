@@ -104,13 +104,22 @@ export interface CoreResult {
   /** Path of the provider wrapper actually used for unit specs, if any. */
   provider: string | undefined;
   /**
-   * What the test-run phase did — present only when a run was ASKED for
-   * (--run-tests, or --changed's affected run). Absent means nothing was ever
-   * requested, which is a different thing from a request that came to nothing.
+   * What the test-run phase did.
    *
-   *  - "affected" | "generated": suites ran; `green` is what folded into
-   *    exitCode.
-   *  - "none": a run was asked for and could not happen; `reason` says why.
+   *  - "affected" | "generated": suites actually RAN — that is the promise
+   *    these two arms make, and `green` is what folded into exitCode. A phase
+   *    that spawned nothing never wears them (FR-042/FR-043).
+   *  - "none": zero suites ran; `reason` says why — no selected task generates
+   *    one --run-tests executes, nothing was affected, or the selected tasks
+   *    plan no run for the work that was.
+   *  - absent: the run never REACHED the test-run phase. FR-046: that is not
+   *    the same as "nothing was requested". It also covers a request blocked by
+   *    a failed task, which exits 1 and is explained by `results`. Read absent
+   *    as "look elsewhere", never as "no run was asked for".
+   *
+   * The invariant a consumer can rely on: `mode: "none"` if and only if zero
+   * suites executed, and a `green` field only ever appears on a phase that ran
+   * something.
    *
    * The whole point is that exit 0 has two meanings — "the suites passed" and
    * "no suite ran" — and a caller reading only the exit code cannot tell them
@@ -633,6 +642,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // actually FIRED — exit 0 alone is equally consistent with the branch never
   // executing, which is exactly how FR-017 hid.
   let testRun: CoreResult["testRun"];
+  // FR-044. --changed is checked first, so passing both flags silently runs the
+  // NARROW set and drops the full suite the caller also asked for. Say so: the
+  // outcome is defensible, choosing it in silence is not.
+  if (opts.changed !== undefined && opts.runTests === true) {
+    warn(
+      "--changed and --run-tests were both given: running only the affected specs. " +
+        "Drop --changed to run the full generated suites.",
+    );
+  }
   if (!anyFailed && opts.changed !== undefined && runnableSelected) {
     const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
     const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
@@ -647,7 +665,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           ? ` (${affected.withoutSpecs.length} unexported component(s) covered through their parent)`
           : ""),
     );
-    suitesGreen = await runAffectedTests(
+    const outcome = await runAffectedTests(
       outDir,
       selected.map((t) => t.id),
       affected,
@@ -664,15 +682,25 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // directly, so nothing would catch it. Same word, one file apart.
       opts.log !== true,
     );
-    testRun = { mode: "affected", green: suitesGreen };
+    suitesGreen = outcome.green;
+    // ran === 0 FIRST, always. A run arm of this union is a promise that suites
+    // executed, so "green because nothing ran" must never wear one (FR-042).
+    testRun =
+      outcome.ran === 0
+        ? { mode: "none", reason: outcome.reason ?? "changed: no specs to run" }
+        : { mode: "affected", green: outcome.green };
   } else if (!anyFailed && opts.runTests === true && runnableSelected) {
-    suitesGreen = await runGeneratedTests(
+    const outcome = await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),
       nextCtx?.root,
       opts.log !== true,
     );
-    testRun = { mode: "generated", green: suitesGreen };
+    suitesGreen = outcome.green;
+    testRun =
+      outcome.ran === 0
+        ? { mode: "none", reason: outcome.reason ?? "no generated suite matched the selection" }
+        : { mode: "generated", green: outcome.green };
   } else if (!anyFailed && (opts.runTests === true || opts.changed !== undefined)) {
     // B-14: a run WAS asked for and cannot happen, because nothing selected
     // generates a suite. Previously this fell off the end of the chain with no
@@ -687,9 +715,16 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     // a no-op.
     const asked = opts.runTests === true ? "--run-tests" : "--changed";
     const selectedIds = selected.map((t) => t.id).join(", ");
+    // FR-045. "generates no suite" was false for `load`, which generates pipes
+    // AND declares the flawless:load script to run them in the same breath —
+    // --run-tests simply does not execute them. Saying a generated artefact is
+    // not one is exactly the kind of claim this repo's rules forbid.
+    const loadNote = selected.some((t) => t.id === "load")
+      ? " load pipes are a suite, but not one --run-tests executes — run them with `bun run flawless:load`."
+      : "";
     const reason =
-      `${asked} ran no suite: none of the selected task(s) (${selectedIds}) generates one. ` +
-      `Select at least one of ${RUNNABLE_TASK_IDS.join(", ")}.`;
+      `${asked} ran no suite: none of the selected task(s) (${selectedIds}) generates one ` +
+      `that ${asked} executes.${loadNote} Select at least one of ${RUNNABLE_TASK_IDS.join(", ")}.`;
     warn(reason);
     testRun = { mode: "none", reason };
   }

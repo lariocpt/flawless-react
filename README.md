@@ -141,11 +141,11 @@ flawless-react <entry.tsx> [options]
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
-With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts, testRun, errors? }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code, suite failures included. Without the flag you get the table and no JSON.
+With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts, testRun?, errors? }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code, suite failures included. Without the flag you get the table and no JSON.
 
 Two of those fields exist so the exit code is *explicable*, not merely correct:
 
-- **`testRun`** — what the test-run phase did, present only when a run was asked for at all. `{ mode: "generated" | "affected", green }` when suites ran; `{ mode: "none", reason }` when a run was asked for and nothing selected could produce one. Absent means nothing was requested. Without it, exit 0 conflates *"the suites passed"* with *"no suite ran"*.
+- **`testRun`** — what the test-run phase did. `{ mode: "generated" | "affected", green }` means suites **actually ran**, and `green` is what folded into the exit code; `{ mode: "none", reason }` means **zero suites ran** and says why — nothing selected generates a suite `--run-tests` executes, nothing was affected, or the selected tasks plan no run for the work that was. The invariant to rely on: `mode: "none"` if and only if nothing executed, so a `green` field never appears on a phase that ran nothing. Absent means the run never *reached* the phase — including a request blocked by a failed task, so read absent as "look at `results`", never as "no run was asked for". Without this field, exit 0 conflates *"the suites passed"* with *"no suite ran"*.
 - **`errors`** — failures that belong to no task and so appear nowhere in `results`, such as a Next.js emit that threw. Omitted entirely on a clean run.
 
 Suppressing stdout is not a vow of silence: **diagnostics still reach stderr under `--ci`** — a file the sweep skipped, an unparseable OpenAPI spec, a test-script collision, a failed Next.js emit. Those are the lines an unattended caller most needs, and they used to share the flag that silenced the table.
