@@ -166,6 +166,18 @@ for (const r of results) console.log(r.id, r.ok, r.summary);
 ```
 
 - Never calls `process.exit`; bad input throws `UsageError`.
+- `exitCode` says *whether* the run was clean, never *why*. `results` names a
+  failed task, `testRun` says what the test-run phase did, and `errors` carries
+  failures belonging to no task at all. Treating exit 0 as "the suites passed"
+  is the mistake `testRun` exists to prevent.
+- **`testRun`'s invariant**: `{ mode: "none", reason }` if and only if **zero
+  suites executed** — so `{ mode: "generated" | "affected", green }` is a
+  promise that suites really ran, and `green` never appears on a phase that ran
+  nothing. Three things produce `"none"`: no selected task generates a suite
+  `runTests` executes, nothing was affected, or the selected tasks plan no run
+  for the work that was. An **absent** `testRun` means the run never reached the
+  phase at all — which includes a request blocked by a failed task, so absent is
+  "look at `results`", not "no run was asked for".
 - `log` defaults to `false` here (the CLI passes `true`), so nothing is written
   to **stdout** unless you ask for it — neither the progress narration nor the
   per-file findings listing.

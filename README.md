@@ -134,18 +134,21 @@ flawless-react <entry.tsx> [options]
 | `--exclude <glob>` | see below | Repeatable. Added to the defaults, which already skip `*.flawless.test.*`, `*.test.*`, `*.spec.*`, `*.stories.*`, `*.d.ts`, `node_modules`, `.next`, `dist`, `build`, `coverage` and `flawless/`. A non-default `--out` is not excluded automatically — add it yourself, or a second sweep analyses the suite it just wrote. |
 | `--no-default-excludes` | off | Drop those defaults and use only what `--exclude` names. |
 | `--no-interactive` | off | Never prompt. Required in CI and by any script. |
-| `--run-tests` | off | Run the generated suites after writing them. |
+| `--run-tests` | off | Run the generated suites after writing them. Only `perf-harness`, `unit-browser` and `e2e` generate a runnable suite — ask for it with none of those selected and the run says so on stderr and records `testRun.mode: "none"`, rather than exiting 0 as if suites had passed. |
 | `--json` | off | Print the machine-readable run result to stdout. |
 | `--no-inline-summary` | off | Skip the per-component `<Component>.flawless.json` sidecars. |
 | `--swagger-url <url>` | auto-probe under `--nextjs` | Fetch the OpenAPI spec over HTTP instead of reading a file. `off` disables the probe entirely. Only consulted in `--nextjs` mode; outside it the value is parsed and never read. |
 | `-h, --help` | — | Show help. |
 | `-V, --version` | — | Show version. |
 
-With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code, suite failures included. Without the flag you get the table and no JSON.
+With `--json` (or `--ci`) the CLI prints `{ exitCode, outDir, results, keptScripts, testRun?, errors? }` and nothing else on stdout — the human summary table is suppressed, and everything `--run-tests`/`--changed` suites say (banners, verdicts, the runners' own reporters) goes to stderr, so stdout always parses. `exitCode` mirrors the process exit code, suite failures included. Without the flag you get the table and no JSON.
+
+Two of those fields exist so the exit code is *explicable*, not merely correct:
+
+- **`testRun`** — what the test-run phase did. `{ mode: "generated" | "affected", green }` means suites **actually ran**, and `green` is what folded into the exit code; `{ mode: "none", reason }` means **zero suites ran** and says why — nothing selected generates a suite `--run-tests` executes, nothing was affected, or the selected tasks plan no run for the work that was. The invariant to rely on: `mode: "none"` if and only if nothing executed, so a `green` field never appears on a phase that ran nothing. Absent means the run never *reached* the phase — including a request blocked by a failed task, so read absent as "look at `results`", never as "no run was asked for". Without this field, exit 0 conflates *"the suites passed"* with *"no suite ran"*.
+- **`errors`** — failures that belong to no task and so appear nowhere in `results`, such as a Next.js emit that threw. Omitted entirely on a clean run.
 
 Suppressing stdout is not a vow of silence: **diagnostics still reach stderr under `--ci`** — a file the sweep skipped, an unparseable OpenAPI spec, a test-script collision, a failed Next.js emit. Those are the lines an unattended caller most needs, and they used to share the flag that silenced the table.
-
-Capture stderr as well as parsing stdout. Most red runs are readable from the blob alone — a failed task is `ok: false` with its `error` set — but not all of them are: a failure that belongs to no task, such as a Next.js emit that threw, sets `exitCode: 1` while every entry in `results` still says `ok: true`, and the only account of what went wrong is the stderr line.
 
 ## What gets generated
 

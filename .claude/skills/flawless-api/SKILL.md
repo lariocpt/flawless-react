@@ -39,14 +39,32 @@ and task-level `console.warn`s have no gate. Redirect fd 2 if you need silence.
 
 - **Never calls `process.exit`.** Bad input throws `UsageError` (exported from
   the package and from `types.ts`); everything else is a plain error.
-- **CLI exit codes:** 0 clean · 1 a task failed OR a `--run-tests`/`--changed`
-  suite run failed (suite outcomes fold into the exit code) · 2 usage error.
+- **CLI exit codes:** 0 clean · 1 a task failed, a `--run-tests`/`--changed`
+  suite run failed (suite outcomes fold into the exit code), or a non-task
+  failure such as a broken Next.js emit · 2 usage error. The code alone does not
+  say which — `results`, `testRun` and `errors` do.
 - **`--ci`** = `--no-interactive --json`: stdout is exactly one JSON blob
-  `{ exitCode, outDir, results, keptScripts }` and nothing else. Progress goes away entirely; parse
-  the whole stdout, not a line of it. **stderr still carries diagnostics** —
-  skipped files, an unparseable spec, script collisions, a failed Next.js emit.
-  Capture it: under `--ci` those lines are the only account of work the run
-  quietly dropped.
+  `{ exitCode, outDir, results, keptScripts, testRun, errors? }` and nothing
+  else. Progress goes away entirely; parse the whole stdout, not a line of it.
+  **stderr still carries diagnostics** — skipped files, an unparseable spec,
+  script collisions, a failed Next.js emit. Capture it: those lines are the only
+  account of work the run quietly dropped.
+- **Never read exit 0 as "the suites passed."** Read `testRun`. The invariant:
+  `mode: "none"` **if and only if** zero suites executed, so `green` never
+  appears on a phase that ran nothing.
+  - `{ mode: "generated" | "affected", green }` → suites really RAN; `green` is
+    what folded into `exitCode`;
+  - `{ mode: "none", reason }` → **nothing ran**, and `reason` says which of the
+    three causes it was: no selected task generates a suite `--run-tests`
+    executes (only `perf-harness`, `unit-browser` and `e2e` do — `load` emits
+    pipes you run with `bun run flawless:load`), nothing was affected, or the
+    selected tasks plan no run for the work that was;
+  - absent → the run never REACHED the test-run phase. That is NOT "no run was
+    asked for": a request blocked by a failed task is also absent, exits 1, and
+    is explained by `results`. Read absent as "look elsewhere" (FR-046).
+- **`errors`** carries failures belonging to no task, so `results` cannot show
+  them — a Next.js emit that threw sets `exitCode: 1` with every task `ok: true`.
+  Omitted on a clean run, so branch on its presence.
 - `results` is `TaskResult[]`: `{ id, ok, outputs, findings, summary, error?,
   status? }` — `ok: false` with `error` set is a real task failure.
   `status` ("generated" | "refreshed" | "kept", perf-harness only for now)

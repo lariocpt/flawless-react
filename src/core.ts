@@ -104,12 +104,41 @@ export interface CoreResult {
   /** Path of the provider wrapper actually used for unit specs, if any. */
   provider: string | undefined;
   /**
-   * Present when a test run happened (--run-tests, or --changed's affected
-   * run); absent when none did. Distinguishes "exit 0 because the suites
-   * passed" from "exit 0 because nothing ran" — the two states FR-017 hid
-   * between. `green` is what folded into exitCode.
+   * What the test-run phase did.
+   *
+   *  - "affected" | "generated": suites actually RAN — that is the promise
+   *    these two arms make, and `green` is what folded into exitCode. A phase
+   *    that spawned nothing never wears them (FR-042/FR-043).
+   *  - "none": zero suites ran; `reason` says why — no selected task generates
+   *    one --run-tests executes, nothing was affected, or the selected tasks
+   *    plan no run for the work that was.
+   *  - absent: the run never REACHED the test-run phase. FR-046: that is not
+   *    the same as "nothing was requested". It also covers a request blocked by
+   *    a failed task, which exits 1 and is explained by `results`. Read absent
+   *    as "look elsewhere", never as "no run was asked for".
+   *
+   * The invariant a consumer can rely on: `mode: "none"` if and only if zero
+   * suites executed, and a `green` field only ever appears on a phase that ran
+   * something.
+   *
+   * The whole point is that exit 0 has two meanings — "the suites passed" and
+   * "no suite ran" — and a caller reading only the exit code cannot tell them
+   * apart. That is the pair FR-017 hid between, and B-14 found `--run-tests`
+   * over a selection of non-runnable tasks reproducing it one flag over.
+   *
+   * Deliberately NOT set when a task failed: that run exits 1, so it is already
+   * telling the truth, and the failing TaskResult says which task.
    */
-  testRun?: { mode: "affected" | "generated"; green: boolean };
+  testRun?: { mode: "affected" | "generated"; green: boolean } | { mode: "none"; reason: string };
+  /**
+   * Failures that belong to no task and so appear nowhere in `results`
+   * (FR-041). Today's only producer is a Next.js emit that threw: it sets the
+   * exit code to 1 while every TaskResult still says ok:true, so without this
+   * a --ci consumer saw a red run whose blob contained no account of it.
+   * Empty on a clean run; with `testRun`, every red run is now explicable from
+   * the blob alone.
+   */
+  errors: string[];
   /**
    * flawless:* scripts whose existing package.json value the merge did not
    * recognize as the tool's own and therefore KEPT (FR-034). Durable on
@@ -369,6 +398,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
 
   const results: TaskResult[] = [];
   let anyFailed = false;
+  // FR-041: failures that belong to no task, and so appear nowhere in
+  // `results`. A caller reading the blob saw exitCode 1 with every task ok:true
+  // and no account of why; the stderr line was the only record, and before B-13
+  // even that was suppressed under --ci.
+  const runErrors: string[] = [];
   for (const task of selected) {
     try {
       const r = await task.run(ctx);
@@ -527,7 +561,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       }
     } catch (err) {
       anyFailed = true;
-      warn(`nextjs emit failed: ${(err as Error).message}`);
+      const message = `nextjs emit failed: ${(err as Error).message}`;
+      runErrors.push(message);
+      warn(message);
     }
   }
 
@@ -589,9 +625,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     warn(`stamp refresh failed (non-fatal): ${(err as Error).message}`);
   }
 
-  const runnableSelected = selected.some(
-    (t) => t.id === "perf-harness" || t.id === "unit-browser" || t.id === "e2e",
-  );
+  // The tasks that generate a suite something can run. Named once, so the
+  // message below cannot drift from the predicate that produced it.
+  const RUNNABLE_TASK_IDS: readonly TaskId[] = ["perf-harness", "unit-browser", "e2e"];
+  const runnableSelected = selected.some((t) => RUNNABLE_TASK_IDS.includes(t.id));
 
   // --changed narrows the RUN, never the generation. The profiling host is a
   // single bundle of every component, so regenerating only part of it would
@@ -605,6 +642,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // actually FIRED — exit 0 alone is equally consistent with the branch never
   // executing, which is exactly how FR-017 hid.
   let testRun: CoreResult["testRun"];
+  // FR-044. --changed is checked first, so passing both flags silently runs the
+  // NARROW set and drops the full suite the caller also asked for. Say so: the
+  // outcome is defensible, choosing it in silence is not.
+  if (opts.changed !== undefined && opts.runTests === true) {
+    warn(
+      "--changed and --run-tests were both given: running only the affected specs. " +
+        "Drop --changed to run the full generated suites.",
+    );
+  }
   if (!anyFailed && opts.changed !== undefined && runnableSelected) {
     const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
     const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
@@ -619,7 +665,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           ? ` (${affected.withoutSpecs.length} unexported component(s) covered through their parent)`
           : ""),
     );
-    suitesGreen = await runAffectedTests(
+    const outcome = await runAffectedTests(
       outDir,
       selected.map((t) => t.id),
       affected,
@@ -636,15 +682,51 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // directly, so nothing would catch it. Same word, one file apart.
       opts.log !== true,
     );
-    testRun = { mode: "affected", green: suitesGreen };
+    suitesGreen = outcome.green;
+    // ran === 0 FIRST, always. A run arm of this union is a promise that suites
+    // executed, so "green because nothing ran" must never wear one (FR-042).
+    testRun =
+      outcome.ran === 0
+        ? { mode: "none", reason: outcome.reason ?? "changed: no specs to run" }
+        : { mode: "affected", green: outcome.green };
   } else if (!anyFailed && opts.runTests === true && runnableSelected) {
-    suitesGreen = await runGeneratedTests(
+    const outcome = await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),
       nextCtx?.root,
       opts.log !== true,
     );
-    testRun = { mode: "generated", green: suitesGreen };
+    suitesGreen = outcome.green;
+    testRun =
+      outcome.ran === 0
+        ? { mode: "none", reason: outcome.reason ?? "no generated suite matched the selection" }
+        : { mode: "generated", green: outcome.green };
+  } else if (!anyFailed && (opts.runTests === true || opts.changed !== undefined)) {
+    // B-14: a run WAS asked for and cannot happen, because nothing selected
+    // generates a suite. Previously this fell off the end of the chain with no
+    // else — exit 0, empty stderr, and a blob indistinguishable from a green
+    // suite run. The reason names the ids that would have run something: told
+    // only that nothing ran, a caller has to go and read the source to learn
+    // what to select instead.
+    //
+    // The !anyFailed guard is deliberate and load-bearing. A run where a task
+    // failed exits 1 and its TaskResult says which — that run is already
+    // telling the truth, and marking it "none" would relabel a real failure as
+    // a no-op.
+    const asked = opts.runTests === true ? "--run-tests" : "--changed";
+    const selectedIds = selected.map((t) => t.id).join(", ");
+    // FR-045. "generates no suite" was false for `load`, which generates pipes
+    // AND declares the flawless:load script to run them in the same breath —
+    // --run-tests simply does not execute them. Saying a generated artefact is
+    // not one is exactly the kind of claim this repo's rules forbid.
+    const loadNote = selected.some((t) => t.id === "load")
+      ? " load pipes are a suite, but not one --run-tests executes — run them with `bun run flawless:load`."
+      : "";
+    const reason =
+      `${asked} ran no suite: none of the selected task(s) (${selectedIds}) generates one ` +
+      `that ${asked} executes.${loadNote} Select at least one of ${RUNNABLE_TASK_IDS.join(", ")}.`;
+    warn(reason);
+    testRun = { mode: "none", reason };
   }
 
   return {
@@ -656,6 +738,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     nextjs: nextCtx,
     provider: providerOverride,
     testRun,
+    errors: runErrors,
   };
 }
 

@@ -23,6 +23,28 @@ export interface PlannedRun {
  * otherwise invoked a script that had never been written. Standalone suites
  * have no e2e script at all.
  */
+/**
+ * What a suite-run phase actually DID.
+ *
+ * `ran` is the number of suites that were spawned, and it exists because
+ * `green` alone cannot tell "every suite passed" from "no suite ran" — both
+ * were `true`. Both runners returned that bare boolean and both said so out
+ * loud ("all generated/affected suites passed") over an EMPTY plan, which is
+ * the false pass this project exists to kill: FR-042 reached it through plain
+ * `--changed --tasks e2e`, FR-043 through `--run-tests` with an `--out` dir
+ * that happened to hold a package.json.
+ *
+ * The rule at every call site: check `ran === 0` BEFORE reading `green`.
+ */
+export interface SuiteRunOutcome {
+  /** Suites actually spawned. Zero means nothing ran — never report green. */
+  ran: number;
+  /** No spawned suite failed. Meaningless unless `ran > 0`. */
+  green: boolean;
+  /** Why nothing ran. Set exactly when `ran === 0`, for the caller to relay. */
+  reason?: string;
+}
+
 export function planGeneratedRuns(selectedTasks: TaskId[], standalone: boolean): PlannedRun[] {
   const prefix = standalone ? "test" : "flawless";
   const script = (name: string): string[] => ["bun", "run", `${prefix}:${name}`];
@@ -49,7 +71,7 @@ export async function runGeneratedTests(
   selectedTasks: TaskId[],
   nextRoot?: string,
   quiet = false,
-): Promise<boolean> {
+): Promise<SuiteRunOutcome> {
   // Under --json/--ci stdout is contractually one JSON blob; in quiet mode
   // everything the runner says — and the child suites' own stdout — goes to
   // stderr so the blob stays parseable on exactly the red runs it exists for.
@@ -72,6 +94,22 @@ export async function runGeneratedTests(
 
   const scripts = planGeneratedRuns(selectedTasks, standalone);
 
+  // FR-043. Checked BEFORE anything is spawned, because the loop below cannot
+  // distinguish an empty plan from a plan that all passed — it reports both as
+  // "all generated suites passed".
+  //
+  // The previous comment here claimed this was unreachable through runCore.
+  // That was WRONG, and the correctness lens refuted it with a repro:
+  // `standalone` is `existsSync(outDir/package.json)`, NOT "outside Next.js
+  // mode". Point --out at any directory holding a package.json — a leftover
+  // standalone suite, a package root — and `standalone` is true inside Next.js
+  // mode, where planGeneratedRuns(["e2e"], true) plans nothing at all.
+  if (scripts.length === 0) {
+    const reason = `no generated suite matched the selected task(s): ${selectedTasks.join(", ")}`;
+    say(`\n${reason}\n`);
+    return { ran: 0, green: true, reason };
+  }
+
   const failed: string[] = [];
   for (const s of scripts) {
     say(`\n› ${s.cmd.join(" ")}\n`);
@@ -81,10 +119,10 @@ export async function runGeneratedTests(
 
   if (failed.length > 0) {
     say(`\nfailed suites: ${failed.join(", ")}\n`);
-    return false;
+    return { ran: scripts.length, green: false };
   }
   say("\nall generated suites passed\n");
-  return true;
+  return { ran: scripts.length, green: true };
 }
 
 function sayInto(quiet: boolean): (s: string) => void {
@@ -205,15 +243,26 @@ export async function runAffectedTests(
   affected: AffectedSpecs,
   nextRoot?: string,
   quiet = false,
-): Promise<boolean> {
+): Promise<SuiteRunOutcome> {
   const say = sayInto(quiet);
   const standalone = existsSync(path.join(path.resolve(outDir), "package.json"));
   const cwd = standalone ? path.resolve(outDir) : (nextRoot ?? path.resolve(outDir));
 
   const runs = planAffectedRuns(outDir, selectedTasks, affected, standalone);
-  if (runs.length === 0 && affected.components.length === 0 && affected.routes.length === 0) {
-    say("\nchanged: nothing affected — no specs to run\n");
-    return true;
+  // FR-042. The old guard demanded runs.length === 0 AND both affected sets
+  // empty, so an empty plan WITH affected work fell through the loop below and
+  // announced "all affected suites passed" having spawned nothing. Two plain
+  // routes reached it: --changed --tasks e2e when the edited component sits on
+  // no page route, and --changed --tasks perf-harness when the only affected
+  // work is a route. The plan being empty is the whole condition — what made
+  // it empty only decides which sentence to say.
+  if (runs.length === 0) {
+    const nothingAffected = affected.components.length === 0 && affected.routes.length === 0;
+    const reason = nothingAffected
+      ? "changed: nothing affected — no specs to run"
+      : `changed: ${affected.components.length} affected component(s) and ${affected.routes.length} affected route(s), but the selected task(s) (${selectedTasks.join(", ")}) plan no run for them`;
+    say(`\n${reason}\n`);
+    return { ran: 0, green: true, reason };
   }
 
   const failed: string[] = [];
@@ -224,8 +273,8 @@ export async function runAffectedTests(
   }
   if (failed.length > 0) {
     say(`\nfailed suites: ${failed.join(", ")}\n`);
-    return false;
+    return { ran: runs.length, green: false };
   }
   say("\nall affected suites passed\n");
-  return true;
+  return { ran: runs.length, green: true };
 }

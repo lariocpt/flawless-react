@@ -387,6 +387,13 @@ export async function main(argv: string[]): Promise<void> {
     // exitCode rides inside the blob: suite failures under --run-tests fold
     // into it, and a --ci consumer parsing stdout alone must see them without
     // shell plumbing around $?.
+    //
+    // testRun and errors are what make the exit code EXPLICABLE rather than
+    // merely correct. Without testRun, exit 0 conflates "the suites passed"
+    // with "no suite ran" (B-14); without errors, a failure belonging to no
+    // task gives exit 1 with every result ok:true and no reason anywhere
+    // (FR-041). Both are omitted from the JSON when empty/absent — `testRun`
+    // because absent genuinely means "no run was asked for".
     process.stdout.write(
       `${JSON.stringify(
         {
@@ -394,6 +401,8 @@ export async function main(argv: string[]): Promise<void> {
           outDir: result.outDir,
           results: result.results,
           keptScripts: result.keptScripts,
+          testRun: result.testRun,
+          ...(result.errors.length > 0 ? { errors: result.errors } : {}),
         },
         null,
         2,
