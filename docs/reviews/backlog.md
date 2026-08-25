@@ -22,10 +22,44 @@ three clusters are 89% of all remaining hand-work.
 | ~~B-12~~ (done, round 8) | **Emit an e2e setup that fails until filled**: the generated `global-setup.ts` is a hand-fill stub, so route specs assert `status < 500` against a login redirect (which answers 200) and the suite is green before it is real | Round-7 sweep + the `flawless-e2e-load` skill's anti-vacuous probes, which exist precisely because of this shape. Shipped as a **redirect assertion in the route spec** (not a throw in the stub — `global-setup.ts` is write-once even under `--force`, so a change there never reaches an existing suite) plus a REPORT.md hand-work tally keyed on byte-identity with the stub. Proved by EXECUTING the emitted spec in a real chromium against a server that 302s to /login: green before the fix, red until the hook is filled, green after | M |
 | ~~B-13~~ (done, round 8) | **Keep diagnostics under `--ci`**: `warn()` writes to stderr but is gated on the same flag as `log()`, so the mode built for machines loses "your `--api` flag was ignored" and "skipping unparseable file" | Round-7 sweep, mechanism read at core.ts:170 + cli.ts's `log: !args.json`. Shipped: `warn()` gates on a separate `quiet` (programmatic-only, default off), all nine warn sites survive `--ci`, and one test pins both halves — warning on stderr, stdout still exactly one blob | S |
 | ~~B-14~~ (done, round 8) | **`--run-tests` with only non-runnable tasks says nothing**: no message, no marker in the `--ci` blob — the caller cannot tell "suites passed" from "no suite ran" | Round-7 sweep; same ambiguity class FR-017 fixed for the affected-run gate. Shipped: a warning naming the runnable ids, `testRun` widened with `{mode:"none", reason}` and added to the blob, plus `errors` for FR-041 (a failure belonging to no task) so every red run is explicable from the blob alone | S |
-| B-15 | **Absorb repeated work into the caches**: `parseFile` re-runs component detection per call; `findExportedDecl` re-walks the same barrels per member per component | Round-7 sweep. Measured impact is small today (the B-7 timing pin still holds) — recorded as an opportunity, not a finding | M |
+| ~~B-15~~ (measured, NOT taken, round 8) | **Absorb repeated work into the caches**: `parseFile` re-runs component detection per call; `findExportedDecl` re-walks the same barrels per member per component | Round-7 sweep. **Measured before deciding, and the measurement said stop** — numbers in the paragraph below. The redundant work is real; its cost is not. What shipped instead is the timing bound the mode never had | M |
 
 Perf micro-items measured and deliberately NOT taken (recorded so nobody
 re-litigates them): parallelising the analyse loop (~2.5% projected saving —
 sequential is fine); template building (no quadratic behaviour found); process
 spawns (a full 7-task run spawns exactly 3 children — the per-file-spawn fear
 is already fixed and guarded by a comment at biomeSweep.ts:89).
+
+**B-15's three caches, measured 2026-08-25 and declined.** Driven through
+`analyseFile({roots: "exported"})` — the mode `--roots exported` uses and the
+one the B-7 pin cannot see, because `analyse()` hard-forces `roots: "primary"`
+(`analyse/index.ts:49`). Corpus: a named props interface per component imported
+through a wide star barrel, plus a child chain every root renders.
+
+| Scale (100 files, 60-arm barrel, 3-deep children) | trees | median | per tree |
+|---|---|---|---|
+| 2 roots/file | 200 | 61.8 ms | 0.309 ms |
+| 8 roots/file | 800 | 246.0 ms | 0.308 ms |
+
+- **Per-tree cost is flat across a 4x change in tree count — linear, not
+  quadratic.** The R x (R-1) sibling loop and the per-root subtree re-walk do
+  not dominate anything.
+- **Subtree depth is free**: 1 -> 10 levels moves the total by 4 ms. `depth`
+  bounds it and the shared parse cache absorbs the repeats.
+- **Barrel breadth is the only dimension that bites**, and the entire prize is
+  ~30 ms at a pathological 320-arm barrel (13.2 ms at 20 arms, 43.2 ms at 320,
+  with the tree count fixed). A realistic 60-arm barrel: a few ms.
+- `--roots exported` is **opt-in** (`cli.ts:123` defaults to `primary`), so even
+  these numbers overstate a default run.
+
+Against a run whose generated suite takes minutes to execute, and an
+invalidation hazard the round-7 shadowing bug (`2613f8b`) already demonstrated —
+the memo key must carry the EFFECTIVE `viaReexport`, not the outer
+`requireExportAtRoot` — a cache here buys nothing and costs the next reader.
+
+Two corpus mistakes are recorded because they are the reusable part: inline
+`{ shape: T }` annotations **bail** (`propsShape: {}`, `unresolvedProps`), so a
+corpus built on them measures the bail path while the timings look perfectly
+reasonable; and a corpus with no child components never exercises the per-root
+subtree re-walk at all. `tests/analysePerf.test.ts` asserts against both before
+it trusts its own number.
