@@ -96,8 +96,31 @@ describe("the emitted baseline gate, through real crust", () => {
     expect(last.summary?.p95 as number).toBeGreaterThan(0);
 
     // Case 2: the documented flow — copy a good last-*.json to baseline —
-    // and a healthy run stays under 2x itself.
-    writeFileSync(path.join(loadDir, "baseline-dashboard.json"), JSON.stringify(last));
+    // and a healthy run stays under 2x it.
+    //
+    // FR-047. Copying `last` VERBATIM made this flaky: the gate is
+    // `p95 < 2 * baseline.p95`, and this test shortens the emitted load to
+    // `1s 10/s` against a trivial in-process server, so p95 lands in the
+    // sub-millisecond noise floor where run-to-run jitter doubles it easily.
+    // Observed failing roughly 1 run in 3 while the rest of the suite (a real
+    // chromium included) competed for the machine.
+    //
+    // The emitted gate is NOT the problem — at its real `10s 50/s` the p95 it
+    // compares is a meaningful number. The problem is a test asserting a ratio
+    // between two measurements too small to have a stable ratio. So the
+    // baseline gets a floor: still derived from the observed run (this is
+    // still the documented copy-last-to-baseline flow), just not asked to
+    // resolve differences below a millisecond.
+    //
+    // Case 3 below is what keeps this honest — it forces the baseline far
+    // under reality and REQUIRES a failure, so a floor generous enough to stop
+    // the flake cannot also stop the gate from gating.
+    const observedP95 = last.summary?.p95 as number;
+    const baselineP95 = Math.max(observedP95, 5);
+    writeFileSync(
+      path.join(loadDir, "baseline-dashboard.json"),
+      JSON.stringify({ ...last, summary: { ...last.summary, p95: baselineP95 } }),
+    );
     const atBaseline = await runPipes(env);
     if (atBaseline.code !== 0) console.error(atBaseline.output);
     expect(atBaseline.code).toBe(0);

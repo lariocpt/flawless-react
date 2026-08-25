@@ -87,6 +87,19 @@
       "repro": "--ci --tasks e2e,a11y --run-tests -> exit 1, results [e2e ok:false, a11y ok:true], no testRun key.",
       "fix": "Absent is documented as \"the run never reached the test-run phase — look at results\", in core.ts, README.md, the skill (both copies) and the website.",
       "foundBy": "correctness lens (finding D)"
+    },
+    {
+      "id": "FR-047",
+      "severity": "P1",
+      "dimension": "tests",
+      "status": "fixed",
+      "file": "tests/crustGate.test.ts",
+      "line": 74,
+      "title": "The crust baseline-gate test is flaky — it asserts a ratio between two sub-millisecond measurements",
+      "claim": "Case 2 copies the observed `last-*.json` VERBATIM to the baseline and re-runs, relying on the emitted gate `p95 < 2 * baseline.p95`. The test shortens the emitted load to `1s 10/s` against a trivial in-process server, so p95 sits in the sub-millisecond noise floor where ordinary jitter doubles it. The emitted gate is not at fault — at its real `10s 50/s` the p95 is a meaningful number; the test asks for a stable ratio between measurements too small to have one. A flaky gate is worse than a missing one: it trains the reader to dismiss a red run, which is how a real failure gets waved through.",
+      "repro": "Full suite under FLAWLESS_CI_BROWSER=1 (a real chromium competing for the machine) failed roughly 1 run in 3: '✗ the emitted baseline gate, through real crust > no baseline passes; a copied baseline passes; a forced one fails [1903.08ms]'. Found while re-verifying the round-8 gates, not by a review lens.",
+      "fix": "The baseline is floored at max(observed, 5ms) — still derived from the observed run, so it is still the documented copy-last-to-baseline flow, just not asked to resolve differences below a millisecond. Case 3 (a baseline forced to 0.000001 MUST fail) is unchanged and is what keeps the floor honest: a floor generous enough to stop the flake cannot also stop the gate from gating. Verified with 5 isolated runs and 4 full gated suite runs, all green.",
+      "foundBy": "final round-8 verification — a single flaked run that was chased instead of re-run"
     }
   ],
   "reportedNotReproduced": []
