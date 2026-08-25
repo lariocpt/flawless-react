@@ -244,6 +244,12 @@ Deliberately **not** moved:
   gated browser-execution test and a `roots:"exported"` timing bound the mode
   never had, but the single-LAN CI caveat is scored in #1/#11.
 - **#8 Performance at scale (5)** — B-15 measured the three proposed analysis
-  caches and **declined** them: per-tree cost is flat at 0.308 ms across a 4×
-  change in tree count, so the work is linear. Nothing moved because nothing
-  needed to.
+  caches and **declined** them. The justification stated here first was wrong
+  and is retracted: "per-tree cost is flat, so the work is linear" was a
+  two-point artifact, and re-running the sweep wider shows per-tree cost rising
+  0.309 → 0.442 ms from 8 to 32 roots per file. The redundant work is real and
+  superlinear. It is declined on the real app instead: `mybodycorpai/apps/web`
+  analyses in 163 ms warm / 251 ms cold (273 files, 174 trees) and a memo
+  prototype buys ~1.14 × — **18 ms**, against a generated suite that takes
+  minutes to execute. Nothing moved because nothing needed to, but the number
+  that says so is a different number.
