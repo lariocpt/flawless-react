@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { A11Y_REPORT } from "../tasks/a11yScan.ts";
+import { REACT_RULES_REPORT } from "../tasks/eslintReactRules.ts";
 import type { ComponentTree, Finding, TaskId, TaskResult } from "../types.ts";
 
 export function printFindings(findings: Finding[]): void {
@@ -101,9 +103,14 @@ export async function writeInlineSummaries(
       file: tree.entry.filePath,
       counts,
       top,
+      // a11y and react-rules are SWEEPS: each writes a single aggregate for the
+      // whole run, and only perf-static reports per component. These two used
+      // to be spelled `${name}.a11y.json` and `${name}.react-rules.json` —
+      // files no run has ever produced — so two thirds of this map pointed at
+      // nothing, and the published docs copied the wrong names from it.
       reports: {
-        a11y: path.join(outDir, "reports", `${name}.a11y.json`),
-        reactRules: path.join(outDir, "reports", `${name}.react-rules.json`),
+        a11y: path.join(outDir, "reports", A11Y_REPORT),
+        reactRules: path.join(outDir, "reports", REACT_RULES_REPORT),
         perfStatic: path.join(outDir, "reports", `${name}.perf-static.json`),
       },
     };

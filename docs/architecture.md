@@ -304,6 +304,41 @@ the output dir:
   file's existing indentation. Generation should read as an additive diff, not
   a reformat.
 
+## The docs are part of the deliverable
+
+Everything this project claims about itself — `README.md`, `docs/*.md`, the six
+`.claude/skills` entries, and the separate website repo — is checked against the
+code, not trusted.
+
+That is new, and it is new because nothing had ever checked it. No test in
+`tests/` opened a prose file, and a single reading pass in round 8 turned up a
+skill documenting a `throw` the tool never emits, a wrong exit-code table, a
+`--ci` field list two fields stale, and a JSDoc contradicting itself two lines
+later. The first run of the guard found three more, plus the code defect
+underneath one of them (FR-048).
+
+- [tests/docsLint.test.ts](../tests/docsLint.test.ts) parses every documented
+  `flawless-react …` invocation through the real `parseArgs`, and checks the
+  flag inventory, the task ids, the `--ci` blob's field set, the documented exit
+  codes, the environment variables and the emitted artefact paths. The last
+  four are checked against a **real run** over `tests/fixtures/nextapp`, not
+  against a reading of the source.
+- [tests/skillsDocs.test.ts](../tests/skillsDocs.test.ts) covers what is
+  specific to a skill: frontmatter, and the siblings it cross-references.
+- Both carry a "the lint can actually fail" block. A guard that cannot redden is
+  worse than no guard, because it reads as coverage.
+
+The flag list lives in [src/cliFlags.ts](../src/cliFlags.ts) as data. `--help`
+renders from it, so help can never omit a flag, and `flawless-react --flags`
+prints it for consumers that cannot import it. That last one is the bridge to
+the website repo: it has hand-copied examples and a table headed "every flag
+flawless-react accepts", it cannot import `parseArgs`, but its CI can run the
+published binary — `--check '<line>'` parses without executing (no file opened,
+nothing spawned), and `--flags` is what catches a flag the table simply omits,
+which `--check` never can. Four real flags went undocumented exactly that way.
+
+If you change the CLI or an emitted path, these go red before a user does.
+
 ## Why two phases?
 
 The split lets us:

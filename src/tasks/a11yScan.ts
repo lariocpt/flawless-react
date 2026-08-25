@@ -1,6 +1,11 @@
 import type { RunContext, Task, TaskResult } from "../types.ts";
 import { runBiomeSweep } from "./biomeSweep.ts";
 
+/** The sweep writes ONE aggregate, not one report per component. Exported so
+ *  that anything pointing a reader at it cannot name a file that is never
+ *  written — which is exactly what the inline sidecar used to do. */
+export const A11Y_REPORT = "a11y.json";
+
 export const a11yScan: Task = {
   id: "a11y",
   label: "Accessibility / web-standards scan",
@@ -12,7 +17,7 @@ export const a11yScan: Task = {
       ctx,
       rules: biomeA11yRules(),
       categoryPrefix: "lint/a11y",
-      aggregateFile: "a11y.json",
+      aggregateFile: A11Y_REPORT,
     });
   },
 };
