@@ -18,7 +18,8 @@ flawless/e2e/
 ```
 
 Each spec navigates the route, asserts the response is not 5xx, waits for
-`networkidle`, and requires an empty `pageerror` + console-error list. When the
+`networkidle`, **asserts it is still on the route it asked for**, and requires
+an empty `pageerror` + console-error list. When the
 component tree contains click interactions, up to three of them are replayed in
 a second test — each guarded by a visibility check, so a spec never fails
 merely because an element is behind state it did not open.
@@ -42,13 +43,38 @@ on the server (invasive, and still incomplete for direct DB access).
 v1 picks the first. Seed the database with whatever the repo already provides,
 then run. Nothing is stubbed and nothing pretends to be.
 
-### Authentication
+### Authentication, and why the suite is not green before it is real
 
 `global-setup.ts` ships a stub that writes an empty storage state (so the
 config's `storageState` reference always resolves) plus a worked example:
 request the login endpoint with a Playwright request context and persist
 `storageState` to `.auth.json`. Fill it in once; the file is yours and is
 gitignored.
+
+Until you do, the suite is running **unauthenticated** — and that used to pass.
+A protected route 302s to `/login`, `page.goto` follows the redirect, and the
+login page answers **200** with a clean console. "Not 5xx" and "no console
+errors" are both true of somebody else's form, so thirty route specs could go
+green having tested one login screen.
+
+Two things close it, and neither is a flag you can forget:
+
+- **Every spec asserts the landing.** After `networkidle` it compares the final
+  pathname against the route it navigated to (trailing slashes normalised). The
+  failure names both ways out: authenticate in `global-setup.ts`, or change the
+  expectation if the redirect is what the route is supposed to do. Reading after
+  `networkidle` means a client-side `router.push` counts as a redirect too, not
+  only a server 302.
+- **REPORT.md says the hook is still a stub.** The e2e task reports it as
+  hand-work when the on-disk `global-setup.ts` is byte-identical to what it
+  emits — identity, not a grep for the TODO marker, so filling the file in while
+  leaving the comment stops the report rather than nagging forever.
+
+This is verified by executing the emitted spec in a real chromium against a
+server that redirects — red before the hook is filled, green after
+(`tests/e2eExecution.test.ts`, gated on `FLAWLESS_CI_BROWSER=1`). Reading the
+spec is exactly what let the old behaviour survive: every assertion in it looked
+reasonable.
 
 ### Contract-checked runs
 

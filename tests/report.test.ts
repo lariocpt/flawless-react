@@ -165,17 +165,26 @@ describe("Hand-work remaining", () => {
     expect(renderReportMarkdown(withHandWork)).toBe(renderReportMarkdown(withHandWork));
   });
 
-  test("the section states its scope in every state: unit/browser only, other layers uncounted", () => {
-    // e2eRoutes, loadPipes and providerWrapper plant markers no counter sees;
-    // copy claiming unit-browser's emitters "are what plant" them was false.
+  test("the section states its scope in every state, and the scope moved with B-12", () => {
+    // loadPipes and providerWrapper still plant markers no counter sees; copy
+    // claiming unit-browser's emitters "are what plant" them was false.
+    //
+    // Widened deliberately: e2eRoutes now reports one tally of its own (the
+    // auth hook, still the untouched stub), so "unit/browser only" stopped
+    // being true the moment it did. The failure mode this test guards is the
+    // scope sentence OUTLIVING the set of emitters that feed the section —
+    // so it asserts the new scope AND that the old, now-false claim is gone.
     for (const results of [
       [task("unit-browser", { handWork } as never)],
       [task("unit-browser", { handWork: [] } as never)],
       [task("unit-browser")],
     ]) {
       const md = renderReportMarkdown({ ...INPUT, results });
-      expect(md).toContain("unit/browser layer");
-      expect(md).toContain("carry their own `TODO(flawless)` markers, not counted here");
+      expect(md).toContain("unit/browser layer, plus the e2e suite's auth hook");
+      expect(md).toContain("`TODO(flawless)` markers, not");
+      expect(md).toContain("counted here");
+      // The superseded sentence must not survive alongside the new one.
+      expect(md).not.toContain("Counted for the unit/browser layer only");
     }
   });
 

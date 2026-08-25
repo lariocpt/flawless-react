@@ -177,6 +177,44 @@ describe("e2e task", () => {
     expect(existsSync(path.join(outDir, "e2e"))).toBe(false);
   });
 
+  // B-12, the visibility half. The suite is green before it is real: the auth
+  // hook ships as a stub, so every route spec navigates unauthenticated. The
+  // correctness half (each spec asserting it landed on the route it asked for)
+  // is proved by EXECUTION in tests/e2eExecution.test.ts — reading a spec is
+  // what let this survive in the first place. This pins the reporting.
+  test("an untouched auth stub is reported as hand-work — and a filled one is not", async () => {
+    const nextjs = nextProject("next dev -p 3123");
+    const outDir = path.join(nextjs.root, "flawless");
+    const pageFile = writePage(nextjs, path.join("things", "[id]"));
+    const tree = withFilePath(await toolbarTree(), pageFile);
+
+    const first = await task("e2e").run(ctxOf({ outDir, trees: [tree], nextjs }));
+    expect(first.ok).toBe(true);
+    expect(first.handWork).toEqual([
+      {
+        kind: "e2e-auth-unfilled",
+        count: 1,
+        exemplar: path.join(outDir, "e2e", "global-setup.ts"),
+      },
+    ]);
+
+    // The control, and the reason this is byte-identity and not a marker grep:
+    // a user who authenticates but leaves the TODO comment in place must stop
+    // being reported. Edit the file the way a human would and re-run.
+    const setupPath = path.join(outDir, "e2e", "global-setup.ts");
+    writeFileSync(
+      setupPath,
+      `${readFileSync(setupPath, "utf8")}\n// authenticated for real, by a person\n`,
+    );
+    const second = await task("e2e").run(ctxOf({ outDir, trees: [tree], nextjs, force: true }));
+    expect(second.ok).toBe(true);
+    expect(second.handWork).toEqual([]);
+    // …and the edit survived, because global-setup is never overwritten — which
+    // is exactly why the fix had to go in the ROUTE SPECS, which --force does
+    // rewrite, and not in the stub.
+    expect(readFileSync(setupPath, "utf8")).toContain("by a person");
+  });
+
   test("emits a port-aware config, global setup, README and one spec per page", async () => {
     const nextjs = nextProject("next dev -p 3123");
     // Under the project root, like a real run. Pointed at an unrelated tmpdir

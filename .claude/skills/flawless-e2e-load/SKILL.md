@@ -20,12 +20,21 @@ bun run dev:web                                          # app on :3001
 bun run flawless:e2e
 ```
 
-`flawless/e2e/global-setup.ts` signs in as the seeded user and persists
-`storageState` to `e2e/.auth.json`. It **throws if login lands back on
-/login** — that throw is an anti-vacuous guard, not a bug. When it fires, the
-seed drifted (wrong user, wrong password, unseeded DB); fix the seed, never
-the guard. Override credentials with `FLAWLESS_E2E_EMAIL` / `_PASSWORD` /
-`_BASEURL`.
+`flawless/e2e/global-setup.ts` is where you sign in as the seeded user and
+persist `storageState` to `e2e/.auth.json`. **What the tool emits is a stub**
+that writes an empty state (so the config's `storageState` always resolves) plus
+a worked example — it is never overwritten, `--force` included, because it is
+yours once you touch it.
+
+A hand-filled setup should **throw if login lands back on /login**: that throw
+is an anti-vacuous guard, not a bug. When it fires the seed drifted (wrong user,
+wrong password, unseeded DB); fix the seed, never the guard.
+
+You are not relying on remembering that, though. **Every emitted route spec now
+asserts it landed on the route it asked for**, so an unauthenticated suite fails
+naming both escapes instead of quietly testing the login screen. Until the hook
+is filled, REPORT.md's hand-work table says so — the check is byte-identity
+against the stub, so it clears the moment you edit the file.
 
 Dynamic segments come from `flawless/e2e/params.json` (write-once, merge-kept):
 `defaults` filled with seeded UUIDs, per-route overrides optional. A blank id
@@ -53,6 +62,10 @@ bun run flawless:load
   exports silently stay empty and 2/3 of the pipes measure the 404 handler.
 
 ## The anti-vacuous probes — run BEFORE the pipes
+
+These are for the **load** pipes. The e2e specs now carry their own landing
+assertion; a load pipe has nothing of the kind, and `crust` will happily report
+a fast, green p95 for 500 redirects to a login page.
 
 ```bash
 echo "$LOAD_ID"                                   # must be non-empty

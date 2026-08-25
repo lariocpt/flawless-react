@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { outDirRel, relativeToEmitted, underOutDir } from "../emitPaths.ts";
 import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
-import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
+import type { ComponentTree, RunContext, Task, TaskResult, TodoTally } from "../types.ts";
 
 /**
  * Route-level Playwright e2e against the target's real `next dev` server.
@@ -56,6 +56,17 @@ export const e2eRoutes: Task = {
       await Bun.write(setupPath, globalSetupStub());
       written.push(setupPath);
     }
+    // B-12. Every route spec now asserts it landed on the route it asked for,
+    // so an unauthenticated suite fails loudly instead of testing the login
+    // screen. That is the correctness half; this is the VISIBILITY half — the
+    // REPORT should say the auth hook is still a stub before anyone runs it.
+    //
+    // Byte-identity against the stub, not a grep for the TODO marker: the
+    // marker wording is presentation (types.ts says so), and a user who filled
+    // the file in while leaving the comment would be reported as unfilled
+    // forever. Identity clears the moment a human edits the file, and stays
+    // honest across re-runs because the stub is never overwritten.
+    const authUnfilled = readFileSync(setupPath, "utf8") === globalSetupStub();
 
     const paramsJsonPath = path.join(e2eDir, "params.json");
     const wroteParams = await writeParams(paramsJsonPath, pages, ctx.force);
@@ -86,11 +97,19 @@ export const e2eRoutes: Task = {
 
     const skippedNote =
       skipped.length > 0 ? `; kept ${skipped.length} existing spec(s) (--force to regenerate)` : "";
+    // One tally for the run, not one per spec: the stub being unfilled is a
+    // single fact about the suite, and counting it per route would report the
+    // same hand-work N times.
+    const handWork: TodoTally[] =
+      authUnfilled && pages.length > 0
+        ? [{ kind: "e2e-auth-unfilled", count: 1, exemplar: setupPath }]
+        : [];
     return {
       id: "e2e",
       ok: true,
       outputs: written,
       findings: [],
+      handWork,
       summary:
         pages.length === 0
           ? "no analysed entry is an app-router page.tsx — config emitted, no specs"
@@ -256,6 +275,11 @@ function routeSpec(
 ${paramLines}
 const ROUTE = ${urlExpr};
 
+/** Trailing slashes are not a difference: "/items/" and "/items" are one route. */
+function normalisePath(p: string): string {
+  return p.replace(/\\/+$/, "") || "/";
+}
+
 // The route rides on the describe: playwright matches --grep against the
 // space-joined full title path, so a --changed run's "\\bGET <route> " pattern
 // (grepForRoutes) must select EVERY test in this file — a route embedded in
@@ -271,6 +295,20 @@ test.describe("GET ${route.urlPath}", () => {
     expect(resp, "navigation returned a response").toBeTruthy();
     expect(resp?.status(), "no 5xx").toBeLessThan(500);
     await page.waitForLoadState("networkidle");
+    // B-12: assert we are ON the route we asked for. An unauthenticated request
+    // to a protected page redirects to a login screen, which answers 200 — so
+    // every check above passes while this spec tests somebody else's form.
+    // Read after networkidle so a client-side router.push counts as a redirect
+    // too, not just a server 302.
+    const landed = normalisePath(new URL(page.url()).pathname);
+    const wanted = normalisePath(new URL(ROUTE, "http://flawless.invalid").pathname);
+    expect(
+      landed,
+      \`navigation left the route: asked for \\\`\${wanted}\\\`, landed on \\\`\${landed}\\\`. \` +
+        \`A redirect to a login page answers 200, so the status check above cannot see it. \` +
+        \`Authenticate in ${underOutDir(rel, "e2e/global-setup.ts")}, or change this \` +
+        \`expectation if the redirect is what the route is supposed to do.\`,
+    ).toBe(wanted);
     expect(errors).toEqual([]);
   });
 ${

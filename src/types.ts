@@ -535,6 +535,10 @@ export type TodoKind =
   | "compound-root-wrap"
   | "server-action-stub"
   | "unaddressable-target"
+  // B-12. Not planted per spec like the others: it is recorded once per run
+  // when the emitted global-setup.ts is still byte-identical to the stub, so
+  // every route spec in the suite is navigating unauthenticated.
+  | "e2e-auth-unfilled"
   | "other";
 
 export interface TodoTally {

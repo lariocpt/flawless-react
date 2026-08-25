@@ -196,11 +196,15 @@ export function renderReportMarkdown(input: ReportInput): string {
   lines.push(
     "## Hand-work remaining",
     "",
-    // Fixed line, present in every state: the counters live in the unit/browser
-    // emitters only, and claiming more is how this section lied about scope.
-    // Ledger: tally the other layers' markers too, then widen this claim.
-    "Counted for the unit/browser layer only — the e2e, load and provider files",
-    "carry their own `TODO(flawless)` markers, not counted here.",
+    // Fixed line, present in every state. Widened deliberately in B-12: the
+    // e2e task now reports one tally of its own (the auth stub, still
+    // unfilled), so "unit/browser only" became false the moment it did. The
+    // claim still names exactly what is counted and what is not — the scope
+    // sentence is load-bearing, and the way this section once lied was by
+    // outliving the set of emitters that feed it.
+    "Counted for the unit/browser layer, plus the e2e suite's auth hook — the",
+    "load and provider files carry their own `TODO(flawless)` markers, not",
+    "counted here.",
     "",
   );
   if (measured.length === 0) {
