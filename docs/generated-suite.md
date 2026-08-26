@@ -473,3 +473,12 @@ identical run leaves `git status` empty.
 `reports/summary.json` is the machine-readable per-task result, and
 `<Component>.flawless.json` sidecars carry per-component findings unless
 `--no-inline-summary`.
+
+Every path inside a sidecar — `file` and each entry of `reports` — is written
+**relative to the sidecar itself**, so resolve them with
+`path.resolve(dirname(sidecarPath), value)`. They used to be absolute, which
+named the machine that ran the tool in a file that gets committed; that is the
+invariant `src/emitPaths.ts` exists to hold, and the sidecar was the one emitted
+file its sweep did not cover. Note that `reports.a11y` and `reports.reactRules`
+point at the run's single aggregate — those two tasks are sweeps — while
+`reports.perfStatic` is per component.

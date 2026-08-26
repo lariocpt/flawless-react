@@ -138,9 +138,21 @@ Two things decide whether a load run means anything:
   dashboard route redirects to the login page, which answers 200, so every pipe
   passes while measuring the login screen.
 
-`source flawless/load/env.sh` exports one `LOAD_<PARAM>` per id in
+`flawless/load/routes.setup.ts` does both jobs before a single pipe runs:
+crust imports the sibling `<name>.setup.ts` of a pipes file and awaits its
+default export first. It seeds one `LOAD_<PARAM>` per id in
 `flawless/e2e/params.json`, so the load pipes and the e2e specs cannot drift
-apart over which records they target. `--tasks load` on its own creates that
+apart over which records they target, and it probes every static route to prove
+`LOAD_AUTH` still authenticates — the check described above, enforced rather
+than left to you. A route that redirects by design goes under `landing` in
+`params.json`, the same map the e2e specs read.
+
+The module is **write-once**: a hand-written check that knows your app (an
+authenticated endpoint answering 401 is a sharper signal than a redirect) is
+better than the generated one, and no regeneration will overwrite it. It is
+written when absent, so a suite that predates it does get the guard.
+`flawless/load/env.sh` is still emitted for shells that want the exports, but
+nothing needs to source it any more. `--tasks load` on its own creates that
 file, with a blank slot per id its pipes reference: the gate comments, this
 README and `env.sh` all tell you to fill it in, and until they did it was a file
 no run without the e2e task had written.

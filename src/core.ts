@@ -2,10 +2,12 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
-import { outDirRel, underOutDir } from "./emitPaths.ts";
+import { outDirRel } from "./emitPaths.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
+  ignoreEntries,
+  ignoreRootFor,
   mergeIntoNextPackageJson,
   updateGitignore,
 } from "./nextjs/detect.ts";
@@ -544,18 +546,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // you to persist a logged-in storageState, i.e. session cookies staged
       // for commit. `*.flawless.json` stays literal: it is the inline-summary
       // sidecar pattern, written beside the analysed sources, not under outDir.
-      const added = updateGitignore(nextCtx.root, [
-        underOutDir(outRel, "reports/"),
-        underOutDir(outRel, "heaps/"),
-        underOutDir(outRel, "playwright-report/"),
-        underOutDir(outRel, "node_modules/"),
-        underOutDir(outRel, "test-results/"),
-        underOutDir(outRel, "browser/test-results/"),
-        underOutDir(outRel, "e2e/test-results/"),
-        underOutDir(outRel, "e2e/.auth.json"),
-        underOutDir(outRel, "load/last-*.json"),
-        "*.flawless.json",
-      ]);
+      const added = updateGitignore(nextCtx.root, ignoreEntries(outRel));
       if (added.length > 0) {
         log(`nextjs: added ${added.length} entry(ies) to .gitignore (${added.join(", ")})`);
       }
@@ -564,6 +555,30 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       const message = `nextjs emit failed: ${(err as Error).message}`;
       runErrors.push(message);
       warn(message);
+    }
+  }
+
+  // Outside Next.js mode this used to run at all: updateGitignore was reached
+  // only from the branch above, so a plain `flawless-react "src/**/*.tsx"` run
+  // ignored NOTHING it generated — not reports/, not heaps/, not
+  // playwright-report/, and not e2e/.auth.json, which the emitted global-setup
+  // itself describes as session cookies staged for commit. One run in a fresh
+  // repo left 28 generated files untracked and unignored.
+  //
+  // The design call this needed: WHERE does a non-Next .gitignore belong? At the
+  // git root — that is where git reads a repo-wide ignore and where the user's
+  // existing one already is. Writing beside the out dir instead would create a
+  // second, easily-missed ignore file inside generated output. Failing that (a
+  // package that is not a repo) the nearest package.json, and failing that the
+  // out dir's parent, so something is always ignored rather than nothing.
+  if (!nextCtx) {
+    const ignoreRoot = ignoreRootFor(outDir);
+    const added = updateGitignore(ignoreRoot, ignoreEntries(outDirRel(outDir, ignoreRoot)));
+    if (added.length > 0) {
+      log(
+        `added ${added.length} entry(ies) to ${path.join(ignoreRoot, ".gitignore")} ` +
+          `(${added.join(", ")})`,
+      );
     }
   }
 

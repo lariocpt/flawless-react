@@ -55,6 +55,12 @@ See the flawless-regen skill for the full regeneration contract.
 everything under `<root>/flawless/`, merges devDeps + `flawless:*` scripts into
 the project's `package.json`, and appends gitignore entries.
 
+Ignore entries are appended in **every** mode, not only under `--nextjs`. Outside
+Next.js mode they go to the git root (then the nearest `package.json`, then the
+out dir's parent). Until that was fixed a plain run ignored nothing it
+generated, including `<out>/e2e/.auth.json` — the file the emitted global-setup
+tells you to persist a logged-in storageState into.
+
 **Providers.** App-router `layout.tsx` is usually an async server component
 importing `next/font` or `next/headers` — unusable under jsdom. flawless
 detects that and derives `flawless/provider.tsx` from the JSX chain that
@@ -171,7 +177,10 @@ commented counts, so REPORT.md does not call a gated pipe covered.
 
 `perf-static` and the biome tasks print `file:line:col rule message` and write
 `flawless/reports/*.json`; a `<Component>.flawless.json` sidecar lands next to
-each analysed source (`--no-inline-summary` to disable). Rules worth knowing:
+each analysed source (`--no-inline-summary` to disable). Its paths are relative
+to the sidecar — resolve against its own directory — and its `a11y` and
+`reactRules` entries name the run's single aggregate, not a per-component file.
+Rules worth knowing:
 
 - `perf/hook-missing-dependency` / `hook-extraneous-dependency` — stale-closure
   and over-firing effects, deliberately conservative (skipped when deps contain

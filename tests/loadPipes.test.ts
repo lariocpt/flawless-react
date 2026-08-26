@@ -9,6 +9,7 @@ import {
   type LoadTarget,
   mergePipes,
   readFilledParams,
+  renderLoadSetup,
   renderPipes,
 } from "../src/tasks/loadPipes.ts";
 import type { ComponentInfo, ComponentTree } from "../src/types.ts";
@@ -565,5 +566,149 @@ describe("env.sh finds params.json whatever shell sources it", () => {
     // The header tells you what to source; naming a path that does not exist
     // is the same defect one line higher up.
     expect(env).toContain("# source qa/load/env.sh");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The load setup module
+// ---------------------------------------------------------------------------
+
+/**
+ * An expired LOAD_AUTH is the silent failure of this plane. crust follows
+ * redirects, so a dead session turns every route into a login page answering
+ * 200: `expect 200` passes, `stats` reports healthy percentiles, and the file
+ * goes green having measured a login form. Reproduced on the dogfood app —
+ * 20/20 status 200, p50 19.7ms, exit 0, every request served /login.
+ *
+ * No assertion inside a load pipe can see it: in load mode crust's record is
+ * {status, ms, url} and that url is the REQUESTED one, byte-identical whether
+ * the session is live or dead.
+ */
+describe("the load setup module", () => {
+  const targets: LoadTarget[] = [
+    { name: "dashboard-buildings-id", urlPath: "/dashboard/buildings/$LOAD_ID", params: ["id"] },
+    { name: "dashboard", urlPath: "/dashboard", params: [] },
+    { name: "forgot-password", urlPath: "/forgot-password", params: [] },
+    { name: "index", urlPath: "/", params: [] },
+  ];
+
+  test("probes every static route, and no dynamic one", () => {
+    const src = renderLoadSetup(targets, "flawless");
+    const routes = JSON.parse(
+      /const ROUTES: string\[\] = ([\s\S]*?);\n/.exec(src)?.[1] as string,
+    ) as string[];
+    expect(routes).toContain("/dashboard");
+    // An earlier cut probed ONE static route and drew /forgot-password on the
+    // dogfood app — a public page a dead cookie does not redirect, i.e. a check
+    // that cannot fail. Every static route is probed precisely so the authed
+    // ones are always among them.
+    expect(routes).toContain("/forgot-password");
+    // An unfilled id must not read as an auth failure.
+    expect(routes.some((r) => r.includes("$LOAD_ID"))).toBe(false);
+    // "/" redirects by design in most apps, before the user can record where to.
+    expect(routes).not.toContain("/");
+  });
+
+  test("asserts where the response landed, not merely its status", () => {
+    const src = renderLoadSetup(targets, "flawless");
+    expect(src).toContain("new URL(res.url).pathname");
+    expect(src).toContain("landed.startsWith(want)");
+    // Reuses the e2e landing map rather than opening a second place to record
+    // a by-design redirect.
+    expect(src).toContain("flawless/e2e/params.json");
+  });
+
+  test("refuses to run at all without the env it needs", () => {
+    const src = renderLoadSetup(targets, "flawless");
+    expect(src).toContain("LOAD_BASE and LOAD_AUTH are required");
+    expect(src).toContain("must be a header line");
+  });
+
+  test("honours a non-default --out in every path it emits", () => {
+    const src = renderLoadSetup(targets, "qa");
+    expect(src).toContain("qa/e2e/params.json");
+    expect(src).toContain("qa/load/.env.load");
+    expect(src).not.toContain("flawless/");
+  });
+
+  // env.sh, which this replaces, has two documented incidents in its own
+  // comments where it exported NOTHING silently — the pipes then requested URLs
+  // with empty path segments and measured the 404 handler while reporting the
+  // application. Seeding here instead is the design the first real user of this
+  // plane arrived at by hand, for exactly that reason.
+  test("seeds LOAD_<PARAM> ids from params.json, and says so when there are none", () => {
+    const src = renderLoadSetup(targets, "flawless");
+    // Split so this assertion is not itself a template-literal-in-a-string:
+    // the emitted line is process.env[`LOAD_${k.toUpperCase()}`] = v.
+    expect(src).toContain("process.env[`LOAD_");
+    expect(src).toContain("k.toUpperCase()");
+    // defaults first, per-route overrides after, blanks never clobbering.
+    expect(src).toContain("...(params.defaults ?? {})");
+    expect(src).toContain('if (v !== "") merged[k] = v;');
+    expect(src).toContain("measure the 404 handler");
+  });
+
+  test("the emitted module is valid TypeScript that exports a default", async () => {
+    // Emitted code is a program, not text: it has to parse and expose the shape
+    // test-pipes will await.
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-setup-"));
+    const file = path.join(dir, "routes.setup.ts");
+    await Bun.write(file, renderLoadSetup(targets, "flawless"));
+    const mod = (await import(file)) as { default: unknown };
+    expect(typeof mod.default).toBe("function");
+  });
+
+  test("routes.pipes no longer carries guard lines of its own", () => {
+    // They were the first design and were replaced: N failures among the
+    // results is worse than one before any measurement starts.
+    const text = renderPipes(targets, "/proj/flawless", "/proj", new Set(["ID"]));
+    expect(text).not.toMatch(/^GET /m);
+  });
+});
+
+describe("the setup module reaches disk", () => {
+  /** Drive the real task into a temp project, the way a run lays it out. */
+  async function runLoad(root: string, outName = "flawless"): Promise<string> {
+    const { loadPipes } = await import("../src/tasks/loadPipes.ts");
+    const outDir = path.join(root, outName);
+    await Bun.write(
+      path.join(outDir, "e2e", "params.json"),
+      JSON.stringify({ defaults: { id: "seeded-1" }, routes: {} }),
+    );
+    await loadPipes.run({
+      trees: [],
+      outDir,
+      variants: 3,
+      heaps: "stress",
+      force: true,
+      report: false,
+      provider: undefined,
+      apiSpec: undefined,
+      inlineSummary: false,
+      json: false,
+      changed: undefined,
+      nextjs: { root, router: "app", apiRoutes: [], appResolver: undefined },
+    } as never);
+    return path.join(outDir, "load", "routes.setup.ts");
+  }
+
+  test("a run writes it when it is absent", async () => {
+    const setup = await runLoad(await tmpDir());
+    expect(await Bun.file(setup).exists()).toBe(true);
+    expect(await Bun.file(setup).text()).toContain("LOAD_BASE and LOAD_AUTH are required");
+  });
+
+  // Write-once is the whole reason this can be emitted at all. The first app to
+  // hit the underlying bug had already written its own module BY HAND, with a
+  // sharper check than this one (an authenticated /api/me answering 401). A
+  // regeneration that overwrote it would replace a real guard with a weaker one
+  // — the "escape hatch a --force deletes" failure, again.
+  test("--force does not overwrite one you wrote", async () => {
+    const root = await tmpDir();
+    await runLoad(root);
+    const setup = path.join(root, "flawless", "load", "routes.setup.ts");
+    await Bun.write(setup, "// mine\nexport default async () => {};\n");
+    await runLoad(root);
+    expect(await Bun.file(setup).text()).toBe("// mine\nexport default async () => {};\n");
   });
 });

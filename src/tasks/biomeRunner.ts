@@ -40,16 +40,29 @@ export interface RunBiomeOptions {
  * tasks (a11y, react-rules) hard-failed in the binary while the other three worked.
  *
  * Checking a few plausible locations makes the binary useful whenever biome is reachable at
- * all, and keeps the source install behaving exactly as before. */
-function resolveBiomeBin(): string | null {
-  const candidates = [
+ * all, and keeps the source install behaving exactly as before.
+ *
+ * The walk UP from the analysed project is not decoration. A monorepo hoists its dev
+ * dependencies to the workspace root, so `apps/web/node_modules/.bin/biome` does not exist
+ * while `<root>/node_modules/.bin/biome` does — and a monorepo app is the shape this tool is
+ * most often pointed at. Checking only the scanned package left a11y and react-rules dead in
+ * the compiled binary on exactly that layout, including on this project's own dogfood app,
+ * where every previous run had been made with the SOURCE install and therefore resolved
+ * biome from flawless-react's own node_modules instead. Two of seven tasks were failing in
+ * the shipped artifact and passing in the one used to test it. */
+export function biomeCandidates(from: string = process.cwd()): string[] {
+  return [
     // 1. Our own node_modules. This is the source-install case and stays first, so a
     //    source install always uses the biome version pinned in our package.json.
     path.join(findProjectRoot(), "node_modules", ".bin", "biome"),
-    // 2. The project being analysed. A React codebase that lints with biome already has it.
-    path.join(process.cwd(), "node_modules", ".bin", "biome"),
+    // 2. The project being analysed, then every ancestor — node's own resolution order,
+    //    which is what makes a hoisted workspace root reachable.
+    ...nodeModulesBinCandidates(from, "biome"),
   ];
-  for (const c of candidates) if (existsSync(c)) return c;
+}
+
+function resolveBiomeBin(): string | null {
+  for (const c of biomeCandidates()) if (existsSync(c)) return c;
   // 3. Anything on PATH — a global install, or a distro package.
   try {
     const onPath = Bun.which("biome");
@@ -60,13 +73,26 @@ function resolveBiomeBin(): string | null {
   return null;
 }
 
+/** `<dir>/node_modules/.bin/<bin>` for dir and every ancestor, nearest first. */
+export function nodeModulesBinCandidates(from: string, bin: string): string[] {
+  const out: string[] = [];
+  let dir = path.resolve(from);
+  for (;;) {
+    out.push(path.join(dir, "node_modules", ".bin", bin));
+    const parent = path.dirname(dir);
+    if (parent === dir) return out;
+    dir = parent;
+  }
+}
+
 export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
   if (opts.files.length === 0) return [];
   const biomeBin = resolveBiomeBin();
   if (!biomeBin) {
     throw new Error(
-      "biome executable not found. Looked in this package's node_modules, " +
-        `${path.join(process.cwd(), "node_modules", ".bin", "biome")}, and on PATH.\n` +
+      "biome executable not found. Looked in this package's node_modules, in " +
+        `${path.join(process.cwd(), "node_modules", ".bin", "biome")} and every ancestor ` +
+        "(so a hoisted workspace root counts), and on PATH.\n" +
         "  Source install:   bun install\n" +
         "  Compiled binary:  install biome in the project you are scanning " +
         "(bun add -d @biomejs/biome) or put it on PATH.",
