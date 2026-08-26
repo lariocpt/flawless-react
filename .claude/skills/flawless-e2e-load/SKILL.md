@@ -68,8 +68,7 @@ bun run build:web && PORT=3001 bunx next start &         # PROD build on :3001
 SESSION=$(jq -r '.cookies[] | select(.name=="session").value' flawless/e2e/.auth.json)
 export LOAD_BASE=http://localhost:3001
 export LOAD_AUTH="cookie: session=$SESSION"
-source flawless/load/env.sh                              # exports LOAD_<PARAM> ids
-bun run flawless:load
+bun run flawless:load    # routes.setup.ts seeds the ids and proves the auth
 ```
 
 - **LOAD_BASE must be a production build.** `next dev` compiles routes on
@@ -78,8 +77,19 @@ bun run flawless:load
   default :3000 may collide with something else on the box — `PORT=3001` wins.
 - **LOAD_AUTH is a header line** — for cookie sessions, `cookie:
   session=<value>` taken from the e2e run's `.auth.json`, not a Bearer token.
-- **jq is a hard prerequisite** for `env.sh`; without it the LOAD_<PARAM>
-  exports silently stay empty and 2/3 of the pipes measure the 404 handler.
+- **You no longer source `env.sh`.** `flawless/load/routes.setup.ts` runs
+  first (crust awaits a pipes file's sibling setup module), seeds every
+  `LOAD_<PARAM>` from `params.json`, and throws if it seeded none. env.sh needed
+  jq and, without it, exported nothing *silently* while 2/3 of the pipes
+  measured the 404 handler. The module has one failure mode and it is loud.
+- **The auth check is enforced, not advised.** The same module probes every
+  static route and throws if one lands somewhere else — an expired cookie
+  redirects to a login page that answers 200, so `expect 200` passes and the
+  whole file reports healthy percentiles for a login form. Measured: 20/20
+  status 200, p50 19.7ms, exit 0, every request served /login. Record a
+  by-design redirect under `landing` in `params.json`.
+- The module is **write-once** — replace it with a check that knows your app and
+  nothing will overwrite yours.
 
 ## The anti-vacuous probes — run BEFORE the pipes
 

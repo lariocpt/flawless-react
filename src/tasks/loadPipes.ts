@@ -76,6 +76,16 @@ export const loadPipes: Task = {
       keptPipes = true;
     }
 
+    // Write-once, like the e2e global-setup stub: a hand-written module that
+    // knows the app is better than this one, and a regeneration must never take
+    // it. Absent, it IS written — so a suite that predates the guard gets it,
+    // which a write-once file only manages because "absent" is the common case.
+    const setupPath = path.join(loadDir, "routes.setup.ts");
+    if (!existsSync(setupPath)) {
+      await Bun.write(setupPath, renderLoadSetup(targets, outDirRel(ctx.outDir, ctx.nextjs.root)));
+      written.push(setupPath);
+    }
+
     const envPath = path.join(loadDir, "env.sh");
     await Bun.write(envPath, loadEnvScript(outDirRel(ctx.outDir, ctx.nextjs.root)));
     written.push(envPath);
@@ -281,6 +291,134 @@ function renderPipeBody(t: LoadTarget, rel: string): string {
     `| stats --out ${statsOut} ` +
     `| assert (async s => { const b = Bun.file("${baseline}"); return !(await b.exists()) || s.p95 < 2 * (await b.json()).summary.p95 })`
   );
+}
+
+/**
+ * The routes the setup module can probe: static ones only.
+ *
+ * params.length === 0 also means urlPath carries no $VARS, so it is the literal
+ * route path. A dynamic route is excluded because an unfilled id would read as
+ * an auth failure; "/" because it redirects by design in most apps and would
+ * fail before the user has had a chance to record where to.
+ */
+function guardTargets(targets: LoadTarget[]): LoadTarget[] {
+  return targets.filter((t) => t.params.length === 0 && t.urlPath !== "/");
+}
+
+/**
+ * The setup module crust imports before a single pipe runs.
+ *
+ * An expiring $LOAD_AUTH is THE failure mode of this plane, and it is silent.
+ * crust follows redirects, so a dead session turns every route into the login
+ * page answering 200: `expect 200` passes, `stats` reports healthy percentiles,
+ * and the file goes green having measured a login form. Reproduced on a real
+ * app — 20/20 status 200, p50 19.7ms, exit 0, every request served /login.
+ *
+ * Nothing downstream can see it. In load mode (`parallel N`) crust's record is
+ * {status, ms, url} and that url is the REQUESTED one, byte-identical whether
+ * the session is live or dead. Only a plain fetch shows where a request landed.
+ *
+ * A setup module rather than guard lines in routes.pipes: it fails once, before
+ * anything is measured, instead of N times among the results — and the first
+ * app to hit this had already been fixed BY HAND exactly this way, which is
+ * where the shape comes from.
+ *
+ * Every static route is probed, not one. Nothing in the analysis says which
+ * routes need a session, and an earlier cut of this picked a single static
+ * route, drew /forgot-password on the dogfood app, and would have passed with a
+ * dead cookie — a check that cannot fail. Dynamic routes are skipped: an
+ * unfilled id would read as an auth failure.
+ *
+ * WRITE-ONCE. A hand-written module that knows the app (an authenticated
+ * /api/me answering 401 is a sharper signal than a redirect) is strictly better
+ * than this one, and no regeneration may overwrite it. Absent, it is written —
+ * so suites that predate it do get the guard.
+ */
+export function renderLoadSetup(targets: LoadTarget[], rel: string): string {
+  const routes = guardTargets(targets).map((t) => t.urlPath);
+  return `// Setup module for routes.pipes. test-pipes imports the sibling
+// <name>.setup.ts and awaits its default export before any line runs.
+//
+// Why: crust follows redirects, so an expired LOAD_AUTH turns every route into
+// a login page answering 200 — "expect 200" passes, stats reports healthy
+// percentiles, and the whole file goes green having measured a login form.
+// Nothing downstream can see it: a load-mode record carries the REQUESTED url,
+// not the landed one. So the check has to happen here, before any measurement.
+//
+// This file is written once and never regenerated. Replace it with a check that
+// knows your app if you have a better signal — an authenticated endpoint
+// answering 401 is sharper than a redirect — and nothing will overwrite yours.
+
+/** Static routes only: a dynamic one with an unfilled id would look like an auth failure. */
+const ROUTES: string[] = ${JSON.stringify(routes)};
+/** Every route the pipes target, so "no ids" can be told from "no dynamic routes". */
+const TOTAL_ROUTES = ${targets.length};
+
+export default async () => {
+	const base = process.env.LOAD_BASE;
+	const auth = process.env.LOAD_AUTH;
+	if (!base || !auth) {
+		throw new Error(
+			"routes.setup: LOAD_BASE and LOAD_AUTH are required — run via \`crust --env-file ${underOutDir(rel, "load/.env.load")}\` or export them",
+		);
+	}
+	const sep = auth.indexOf(":");
+	if (sep < 0) {
+		throw new Error(\`routes.setup: LOAD_AUTH must be a header line, e.g. "cookie: session=…" — got \${auth}\`);
+	}
+	const headers = { [auth.slice(0, sep).trim()]: auth.slice(sep + 1).trim() };
+
+	const paramsFile = Bun.file("${underOutDir(rel, "e2e/params.json")}");
+	if (!(await paramsFile.exists())) {
+		throw new Error(
+			"routes.setup: ${underOutDir(rel, "e2e/params.json")} not found — its ids are what these pipes target",
+		);
+	}
+	const params = (await paramsFile.json()) as {
+		defaults?: Record<string, string>;
+		routes?: Record<string, Record<string, string>>;
+		landing?: Record<string, string>;
+	};
+
+	// LOAD_<PARAM> ids, seeded here rather than by sourcing env.sh. That shim is a
+	// bash/zsh-portability script whose own comments record two incidents where it
+	// exported NOTHING silently — the pipes then ran against URLs with empty path
+	// segments and measured the 404 handler while reporting the application. This
+	// has one failure mode, and it is loud.
+	const merged: Record<string, string> = { ...(params.defaults ?? {}) };
+	for (const route of Object.values(params.routes ?? {})) {
+		for (const [k, v] of Object.entries(route)) if (v !== "") merged[k] = v;
+	}
+	let exported = 0;
+	for (const [k, v] of Object.entries(merged)) {
+		if (v === "") continue;
+		process.env[\`LOAD_\${k.toUpperCase()}\`] = v;
+		exported++;
+	}
+	if (exported === 0 && ROUTES.length < TOTAL_ROUTES) {
+		throw new Error(
+			"routes.setup: no ids in ${underOutDir(rel, "e2e/params.json")} — every dynamic route below would request a URL with an empty segment and measure the 404 handler",
+		);
+	}
+
+	// The same landing map the e2e specs use, so a route that redirects by design
+	// is recorded once rather than in two places that drift.
+	const landing: Record<string, string> = params.landing ?? {};
+
+	for (const route of ROUTES) {
+		const res = await fetch(new URL(route, base), { headers });
+		const landed = new URL(res.url).pathname;
+		const want = landing[route] ?? route;
+		if (!landed.startsWith(want)) {
+			throw new Error(
+				\`routes.setup: \${route} landed on \${landed} (status \${res.status}). Either LOAD_AUTH no longer \` +
+				\`authenticates, or this route redirects by design — record the destination under "landing" in \` +
+				\`${underOutDir(rel, "e2e/params.json")}. Every measurement below would be of \${landed}, not \${route}.\`,
+			);
+		}
+	}
+};
+`;
 }
 
 function gateComment(missing: string[], rel: string): string {
