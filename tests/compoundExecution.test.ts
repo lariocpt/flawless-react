@@ -39,6 +39,10 @@ export function DialogContent({ children }: { children?: React.ReactNode }) {
 export function DialogHeader({ children }: { children?: React.ReactNode }) {
   return <DialogPrimitive.Title>{children}</DialogPrimitive.Title>;
 }
+
+export function DialogOverlay() {
+  return <DialogPrimitive.Overlay />;
+}
 `;
 
 /**
@@ -150,6 +154,14 @@ describe("family-wrapped compound specs, executed", () => {
     const triggerSpec = readFileSync(path.join(outDir, "unit", "DialogTrigger.test.tsx"), "utf8");
     expect(triggerSpec).toContain("<Dialog>");
     expect(triggerSpec).not.toContain("<Dialog open>");
+    // A part taking no children takes the other emission branch, which has no
+    // child text to witness and counts document elements instead. Pin that the
+    // branch was actually taken, so the run below is executing it.
+    const overlaySpec = readFileSync(path.join(outDir, "unit", "DialogOverlay.test.tsx"), "utf8");
+    expect(overlaySpec).toContain(
+      'expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1)',
+    );
+    expect(overlaySpec).not.toContain("flawless-slot");
 
     const install = Bun.spawn(["bun", "add", "-d", ...suitePins()], {
       cwd: app,
@@ -198,6 +210,7 @@ describe("family-wrapped compound specs, executed", () => {
       "unit/DialogHeader.test.tsx",
       "unit/DialogTrigger.test.tsx",
       "unit/DialogContent.test.tsx",
+      "unit/DialogOverlay.test.tsx",
     );
     if (generated.code !== 0) console.error(generated.output);
     expect(generated.code).toBe(0);

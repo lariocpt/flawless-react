@@ -115,8 +115,8 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
         reason: "async server component — it awaits data and cannot mount in a browser",
       };
     case "compound-part":
-      // A part whose own file exports an open-state family mounts through
-      // the registry's composed wrapper (hostRegistry's COMPOUND_WRAP).
+      // A part whose own file exports an open-state family mounts through the
+      // wrapper hostRegistry composes into its own REGISTRY entry.
       if (compoundWrappable(info)) break;
       return {
         eligible: false,

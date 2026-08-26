@@ -954,7 +954,8 @@ test("${name} is exported as a component", () => {
  * sites do: the Trigger inside a closed Root (the state where a trigger is
  * visible), everything else inside <Root open> — with the Content sibling
  * in between for parts that live inside the popup. Portal content lands
- * outside the render container, so assertions read baseElement.
+ * outside the render container, so assertions read the whole document rather
+ * than the container — through screen and baseElement both.
  */
 function compoundPartSpec(
   info: ComponentInfo,
@@ -985,20 +986,36 @@ function compoundPartSpec(
       ? `<${family.root}${open}><${family.content}>${partJsx}</${family.content}></${family.root}>`
       : `<${family.root}${open}>${partJsx}</${family.root}>`;
 
+  // Both portal surfaces. screen is bound to document.body, so it sees a part
+  // that rendered through a portal and a part that rendered inline alike;
+  // baseElement is the same document from the render result's side. A part
+  // that rendered nowhere satisfies neither.
+  //
+  // With no child to witness, count elements instead: render() always appends
+  // its own container div to baseElement, so >1 means the composed mount put
+  // something in the document. A bare not.toThrow() did not even ask that.
+  //
+  // Honest about its reach: a Root is a context provider and renders no DOM of
+  // its own, so for a trigger or the content part this fails when the part
+  // renders nothing. An "other" part is wrapped in the Content sibling too,
+  // and that sibling's own DOM satisfies the count on its own — there the
+  // assertion witnesses the mount, not the part.
   const body = child
     ? `  const { baseElement } = render(${wrapped});
+  expect(screen.getByText("flawless-slot")).toBeInTheDocument();
   expect(baseElement.textContent).toContain("flawless-slot");`
-    : `  expect(() => render(${wrapped})).not.toThrow();`;
+    : `  const { baseElement } = render(${wrapped});
+  expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1);`;
 
   return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
-import { render } from "@testing-library/react";
+import { render${child ? ", screen" : ""} } from "@testing-library/react";
 import type * as React from "react";
 ${mockBlock}${emitComponentImport(info, importPath)}
 ${wrapImport}
 // ${name} ${note}
 // Its own file exports the family, so the spec mounts the part the way call
-// sites do instead of skipping. Portal content lands outside the container —
-// assertions read baseElement.
+// sites do instead of skipping. Portal content lands outside the container, so
+// the assertions read the whole document — via screen and baseElement.
 const DEFAULTS: Record<string, unknown> = ${JSON.stringify(synthesiseDefaults(info))};
 
 test("${name} mounts inside its family wrapper", () => {

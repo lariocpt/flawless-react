@@ -5,8 +5,8 @@ import type * as React from "react";
 
 // A shadcn-style compound family in one file: primary is the PART (the file
 // is named after it), so both emitted-artefact sweeps exercise the wrapped
-// branches — compoundPartSpec in the unit suite and the composed
-// COMPOUND_WRAP registry entry in the host.
+// branches — compoundPartSpec in the unit suite and the composed REGISTRY
+// entry in the host.
 
 export function Dialog(props: Record<string, unknown>) {
   return <DialogPrimitive.Root {...props} />;

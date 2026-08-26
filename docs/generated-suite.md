@@ -362,13 +362,19 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   sibling) do better: the spec mounts the part the way call sites do — the
   Trigger inside a closed Root, everything else inside
   `<Root open><Content>…</Content></Root>` — with portal-aware assertions
-  reading `baseElement`. Only open-state families are wrapped (dialog,
+  reading the whole document through `screen` and `baseElement`, since portal
+  content lands outside the render container. A part that takes no children
+  has no text to witness, so its spec asserts the mount put elements in the
+  document instead. Only open-state families are wrapped (dialog,
   alert-dialog, popover, dropdown-menu, select, tooltip, hover-card,
   context-menu, menubar, collapsible); value-driven families (accordion,
   tabs) and parts without a same-file Root keep the honest skip and its
-  TODO. The browser host mounts wrapped parts too: the regenerated
-  `host/registry.ts` composes the wrapper per entry and records it in a
-  `COMPOUND_WRAP` table, so a kept `main.tsx` benefits from a plain refresh.
+  TODO. Two more shapes keep the skip: a `Sub`-prefixed part (SubTrigger,
+  SubContent) needs a `<Sub>` ancestor this wrapper does not build, and a
+  family whose Root is exported by default rather than by name would produce
+  an import that does not resolve. The browser host mounts wrapped parts too:
+  the regenerated `host/registry.ts` composes the wrapper into the part's own
+  REGISTRY entry, so a kept `main.tsx` benefits from a plain refresh.
 
 #### Colocated spec stamps
 
