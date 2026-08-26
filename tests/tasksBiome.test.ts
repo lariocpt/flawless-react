@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
+import { biomeCandidates, nodeModulesBinCandidates } from "../src/tasks/biomeRunner.ts";
 import {
   dedupeTreeFiles,
   findingsByComponent,
@@ -402,3 +403,52 @@ function reactRulesConfig(): unknown {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Resolving the biome executable
+// ---------------------------------------------------------------------------
+
+/**
+ * A monorepo hoists dev dependencies to the workspace root, so the scanned
+ * package has no node_modules/.bin/biome of its own. Checking only that one
+ * path left a11y and react-rules hard-failing in the COMPILED binary on
+ * exactly that layout — including on this project's own dogfood app, where
+ * every previous run had used the source install and so resolved biome from
+ * flawless-react's own node_modules. Two of seven tasks were broken in the
+ * shipped artifact and working in the artifact used to test it.
+ */
+describe("biome executable resolution", () => {
+  test("candidates walk up from the scanned package, nearest first", () => {
+    const c = nodeModulesBinCandidates("/a/b/c", "biome");
+    expect(c[0]).toBe(path.join("/a/b/c", "node_modules", ".bin", "biome"));
+    expect(c[1]).toBe(path.join("/a/b", "node_modules", ".bin", "biome"));
+    expect(c[2]).toBe(path.join("/a", "node_modules", ".bin", "biome"));
+    // Terminates at the filesystem root rather than looping.
+    expect(c.at(-1)).toBe(path.join("/", "node_modules", ".bin", "biome"));
+  });
+
+  test("a hoisted workspace root is reachable from the app package", () => {
+    // The mybodycorpai shape: biome declared and hoisted at the repo root,
+    // absent under apps/web, which is where the tool is pointed.
+    const root = mkdtempSync(path.join(os.tmpdir(), "flawless-hoist-"));
+    created.push(root);
+    const hoisted = path.join(root, "node_modules", ".bin");
+    mkdirSync(hoisted, { recursive: true });
+    writeFileSync(path.join(hoisted, "biome"), "#!/bin/sh\necho '{\"diagnostics\":[]}'\n");
+    const appDir = path.join(root, "apps", "web");
+    mkdirSync(path.join(appDir, "node_modules"), { recursive: true });
+
+    // biomeCandidates, NOT the helper: the defect was that the list the
+    // RESOLVER consumes omitted ancestors. A test of the helper alone stays
+    // green when the resolver stops calling it — which it did, on the first
+    // attempt at this test.
+    const candidates = biomeCandidates(appDir);
+    expect(candidates).toContain(path.join(hoisted, "biome"));
+    // The scanned package's own path is offered first and does not exist here,
+    // which is the whole shape of the bug.
+    const own = path.join(appDir, "node_modules", ".bin", "biome");
+    expect(candidates).toContain(own);
+    expect(existsSync(own)).toBe(false);
+    expect(candidates.indexOf(own)).toBeLessThan(candidates.indexOf(path.join(hoisted, "biome")));
+  });
+});
