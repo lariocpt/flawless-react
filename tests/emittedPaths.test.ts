@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { relativeToEmitted } from "../src/emitPaths.ts";
+import { ignoreEntries, ignoreRootFor } from "../src/nextjs/detect.ts";
 import { renderSuite } from "../src/scaffold/templates.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
 import { e2eRoutes } from "../src/tasks/e2eRoutes.ts";
@@ -356,13 +357,112 @@ describe("the inline sidecar points at files that exist", () => {
     const missing: string[] = [];
     for (const sidecar of found) {
       const body = JSON.parse(await Bun.file(sidecar).text()) as {
+        file: string;
         reports: Record<string, string>;
       };
       expect(Object.keys(body.reports).length).toBeGreaterThan(0);
       for (const [key, target] of Object.entries(body.reports)) {
-        if (!(await Bun.file(target).exists())) missing.push(`${key} -> ${target}`);
+        // Relative to the sidecar, never to the machine that wrote it: this file
+        // is committed, so an absolute path in it names a developer's home
+        // directory and resolves nowhere on any other checkout.
+        expect(path.isAbsolute(target)).toBe(false);
+        const abs = path.resolve(path.dirname(sidecar), target);
+        if (!(await Bun.file(abs).exists())) missing.push(`${key} -> ${target}`);
       }
+      // The analysed source is a path too, and was absolute for the same reason.
+      expect(path.isAbsolute(body.file)).toBe(false);
+      expect(await Bun.file(path.resolve(path.dirname(sidecar), body.file)).exists()).toBe(true);
     }
     expect(missing.join("\n")).toBe("");
+  });
+});
+
+/**
+ * A run must ignore what it generates, in EVERY mode.
+ *
+ * updateGitignore was reached only from the Next.js branch, so a plain
+ * `flawless-react "src/**\/*.tsx"` run ignored nothing at all — not reports/,
+ * not heaps/, not playwright-report/, and not e2e/.auth.json, which the emitted
+ * global-setup itself describes as session cookies staged for commit. One run
+ * in a fresh repo left 28 generated files untracked and unignored.
+ */
+describe("generated output is ignored outside Next.js mode too", () => {
+  test("the ignore root is the git root, then a package, then the out dir's parent", async () => {
+    const root = await tmpDir();
+    const nested = path.join(root, "a", "b", "flawless");
+    await Bun.$`mkdir -p ${nested}`.quiet();
+
+    // Nothing to anchor on: the out dir's parent, so something is ignored.
+    expect(ignoreRootFor(nested)).toBe(path.join(root, "a", "b"));
+
+    // A package that is not a repository.
+    await Bun.write(path.join(root, "a", "package.json"), "{}");
+    expect(ignoreRootFor(nested)).toBe(path.join(root, "a"));
+
+    // A repository outranks it — that is where git reads a repo-wide ignore
+    // and where the user's existing one already is.
+    await Bun.$`mkdir -p ${path.join(root, ".git")}`.quiet();
+    expect(ignoreRootFor(nested)).toBe(root);
+  });
+
+  test("both modes ignore the same set", () => {
+    // Two call sites composing their own lists is precisely how one of them
+    // came to ignore nothing.
+    expect(ignoreEntries("flawless")).toEqual([
+      "flawless/reports/",
+      "flawless/heaps/",
+      "flawless/playwright-report/",
+      "flawless/node_modules/",
+      "flawless/test-results/",
+      "flawless/browser/test-results/",
+      "flawless/e2e/test-results/",
+      "flawless/e2e/.auth.json",
+      "flawless/load/last-*.json",
+      "*.flawless.json",
+    ]);
+  });
+
+  test("a non-default --out is honoured, not assumed to be flawless/", () => {
+    const entries = ignoreEntries("qa");
+    expect(entries).toContain("qa/e2e/.auth.json");
+    expect(entries).toContain("qa/heaps/");
+    expect(entries.some((e) => e.startsWith("flawless/"))).toBe(false);
+    // The sidecar pattern is not under the out dir, so it stays literal.
+    expect(entries).toContain("*.flawless.json");
+  });
+
+  test("a real non-Next run writes them, and leaks no report, heap, auth file or sidecar", async () => {
+    const root = await tmpDir();
+    await Bun.$`cp -r ${path.join(import.meta.dir, "fixtures", "nextapp")} ${path.join(root, "app")}`.quiet();
+    const app = path.join(root, "app");
+    await Bun.$`git init -q ${app}`.quiet();
+    await Bun.write(path.join(app, ".gitignore"), "node_modules\n");
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        path.join(import.meta.dir, "..", "src", "bin.ts"),
+        "src/**/*.tsx",
+        "--ci",
+        "--tasks",
+        "perf-static,perf-harness",
+      ],
+      { stdout: "pipe", stderr: "pipe", cwd: app },
+    );
+    await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+
+    const gi = await Bun.file(path.join(app, ".gitignore")).text();
+    for (const entry of ignoreEntries(".flawless")) expect(gi).toContain(entry);
+
+    // The check that matters is git's opinion, not the file's contents.
+    await Bun.$`git -C ${app} add -A`.quiet();
+    const staged = await Bun.$`git -C ${app} status --short`.quiet().text();
+    const leaked = staged
+      .split("\n")
+      .filter((l) => /reports\/|heaps\/|\.auth\.json|\.flawless\.json|test-results/.test(l));
+    expect(leaked.join("\n")).toBe("");
+    // ...and it did not over-ignore: the suite's own sources are still staged.
+    expect(staged).toContain("playwright.config.ts");
   });
 });

@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { relativeToEmitted } from "../emitPaths.ts";
 import { A11Y_REPORT } from "../tasks/a11yScan.ts";
 import { REACT_RULES_REPORT } from "../tasks/eslintReactRules.ts";
 import type { ComponentTree, Finding, TaskId, TaskResult } from "../types.ts";
@@ -98,9 +99,16 @@ export async function writeInlineSummaries(
         column: f.column,
         message: f.message,
       }));
+    // Every path here is relative to THIS file, not to the machine that wrote
+    // it. The sidecar lands beside the analysed source and is committed like any
+    // other generated file, so an absolute path in one names the developer who
+    // ran the tool — src/emitPaths.ts exists to stop exactly that, and this was
+    // the one emitted file its sentinel sweep did not cover. Resolve with
+    // path.resolve(dirname(<this file>), value).
+    const rel = (target: string): string => relativeToEmitted(dir, target);
     const body = {
       component: name,
-      file: tree.entry.filePath,
+      file: rel(tree.entry.filePath),
       counts,
       top,
       // a11y and react-rules are SWEEPS: each writes a single aggregate for the
@@ -109,9 +117,9 @@ export async function writeInlineSummaries(
       // files no run has ever produced — so two thirds of this map pointed at
       // nothing, and the published docs copied the wrong names from it.
       reports: {
-        a11y: path.join(outDir, "reports", A11Y_REPORT),
-        reactRules: path.join(outDir, "reports", REACT_RULES_REPORT),
-        perfStatic: path.join(outDir, "reports", `${name}.perf-static.json`),
+        a11y: rel(path.join(outDir, "reports", A11Y_REPORT)),
+        reactRules: rel(path.join(outDir, "reports", REACT_RULES_REPORT)),
+        perfStatic: rel(path.join(outDir, "reports", `${name}.perf-static.json`)),
       },
     };
     await Bun.write(out, `${JSON.stringify(body, null, 2)}\n`);

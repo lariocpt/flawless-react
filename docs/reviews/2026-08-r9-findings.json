@@ -1,7 +1,7 @@
 {
   "review": "2026-08 round-9 — findings raised while porting crust's prose guard (tests/docsLint.test.ts, tests/skillsDocs.test.ts, the website's lint-examples.mjs); then extended by a full dogfood of every plane against mybodycorpai/apps/web",
   "toolBase": "cfd33b4",
-  "method": "Not a review pass. These are the defects the new documentation guard found on its first run, plus what verifying them turned up. Every entry was reproduced by running the tool over tests/fixtures/nextapp and inspecting the emitted files — none is reasoned-only. The guard itself was mutation-probed: six drifts were introduced one at a time (each applied by a script asserting match count == 1, reverted after), the unmutated baseline was run first and printed, and all six were caught; survivors: 0. The second half is a dogfood: the SHIPPED binary regenerated mybodycorpai/apps/web (99 files, 183 components) and every plane was run — unit 517 pass/14 skip, browser 191/12, perf 256/319 skip (every skip carrying a reason), e2e 39 pass, load 33 pass. Green runs were probed for vacuity rather than believed: the e2e landing assertion was inverted to prove the session is authenticated, and the load plane was re-run against a deliberately dead cookie.",
+  "method": "Not a review pass. These are the defects the new documentation guard found on its first run, plus what verifying them turned up. Every entry was reproduced by running the tool over tests/fixtures/nextapp and inspecting the emitted files — none is reasoned-only. The guard itself was mutation-probed: six drifts were introduced one at a time (each applied by a script asserting match count == 1, reverted after), the unmutated baseline was run first and printed, and all six were caught; survivors: 0. The second half is a dogfood: the SHIPPED binary regenerated mybodycorpai/apps/web (99 files, 183 components) and every plane was run — unit 517 pass/14 skip, browser 191/12, perf 256/319 skip (every skip carrying a reason), e2e 39 pass, load 33 pass. Green runs were probed for vacuity rather than believed: the e2e landing assertion was inverted to prove the session is authenticated, and the load plane was re-run against a deliberately dead cookie. A second dogfood pass after fixing FR-049 and FR-052 re-ran every plane — unit 517/14, browser 191/12, perf 256/319, e2e 39, load 33 — with a full 7-task --force regeneration again byte-identical to what is committed in that repo.",
   "severityAnchors": {
     "P0": "emitted suite broken, silently passes, or lies; or the tool corrupts user files",
     "P1": "wrong analysis output, docs claim contradicted by code, or a CI gap that lets P0s ship",
@@ -27,15 +27,15 @@
       "id": "FR-049",
       "severity": "P3",
       "dimension": "emitted-artefacts",
-      "status": "open",
+      "status": "fixed",
       "file": "src/reporters/findings.ts",
       "line": 104,
       "title": "The inline sidecar stores ABSOLUTE report paths (narrower than first stated)",
       "claim": "The reports map holds machine-rooted paths. CORRECTION to this entry as first written: it claimed the sidecar 'is committed', which is wrong in the mode that matters. The tool itself adds `*.flawless.json` to the project's .gitignore (src/core.ts:557), so in --nextjs mode — the mode the dogfood app and the documented workflow use — sidecars are never committed. Verified on mybodycorpai: 181 sidecars on disk, 0 tracked. The finding survives only OUTSIDE --nextjs mode, where updateGitignore is not reached at all: reproduced by running `--tasks perf-static` over a non-Next fixture in a fresh git repo, after which `git add -A` stages 5 sidecars carrying absolute paths.",
       "spirit": "Same class as the three defects emitPaths.ts's header records, in the one emitted file its sentinel sweep does not cover.",
       "foundBy": "re-reading the entry while answering 'has this been dogfooded?' — the dogfood app disproved it",
-      "note": "Recorded as a correction, not an edit: the original entry asserted a scope wider than the code supports, which is the exact defect class this ledger exists to catch. Downgraded P2 -> P3.",
-      "fix": ""
+      "note": "Recorded as a correction, not an edit: the original entry asserted a scope wider than the code supports, which is the exact defect class this ledger exists to catch. Downgraded P2 -> P3. Fixed anyway once FR-052 was taken — the two share a cause, and the invariant src/emitPaths.ts states is absolute, not conditional on a mode.",
+      "fix": "Every path in the sidecar — the reports map AND `file` — is now written with relativeToEmitted against the sidecar's own directory, the same rule every other emitted file follows. Verified on the dogfood app: file 'error.tsx', reports '../../flawless/reports/…', all resolving, none absolute, no machine name anywhere in the file. The regression test now asserts path.isAbsolute(...) === false and resolves each path against the sidecar before checking it exists; probed by reverting each of the two to absolute (match count == 1), both reddened."
     },
     {
       "id": "FR-050",
@@ -69,15 +69,15 @@
       "id": "FR-052",
       "severity": "P2",
       "dimension": "cli",
-      "status": "open",
+      "status": "fixed",
       "file": "src/core.ts",
       "line": 548,
       "title": "Outside --nextjs mode the tool ignores nothing it generates",
       "claim": "updateGitignore is called only inside the Next.js branch, so a plain `flawless-react \"src/**/*.tsx\"` run adds no ignore entries at all — not reports/, not heaps/, not playwright-report/, not e2e/.auth.json, whose own emitted comment calls it session cookies staged for commit. Reproduced in a fresh git repo over a non-Next fixture: after one run `git add -A` stages 28 generated files. In --nextjs mode all ten entries are added correctly.",
       "spirit": "The tool writing files a user then commits by accident is the tool's problem, not theirs.",
       "foundBy": "reproducing FR-049, which turned out to be a special case of this",
-      "note": "Not fixed here: the ignore list is composed from outDirRel against nextCtx.root, and the non-Next path has no equivalent notion of a project root to resolve against. Choosing one is a design decision, not a patch.",
-      "fix": ""
+      "note": "The design call it needed: WHERE does a non-Next .gitignore belong? At the git root — that is where git reads a repo-wide ignore and where the user's existing one already is. Writing beside the out dir would create a second, easily-missed ignore file inside generated output. Falling back to the nearest package.json (a package that is not a repo), then the out dir's parent, so a run always ignores something rather than nothing.",
+      "fix": "updateGitignore is now called from both paths, and both compose their entries from one shared ignoreEntries(outRel) — two call sites building their own lists is how one of them came to ignore nothing. Verified by reproduction: a non-Next run in a fresh repo now writes all ten entries, and `git add -A` afterwards stages zero reports, heaps, .auth.json files or sidecars while still staging the suite's own sources. Four probes, all caught."
     }
   ],
   "reportedNotReproduced": [],

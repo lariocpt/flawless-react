@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
+import { underOutDir } from "../emitPaths.ts";
 import { stringifyLike } from "../scaffold/adoptStyle.ts";
 import {
   type NextjsApiRoute,
@@ -98,6 +99,63 @@ async function detectAppResolver(
     if (existsSync(candidate)) return candidate;
   }
   return undefined;
+}
+
+/**
+ * The entries a run must add, given the out dir as the ignore root sees it.
+ *
+ * Shared rather than written per call site: the Next and non-Next paths ignoring
+ * different sets is the bug this list exists to prevent, one level up.
+ *
+ * `underOutDir`, not a literal "flawless": under `--out qa` the run writes qa/
+ * and an earlier version ignored flawless/, leaving 566MB of heaps, the
+ * Playwright output and — worst — qa/e2e/.auth.json untracked and unignored.
+ * That file is where global-setup.ts tells you to persist a logged-in
+ * storageState, i.e. session cookies staged for commit.
+ *
+ * `*.flawless.json` stays literal: it is the inline-summary sidecar pattern,
+ * written beside the analysed sources rather than under the out dir.
+ */
+export function ignoreEntries(outRel: string): string[] {
+  return [
+    underOutDir(outRel, "reports/"),
+    underOutDir(outRel, "heaps/"),
+    underOutDir(outRel, "playwright-report/"),
+    underOutDir(outRel, "node_modules/"),
+    underOutDir(outRel, "test-results/"),
+    underOutDir(outRel, "browser/test-results/"),
+    underOutDir(outRel, "e2e/test-results/"),
+    underOutDir(outRel, "e2e/.auth.json"),
+    underOutDir(outRel, "load/last-*.json"),
+    "*.flawless.json",
+  ];
+}
+
+/**
+ * Where a non-Next run's .gitignore belongs.
+ *
+ * The git root first: that is where git reads a repo-wide ignore and where the
+ * user's existing one already is. Then the nearest package.json, for a package
+ * that is not a repository. Then the out dir's parent, so a run always ignores
+ * something rather than nothing.
+ */
+export function ignoreRootFor(outDir: string): string {
+  let dir = path.resolve(outDir);
+  const start = dir;
+  for (;;) {
+    if (existsSync(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  dir = start;
+  for (;;) {
+    if (existsSync(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.dirname(start);
 }
 
 export function updateGitignore(nextRoot: string, entries: string[]): string[] {
