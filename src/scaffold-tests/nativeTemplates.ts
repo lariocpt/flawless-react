@@ -567,11 +567,14 @@ function mountTest(
     out.push(
       `  const mount = () => renderRouter(CONTEXT, { initialUrl: INITIAL_URL });`,
       "",
-      `  test("mounts at ${route.urlPath} and renders something", () => {`,
+      `  test("mounts at ${route.urlPath}", () => {`,
       "    mount();",
-      "    // toJSON() is null if and only if the component rendered null — the",
-      "    // direct analogue of the DOM spec's container.firstElementChild check.",
-      "    expect(screen.toJSON()).not.toBeNull();",
+      "    // The pathname is the claim. `expect(screen.toJSON()).not.toBeNull()`",
+      '    // used to stand here calling itself "the direct analogue of the DOM',
+      "    // spec's container.firstElementChild check\" — it is not. renderRouter",
+      "    // mounts the screen inside a navigator, so the NAVIGATOR's tree answers",
+      "    // it whatever the screen returns. Executed: a route screen whose whole",
+      "    // body is `return null` passes that assertion.",
       `    expect(screen).toHavePathname(${JSON.stringify(seededUrl(route))});`,
       "  });",
       "",
@@ -580,17 +583,18 @@ function mountTest(
       // Mounted inside a real navigation container the screen is FOCUSED, so
       // useFocusEffect runs — which is the whole reason route screens use
       // renderRouter rather than render.
-      out.push(
-        `  test("its focus effect runs on mount", async () => {`,
-        "    mount();",
-        "    // useFocusEffect fires because renderRouter mounts the screen inside a",
-        "    // real navigator, focused. A plain render() would never run it, and the",
-        "    // spec would then assert the loading skeleton and pass — which is the",
-        "    // vacuous green this whole mode exists to refuse.",
-        "    await waitFor(() => expect(screen.toJSON()).not.toBeNull());",
-        "  });",
-        "",
-      );
+      // No "its focus effect runs on mount" test.
+      //
+      // It used to assert `screen.toJSON()).not.toBeNull()`, which is answered by
+      // the navigator's own tree under renderRouter — so it could not fail, AND it
+      // said nothing whatever about whether the focus effect ran. A test whose
+      // NAME is a claim its body does not make is worse than no test.
+      //
+      // What actually proves the focus effect ran is the loaded-state test below:
+      // it mocks one api function to return a row and asserts the row appears,
+      // which cannot happen unless the effect fired and the fetch resolved. Where
+      // that test does not qualify, this emitter has no proof to offer and says so
+      // rather than staging one.
       // Blur/refocus is the reason the app uses useFocusEffect over useEffect, and
       // a single mount never blurs. Whether a refetch SHOULD happen depends on
       // state this emitter cannot reason about, so it is hand-work, named.
