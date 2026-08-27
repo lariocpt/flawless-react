@@ -5,6 +5,14 @@ description: Use flawless-react programmatically — runFlawless/runCore options
 
 # flawless programmatic API
 
+> **`expo` is a `CoreOptions` field beside `nextjs`**, and the two are mutually
+> exclusive — `runCore` throws a `UsageError` for the pair, because it is a public API a
+> programmatic caller reaches without `parseArgs`. `RunContext` carries
+> `expo?: ExpoContext`; ask `platformOf(ctx)` rather than testing `ctx.expo` yourself, so
+> widening the rule later happens in one place. An unported task returns a **failed
+> `TaskResult`**, not a throw, so a refusal is readable from `results[]` and the `--ci`
+> blob.
+
 ```ts
 import { runFlawless } from "flawless-react";
 

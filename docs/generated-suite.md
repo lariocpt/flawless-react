@@ -494,3 +494,84 @@ invariant `src/emitPaths.ts` exists to hold, and the sidecar was the one emitted
 file its sweep did not cover. Note that `reports.a11y` and `reports.reactRules`
 point at the run's single aggregate — those two tasks are sweeps — while
 `reports.perfStatic` is per component.
+
+---
+
+## The native suite (`--expo`)
+
+A different plane, not a variant of the DOM one. Under `--expo --tasks unit-browser` the run writes:
+
+```
+<outDir>/
+├── jest.config.cjs        # regenerated every run
+├── jest.setup.ts          # WRITE-ONCE — hand-written module mocks live here
+├── styleStub.js           # jest cannot parse CSS; app/_layout.tsx imports global.css
+└── unit/
+    └── <Component>.flawless.test.tsx
+```
+
+and merges `flawless:unit` plus the runner into the **app's** `package.json`.
+
+### Why `.cjs`
+
+Jest loads `jest.config.js` through `require`, which is CJS unless the nearest `package.json` says `"type": "module"` — and in Expo mode the nearest one is the target app's, whose type the tool does not control. `.cjs` is unambiguous wherever it sits. Exactly the reasoning behind `vitest.config.mts`.
+
+### Why the specs live in `unit/`
+
+Not a directory of their own, deliberately. `tests/docsLint.test.ts`'s `EMITTED_DIRS` is a **filter**: a prose claim about a path under an unlisted directory is silently skipped rather than checked. A `native/` directory would therefore make every native path claim in the docs unverified *forever* instead of turning something red.
+
+### The version pairing
+
+Derived from the project, never guessed, because every wrong answer here fails somewhere that names nothing:
+
+| package | pin | why |
+|---|---|---|
+| `jest-expo` | `~<the project's own SDK major>.0.0` | `jest-expo@54` pairs with Expo SDK 54. A fixed range breaks every other adopter; a guessed one fails inside `expo-modules-core`. |
+| `jest` | `^29.7.0` | jest-expo's own `babel-jest`/`@jest/globals`/`jest-snapshot` are all `^29.2.1`. A bare `jest` resolves to 30, and the mismatch surfaces as `this._moduleMocker.clearMocksOnScope is not a function` from inside jest-runtime. |
+| `@testing-library/react-native` | `^13.3.3` | **13, not 14.** expo-router 6's testing-library is built against `react-test-renderer`, which RNTL 14 replaced with `test-renderer`. |
+| `react-test-renderer` | `19.1.0` | what jest-expo 54 itself carries. |
+
+When the SDK major cannot be read from the project's `expo` range *or* from what is installed, `jest-expo` is left undeclared and the run says so. It never substitutes a number.
+
+### Three spec shapes, chosen from the file
+
+**A route screen** — any file under the expo-router root that resolves to a route — mounts through `renderRouter` from `expo-router/testing-library`, at its own URL. This is not a preference. `useFocusEffect` reaches `useNavigation()`, which throws `Couldn't find a navigation object` outside a navigator, and `useLocalSearchParams` is empty. Mounted inside a real navigator the screen is **focused**, so focus effects actually run and the spec can assert loaded state rather than the loading skeleton.
+
+The context is the plain **object** form:
+
+```tsx
+const CONTEXT = {
+  "_layout": Layout0,
+  "login": { default: LoginScreen },
+  "signup": { default: () => null },   // a stub for every literal push target
+};
+```
+
+Never the string or `{ appDir }` forms: expo-router resolves both through `path.resolve(process.cwd(), …)`, so a spec using one breaks the moment jest runs from the monorepo root instead of the app directory.
+
+**A `_layout`** is a third case. `<Tabs>` and `<Stack>` call `useContextKey` and throw `No filename found. This is likely a bug in expo-router` when rendered alone, so a layout is mounted through its own navigator with one synthesised child — the smallest honest way to exercise it.
+
+**Everything else** mounts through RNTL's `render()`.
+
+### What a native spec asserts
+
+- **It mounted.** `expect(screen.toJSON()).not.toBeNull()` — the direct analogue of the DOM spec's `container.firstElementChild` check, and null if and only if the component rendered null.
+- **It landed on its route**, for a route screen.
+- **Its static copy**, through `getAllByText`. This ports unchanged: RNTL's `getByText` matches a `<Text>`'s composed content, which is where React Native copy lives.
+- **Each addressable interaction**, driven by `fireEvent` (route specs) or `userEvent` (component specs — `renderRouter` turns on fake timers internally, and `userEvent`'s press timing under fake timers is not something the emitter can vouch for).
+- **The resulting pathname**, where the source names a literal route: `onPress={() => router.push("/items/new")}` is statically knowable, and this is the React Native analogue of asserting a link's `href`.
+
+Three DOM assertions have **no honest native equivalent and are dropped rather than faked**: the root-tag `querySelector`, the `.flawless-cls` className-flow check (NativeWind compiles `className` away through babel, so a sentinel class is unobservable), and anything asserting a specific style token.
+
+### No emitted spec touches the network
+
+A module that resolves project-locally and performs `fetch()` is `jest.mock`ed with stubs. This is not a nicety: before it existed the fixture suite made live HTTP calls and crashed a jest worker with `api_error 405` from a real server. The mock's specifier is relativised to the **spec**, not to the component — `app/login.tsx` writes `"../lib/api"`, which from `flawless/unit/` names `flawless/lib/api` and does not exist.
+
+The stub shapes are `{}` with a `TODO(flawless)` until the dep collector runs for non-async components; replacing them turns the mount assertions into assertions about loaded state.
+
+### Unaddressable controls become named skips
+
+React Native has **no implicit roles** — `getByRole("button")` matches nothing on a bare `<Pressable>` — and there is deliberately **no last-resort locator**. The two candidates are both unsound: `UNSAFE_getByType(Pressable)` compares component identity, and under NativeWind's `jsxImportSource` the `Pressable` the source rendered went through `cssInterop`'s wrapper while the one a spec imports is the bare component, so it matches zero elements; and "the first pressable in the tree" is wrong for the same reason the DOM ladder refuses an ambiguous bare tag, only more often.
+
+So a control with no `testID`, no `accessibilityLabel`, no `accessibilityRole` and no text under it is a `test.skip` carrying the reason and the fix. The icon-only wording wins over the ambiguous one when both apply, because one `accessibilityLabel` resolves both — and the same absence is what makes the control silent to a screen reader.
+

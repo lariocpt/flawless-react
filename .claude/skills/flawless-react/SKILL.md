@@ -1,6 +1,6 @@
 ---
 name: flawless-react
-description: Generate and maintain React/Next.js test suites with flawless-react — task selection, Next.js mode, provider wrappers, MSW fixtures from an OpenAPI spec, colocated specs, route e2e, crust load pipes, the programmatic API, and how to read its findings. Use when adding component/e2e/load tests to a React codebase, when a generated flawless suite is red, or for "scaffold tests for this component" work. Deeper guidance lives in the sibling skills flawless-unit-browser, flawless-e2e-load, flawless-findings, flawless-regen, and flawless-api.
+description: Generate and maintain React/Next.js/Expo test suites with flawless-react — task selection, Next.js and Expo modes, provider wrappers, MSW fixtures from an OpenAPI spec, colocated specs, route e2e, crust load pipes, the programmatic API, and how to read its findings. Use when adding component/e2e/load tests to a React codebase, when a generated flawless suite is red, or for "scaffold tests for this component" work. Deeper guidance lives in the sibling skills flawless-unit-browser, flawless-e2e-load, flawless-findings, flawless-regen, flawless-api, and flawless-expo.
 ---
 
 # flawless-react
@@ -76,6 +76,30 @@ is useless for catch-all APIs (Hono, tRPC). Pass `--api openapi.json` (or
 `--swagger-url http://localhost:3000/api/docs`) and real example bodies flow
 into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 `--swagger-url=off` to skip the live-spec probe.
+
+## Expo / React Native mode
+
+`--expo [<path>]`, mutually exclusive with `--nextjs`. Reads the project's SDK major, expo-router root, React Compiler and NativeWind settings off disk, defaults the entry glob to the router root, and writes to `<expoRoot>/flawless/`.
+
+**Not every task is ported, and the tool says which.**
+
+| task | under `--expo` |
+|---|---|
+| `unit-browser` | **runs** — jest-expo + @testing-library/react-native |
+| `perf-static` | **runs** |
+| `react-rules` | **runs** |
+| `perf-harness`, `a11y`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+
+A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `--ci` blob and `REPORT.md`. A mixed selection still runs what it can.
+
+**Do not work around a refusal by dropping `--expo`.** The DOM suite pointed at React Native emits specs that run, pass, and touch nothing — `container.querySelector("Pressable")` matches no element, and `getByRole("button")` finds nothing because React Native has no implicit roles.
+
+Two things worth knowing before reading a native run's output, both measured (`docs/reviews/2026-08-expo-probes.md`):
+
+- **`a11y` would be vacuously green.** Biome's 28 rules are HTML/ARIA rules; on 31 React Native files with 82 unlabelled `<Pressable>`s they return **zero**, while the same sweep finds 3/3 on this repo's own offender fixture. That is why the task refuses instead of reporting clean.
+- **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
+
+See the `flawless-expo` skill for the native spec shapes, the selector ladder, and what a skip means.
 
 ## What the generated unit specs contain
 

@@ -153,3 +153,157 @@
 ../../../../../../../../tmp/flawless-expo-refuse-WTR495/mixed/e2e/test-results/
 ../../../../../../../../tmp/flawless-expo-refuse-WTR495/mixed/e2e/.auth.json
 ../../../../../../../../tmp/flawless-expo-refuse-WTR495/mixed/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/ok/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-perf-harness/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-a11y/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-e2e/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-load/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/refuse-all/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/reports/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-QiKpGO/mixed/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/ok/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-perf-harness/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-a11y/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-e2e/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-load/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/refuse-all/load/last-*.json
+
+# flawless-react — generated reports + sidecars
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/reports/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/heaps/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/playwright-report/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/node_modules/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/browser/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/e2e/test-results/
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/e2e/.auth.json
+../../../../../../../../tmp/flawless-expo-refuse-CfLB4s/mixed/load/last-*.json

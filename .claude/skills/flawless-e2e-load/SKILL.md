@@ -5,6 +5,13 @@ description: Run and maintain flawless-react's route e2e specs and crust load pi
 
 # flawless e2e + load
 
+> **Both tasks refuse under `--expo` today**, naming the wave that will implement them.
+> `e2e` will target expo-router routes against `expo start --web` (Metro's port 8081,
+> not 3000) and authenticate against the API origin with a **cookie** rather than a
+> storage token — the mobile app short-circuits `expo-secure-store` on web and sends
+> `credentials: "include"`. `load` will emit **API pipes only**: an Expo app has no
+> server of its own, and load-testing `expo start --web` measures Metro.
+
 Both suites run against the **real app** — e2e because MSW cannot intercept a
 server component's database access, load because measuring anything else is
 fiction. That realism is also where every vacuous pass hides, so the probes
