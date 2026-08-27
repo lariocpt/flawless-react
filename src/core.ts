@@ -260,6 +260,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   if (opts.expo !== undefined) {
     expoCtx = await detectExpo(opts.expo); // throws UsageError on bad input
     if (outDir === undefined) outDir = path.join(expoCtx.root, "flawless");
+    else assertOutDirInsideProject(outDir, expoCtx.root, "--expo");
     if (pattern === undefined && expoCtx.routerRoot !== undefined) {
       pattern = path.join(expoCtx.routerRoot, "**/*.tsx");
       log(`expo: no entry passed — defaulting to ${path.relative(expoCtx.root, pattern)}`);
@@ -276,6 +277,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   if (opts.nextjs !== undefined) {
     nextCtx = await detectNextjs(opts.nextjs); // throws UsageError on bad input
     if (outDir === undefined) outDir = path.join(nextCtx.root, "flawless");
+    else assertOutDirInsideProject(outDir, nextCtx.root, "--nextjs");
     if (providerOverride === undefined) providerOverride = nextCtx.appResolver;
     if (pattern === undefined) {
       const detected = detectComponentsGlob(nextCtx.root);
@@ -984,6 +986,35 @@ export function selectsAllTests(cmd: string): boolean {
     i++;
   }
   return positionals === 0 && !configScoped;
+}
+
+/**
+ * Refuse an out dir outside the project root, in a mode that writes INTO that project.
+ *
+ * `--nextjs`/`--expo` do more than choose a directory: they merge scripts into the
+ * project's package.json and add entries to its .gitignore, both computed relative
+ * to the project. With the out dir outside it, those come out as
+ * `../../../../tmp/…` — a gitignore pattern git ignores, and a `flawless:unit`
+ * script naming a path that exists on one machine. Both were observed: a run with
+ * `--out` in a tmpdir left
+ *
+ *   "flawless:unit": "jest --config ../../../../../../../tmp/mockfix2/out/jest.config.cjs"
+ *
+ * in the app's package.json, and ten `../../../../tmp/…` lines in its .gitignore.
+ *
+ * A UsageError rather than a warning: the run would otherwise write those into a
+ * repo the user then commits, and every emitted path in the suite has the same
+ * problem. The escape is to leave --out off, which defaults to <root>/flawless.
+ */
+function assertOutDirInsideProject(outDir: string, root: string, flag: string): void {
+  if (isInside(root, outDir) || path.resolve(outDir) === path.resolve(root)) return;
+  throw new UsageError(
+    `--out ${outDir} is outside the ${flag} project at ${root}. ` +
+      `In ${flag} mode the run writes into that project — package.json scripts and ` +
+      `.gitignore entries are both relative to it — so an out dir outside it produces ` +
+      `paths that escape the repository and name this machine. ` +
+      `Drop --out to use ${path.join(root, "flawless")}, or point it inside the project.`,
+  );
 }
 
 /** True when `file` lives under `dir` (not merely shares its path prefix). */

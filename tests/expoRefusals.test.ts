@@ -6,7 +6,7 @@
 // guard on that promise, and they check the refusal where a consumer actually
 // reads it: in results[], in the --ci blob, and in the exit code.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ALL_TASK_IDS } from "../src/tasks/index.ts";
@@ -20,8 +20,16 @@ const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser"]);
 const REFUSING = ALL_TASK_IDS.filter((id) => !IMPLEMENTED.has(id));
 
 let tmpRoot: string;
+let app: string;
 beforeAll(() => {
+  // The fixture is COPIED rather than pointed at, so each run's out dir can live
+  // inside the project. The tool now refuses an out dir outside a --expo/--nextjs
+  // root, because everything it writes into that project — package.json scripts,
+  // .gitignore entries — is relative to it, and an outside out dir produced paths
+  // that escaped the repo and named this machine.
   tmpRoot = mkdtempSync(path.join(os.tmpdir(), "flawless-expo-refuse-"));
+  app = path.join(tmpRoot, "app");
+  cpSync(EXPOAPP, app, { recursive: true });
 });
 afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
@@ -39,9 +47,9 @@ async function run(args: string[], out: string): Promise<{ code: number; blob: B
       "bun",
       BIN,
       "--expo",
-      EXPOAPP,
+      app,
       "--out",
-      path.join(tmpRoot, out),
+      path.join(app, out),
       "--ci",
       "--roots",
       "exported",
@@ -50,9 +58,18 @@ async function run(args: string[], out: string): Promise<{ code: number; blob: B
     ],
     { stdout: "pipe", stderr: "pipe", cwd: REPO_ROOT },
   );
-  const stdout = await new Response(proc.stdout).text();
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
   const code = await proc.exited;
-  return { code, blob: JSON.parse(stdout) as Blob };
+  try {
+    return { code, blob: JSON.parse(stdout) as Blob };
+  } catch {
+    // Without this the failure is "JSON Parse error: Unexpected EOF", which says
+    // nothing about why the run produced no blob.
+    throw new Error(`run exited ${code} with no JSON on stdout.\nstderr:\n${stderr}`);
+  }
 }
 
 describe("--expo: what runs today", () => {
@@ -111,7 +128,7 @@ describe("--expo: what refuses, and how", () => {
 describe("--expo and --nextjs together", () => {
   test("exit 2, the usage-error code, from the real binary", async () => {
     const proc = Bun.spawn(
-      ["bun", BIN, "--expo", EXPOAPP, "--nextjs", ".", "--ci", "--tasks", "perf-static"],
+      ["bun", BIN, "--expo", app, "--nextjs", ".", "--ci", "--tasks", "perf-static"],
       { stdout: "pipe", stderr: "pipe", cwd: REPO_ROOT },
     );
     const stderr = await new Response(proc.stderr).text();
