@@ -339,3 +339,37 @@ distribution and CI — is unchanged.
 
 Verdict unchanged: **A− as an internal power tool; distribution is the only 1.0
 gate.**
+
+
+### Addendum — B-10 / B-18 / B-21 (same day, after the rounds closed)
+
+`exportedFunctions` skipped any `VariableDeclaration` with a `CallExpression`
+initializer, so `export const getCurrentUser = cache(async (): Promise<User> => …)`
+— the standard Next.js DAL idiom — was invisible to all five of its consumers.
+
+Fixing that made the dogfood app's three `lib/dal.ts` exports **visible and still
+unresolvable**: `User` reaches them through `import type { User } …; export type
+{ User };`, and the barrel chase looked only for a local declaration of that name.
+Two defects wearing one symptom, separated with a three-file probe (`plain` ok,
+`wrapped` ok, `viaReexport` undefined) before either was touched.
+
+  web  RSC fixture-missing skips 2 → 1   tests 514/15 → 515/14
+       lines 74.9% → 75.0%   branches 56.2% → 56.4%   functions 79.4% → 79.8%
+
+Small, and the mechanism is the point: an enriched dep drops the RSC skip escape,
+so a page's whole render test stops being skipped and starts running.
+
+**One earlier claim retracted.** The rounds' record said the pass/skip split "can
+move by one without anything changing". It has a cause — it tracks how many RSC
+specs take the fixture-missing escape, which tracks how many mock shapes resolve —
+and this change moved it by exactly one, deliberately. The caveat was written from
+three observations with no mechanism behind them; that was a guess about
+flakiness, which is the same species of thing as the guesses these rounds exist to
+remove.
+
+The wrapper set stays **closed** (`cache`, `unstable_cache`). The original skip's
+reasoning holds for most wrappers — `withPagination(async (): Promise<Row[]> => …)`
+may well return `Promise<Page<Row>>` — and widening it means showing the added
+wrapper preserves the call signature, which there is no type checker here to do.
+
+**Weighted total: unchanged at 60/70.**

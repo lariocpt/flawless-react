@@ -62,6 +62,33 @@ export function exportedNames(sf: ts.SourceFile): string[] {
   return [...out].sort();
 }
 
+/**
+ * The module and module-side name a local binding was imported under.
+ *
+ * `import type { User as U } from "./x"` looked up as "U" gives
+ * `{ specifier: "./x", importedName: "User" }`. Default and namespace imports
+ * are not reported: neither names a single exported declaration this chase can
+ * continue to.
+ */
+function importedFrom(
+  sf: ts.SourceFile,
+  local: string,
+): { specifier: string; importedName: string } | undefined {
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const bindings = stmt.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const el of bindings.elements) {
+      if (el.name.text !== local) continue;
+      return {
+        specifier: stmt.moduleSpecifier.text,
+        importedName: (el.propertyName ?? el.name).text,
+      };
+    }
+  }
+  return undefined;
+}
+
 /** Where a re-export chase landed: the declaring file and its parse. */
 export interface RelocatedExport<T> {
   sf: ts.SourceFile;
@@ -145,8 +172,27 @@ export function findExportedDecl<T>(
     for (const clause of localClauses) {
       for (const el of clause.elements) {
         if (el.name.text !== wanted) continue;
-        const localHit = find(sf, (el.propertyName ?? el.name).text, false);
+        const local = (el.propertyName ?? el.name).text;
+        const localHit = find(sf, local, false);
         if (localHit !== undefined) return { sf, file: f, decl: localHit };
+        // No local DECLARATION of that name — but the file may have imported it
+        // and re-exported the binding:
+        //
+        //   import type { User } from "@scope/shared";
+        //   export type { User };
+        //
+        // ESM treats that as an export of this module, and it is how a package
+        // republishes a type it does not own. The chase stopped here, so a
+        // function annotated `Promise<User>` behind such a file resolved to
+        // nothing — which on the dogfood app is every export of lib/dal.ts.
+        const from = importedFrom(sf, local);
+        if (from) {
+          const target = resolver?.resolve(from.specifier, f);
+          if (target) {
+            const relocated = walk(target, from.importedName, depth + 1);
+            if (relocated) return relocated;
+          }
+        }
       }
     }
     for (const { clause, spec } of named) {

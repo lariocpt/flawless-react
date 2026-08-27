@@ -5,6 +5,9 @@ import path from "node:path";
 import ts from "typescript";
 import { resolveTypeNodeValue } from "../src/analyse/extractProps.ts";
 import { analyse } from "../src/analyse/index.ts";
+import { annotatedReturnValue } from "../src/analyse/resolveDepReturns.ts";
+import { ModuleResolver } from "../src/analyse/resolveModule.ts";
+import { SourceFileCache } from "../src/analyse/sourceCache.ts";
 import { emitModuleMocks } from "../src/scaffold-tests/mocks.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
 import type { ComponentInfo, DataDepInfo, ModuleImportInfo, NextjsApiRoute } from "../src/types.ts";
@@ -733,5 +736,136 @@ describe("constrained specs get the same emit-time join", () => {
     });
     const spec = files.find((f) => f.relPath === "unit/RootLayout.test.tsx")?.content ?? "";
     expect(spec).toContain('getUsers: vi.fn(async () => ([{"id":7,"name":"octavia"}]))');
+  });
+});
+
+describe("cache()-wrapped exports, and types re-exported from an import", () => {
+  // Two defects that sat between the analyser and the standard Next.js DAL
+  // idiom. Both are resolution SHAPES that were simply not handled, and the
+  // dogfood app's src/lib/dal.ts hits both at once:
+  //
+  //   import type { User } from "@/lib/users";          <- users.ts re-exports
+  //   export const getCurrentUser = cache(async (): Promise<User> => …);
+  //
+  // Before: the export was invisible (a CallExpression initializer), and even
+  // once visible the type resolved to nothing.
+  function projectOf(files: Record<string, string>): { dir: string } {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "dal-"));
+    writeFileSync(path.join(dir, "tsconfig.json"), "{}");
+    for (const [rel, body] of Object.entries(files)) {
+      const abs = path.join(dir, rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, body);
+    }
+    return { dir };
+  }
+
+  const BASE = {
+    "shape.ts": "export interface Row { id: string; n: number }\n",
+    "reexport.ts": 'import type { Row } from "./shape.ts";\nexport type { Row };\n',
+  };
+
+  function returnOf(files: Record<string, string>, file: string, name: string): unknown {
+    const { dir } = projectOf({ ...BASE, ...files });
+    return annotatedReturnValue(
+      path.join(dir, file),
+      name,
+      new ModuleResolver(),
+      new SourceFileCache(),
+    );
+  }
+
+  test("cache(async (): Promise<T> => …) resolves like a bare arrow", () => {
+    const src = `
+      import { cache } from "react";
+      import type { Row } from "./shape.ts";
+      export const wrapped = cache(async (): Promise<Row> => ({ id: "x", n: 1 }));
+      export const plain = async (): Promise<Row> => ({ id: "x", n: 1 });`;
+    expect(returnOf({ "a.ts": src }, "a.ts", "wrapped")).toEqual({ id: "flawless-id", n: 1 });
+    // The control: the same annotation without the wrapper always worked, so a
+    // difference between these two is the wrapper and nothing else.
+    expect(returnOf({ "a.ts": src }, "a.ts", "plain")).toEqual({ id: "flawless-id", n: 1 });
+  });
+
+  test("React.cache(…) resolves too — the member name is what identifies it", () => {
+    const src = `
+      import * as React from "react";
+      import type { Row } from "./shape.ts";
+      export const wrapped = React.cache(async (): Promise<Row> => ({ id: "x", n: 1 }));`;
+    expect(returnOf({ "a.ts": src }, "a.ts", "wrapped")).toEqual({ id: "flawless-id", n: 1 });
+  });
+
+  test("unstable_cache(fn, keyParts, opts) resolves — only argument 0 is a function", () => {
+    const src = `
+      import { unstable_cache } from "next/cache";
+      import type { Row } from "./shape.ts";
+      export const wrapped = unstable_cache(async (): Promise<Row> => ({ id: "x", n: 1 }), ["k"], { revalidate: 60 });`;
+    expect(returnOf({ "a.ts": src }, "a.ts", "wrapped")).toEqual({ id: "flawless-id", n: 1 });
+  });
+
+  test("an UNKNOWN wrapper still bails — it may not preserve the signature", () => {
+    // The reason the original skip existed, and it is a real reason:
+    // withPagination(async (): Promise<Row[]> => …) may well return
+    // Promise<Page<Row>>, and unwrapping hands the emitter a shape the function
+    // never produces. A closed table, not "any call with one function argument".
+    const src = `
+      import { withPagination } from "./wrap.ts";
+      import type { Row } from "./shape.ts";
+      export const wrapped = withPagination(async (): Promise<Row> => ({ id: "x", n: 1 }));`;
+    expect(
+      returnOf(
+        { "a.ts": src, "wrap.ts": "export const withPagination = (f: unknown) => f;\n" },
+        "a.ts",
+        "wrapped",
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a wrapper given TWO callbacks bails rather than pick one", () => {
+    const src = `
+      import { cache } from "react";
+      import type { Row } from "./shape.ts";
+      export const wrapped = cache(async (): Promise<Row> => ({ id: "x", n: 1 }), () => 1);`;
+    expect(returnOf({ "a.ts": src }, "a.ts", "wrapped")).toBeUndefined();
+  });
+
+  test("a type reached through `export type { X }` resolves", () => {
+    // ESM treats an imported binding re-exported by name as an export of THIS
+    // module. The chase looked only for a local declaration, found none, and
+    // stopped — so every export of the dogfood app's dal.ts resolved to nothing.
+    const src = `
+      import type { Row } from "./reexport.ts";
+      export const viaReexport = async (): Promise<Row> => ({ id: "x", n: 1 });`;
+    expect(returnOf({ "a.ts": src }, "a.ts", "viaReexport")).toEqual({ id: "flawless-id", n: 1 });
+  });
+
+  test("the re-export chase is rename-aware", () => {
+    const files = {
+      "ren.ts":
+        'import type { Row as Inner } from "./shape.ts";\nexport type { Inner as Outer };\n',
+      "a.ts":
+        'import type { Outer } from "./ren.ts";\nexport const f = async (): Promise<Outer> => ({ id: "x", n: 1 });\n',
+    };
+    expect(returnOf(files, "a.ts", "f")).toEqual({ id: "flawless-id", n: 1 });
+  });
+
+  test("both defects at once — the shape the dogfood app actually has", () => {
+    const src = `
+      import { cache } from "react";
+      import type { Row } from "./reexport.ts";
+      export const getCurrentThing = cache(async (): Promise<Row> => ({ id: "x", n: 1 }));`;
+    expect(returnOf({ "a.ts": src }, "a.ts", "getCurrentThing")).toEqual({
+      id: "flawless-id",
+      n: 1,
+    });
+  });
+
+  test("a re-export naming something that is nowhere still bails", () => {
+    const files = {
+      "ghost.ts": "export type { Nowhere };\n",
+      "a.ts":
+        'import type { Nowhere } from "./ghost.ts";\nexport const f = async (): Promise<Nowhere> => ({} as never);\n',
+    };
+    expect(returnOf(files, "a.ts", "f")).toBeUndefined();
   });
 });

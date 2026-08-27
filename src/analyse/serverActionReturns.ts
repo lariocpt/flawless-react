@@ -82,6 +82,54 @@ function isExitCall(expr: ts.Expression, exits: ExitBindings): boolean {
 
 export type ActionFn = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
+/**
+ * Calls that hand back their function argument with the SAME call signature.
+ *
+ * `export const getCurrentUser = cache(async (): Promise<User> => …)` is the
+ * standard Next.js DAL idiom — the dogfood app's `lib/dal.ts` uses it three
+ * times — and a `CallExpression` initializer was skipped outright, so every
+ * consumer of this list saw the module as having no such export. Downstream that
+ * is a `{}` mock plus an uninferred-return TODO on a function whose return type
+ * is written down two characters away.
+ *
+ * A CLOSED table, not "any call with one function argument", because the reason
+ * for the original skip is real for most wrappers: `withPagination(async ():
+ * Promise<User[]> => …)` may well return `Promise<Page<User>>`, and unwrapping it
+ * hands the emitter the inner shape for a function that never produces it — a
+ * wrong fixture, which this repo treats as worse than none.
+ *
+ * These two are typed `<T>(fn: T) => T` and `(cb, keyParts?, opts?) => typeof cb`
+ * respectively, so for them the inner annotation IS the effective return type.
+ * Widening this set means showing the same of whatever is added — there is no
+ * type checker here to work it out.
+ */
+const IDENTITY_WRAPPERS = new Set(["cache", "unstable_cache"]);
+
+/**
+ * The function inside an allowlisted wrapper call, or undefined.
+ *
+ * Exactly one function-like argument, so `unstable_cache(fn, keyParts, opts)`
+ * resolves (only argument 0 is function-like) while anything passing two
+ * callbacks bails rather than pick one.
+ */
+function unwrapIdentityWrapper(init: ts.Expression): ActionFn | undefined {
+  if (!ts.isCallExpression(init)) return undefined;
+  // `cache(…)` and `React.cache(…)` both, keyed on the member name — the import
+  // could be aliased either way and this list is about the callee's identity.
+  const callee = init.expression;
+  const name = ts.isIdentifier(callee)
+    ? callee.text
+    : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)
+      ? callee.name.text
+      : undefined;
+  if (name === undefined || !IDENTITY_WRAPPERS.has(name)) return undefined;
+  const fns = init.arguments.filter(
+    (a): a is ts.ArrowFunction | ts.FunctionExpression =>
+      ts.isArrowFunction(a) || ts.isFunctionExpression(a),
+  );
+  return fns.length === 1 ? fns[0] : undefined;
+}
+
 /** Exported name → its function node, local declarations resolved in-file. */
 export function exportedFunctions(sf: ts.SourceFile): Array<[string, ActionFn]> {
   // Every top-level function-ish declaration, exported or not: an export
@@ -102,9 +150,13 @@ export function exportedFunctions(sf: ts.SourceFile): Array<[string, ActionFn]> 
       for (const d of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(d.name) || d.initializer === undefined) continue;
         const init = d.initializer;
-        if (!ts.isArrowFunction(init) && !ts.isFunctionExpression(init)) continue;
-        locals.set(d.name.text, init);
-        if (exported) out.push([d.name.text, init]);
+        const fn =
+          ts.isArrowFunction(init) || ts.isFunctionExpression(init)
+            ? init
+            : unwrapIdentityWrapper(init);
+        if (!fn) continue;
+        locals.set(d.name.text, fn);
+        if (exported) out.push([d.name.text, fn]);
       }
       continue;
     }
