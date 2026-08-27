@@ -9,7 +9,7 @@ import { expoFileToRoute, routeModuleId } from "../expo/routes.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { JEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, ExpoContext, TodoRecorder } from "../types.ts";
-import { allocateSpecNames, flattenTrees, synthesiseDefaults } from "./registry.ts";
+import { allocateSpecNames, flattenTrees, functionProps, synthesiseDefaults } from "./registry.ts";
 import {
   awaitNativeSelector,
   describeUnlocatableNative,
@@ -358,11 +358,23 @@ function renderNativeSpec(
   // against a const-asserted literal — so an app running `tsc --noEmit` in CI
   // goes red on the generated file. The DOM emitter has always typed it this way.
   lines.push(`const DEFAULTS: Record<string, unknown> = ${JSON.stringify(defaults, null, 2)};`);
+  // Function props, spread SEPARATELY because DEFAULTS is JSON and a function
+  // cannot ride in it. Without these a prop-bound handler is undefined at mount:
+  // pressing it asserted nothing, and deleting `onPress={onPress}` from the source
+  // left the test green. The DOM emitter has passed spies for exactly this.
+  const fnProps = route ? [] : functionProps(info);
+  if (fnProps.length > 0) {
+    lines.push(
+      "const handlers: Record<string, jest.Mock> = {",
+      ...fnProps.map((n) => `  ${JSON.stringify(n)}: jest.fn(),`),
+      "};",
+    );
+  }
   lines.push(`const SAMPLE_TEXT = "flawless";`);
   lines.push("");
   if (route) lines.push(...routeContext(info, specName, opts, route));
   lines.push(`describe(${JSON.stringify(specName)}, () => {`);
-  lines.push(...mountTest(specName, route, providers, todo));
+  lines.push(...mountTest(specName, route, providers, fnProps, todo));
   lines.push(...staticTextTests(info));
   lines.push(...interactionTests(clicks, Boolean(route), loadsData, todo));
   lines.push("});");
@@ -474,6 +486,7 @@ function mountTest(
   specName: string,
   route: ReturnType<typeof routeOf>,
   providers: ReturnType<typeof requiredNativeProviders>,
+  fnProps: string[],
   todo: TodoRecorder | undefined,
 ): string[] {
   const out: string[] = [];
@@ -521,8 +534,20 @@ function mountTest(
     }
     return out;
   }
+  if (fnProps.length > 0) {
+    // Cleared between tests, or "was this handler called" is answered by an
+    // earlier test in the same file rather than by this one.
+    out.push(
+      "  beforeEach(() => {",
+      "    for (const h of Object.values(handlers)) h.mockClear();",
+      "  });",
+      "",
+    );
+  }
   out.push(
-    `  const mount = () => render(<${specName} {...(DEFAULTS as never)} />);`,
+    fnProps.length > 0
+      ? `  const mount = () => render(<${specName} {...(DEFAULTS as never)} {...(handlers as never)} />);`
+      : `  const mount = () => render(<${specName} {...(DEFAULTS as never)} />);`,
     "",
     `  test("mounts and renders something", () => {`,
     "    mount();",
@@ -570,6 +595,44 @@ function staticTextTests(info: Parameters<typeof synthesiseDefaults>[0]): string
  * nothing — the exact failure `emitVitestSelector`'s undefined return was
  * written to prevent, arriving on a second platform.
  */
+/**
+ * What a spec may honestly assert AFTER firing an event.
+ *
+ * Without these the interaction tests were `expect(el).toBeTruthy(); fireEvent(…)`
+ * and stopped — proving the element is addressable and nothing else. Measured on
+ * the dogfood apps: 17 of 87 live mobile tests and 25 of 341 web tests fired an
+ * event and asserted nothing after it, which is a test that cannot fail.
+ *
+ * Every rule below was PROBED under real jest-expo before being emitted, because
+ * reasoning about RNTL's behaviour is how the last three defects got in:
+ *
+ *   controlled TextInput   -> display value reflects the typed text   (1 match)
+ *   uncontrolled TextInput -> so does it                              (1 match)
+ *   frozen (value, no onChangeText) -> it does NOT                    (0 matches)
+ *   prop spy               -> called                                  (1 call)
+ *   throwing handler       -> propagates out of fireEvent
+ *
+ * The frozen case is why the display-value assertion is safe to emit: the only
+ * shape it fails on is an input the app has genuinely wired wrong, and the
+ * analyser can already tell that one apart.
+ */
+function postDispatchAssertions(h: Parameters<typeof emitNativeSelector>[0], el: string): string[] {
+  // A handler bound to a PROP is the precise case: pass a spy, assert it ran.
+  if (h.binding.kind === "prop") {
+    return [`    expect(handlers[${JSON.stringify(h.binding.propName)}]).toHaveBeenCalled();`];
+  }
+  if (h.event === "onChangeText") {
+    // Typing into a wired input changes what it displays. Probed above for all
+    // three wirings; only the frozen one fails, and that is an app defect.
+    return [`    expect(${el}).toHaveDisplayValue(SAMPLE_TEXT);`];
+  }
+  // The floor, for a handler whose effect is not statically knowable: the tree
+  // survived. Weak, but it is a real assertion — a handler that throws, or that
+  // sets state the next render cannot cope with, fails here. It is strictly more
+  // than the nothing that was emitted before.
+  return ["    expect(screen.toJSON()).not.toBeNull();"];
+}
+
 function interactionTests(
   clicks: Parameters<typeof emitNativeSelector>[0][],
   isRoute: boolean,
@@ -655,6 +718,7 @@ function interactionTests(
       `    const ${el} = ${locator};`,
       `    expect(${el}).toBeTruthy();`,
       `    ${dispatch};`,
+      ...postDispatchAssertions(h, el),
       ...(h.pushTargets?.length
         ? [
             "    // The push target is a literal in the source, so where it lands is",

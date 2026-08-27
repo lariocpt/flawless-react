@@ -1373,11 +1373,23 @@ ${isolationAsserts || "  // no other handlers to isolate"}
   const isolationAsserts = allHandlers
     .map((h) => `  expect(handlers.${h}).not.toHaveBeenCalled();`)
     .join("\n");
+  // A component with no prop handlers had NOTHING after the dispatch — the test
+  // fired an event and asserted nothing, so it could not fail. Measured on the
+  // dogfood app: 25 of 341 live web tests were this shape.
+  //
+  // The floor is that the component still renders. Modest, but real: a thrown
+  // handler already fails at the dispatch, and this additionally catches one that
+  // sets state the next render cannot cope with, or that blanks the tree. It is
+  // strictly more than nothing, and it is the most that is knowable about a
+  // handler whose effect the analyser cannot see.
+  const after =
+    isolationAsserts ||
+    "  expect(container.firstElementChild).not.toBeNull(); // the click did not take the component down";
   return `test("${name} ${click.event} on ${labelDesc} #${idx} is a smoke click", async () => {
   const { container } = renderTarget();
   void container;${preludeLines}
   ${dispatch};
-${isolationAsserts || "  // no prop handlers declared"}
+${after}
 });`;
 }
 
