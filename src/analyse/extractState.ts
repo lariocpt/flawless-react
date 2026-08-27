@@ -17,7 +17,17 @@ export function extractState(bodyNode: ts.Node, sourceFile: ts.SourceFile): Stat
   const visit = (n: ts.Node): void => {
     if (ts.isVariableDeclaration(n) && n.initializer && ts.isCallExpression(n.initializer)) {
       const hook = hookCalleeName(n.initializer.expression);
-      if (hook === "useState" || hook === "useReducer" || hook === "useRef") {
+      // useActionState(action, initialState) has useReducer's shape exactly, and
+      // its initial state is a literal in the source. Without it, `state` was
+      // opaque, every guard on it was undecidable, and — once an undecidable
+      // render started refusing rather than guessing — two correct React 19 form
+      // components lost their whole spec to a refusal that was simply wrong.
+      if (
+        hook === "useState" ||
+        hook === "useReducer" ||
+        hook === "useRef" ||
+        hook === "useActionState"
+      ) {
         const info = buildStateInfo(n, n.initializer, hook, bodyNode, sourceFile);
         if (info) out.push(info);
       }
@@ -48,8 +58,10 @@ function buildStateInfo(
   }
   if (varName === undefined) return undefined;
 
-  // useReducer(reducer, initialState) — the init value is the second argument.
-  const initExpr = kind === "useReducer" ? call.arguments[1] : call.arguments[0];
+  // useReducer(reducer, initialState) and useActionState(action, initialState) —
+  // the init value is the second argument in both.
+  const initExpr =
+    kind === "useReducer" || kind === "useActionState" ? call.arguments[1] : call.arguments[0];
   const initialValue = initExpr ? literalToValue(initExpr) : undefined;
   const initialRaw = initExpr ? initExpr.getText(sourceFile).slice(0, INITIAL_RAW_MAX) : "";
   const typeKind = classifyTypeKind(call.typeArguments?.[0], initExpr);

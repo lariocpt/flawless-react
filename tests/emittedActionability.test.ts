@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { renderSuite } from "../src/scaffold/templates.ts";
@@ -130,5 +131,46 @@ describe("emitted specs never wait on something that may not be there", () => {
       'test("x", async () => {\n  await page.getByRole("button", { name: "Go" }).first().click();\n});';
     expect(unguardedClicks(fine)).toEqual([]);
     expect(bareTagLocators(fine)).toEqual([]);
+  });
+});
+
+describe("an undecidable render emits a named refusal, not a spec that cannot pass", () => {
+  const BOUNDARY = path.resolve(__dirname, "fixtures/ClassBoundary.tsx");
+
+  async function specFor(entry: string): Promise<string> {
+    const out = mkdtempSync(path.join(os.tmpdir(), "undecidable-"));
+    try {
+      const tree = await analyse({ entry, depth: 0, includeChildren: false });
+      const files = renderUnitBrowser({ trees: [tree], outDir: out, variants: 3 });
+      const spec = files.find((f) => f.relPath.endsWith(".test.tsx"));
+      if (!spec) throw new Error("no spec emitted");
+      return spec.content;
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  }
+
+  test("the spec refuses by name and says how to make it assertable", async () => {
+    const src = await specFor(BOUNDARY);
+    expect(src).toContain("no render can be described");
+    expect(src).toContain("test.skip(");
+  });
+
+  test("and does NOT drive the control inside the branch the defaults never take", async () => {
+    // This is the assertion that matters. A test checking only "a spec was
+    // emitted" is green over a spec that cannot pass. Executed before the fix:
+    // "Unable to find an accessible element with the role 'button' and name
+    // 'Try again'".
+    const src = await specFor(BOUNDARY);
+    expect(src).not.toContain("Try again");
+    expect(src).not.toContain("Something went wrong");
+  });
+
+  test("a component whose render IS decidable still gets its real spec", async () => {
+    // The control: without it the refusal could fire for everything and both
+    // assertions above would still pass.
+    const src = await specFor(path.resolve(__dirname, "fixtures/ClassComponents.tsx"));
+    expect(src).not.toContain("no render can be described");
+    expect(src).toContain("renderTarget()");
   });
 });

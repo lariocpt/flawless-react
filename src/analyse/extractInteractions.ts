@@ -302,9 +302,17 @@ export function extractInteractions(
             ...(gatedBy ? { gatedBy } : {}),
             ...((tagCounts.get(tag) ?? 0) > 1 ? { ambiguousTag: true } : {}),
             ...(native && enclosing && isIconOnly(enclosing) ? { iconOnly: true } : {}),
-            ...(initial && reachability(n, initial.expr, scope) !== "yes"
-              ? { conditional: true }
-              : {}),
+            // With NO decidable initial render, the walk falls back to the whole
+            // body and harvests handlers from every branch — including ones the
+            // defaults provably never take. `initial &&` short-circuited, so
+            // those arrived unmarked and read as certainly-present, which is how
+            // a spec came to drive a button inside `if (this.state.error)`.
+            // Nothing here is known to render, so all of it is conditional.
+            ...(initial
+              ? reachability(n, initial.expr, scope) !== "yes"
+                ? { conditional: true }
+                : {}
+              : { conditional: true }),
             ...(() => {
               if (!native) return {};
               const targets = collectPushTargets(attr.initializer);

@@ -41,6 +41,16 @@ export interface ParsedComponentUnit {
   exportKind: "default" | "named" | "none";
   isAsync: boolean;
   wrappers: Array<"memo" | "forwardRef">;
+  /**
+   * The class declaration, for a class component only.
+   *
+   * bodyNode is render(), which is what every JSX/hook walk wants — but it hides
+   * the rest of the class from anything that needs it. detectSelfLogging reads
+   * bodyNode, so componentDidCatch's console.error was invisible and logsErrors
+   * stayed false: the spec then asserted `expect(errors).toEqual([])` against a
+   * component whose entire contract is to log what it caught.
+   */
+  classNode?: ts.ClassDeclaration;
   pos: SourcePosition;
 }
 
@@ -110,11 +120,11 @@ export async function parseFile(entry: string, cache?: SourceFileCache): Promise
   }
 
   const imports = collectImports(sourceFile);
-  const components = findComponents(sourceFile);
+  const components = findComponents(sourceFile, imports);
   if (components.length === 0) {
     throw new Error(
       `parseFile: could not locate a React component in ${entry}. ` +
-        `Expected an exported function/arrow component or a \`const Name: React.FC<...> = ...\` declaration.`,
+        `Expected an exported function/arrow component, a \`const Name: React.FC<...> = ...\` declaration, or a class extending React's Component/PureComponent whose render() returns JSX.`,
     );
   }
   orderPrimaryFirst(components, entry);
@@ -253,7 +263,10 @@ function collectModuleImports(
 // Component detection
 // ---------------------------------------------------------------------------
 
-function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
+function findComponents(
+  sf: ts.SourceFile,
+  imports: Map<string, ImportBinding>,
+): ParsedComponentUnit[] {
   const units: ParsedComponentUnit[] = [];
   const byName = new Map<string, ParsedComponentUnit>();
   const renderHooks = renderHookNames(sf);
@@ -287,7 +300,7 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
     }
 
     if (ts.isClassDeclaration(stmt) && stmt.name) {
-      const unit = classComponentUnit(stmt, sf);
+      const unit = classComponentUnit(stmt, sf, imports);
       if (unit) {
         add(unit);
         continue;
@@ -733,6 +746,7 @@ function orderPrimaryFirst(units: ParsedComponentUnit[], filePath: string): void
 function classComponentUnit(
   stmt: ts.ClassDeclaration,
   sf: ts.SourceFile,
+  imports: Map<string, ImportBinding>,
 ): ParsedComponentUnit | undefined {
   if (!stmt.name) return undefined;
   const base = (stmt.heritageClauses ?? [])
@@ -745,6 +759,20 @@ function classComponentUnit(
       ? base.expression.name.text
       : undefined;
   if (baseName !== "Component" && baseName !== "PureComponent") return undefined;
+  // The name is not the evidence — the IMPORT is. A local `class Component {}`
+  // shadowing nothing made `class Sneaky extends Component` a detected React
+  // component, which is precisely what the comment above claims this does not do.
+  //
+  // A namespace access (`React.Component`) is checked on its ROOT: `React` must
+  // itself be the react import, however it was named.
+  const rootName = ts.isPropertyAccessExpression(base.expression)
+    ? ts.isIdentifier(base.expression.expression)
+      ? base.expression.expression.text
+      : undefined
+    : baseName;
+  if (rootName === undefined) return undefined;
+  const binding = imports.get(rootName);
+  if (binding?.specifier !== "react") return undefined;
 
   const render = stmt.members.find(
     (m): m is ts.MethodDeclaration =>
@@ -777,6 +805,7 @@ function classComponentUnit(
         : "none",
     isAsync: false,
     wrappers: [],
+    classNode: stmt,
     pos: posOf(stmt, sf),
   };
 }

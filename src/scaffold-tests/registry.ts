@@ -107,6 +107,16 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
   if (info.exportKind === "none") {
     return { eligible: false, reason: "not exported — the host cannot import it" };
   }
+  // No decidable initial render: profiling it measures whichever branch the host
+  // happens to take, which is the thing that could not be decided. The host also
+  // has to mount it, and for a class with required props there is nothing to pass.
+  if (info.renderUndecidable === true) {
+    return {
+      eligible: false,
+      reason:
+        "render() branches on a condition this analysis could not decide — no render to profile",
+    };
+  }
   const mode = info.renderMode ?? (info.isAsync ? "rsc" : "client");
   switch (mode) {
     case "rsc":

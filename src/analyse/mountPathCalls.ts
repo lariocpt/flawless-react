@@ -408,6 +408,14 @@ export function componentNode(sf: ts.SourceFile, name: string): ts.Node {
       found = n.initializer;
       return;
     }
+    // A class component, whose subtree is the class body. Without this arm a
+    // class fell through to `sf` — the whole source file — which is the exact
+    // failure the doc comment above exists to prevent, and it arrived the moment
+    // parseFile learned to see classes at all.
+    if (ts.isClassDeclaration(n) && n.name?.text === name) {
+      found = n;
+      return;
+    }
     ts.forEachChild(n, visit);
   };
   visit(sf);

@@ -436,6 +436,21 @@ function unitSpec(
 ): string {
   const info = c.info;
   const name = info.componentName;
+  // No render could be described at all: renderPath could not decide which
+  // branch runs and every branch returns content. README has said since it was
+  // written that such a component "produces no description at all", and until
+  // renderUndecidable existed nothing recorded it — so the walk fell back to the
+  // whole body and the spec drove a control inside a branch the defaults never
+  // take. Executed: "Unable to find an accessible element with the role
+  // 'button' and name 'Try again'" on a component that is entirely correct.
+  //
+  // A skip that names the cause, and nothing else. Not a mount test either: the
+  // mount is the same claim in a weaker voice, and for a class whose props are
+  // required it does not even compile.
+  if (info.renderUndecidable === true) {
+    todo?.("other");
+    return undecidableRenderSpec(name, importPath, info);
+  }
   // A prop whose type could not be resolved is absent from propsShape, so the
   // component receives undefined — and any `prop.field` read then throws. When
   // the analyser saw it used via member access, stand it up as {} so the read
@@ -1808,5 +1823,33 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });
+`;
+}
+
+/**
+ * The whole spec for a component whose initial render could not be decided.
+ *
+ * Deliberately not "a mount test plus skips": the mount test asserts the same
+ * unknowable thing — that SOMETHING renders at defaults — and for a class with
+ * required props it does not compile, because DEFAULTS is `{}` and the props
+ * type demands children.
+ *
+ * Everything the analyser DID learn is still reported through REPORT.md and the
+ * --ci blob; this file's job is to say why there is nothing to run.
+ */
+function undecidableRenderSpec(name: string, importPath: string, info: ComponentInfo): string {
+  return `${emitComponentImport(info, importPath)}
+import { test } from "vitest";
+
+void ${name};
+
+// render() branches on a condition the analyser could not decide, and every
+// branch returns content — so there is no single render to describe, and any
+// assertion here would be about a branch the defaults may never take.
+//
+// To make it assertable, give the deciding value a knowable initial state (a
+// useState with a literal, or a class \`state = { … }\` field this can read), or
+// pass it as a prop the spec controls.
+test.skip("${name} — render() branches on a condition this analysis could not decide (class state, or a value from a hook it does not follow); no render can be described", () => {});
 `;
 }

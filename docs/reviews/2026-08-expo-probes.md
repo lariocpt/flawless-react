@@ -168,12 +168,24 @@ shape flagged as the most likely wave-1 breakage. Measured: **the alias is never
 `from "@/…"` imports across `app/`, `components/` and `lib/` — every import in the app is relative.
 Still worth handling for other adopters; not a blocker here.
 
-## Gap found while probing — the analyser cannot see class components
+## Gap found while probing — the analyser could not see class components (CLOSED, B-17)
 
 ```
 parseFile: could not locate a React component in components/error-boundary.tsx.
 Expected an exported function/arrow component or a `const Name: React.FC<...> = ...` declaration.
 ```
+
+**Closed 2026-08-27.** `findComponents` gained a class arm, gated on evidence — the
+base must be react's `Component`/`PureComponent` (checked through the IMPORT, not by
+name) and `render()` must contain JSX. The message above is stale; it now names the
+class shape as a fourth accepted form.
+
+That alone was not enough. `error-boundary.tsx`'s render branches on `this.state`,
+which the analyser cannot value, so the first spec it produced drove a button inside
+the fallback branch — red on correct code. A plain FUNCTION with an opaque guard did
+the same, so this was never class-specific; classes just hit it every time.
+`renderUndecidable` now records the case README always described ("produces no
+description at all") and the spec refuses by name instead.
 
 `ErrorBoundary` is a class component, and it is **the only named export in the entire app** — every
 other component is a default export or file-local. `parseFile` (`:235`, `:259`) finds function

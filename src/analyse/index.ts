@@ -156,8 +156,12 @@ async function analyseOne(
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
+  // The CLASS for a class component, not just render(): componentDidCatch is
+  // where an error boundary logs, and bodyNode is render(). Reading render()
+  // alone left logsErrors false for a component whose whole contract is to log
+  // what it caught, and the spec then asserted a clean console against it.
   const logsErrors = detectSelfLogging(
-    unit.bodyNode,
+    unit.classNode ?? unit.bodyNode,
     new Set(parsed.moduleImports.flatMap((mi) => mi.names)),
   );
   // The values the generated spec will actually pass. Everything below describes
@@ -300,6 +304,12 @@ async function analyseOne(
     guards,
     ...(rootTag ? { rootTag } : {}),
     ...(initialRender?.guarded ? { renderGuarded: true } : {}),
+    // The THIRD state. renderGuarded is set only when an initial render EXISTS
+    // and is guarded, so a total bail — renderPath could not decide which branch
+    // runs, and every branch returns content — was indistinguishable from an
+    // unconditional render. Downstream that means a spec asserting on markup
+    // from a branch the defaults never take.
+    ...(initialRender ? {} : { renderUndecidable: true as const }),
     childrenFlow: flows.children,
     classNameFlow: flows.className,
     renderMode: render.mode,
