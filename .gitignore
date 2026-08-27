@@ -32,3 +32,10 @@ tests/fixtures/*.flawless.json
 # whichever test asked for it, and committing it would make the fixture's own
 # regeneration show up as a diff.
 tests/fixtures/expoapp/flawless/
+
+# Written INTO the fixture by tests that run the tool against it. When --out
+# points outside the project (as tests/expoRefusals.test.ts does, into a tmpdir),
+# updateGitignore computes entries relative to the project and they come out as
+# ../../../../tmp/... — meaningless to git and pure noise. The file is an
+# artefact of running the tool, never fixture source.
+tests/fixtures/expoapp/.gitignore

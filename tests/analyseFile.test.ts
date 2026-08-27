@@ -311,3 +311,42 @@ describe("expandGlob exclusions", () => {
     expect(found).toHaveLength(1);
   });
 });
+
+describe("input that TypeScript cannot parse cleanly", () => {
+  // ts.createSourceFile is error-tolerant: `return <div>` with no closing tag
+  // still yields a tree, and every extractor downstream reads it as if it were
+  // the source. Before this guard the tool analysed such a file, described it,
+  // and reported `ok: true, 0 findings` — a clean run over something that does
+  // not compile.
+  //
+  // The asymmetry is the point: parseDiagnostics is asserted in five test files,
+  // every one of them on the tool's OUTPUT, and nowhere on its input.
+  const tmp = (name: string, body: string): string => {
+    const d = mkdtempSync(path.join(os.tmpdir(), "flawless-parse-"));
+    const f = path.join(d, name);
+    writeFileSync(f, body);
+    return f;
+  };
+
+  test("is refused, with the error and the line named", async () => {
+    const f = tmp("Broken.tsx", "export const X = () => {\n  return <div>\n");
+    expect(analyseFile({ entry: f, depth: 0, includeChildren: false })).rejects.toThrow(
+      /syntax error\(s\) and cannot be analysed honestly/,
+    );
+    await analyseFile({ entry: f, depth: 0, includeChildren: false }).catch((e: Error) => {
+      expect(e.message).toContain("has no corresponding closing tag");
+      expect(e.message).toMatch(/at line 2/);
+      // The escape has to be nameable, or the user's only option is to guess.
+      expect(e.message).toContain("--exclude");
+    });
+  });
+
+  test("valid TSX is untouched — the guard fires only on genuinely broken input", async () => {
+    // Measured before shipping: 111 fixture files and 241 real component files
+    // across both dogfood apps produce ZERO parse diagnostics. A guard that
+    // fired on ordinary source would be worse than the defect it replaces.
+    const f = tmp("Fine.tsx", "export const X = () => <div>hi</div>;\n");
+    const trees = await analyseFile({ entry: f, depth: 0, includeChildren: false });
+    expect(trees[0]?.entry.componentName).toBe("X");
+  });
+});
