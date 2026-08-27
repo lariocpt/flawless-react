@@ -5,6 +5,7 @@ import type {
   FieldInfo,
   FormInfo,
   HandlerBinding,
+  HandlerEffect,
   InteractionInfo,
   LabelSource,
   PropsShape,
@@ -59,6 +60,13 @@ export function extractInteractions(
    * every React Native file.
    */
   dialect: HostDialect = "dom",
+  /**
+   * State setter names, so a `setX(…)` in a handler is recorded as a setState
+   * effect rather than as an opaque call. Passed rather than re-derived:
+   * extractState already owns this and running it twice invites the two to
+   * disagree.
+   */
+  setterNames: Set<string> = new Set(),
 ): InteractionInfo {
   // Handler props are function-typed, which extractProps cannot synthesise and
   // routes to unresolvedProps. Union both so the classifier sees them.
@@ -319,6 +327,17 @@ export function extractInteractions(
               return targets.length > 0 ? { pushTargets: targets } : {};
             })(),
             ...(native && callsBack(attr.initializer) ? { navBack: true } : {}),
+            // What the handler provably DOES, for deciding what may be asserted
+            // after dispatching it. The alternative was
+            // `expect(container.firstElementChild).not.toBeNull()`, which under a
+            // provider cannot fail and without one reddens a component that
+            // legitimately unmounts.
+            ...(() => {
+              const init = attr.initializer;
+              if (!init || !ts.isJsxExpression(init) || !init.expression) return {};
+              const effects = handlerEffects(init.expression, routerNames, setterNames, bodyNode);
+              return effects.length > 0 ? { effects } : {};
+            })(),
             pos: posOf(attr, sourceFile),
           });
         }
@@ -891,4 +910,203 @@ function rootIdentifierOf(expr: ts.Expression): string {
     cur = ts.isCallExpression(cur) ? cur.expression : cur.expression;
   }
   return ts.isIdentifier(cur) ? cur.text : "";
+}
+
+/**
+ * True iff `call` runs whenever the handler runs.
+ *
+ * "Dominated" in the flow sense: the call sits in the handler body's own
+ * top-level statement list, and no preceding sibling can leave the function
+ * first. Not inside an if/switch/loop/try/catch/finally, and not inside a
+ * nested function.
+ *
+ * A NEW predicate rather than a reuse of hasConditionalBetween, whose existing
+ * consumers depend on today's meaning: that one walks ANCESTORS only, so the
+ * dominant real shape —
+ *
+ *   if (!parsed.success) { setErr(…); return; }
+ *   setBusy(true);
+ *
+ * — reads as unguarded for `setBusy`, because the `if` is a preceding SIBLING
+ * and not an ancestor. Asserting on `setBusy` there is a claim about a path the
+ * defaults may never reach.
+ */
+export function reachedUnconditionally(call: ts.Node, body: ts.Node): boolean {
+  // Walk up to the handler body, refusing any construct that makes the call
+  // conditional on something.
+  let node: ts.Node = call;
+  let stmt: ts.Statement | undefined;
+  for (;;) {
+    // Stop AT the body. A concise arrow (`onClick={() => save()}`) has the call
+    // itself as its body, so without this the arrow below disqualified the very
+    // handler it is the body of — every inline one-expression handler came back
+    // conditional.
+    if (node === body) break;
+    const parent: ts.Node | undefined = node.parent;
+    if (!parent || parent === body) break;
+    if (
+      ts.isIfStatement(parent) ||
+      ts.isSwitchStatement(parent) ||
+      ts.isCaseClause(parent) ||
+      ts.isDefaultClause(parent) ||
+      ts.isForStatement(parent) ||
+      ts.isForOfStatement(parent) ||
+      ts.isForInStatement(parent) ||
+      ts.isWhileStatement(parent) ||
+      ts.isDoStatement(parent) ||
+      ts.isTryStatement(parent) ||
+      ts.isCatchClause(parent) ||
+      ts.isConditionalExpression(parent)
+    ) {
+      return false;
+    }
+    // A short-circuit right-hand side runs only if the left decided so.
+    if (
+      ts.isBinaryExpression(parent) &&
+      (parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
+      parent.right === node
+    ) {
+      return false;
+    }
+    // A nested function is not the handler's own flow.
+    if (
+      ts.isArrowFunction(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isFunctionDeclaration(parent)
+    ) {
+      return false;
+    }
+    if (ts.isStatement(parent) && parent.parent === body) stmt = parent;
+    node = parent;
+  }
+  if (!stmt) {
+    // A concise arrow body (`onClick={() => save()}`) has no statement list at
+    // all, so the call is trivially the whole handler.
+    return true;
+  }
+  // Nothing before it in the same list may leave the function first.
+  const list = ts.isBlock(body) ? body.statements : undefined;
+  if (!list) return true;
+  for (const s of list) {
+    if (s === stmt) return true;
+    if (exitsEarly(s)) return false;
+  }
+  return true;
+}
+
+/** Whether a statement can return or throw out of the handler at any depth. */
+function exitsEarly(stmt: ts.Statement): boolean {
+  let found = false;
+  const walk = (n: ts.Node): void => {
+    if (found) return;
+    // A return inside a nested function returns from THAT function.
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) return;
+    if (ts.isReturnStatement(n) || ts.isThrowStatement(n)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(stmt);
+  return found;
+}
+
+/**
+ * What a handler expression provably does. See HandlerEffect.
+ *
+ * Syntactic only: a call whose callee root is an identifier, a router method on
+ * a `useRouter()` receiver, or a `set*` call. It claims nothing about what those
+ * do — the emitter decides whether it can observe them.
+ */
+export function handlerEffects(
+  expr: ts.Expression,
+  routerNames: Set<string>,
+  setterNames: Set<string>,
+  /**
+   * The component body, for resolving `onClick={submit}` to the local `submit`.
+   *
+   * ONE hop, and it is the shape that matters: on the dogfood app every handler
+   * that reaches a server action is written this way, so without it the ladder
+   * produced zero real claims over 174 specs and only deleted things. Two hops
+   * would be a call graph; a miss costs a canary, which is honest.
+   */
+  componentBody?: ts.Node,
+): HandlerEffect[] {
+  const body = handlerBody(expr, componentBody);
+  if (!body) return [];
+  const out: HandlerEffect[] = [];
+  const walk = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const dominated = reachedUnconditionally(n, body);
+      const callee = n.expression;
+      if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)) {
+        const method = callee.name.text;
+        if (
+          (method === "push" ||
+            method === "replace" ||
+            method === "navigate" ||
+            method === "back") &&
+          routerNames.has(rootIdentifierOf(callee.expression))
+        ) {
+          const arg = n.arguments[0];
+          const target =
+            arg && ts.isStringLiteral(arg)
+              ? arg.text
+              : arg && ts.isNoSubstitutionTemplateLiteral(arg)
+                ? arg.text
+                : undefined;
+          out.push({ kind: "router", method, ...(target ? { target } : {}), dominated });
+        }
+      } else if (ts.isIdentifier(callee)) {
+        if (setterNames.has(callee.text)) {
+          out.push({ kind: "setState", setter: callee.text, dominated });
+        } else {
+          out.push({ kind: "call", root: callee.text, dominated });
+        }
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(body);
+  return out;
+}
+
+/**
+ * The body whose statements the handler runs — inline, or the local function it
+ * names.
+ *
+ * `onClick={submit}` is the ordinary way to write anything longer than one
+ * expression, and treating it as opaque made every such handler unassertable.
+ */
+function handlerBody(expr: ts.Expression, componentBody?: ts.Node): ts.Node | undefined {
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) return expr.body;
+  if (ts.isIdentifier(expr) && componentBody) return localFunctionBody(expr.text, componentBody);
+  return undefined;
+}
+
+/** The body of a function declared locally under `scope` and bound to `name`. */
+function localFunctionBody(name: string, scope: ts.Node): ts.Node | undefined {
+  let found: ts.Node | undefined;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isFunctionDeclaration(n) && n.name?.text === name && n.body) {
+      found = n.body;
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      n.initializer &&
+      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
+    ) {
+      found = n.initializer.body;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return found;
 }

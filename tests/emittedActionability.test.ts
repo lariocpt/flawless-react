@@ -174,3 +174,53 @@ describe("an undecidable render emits a named refusal, not a spec that cannot pa
     expect(src).toContain("renderTarget()");
   });
 });
+
+describe("no emitted test rests on a survival floor", () => {
+  test("the DOM emitter no longer writes the container.firstElementChild floor", async () => {
+    // Executed both ways before it was removed: vacuous under a provider (the
+    // provider's own node answers it), red without one on a component that
+    // legitimately unmounts. 88 of them across the dogfood app.
+    const out = mkdtempSync(path.join(os.tmpdir(), "nofloor-"));
+    try {
+      const tree = await analyse({
+        entry: path.resolve(__dirname, "fixtures/Dashboard.tsx"),
+        depth: 0,
+        includeChildren: false,
+      });
+      const files = renderUnitBrowser({ trees: [tree], outDir: out, variants: 3 });
+      for (const f of files) {
+        if (!f.relPath.endsWith(".test.tsx")) continue;
+        expect(`${f.relPath}: ${f.content.includes("did not take the component down")}`).toBe(
+          `${f.relPath}: false`,
+        );
+      }
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  test("a canary asserts something that CAN fail — nothing escaped the handler", async () => {
+    // The floor's replacement is not another survival check. Executed: a throwing
+    // handler leaves today's vitest test green and fails only the run, so naming
+    // it in the test is strictly more than the floor ever did.
+    const out = mkdtempSync(path.join(os.tmpdir(), "canary-"));
+    try {
+      const tree = await analyse({
+        entry: path.resolve(__dirname, "fixtures/Dashboard.tsx"),
+        depth: 0,
+        includeChildren: false,
+      });
+      const files = renderUnitBrowser({ trees: [tree], outDir: out, variants: 3 });
+      const withCanary = files.find((f) => f.content.includes("nothing escaped it"));
+      if (withCanary) {
+        expect(withCanary.content).toContain('window.addEventListener("error"');
+        expect(withCanary.content).toContain("expect(escaped");
+        // The listener must be removed even when the dispatch throws, or one
+        // spec's canary starts catching the next one's errors.
+        expect(withCanary.content).toContain("finally");
+      }
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+});

@@ -187,6 +187,7 @@ async function analyseOne(
     tagRootTags,
     hostTag,
     hostDialect,
+    new Set(state.map((st) => st.setterName).filter((n): n is string => n !== undefined)),
   );
   const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
   const flows = extractFlows(unit.bodyNode, renderEnv, hostTag);

@@ -339,7 +339,7 @@ function reachesDataPath(mi: ModuleImportInfo): boolean {
  * any file, so they pass through. Only a relative specifier has to be re-based
  * onto the spec's own directory.
  */
-function mockSpecifier(mi: ModuleImportInfo, specDir: string | undefined): string {
+export function mockSpecifier(mi: ModuleImportInfo, specDir: string | undefined): string {
   if (!mi.specifier.startsWith(".")) return mi.specifier;
   if (!specDir || !mi.resolvedPath) return mi.specifier;
   let rel = path.relative(specDir, mi.resolvedPath).split(path.sep).join("/");
@@ -348,14 +348,32 @@ function mockSpecifier(mi: ModuleImportInfo, specDir: string | undefined): strin
 }
 
 function navigationMock(): string {
-  return `vi.mock("next/navigation", () => ({
+  // `routerMock` is hoisted, and it has to be.
+  //
+  // useRouter used to return a FRESH object with FRESH spies on every call, so
+  // there was no handle to assert against: `router.push("/x")` inside a handler
+  // wrote to a spy the spec could never see. A navigation is one of the few
+  // things a click provably does, and it was unobservable.
+  //
+  // vi.hoisted is the only way to share a value INTO the factory: vi.mock
+  // factories are lifted above every import in the module, so a plain const
+  // declared here is still in the temporal dead zone when the factory runs.
+  return `const routerMock = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  refresh: vi.fn(),
+  back: vi.fn(),
+  forward: vi.fn(),
+  prefetch: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("notFound() called"); }),
   // These abort rendering in Next; a plain vi.fn() would let a guarded
   // component run straight past its own guard and crash on the data it guards.
   redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   usePathname: vi.fn(() => "/"),
-  useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
+  useRouter: vi.fn(() => routerMock),
   useSearchParams: vi.fn(() => new URLSearchParams()),
 }));`;
 }
