@@ -5,6 +5,12 @@ description: Regenerate a flawless-react suite safely — the generated/refreshe
 
 # Regenerating a flawless suite
 
+> **Expo mode adds one write-once file.** `<outDir>/jest.setup.ts` is where
+> hand-written module mocks live and nothing can rebuild them from the analysis, so a
+> re-run never overwrites it — delete it to regenerate. `jest.config.cjs` and every
+> native spec under `unit/` ARE regenerated on each run, like the rest of the derived
+> suite.
+
 The model is regenerate-by-default: derived files track the tool and your
 sources, and only what the tool cannot rebuild is protected. Know the table
 before touching an adopted suite:

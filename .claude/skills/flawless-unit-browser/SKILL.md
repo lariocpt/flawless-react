@@ -5,6 +5,12 @@ description: Work with flawless-react's generated unit and browser specs — wha
 
 # flawless unit + browser specs
 
+> **Expo projects use a different plane entirely.** Under `--expo` this task emits
+> jest-expo + @testing-library/react-native specs into `<outDir>/unit/`, with
+> `renderRouter` for route screens, no browser half at all, and a selector ladder that
+> has no last-resort rung. Everything below describes the **DOM** plane — see the
+> `flawless-expo` skill for the native one.
+
 The `unit-browser` task writes Vitest + Testing Library specs from static
 analysis; when `perf-harness` is also selected it adds Playwright browser specs
 that mount through the profiling host. Everything asserted was derived — the

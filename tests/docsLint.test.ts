@@ -73,6 +73,7 @@ const FOREIGN_FLAGS: Record<string, string> = {
   "--grep": "playwright/vitest",
   "--localstorage-file": "playwright",
   "--porcelain": "git status",
+  "--preload": "bun test",
   "--port": "crust mock-server",
   "--proxy": "crust mock-server",
   "--swagger": "crust mock-server",

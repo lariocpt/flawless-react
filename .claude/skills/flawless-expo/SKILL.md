@@ -1,0 +1,171 @@
+---
+name: flawless-expo
+description: Work with flawless-react's Expo / React Native mode — what --expo detects, which tasks run and which refuse, the jest-expo + @testing-library/react-native unit plane, renderRouter vs render, the native selector ladder and why a skip is a skip, and the version pairing that has to be exact. Use when generating or fixing native specs, when a native suite is red, or when deciding whether a refusal is a bug or the design.
+---
+
+# flawless-expo
+
+React Native is a **second element vocabulary**, not a Next.js variant. `<View>` is
+capitalised and imported; there is no `<form>`, no implicit ARIA role, and
+`className` is compiled away by babel before anything can observe it. Most of what
+this skill records is the consequences of those four facts.
+
+## What `--expo` detects
+
+`detectExpo(root)` reads, off disk only:
+
+| field | from | why it matters |
+|---|---|---|
+| `sdkMajor` | the project's own `expo` range, else what is installed | jest-expo's major must **match** it |
+| `routerRoot` | `app/` or `src/app/`, **only if** `expo-router` is a dependency | decides which files get the route template |
+| `reactCompiler` | `app.json` `experiments.reactCompiler`, or `babel-plugin-react-compiler` | three `perf-static` rules become advice about work already done |
+| `nativewind` | `babel.config.js` mentioning nativewind | decides whether an unstyled host is honest to ship |
+| `webPort` | the `web` then `start` script, default **8081** | Metro's port, not 3000 |
+
+`sdkMajor` is `number | undefined` and **never guessed**. `latest`, `*`, a git url and
+a `file:` specifier all produce *unknown*, and the run says so rather than substituting
+a number — a jest-expo major that does not match the SDK fails deep inside
+`expo-modules-core` with a message that names nothing.
+
+## The version pairing, which has to be exact
+
+```
+jest-expo                       ~<the project's OWN sdk major>.0.0
+jest                            ^29.7.0
+@testing-library/react-native   ^13.3.3      <- 13, NOT 14
+react-test-renderer             19.1.0
+```
+
+Each wrong answer fails somewhere unhelpful:
+
+- **A bare `jest`** resolves to 30 while jest-expo 54's tooling is all `^29.2.1`, and the
+  mismatch surfaces as `this._moduleMocker.clearMocksOnScope is not a function` from
+  inside jest-runtime.
+- **RNTL 14** replaced `react-test-renderer` with the `test-renderer` package, and
+  expo-router 6's own testing-library is built against the former.
+
+If you are tempted to "upgrade" any of these, run the suite. That is what caught all of it.
+
+## Three spec shapes, chosen from the file
+
+**Route screen** → `renderRouter` from `expo-router/testing-library`, at its own URL.
+Not a preference: `useFocusEffect` reaches `useNavigation()`, which throws
+`Couldn't find a navigation object` outside a navigator, and `useLocalSearchParams`
+is empty. Inside a real navigator the screen is **focused**, so focus effects run and
+the spec can assert loaded state instead of the loading skeleton.
+
+**`_layout`** → its own navigator with one synthesised child. `<Tabs>` and `<Stack>`
+call `useContextKey` and throw `No filename found. This is likely a bug in expo-router`
+when rendered alone.
+
+**Everything else** → RNTL `render()`.
+
+### The context is the OBJECT form, always
+
+```tsx
+const CONTEXT = {
+  "_layout": Layout0,
+  "login": { default: LoginScreen },
+  "signup": { default: () => null },   // a stub for every literal push target
+};
+```
+
+expo-router resolves the string and `{ appDir }` forms through
+`path.resolve(process.cwd(), …)`, so a spec using either breaks the moment jest runs
+from the monorepo root instead of the app directory. The stub leaves are not
+decoration: a push to a route the context does not know lands on expo-router's
+injected `+not-found`, and the pathname assertion then fails for the wrong reason.
+
+### fireEvent in route specs, userEvent in component specs
+
+`renderRouter` calls `jest.useFakeTimers()` internally. `userEvent`'s press timing
+under fake timers is not something the emitter vouches for, so route specs use
+`fireEvent`, which has no timers in it. Do not "upgrade" one to the other.
+
+## The selector ladder
+
+```
+testID → accessibilityLabel → accessibilityRole (+name) → placeholder
+       → displayValue → text → text fragment → undefined
+```
+
+`placeholder` sits **above** text deliberately: a placeholder names *the element*,
+text names a *child*.
+
+**There is no last-resort rung, and that is a decision.** The DOM ladder bottoms out at
+`container.querySelector("button")`; the two native candidates are both unsound.
+`UNSAFE_getByType(Pressable)` compares component identity, and under NativeWind's
+`jsxImportSource` the `Pressable` the source rendered went through `cssInterop`'s
+wrapper while the one a spec imports is the bare component — so it matches zero
+elements, and `fireEvent.press` on nothing is a green test that touched nothing.
+"The first pressable in the tree" is wrong for the same reason the DOM ladder refuses
+an ambiguous bare tag, only more often, because every screen is a stack of Pressables.
+
+### A skip is not a gap in the tool
+
+`getByRole("button")` matches **nothing** on a bare `<Pressable>`: RNTL's `getRole()`
+reads the explicit `accessibilityRole` prop, else `"text"` for `Text`, else `"none"`.
+There is no implicit-role table to lean on.
+
+So a control with no `testID`, no `accessibilityLabel`, no `accessibilityRole` and no
+text under it is a `test.skip` carrying the reason **and the fix**. The icon-only
+wording wins over the ambiguous one when both apply, because one `accessibilityLabel`
+resolves both — and the same absence is what makes the control silent to a screen
+reader. **Answer a skip by adding the label to the app, not by loosening the ladder.**
+
+## What a native spec does NOT assert
+
+Three DOM assertions have no honest native equivalent and are dropped rather than faked:
+
+- the root-tag `querySelector` — `rootTag` is a capitalised element name, and the only
+  RNTL equivalents couple the spec to RN internals;
+- the `.flawless-cls` className-flow check — NativeWind compiles `className` into a
+  `style` through **babel**, so a sentinel class is unobservable in the jest-expo tree
+  *and* in the react-native-web DOM;
+- anything asserting a specific style token, for the reason the DOM emitter refuses to
+  assert a Tailwind class.
+
+## No emitted spec touches the network
+
+A module that resolves project-locally and performs `fetch()` is `jest.mock`ed. Before
+this existed the fixture suite made live HTTP calls and crashed a jest worker with
+`api_error 405` from a real server. The stub shapes are `{}` plus a `TODO(flawless)`;
+replacing them turns the mount assertions into assertions about loaded state.
+
+The mock specifier is relativised to the **spec**, not the component — `app/login.tsx`
+writes `"../lib/api"`, which from `flawless/unit/` names `flawless/lib/api`.
+
+## Colocation is impossible under `app/`
+
+expo-router's `require.context` matches every `.[tj]sx?` under the router root, so a
+colocated `app/login.flawless.test.tsx` would **register as a route**. Native specs for
+route files always go to the out dir.
+
+Related: check the app's own `test` script. A bare runner with no path filter — the
+dogfood app's was `bun test --preload ./tests/setup.ts` — sweeps the generated specs
+into the project suite and runs them under a runner they were not written for. The tool
+warns; scope the script (`bun test tests`).
+
+## Tasks that refuse, and why that is the design
+
+`perf-harness`, `a11y`, `e2e` and `load` refuse under `--expo`, naming the wave that
+will implement them. Two of those refusals are load-bearing rather than temporary:
+
+- **`a11y` would be vacuously green.** All 28 Biome rules are HTML/ARIA; over 31 React
+  Native files carrying 82 unlabelled `<Pressable>`s they return **zero**, while the
+  same config finds 3/3 on this repo's `A11yOffender.tsx`. A clean report that means
+  "these rules do not apply" is worse than no report.
+- **`perf-static` runs but reads differently under the React Compiler.** On a project
+  with `experiments.reactCompiler: true`, 136 of 168 findings were
+  `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
+  `perf/no-memoisation-with-children` — work the compiler already performs.
+
+## Never
+
+- Never drop `--expo` to make a task run. It will emit DOM artefacts for a React Native
+  project: a suite that runs, passes and tests nothing.
+- Never mock `react-native`. That is exactly why an app whose own setup does it cannot
+  test screens; jest-expo exists so you do not have to.
+- Never add a row to `NATIVE_TAG_TO_ROLE` unless the element's own React Native source
+  sets the role unconditionally. A fuller table means queries that match nothing.
+- Never satisfy a skip by relaxing the selector ladder. Add the `accessibilityLabel`.

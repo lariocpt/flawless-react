@@ -227,6 +227,48 @@ type ComponentInfo = {
 `ComponentTree` is the stable seam. Everything downstream — the perf harness,
 the unit/browser scaffolder, and every task — consumes it and nothing else.
 
+## The platform seam
+
+Two element vocabularies, decided **per file** rather than per run.
+
+`src/analyse/nativeDialect.ts` reads a file's own imports: anything from `react-native`, `react-native-*`, `@react-native*/`, `expo`, `expo-*`, `@expo/`, `@react-navigation/` or `nativewind` makes the file **native**; everything else is **dom**, which is what every file analysed before this existed was.
+
+Per-file, not per-run, for three reasons in ascending cost of getting it wrong. The evidence is already in `parsed.imports` before any extractor runs, so a flag would ask the operator to assert something the tool can read. A flag cannot express a monorepo, where `apps/web` and `apps/mobile` under one sweep have different answers. And "an Expo app also targets web" argues *against* a run-level axis rather than for one: under Expo web the source is byte-identical — still `<View>`, still imported from `react-native` — and only the runtime differs, so there is nothing for a source-level platform switch to select.
+
+The invariant that makes it safe: **a file with host elements to classify always carries the import that proves the dialect**, because a React Native host element is only reachable through an import. There are no ambient capitalised intrinsics.
+
+### `hostTag.ts` — one predicate, five call sites
+
+`/^[a-z][a-z0-9-]*$/` used to decide what a host element was, written out in `extractRootTag`, `extractRenderMode`, `extractFlows`, `extractChildAttrs` and `selectors.ts`. It now lives once, as a `HostTagResolver`:
+
+- lowercase → a DOM intrinsic. Byte-identical to the old test.
+- Capitalised → a host element **iff this file imports that name from a specifier in the closed native table**.
+- anything else → `undefined`, meaning "this is a component" — exactly the state every uppercase tag was already in.
+
+Never a guess from the name: `<IconButton>` is not a button, and shadcn's `<ButtonPrimitive>` still answers `undefined` on the web path. It reports the **module-side** name, so `import { View as Box }` gives `"View"` — the same refusal `extractRootTag` already makes for `<UI.Badge/>`, applied in the other direction, and what makes `rootTag` comparable across files.
+
+Every extractor takes the resolver as a **trailing optional parameter defaulting to the DOM rule**, and a DOM file gets `domOnlyResolver` *itself* rather than a wrapper — so the web path is unchanged by construction rather than by inspection.
+
+### The native tables
+
+[src/analyse/nativeProps.ts](../src/analyse/nativeProps.ts) is the peer of `hostProps.ts`, keyed by **specifier then export name** — which is what stops a local component called `View` becoming a host element. Its `BASE` is empty, and that is the honest answer: React Native has no universal prop whose synthesised default is both valid and useful, and `className` belongs to NativeWind rather than to RN.
+
+Three invariants, each pinned by a test that names the false result it prevents:
+
+1. **Never synthesise `value`** (except `Switch`, which has no `defaultValue`). `<TextInput value={x}/>` with no `onChangeText` is React Native's controlled-input trap: the field is frozen and `fireEvent.changeText` is a **silent no-op that still passes** — worse than the DOM version, where React at least warns.
+2. **Never synthesise a locator prop.** `placeholder`, `testID`, `accessibilityLabel`, `accessibilityHint` and `nativeID` *are* the entire @testing-library/react-native locator surface.
+3. **Never synthesise a role.** RNTL resolves role from `accessibilityRole` alone, so an invented one makes `getByRole` pass on a fiction.
+
+`NATIVE_TAG_TO_ROLE` has **exactly one row** — RN's own `<Button>`, the only element whose source sets a role unconditionally — and a test asserts the count. RNTL's `getRole()` reads the explicit prop, else `"text"` for `Text`, else `"none"`; there is no `Pressable → button` mapping anywhere in the library, so a fuller table would emit queries that match nothing.
+
+[src/analyse/nativeContentModel.ts](../src/analyse/nativeContentModel.ts) is deliberately nearly empty, and that is the finding rather than an omission: React Native has no required-ancestor chains, so none are declared. It encodes the one hard runtime invariant that does exist — **a raw string must be inside `<Text>`**, which throws — plus the fill model and the hooks that demand a provider. `SafeAreaView` is *absent* from that last list and a test says so: v5 renders a native view and reads no context, so listing it would encode a required-ancestor fact that is simply false.
+
+### What changes downstream
+
+`EVENT_PATTERN` gains a native sibling (`onPress`, `onChangeText`, `onValueChange`, …); `collectHints` reads `testID`/`accessibilityLabel`/`accessibilityRole`/`accessibilityHint` and deliberately never populates `name` or `type`, which is what makes `selectors.ts`'s DOM-only branches inert on native data; and `extractLabel` **descends** — in the DOM the copy is inside the handler element, in React Native it is always one level down inside a `<Text>`. Descending is not a guess: RNTL's `getTextContent` recurses the subtree, and `fireEvent.press` walks *up* to the nearest press responder, so a descendant `<Text>` is the canonical handle.
+
+`classNameFlow` is forced **false** on native. NativeWind compiles `className` into a `style` through babel at build time, and the string reaches neither the jest-expo tree nor the react-native-web DOM — so the assertion is both unfalsifiable and unsatisfiable.
+
 ## Phase 2 — scaffold
 
 Implemented under [src/scaffold/](../src/scaffold/).
