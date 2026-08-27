@@ -72,10 +72,28 @@ export function resolveDepReturns(
       if (value === undefined) return dep;
       return { ...dep, inferredReturn: { provenance: "annotation" as const, value } };
     }
-    // Annotated with something that is not Promise<T>: outside the narrow
-    // case, and a sync annotation on an awaited dep is somebody's refactor
-    // in progress — not a thing to build a fixture on.
-    if (fn.type) return dep;
+    // A sync annotation on an AWAITED dep is somebody's refactor in progress —
+    // not a thing to build a fixture on, and the original bail stands for it.
+    //
+    // On a dep that is NOT awaited, the same annotation is simply the truth.
+    // Refusing it mocked every such call as `async () => ({})`, and the dogfood
+    // web app shows both ways that goes wrong:
+    //
+    //   formatZAR(cents: number): string   every money value rendered as an
+    //                                      object, from a mock that was also
+    //                                      async for a synchronous function
+    //   isTrustee(roles): boolean          `{}` is truthy, so the trustee
+    //                                      branch was taken unconditionally and
+    //                                      the member branch never ran
+    //
+    // Recorded as sync so the emitter can write `vi.fn(() => …)` rather than
+    // wrapping a plain value in a promise nothing awaits.
+    if (fn.type) {
+      if (dep.awaited) return dep;
+      const value = resolveTypeNodeValue(fn.type, sf, declFile, resolver, cache);
+      if (value === undefined) return dep;
+      return { ...dep, inferredReturn: { provenance: "annotation" as const, value, sync: true } };
+    }
 
     if (!fn.body) return dep;
     const fetches = extractFetchCalls(fn.body, sf);
@@ -212,4 +230,59 @@ function promiseTypeArg(type: ts.TypeNode | undefined): ts.TypeNode | undefined 
     return type.typeArguments?.[0];
   }
   return undefined;
+}
+
+/**
+ * Return annotations for the names one import declaration binds.
+ *
+ * The peer of `resolveDepReturns` for functions that never became a dataDep —
+ * a formatter called inside JSX, a predicate read straight into a condition.
+ * Those reached the emitter with no evidence at all and were stubbed
+ * `vi.fn(async () => ({}))`, which is wrong in three ways at once for
+ * `formatZAR(cents: number): string`: async, an object, and a value the page
+ * renders directly.
+ *
+ * Only names with a resolvable annotation appear. An absent name keeps the
+ * honest {} stub and the TODO that goes with it, exactly as before.
+ */
+export function annotatedExportReturns(
+  mi: { names: string[]; importedNames?: string[]; isTypeOnly: boolean },
+  resolvedPath: string,
+  resolver: ModuleResolver,
+  cache: SourceFileCache,
+): Record<string, { value: PropValue; sync: boolean }> {
+  const out: Record<string, { value: PropValue; sync: boolean }> = {};
+  if (mi.isTypeOnly) return out;
+  for (const [i, local] of mi.names.entries()) {
+    const exported = mi.importedNames?.[i] ?? local;
+    if (!exported || exported === "default") continue;
+    const located = findExportedDecl(
+      resolvedPath,
+      exported,
+      cache,
+      resolver,
+      (sf, name) => new Map(exportedFunctions(sf)).get(name),
+      true,
+    );
+    if (!located) continue;
+    const { sf, file: declFile, decl: fn } = located;
+    if (!fn.type) continue;
+    const promiseArg = promiseTypeArg(fn.type);
+    if (promiseArg) {
+      // Void is a real answer, not a gap — see VOID_RETURN.
+      if (
+        promiseArg.kind === ts.SyntaxKind.VoidKeyword ||
+        promiseArg.kind === ts.SyntaxKind.UndefinedKeyword
+      ) {
+        continue;
+      }
+      const value = resolveTypeNodeValue(promiseArg, sf, declFile, resolver, cache);
+      if (value !== undefined) out[exported] = { value, sync: false };
+      continue;
+    }
+    if (fn.type.kind === ts.SyntaxKind.VoidKeyword) continue;
+    const value = resolveTypeNodeValue(fn.type, sf, declFile, resolver, cache);
+    if (value !== undefined) out[exported] = { value, sync: true };
+  }
+  return out;
 }

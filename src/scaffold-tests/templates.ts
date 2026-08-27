@@ -27,6 +27,7 @@ import {
   type FlatComponent,
   flattenTrees,
   synthesiseDefaults,
+  withRouteParams,
 } from "./registry.ts";
 import {
   awaitSelector,
@@ -880,7 +881,7 @@ function constrainedSpec(
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
-    const propsLiteral = JSON.stringify(info.propsShape);
+    const propsLiteral = JSON.stringify(withRouteParams(info.propsShape));
     const promiseProps = info.promiseProps ?? [];
     // An async server component has to be invoked to get its element. A sync one
     // must NOT be: calling it directly runs its hooks with no React dispatcher
@@ -1050,7 +1051,7 @@ function rscSpec(
 ): string {
   const info = c.info;
   const name = info.componentName;
-  const propsLiteral = JSON.stringify(info.propsShape);
+  const propsLiteral = JSON.stringify(withRouteParams(info.propsShape));
   const promiseProps = info.promiseProps ?? [];
 
   const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;

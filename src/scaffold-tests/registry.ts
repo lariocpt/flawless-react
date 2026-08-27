@@ -1,4 +1,4 @@
-import type { ComponentInfo, ComponentTree, PropsShape } from "../types.ts";
+import type { ComponentInfo, ComponentTree, PropsShape, PropValue } from "../types.ts";
 
 /**
  * The one place that decides what a component is CALLED and whether it can be
@@ -215,4 +215,42 @@ export function synthesiseDefaults(info: ComponentInfo): PropsShape {
     else objectish[u.propName] ??= {};
   }
   return { ...objectish, ...info.propsShape };
+}
+
+/**
+ * A Next.js page's `params`, with real segment values.
+ *
+ * mapType's default for a string prop is `""`, and it is the right default: an
+ * empty string is a legitimate neutral value for a caption or a placeholder.
+ * It is never a route param. Next does not match a dynamic segment against an
+ * empty string, so `{ params: { id: "" } }` is a request that cannot happen —
+ * and the pages then act like it: `getBuildingById(db, "")` finds nothing,
+ * `notFound()` fires, and the spec records a guard exit as a pass.
+ *
+ * Twenty-two of the dogfood app's thirty-two page specs never rendered
+ * anything. On the one measured directly, filling this in took the page from 41
+ * of 158 lines to 151.
+ *
+ * `params` only, and only its empty-string leaves — a value the analyser
+ * resolved from a literal union or a nested type is evidence and is left alone.
+ */
+export function withRouteParams(shape: PropsShape): PropsShape {
+  const params = shape.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return shape;
+  const filled: Record<string, PropValue> = {};
+  let changed = false;
+  for (const [k, v] of Object.entries(params as Record<string, PropValue>)) {
+    if (v === "") {
+      filled[k] = `flawless-${k}`;
+      changed = true;
+    } else if (Array.isArray(v) && v.length === 0) {
+      // A catch-all segment (`[...slug]`) is an array of segments, and an empty
+      // one is the same non-request as an empty string.
+      filled[k] = [`flawless-${k}`];
+      changed = true;
+    } else {
+      filled[k] = v;
+    }
+  }
+  return changed ? { ...shape, params: filled } : shape;
 }

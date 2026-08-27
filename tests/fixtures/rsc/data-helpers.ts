@@ -63,3 +63,33 @@ export async function loadMember(db: Db, memberId: string): Promise<Member> {
 export function notFound(): never {
   throw new Error("NEXT_NOT_FOUND");
 }
+
+// ---------------------------------------------------------------------------
+// The three mock shapes dogfood round 6 turned up on the web path.
+// ---------------------------------------------------------------------------
+
+export interface Membership {
+  id: string;
+  building_id: string;
+  status: string;
+  label: string;
+}
+
+/** Async, annotated: the ordinary case, and the control for the two below. */
+export async function listMembershipsForUser(userId: string): Promise<Membership[]> {
+  return [{ id: userId, building_id: userId, status: "active", label: userId }];
+}
+
+/**
+ * Synchronous, and called inside JSX rather than awaited — so it never becomes
+ * a dataDep. It was stubbed `async () => ({})`: a promise where the page
+ * renders a string.
+ */
+export function formatMoney(cents: number): string {
+  return `R${(cents / 100).toFixed(2)}`;
+}
+
+/** Returns nothing. A mock for it needs no fixture and no marker asking for one. */
+export async function recordVisit(id: string): Promise<void> {
+  void id;
+}
