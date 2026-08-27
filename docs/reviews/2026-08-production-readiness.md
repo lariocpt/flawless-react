@@ -268,6 +268,13 @@ history:
 | before | 67.0% | 50.4% | 77.7% | 60.6% | 39.2% | 40.7% |
 | after | **74.9%** | **56.2%** | **79.4%** | **66.2%** | **48.1%** | **56.0%** |
 
+Over **component files only** (`.tsx`), which is the basis every earlier figure in
+this document uses. Counting every instrumented file, mobile is 63.1% / 44.8% /
+53.2% — the difference is `lib/api.ts` and its siblings, which the generated unit
+layer mocks rather than exercises. Both are true and they answer different
+questions; a coverage number with no stated denominator answers neither, which is
+why the basis is now written down rather than assumed.
+
 Coverage of the app under test is not one of the eleven dimensions, and it should
 not become one on the strength of a single dogfood target. What the rounds change
 is the *evidence* under two dimensions that are already at their ceiling.

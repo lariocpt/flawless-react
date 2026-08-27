@@ -3,7 +3,7 @@
   "toolBase": "e063833",
   "method": "Not a reading pass. Each round regenerated both suites from the checkout, ran them under their real runners (vitest for web, jest-expo for mobile), took v8/istanbul coverage, and classified every emitted test as mount / output / driven-asserted / driven-blind. Findings are things a run produced, never things a read suggested. Where a cause was hypothesised it was probed before being fixed: the loaded-state skip's recorded explanation ('an external store the harness does not reach') was tested by enabling all 21 recipes live and reading the failures, and it was wrong. Every fix carries an anti-vacuous probe recorded in its commit: revert the fix, confirm the pin reddens.",
   "coverage": {
-    "note": "Denominators are the app's own source under coverage.include, not the tool's. Web is v8 via vitest; mobile is babel-plugin-istanbul via jest-expo. Both measured on the same checkout of the dogfood app in every round.",
+    "note": "Denominators are COMPONENT FILES ONLY (.tsx) under the app's own source, which is the basis every earlier round in docs/reviews uses. Counting every instrumented file instead, mobile reads 63.1% lines / 44.8% branches / 53.2% functions \u2014 the difference is lib/api.ts and its siblings, which the generated unit layer mocks rather than exercises. Both are true of different questions. Web is v8 via vitest; mobile is babel-plugin-istanbul via jest-expo. Both measured on the same checkout of the dogfood app in every round.",
     "web": {
       "baseline": {
         "lines": "67.0%",
@@ -15,7 +15,7 @@
         "branches": "56.2%",
         "functions": "79.4%"
       },
-      "suites": "174 passed, 515 passed / 14 skipped"
+      "suites": "174 passed; 514 passed / 15 skipped. Two of the skips are the RSC fixture-missing escape, which fires at run time rather than emit time, so that split can move by one without anything changing."
     },
     "mobile": {
       "baseline": {
