@@ -21,6 +21,12 @@ import ts from "typescript";
  * `useFocusEffect` callback, or evaluated directly in the component body — and
  * NOT inside a branch, a catch, or a JSX event handler.
  *
+ * Pass the COMPONENT's own declaration, not its source file. Two exported
+ * components in one file share every file-level fact, so a file-scoped walk gave
+ * a component that imports nothing and calls nothing a skip reading "loaded state
+ * via listItems — what it returns is never rendered as a list", naming a function
+ * that appears nowhere in its subtree. `componentNode` below is how to get it.
+ *
  * Reachability is a fixpoint over LOCAL functions, not a fixed number of hops,
  * because the real screens are two deep and a one-hop rule found none of them:
  *
@@ -31,7 +37,7 @@ import ts from "typescript";
  * loader hidden behind one is missed — and a miss costs a skip, while a wrong
  * answer costs a red test on a healthy component. It errs toward the skip.
  */
-export function mountPathCalls(sf: ts.SourceFile): Set<string> {
+export function mountPathCalls(root: ts.Node): Set<string> {
   // Every unconditional call in the file, with the local name whose body holds
   // it. Collected once; the fixpoint below only re-reads this list.
   const sites: { callee: string; owner: string | undefined; underEffect: boolean }[] = [];
@@ -45,7 +51,7 @@ export function mountPathCalls(sf: ts.SourceFile): Set<string> {
     }
     ts.forEachChild(n, walk);
   };
-  walk(sf);
+  walk(root);
 
   // Seed with what an effect hook evaluates directly, then keep adding the
   // bodies of local functions those calls name, until nothing new appears.
@@ -189,7 +195,7 @@ function enclosingFunction(n: ts.Node): ts.Node | undefined {
  * invoice row renders `invoice_number` and `due_date` — the field is rendered
  * somewhere in the file, by a different element, over different data.
  */
-export function collectionRenderingCalls(sf: ts.SourceFile): Map<string, Set<string>> {
+export function collectionRenderingCalls(root: ts.Node): Map<string, Set<string>> {
   const stateOfSetter = new Map<string, string>();
   /** state variable → the fields its row renders as text. */
   const renderedLists = new Map<string, Set<string>>();
@@ -249,7 +255,7 @@ export function collectionRenderingCalls(sf: ts.SourceFile): Map<string, Set<str
     }
     ts.forEachChild(n, walk);
   };
-  walk(sf);
+  walk(root);
 
   const out = new Map<string, Set<string>>();
   const walkSetters = (n: ts.Node): void => {
@@ -264,7 +270,7 @@ export function collectionRenderingCalls(sf: ts.SourceFile): Map<string, Set<str
     }
     ts.forEachChild(n, walkSetters);
   };
-  walkSetters(sf);
+  walkSetters(root);
   return out;
 }
 
@@ -371,4 +377,58 @@ function insideJsx(n: ts.Node): boolean {
     node = node.parent;
   }
   return false;
+}
+
+/**
+ * The declaration of `name` in `sf`, for scoping the two walks above.
+ *
+ * Both classifiers answer questions ABOUT A COMPONENT, and every fact they read
+ * — which calls are on the mount path, which collections reach JSX — belongs to
+ * one component's subtree. Handed a whole file they answer for the file, and a
+ * second exported component in it inherits the first one's evidence.
+ *
+ * Falls back to the file when the name cannot be located, which is what the
+ * emitter did for every component before this existed: worse than scoped, and
+ * still better than claiming nothing.
+ */
+export function componentNode(sf: ts.SourceFile, name: string): ts.Node {
+  let found: ts.Node | undefined;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isFunctionDeclaration(n) && n.name?.text === name) {
+      found = n;
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      n.initializer
+    ) {
+      found = n.initializer;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found ?? sf;
+}
+
+/**
+ * Every identifier named anywhere in `root`.
+ *
+ * `moduleImports` is a FILE-level fact — parseFile collects the file's imports,
+ * not each component's — so a component that references none of them still
+ * arrives at the mock emitter carrying all of them. Without this, a component
+ * that imports nothing and calls nothing was handed a skip reading "loaded state
+ * via listItems", naming its sibling's dependency.
+ */
+export function referencedNames(root: ts.Node): Set<string> {
+  const out = new Set<string>();
+  const walk = (n: ts.Node): void => {
+    if (ts.isIdentifier(n)) out.add(n.text);
+    ts.forEachChild(n, walk);
+  };
+  walk(root);
+  return out;
 }

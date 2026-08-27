@@ -7,7 +7,12 @@
 // and every real cause turned out to be visible right here in the AST.
 import { describe, expect, test } from "bun:test";
 import ts from "typescript";
-import { collectionRenderingCalls, mountPathCalls } from "../src/analyse/mountPathCalls.ts";
+import {
+  collectionRenderingCalls,
+  componentNode,
+  mountPathCalls,
+  referencedNames,
+} from "../src/analyse/mountPathCalls.ts";
 
 const parse = (src: string): ts.SourceFile =>
   ts.createSourceFile("s.tsx", src, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
@@ -177,5 +182,52 @@ describe("collectionRenderingCalls", () => {
       }`;
     expect(rendered(src)).toEqual(["listRows"]);
     expect(rowFields(src, "listRows")).toEqual([]);
+  });
+});
+
+describe("the classifiers are scoped to a component, not to its file", () => {
+  const TWINS = `
+    import { listItems } from "../lib/api";
+    export function Loader() {
+      const [rows, setRows] = useState([]);
+      useEffect(() => { const { items } = await listItems(); setRows(items); }, []);
+      return <View>{rows.map((r) => (<Text key={r.id}>{r.name}</Text>))}</View>;
+    }
+    export function Bystander() {
+      return <View><Text>nothing here</Text></View>;
+    }`;
+
+  test("componentNode finds a function declaration by name", () => {
+    const sf = parse(TWINS);
+    const node = componentNode(sf, "Bystander");
+    expect(node).not.toBe(sf);
+    expect(ts.isFunctionDeclaration(node)).toBe(true);
+  });
+
+  test("the loader's own subtree still yields its evidence", () => {
+    const sf = parse(TWINS);
+    const scope = componentNode(sf, "Loader");
+    expect([...mountPathCalls(scope)]).toContain("listItems");
+    expect([...collectionRenderingCalls(scope).keys()]).toContain("listItems");
+  });
+
+  test("the sibling's subtree yields NOTHING — the defect this fixes", () => {
+    // File-scoped, both of these came back holding listItems, and the emitter
+    // then told Bystander why its sibling's dependency did not qualify.
+    const sf = parse(TWINS);
+    const scope = componentNode(sf, "Bystander");
+    expect([...mountPathCalls(scope)]).toEqual([]);
+    expect([...collectionRenderingCalls(scope).keys()]).toEqual([]);
+  });
+
+  test("referencedNames keeps a component's own names apart from the file's", () => {
+    const sf = parse(TWINS);
+    expect(referencedNames(componentNode(sf, "Loader")).has("listItems")).toBe(true);
+    expect(referencedNames(componentNode(sf, "Bystander")).has("listItems")).toBe(false);
+  });
+
+  test("an unlocatable name falls back to the file rather than claiming nothing", () => {
+    const sf = parse(TWINS);
+    expect(componentNode(sf, "NoSuchComponent")).toBe(sf);
   });
 });

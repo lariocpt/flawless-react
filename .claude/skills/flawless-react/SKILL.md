@@ -96,7 +96,7 @@ A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `-
 
 Two things worth knowing before reading a native run's output, both measured (`docs/reviews/2026-08-expo-probes.md`):
 
-- **`a11y` would be vacuously green.** Biome's 28 rules are HTML/ARIA rules; on 31 React Native files with 82 unlabelled `<Pressable>`s they return **zero**, while the same sweep finds 3/3 on this repo's own offender fixture. That is why the task refuses instead of reporting clean.
+- **`a11y` would be vacuously green.** Biome's 29 rules are HTML/ARIA rules; on 31 React Native files with 82 unlabelled `<Pressable>`s they return **zero**, while the same sweep finds 3/3 on this repo's own offender fixture. That is why the task refuses instead of reporting clean.
 - **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
 
 See the `flawless-expo` skill for the native spec shapes, the selector ladder, and what a skip means.

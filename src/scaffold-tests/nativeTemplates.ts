@@ -1,5 +1,10 @@
 import path from "node:path";
-import { collectionRenderingCalls, mountPathCalls } from "../analyse/mountPathCalls.ts";
+import {
+  collectionRenderingCalls,
+  componentNode,
+  mountPathCalls,
+  referencedNames,
+} from "../analyse/mountPathCalls.ts";
 import { requiredNativeProviders } from "../analyse/nativeContentModel.ts";
 import { annotatedReturnValue, VOID_RETURN } from "../analyse/resolveDepReturns.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
@@ -873,8 +878,17 @@ function networkModuleMocks(
   const fs = require("node:fs") as typeof import("node:fs");
   const out: string[] = [];
   const self = cache.get(info.filePath);
-  const mountCalls = self ? mountPathCalls(self) : new Set<string>();
-  const renderCalls = self ? collectionRenderingCalls(self) : new Map<string, Set<string>>();
+  // THIS component's subtree, not the whole file. Two exported components in one
+  // file share moduleImports and every other file-level fact, so a file-scoped
+  // walk handed a component that calls nothing a skip naming a function from its
+  // sibling — a statement about the component that was simply untrue.
+  const scope = self ? componentNode(self, info.componentName) : undefined;
+  const mountCalls = scope ? mountPathCalls(scope) : new Set<string>();
+  const renderCalls = scope ? collectionRenderingCalls(scope) : new Map<string, Set<string>>();
+  // Names THIS component actually mentions. Everything else about a mocked module
+  // is file-level, so without this a component that references none of an
+  // import's names is still told why one of them did not qualify.
+  const mine = scope ? referencedNames(scope) : undefined;
   for (const mi of info.moduleImports ?? []) {
     if (mi.isTypeOnly || !mi.resolvedPath) continue;
     let src: string;
@@ -954,12 +968,23 @@ function networkModuleMocks(
       // exactly so — `reportJob` is a submit handler's mutation, and
       // `listBuildingInvitations` sits behind `if (isTrustee)`.
       const rowFields = renderCalls.get(n);
-      if (hasCollection(value) && !(mountCalls.has(n) && rowFields !== undefined)) {
+      if (
+        hasCollection(value) &&
+        (mine?.has(n) ?? true) &&
+        !(mountCalls.has(n) && rowFields !== undefined)
+      ) {
         rejected.push({
           fn: n,
           reason: !mountCalls.has(n)
             ? "mounting this screen never calls it — it runs from an event handler, or behind a branch"
-            : "what it returns is never rendered as a list — the screen reads it for something else",
+            : // Deliberately "nothing this emitter can trace" rather than "it is
+              // never rendered". Both are reasons the test cannot be written, and
+              // the emitter cannot tell them apart: it follows
+              // `const { x } = await fn()` and Promise.all into a useState setter,
+              // and not a `.then()` callback. Claiming the screen does not render
+              // the rows is a statement about the COMPONENT, and on a screen that
+              // loads through .then() it is simply false.
+              "nothing this emitter can trace connects what it returns to a rendered list",
         });
       }
       if (hasCollection(value) && mountCalls.has(n) && rowFields !== undefined) {
