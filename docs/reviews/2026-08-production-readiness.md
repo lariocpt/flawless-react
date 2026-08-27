@@ -253,3 +253,82 @@ Deliberately **not** moved:
   prototype buys ~1.14 × — **18 ms**, against a generated suite that takes
   minutes to execute. Nothing moved because nothing needed to, but the number
   that says so is a different number.
+
+---
+
+## Rescore after dogfood rounds 1–6 (Expo + Next.js, both platforms measured)
+
+**Weighted total: 60/70 (86%) — unchanged.** Six rounds, two platforms, and the
+number does not move. That is the honest answer and it is worth stating plainly,
+because the rounds produced the largest coverage movement in the project's
+history:
+
+|  | web lines | web branches | web funcs | mobile lines | mobile branches | mobile funcs |
+|---|---|---|---|---|---|---|
+| before | 67.0% | 50.4% | 77.7% | 60.6% | 39.2% | 40.7% |
+| after | **74.9%** | **56.2%** | **79.4%** | **66.2%** | **48.1%** | **56.0%** |
+
+Coverage of the app under test is not one of the eleven dimensions, and it should
+not become one on the strength of a single dogfood target. What the rounds change
+is the *evidence* under two dimensions that are already at their ceiling.
+
+**#2 Emitted-artefact correctness — held at 5, and the evidence corrected.**
+
+Round 8 earned this 5 by closing "the last emitted layer that could be green
+while meaning nothing". Rounds 1–6 found the same class again, on a surface no
+probe covered: not the assertion, the **fixture**.
+
+Twenty-two of thirty-two web page specs passed having rendered nothing. The
+fixture failed the page's own predicate (`m.status === "active"` against a row
+carrying `"flawless-status"`, `m.building_id === id` against `params: { id: "" }`),
+the page called `notFound()`, and the RSC template correctly recognised that as a
+declared guard path. Every individual step was right. The composition was a green
+test over an empty render, and it had been that way for every round before this
+one — web coverage sat at 67.0%/50.4% to the digit across five consecutive
+measurements without anyone reading that as a signal.
+
+So "the last emitted layer" was one half of the class. The other half is now
+closed and probed (reverting the params fill reddens 3 tests; reverting the
+compared literal reddens 1), which is why this holds at 5 rather than dropping —
+but the 5 is earned again, not carried.
+
+**#3 Analysis soundness — held at 5, with two recorded bails narrowed.**
+
+Both were wider than their own stated reasons, and both had been quoted as
+deliberate:
+
+- `interface X extends Y` bailed because "a partial fixture is worse than none".
+  The reasoning is right; a base that resolves is not partial. If any base fails,
+  the whole thing still bails.
+- `Record<K,V>` bailed as a generic instantiation needing substitution. `{}` is a
+  complete inhabitant of it and needs none. `Pick`/`Omit` still bail, because for
+  those the reasoning does hold.
+
+Between them, the dogfood app went from seven uninferred api shapes to zero — and
+one of those seven was poisoning a whole screen, since `const [{ poll: p }] =
+await Promise.all([getPoll(…)])` binds `p` to undefined and the next member read
+throws into the app's own catch.
+
+A third item is a correction rather than a narrowing. The native loaded-state test
+shipped as `test.skip` carrying a comment that blamed "an external store the
+harness does not reach". Enabling all twenty-one recipes live produced eleven
+failures with three causes, every one of them visible in the AST. The comment was
+a hypothesis written as a finding, which is the thing these rounds exist to catch,
+and it survived because nothing had run it.
+
+**#5 Docs accuracy — held at 4.** The rounds corrected a doc claim that was
+actively false (`docs/generated-suite.md` said native stub shapes are "`{}` with a
+`TODO(flawless)` until the dep collector runs for non-async components"; they have
+come from the function's own annotation since wave 3). Correcting drift restores
+accuracy. The stated holdback — no declared support matrix — is untouched.
+
+**#11 Portability — held at 3.** The machine-independence guarantee turned out to
+have a hole at the boundary where the out dir is chosen, not inside the emitted
+files it was tested on: a run with `--out` outside the project wrote
+`"flawless:unit": "jest --config ../../../../../../../tmp/…"` into the target's
+package.json and ten escaping patterns into its .gitignore, both staged for
+commit. Closed with a `UsageError`. The dimension's actual holdback — single-LAN
+distribution and CI — is unchanged.
+
+Verdict unchanged: **A− as an internal power tool; distribution is the only 1.0
+gate.**

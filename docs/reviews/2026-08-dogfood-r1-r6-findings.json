@@ -1,0 +1,111 @@
+{
+  "review": "2026-08 dogfood rounds 1-6 \u2014 six full generate/run/measure cycles against mybodycorpai/apps/web (174 Next.js specs) and apps/mobile (31 Expo Router screens), fixing what each round's measurement showed",
+  "toolBase": "e063833",
+  "method": "Not a reading pass. Each round regenerated both suites from the checkout, ran them under their real runners (vitest for web, jest-expo for mobile), took v8/istanbul coverage, and classified every emitted test as mount / output / driven-asserted / driven-blind. Findings are things a run produced, never things a read suggested. Where a cause was hypothesised it was probed before being fixed: the loaded-state skip's recorded explanation ('an external store the harness does not reach') was tested by enabling all 21 recipes live and reading the failures, and it was wrong. Every fix carries an anti-vacuous probe recorded in its commit: revert the fix, confirm the pin reddens.",
+  "coverage": {
+    "note": "Denominators are the app's own source under coverage.include, not the tool's. Web is v8 via vitest; mobile is babel-plugin-istanbul via jest-expo. Both measured on the same checkout of the dogfood app in every round.",
+    "web": {
+      "baseline": {
+        "lines": "67.0%",
+        "branches": "50.4%",
+        "functions": "77.7%"
+      },
+      "afterRound6": {
+        "lines": "74.9%",
+        "branches": "56.2%",
+        "functions": "79.4%"
+      },
+      "suites": "174 passed, 515 passed / 14 skipped"
+    },
+    "mobile": {
+      "baseline": {
+        "lines": "60.6%",
+        "branches": "39.2%",
+        "functions": "40.7%"
+      },
+      "afterRound6": {
+        "lines": "66.2%",
+        "branches": "48.1%",
+        "functions": "56.0%"
+      },
+      "suites": "31 passed, 138 passed / 24 skipped (from 96 passed / 64 skipped)"
+    }
+  },
+  "structuralFindings": [
+    {
+      "id": "R-1",
+      "severity": "P0",
+      "title": "A fixture the component's own predicate rejects makes a green test that rendered nothing",
+      "evidence": "22 of 32 web page specs exited through notFound(). The RSC template recognises notFound()/redirect() as declared guard paths and returns, so the spec passed. On apps/web/.../finance/page.tsx, 117 of 158 lines never ran. Cause: `memberships.find((m) => m.building_id === id && m.status === \"active\")` against a synthesised row carrying status \"flawless-status\" and a params fixture of { id: \"\" }.",
+      "fix": "MockField.equals / equalsProp, and withRouteParams. A field compared with === to a literal takes that literal; a field compared to a prop takes that prop's value from the same fixture DEFAULTS is built from. Next params never carry an empty segment.",
+      "measured": "22 of 32 -> 8 of 32 guard exits; web lines 67.0% -> 74.9%",
+      "probe": "Revert the params fill: 3 tests redden. Revert the compared literal: 1 reddens."
+    },
+    {
+      "id": "R-2",
+      "severity": "P1",
+      "title": "The loaded-state test's recorded explanation was a guess, and it was wrong",
+      "evidence": "It shipped as test.skip on every screen with a comment blaming 'an external store the harness does not reach'. Enabling all 21 live gave 11 failures with three distinct causes, all visible in the AST: the chosen function is a mutation called from a submit handler (reportJob); the call sits behind `if (isTrustee)`; the returned collection decides a permission boolean and is never rendered (getMeWithMemberships, on 5 screens). A fourth was not a filter but a defect \u2014 see R-3.",
+      "fix": "mountPathCalls and collectionRenderingCalls. Fourteen screens qualify and all fourteen pass, so the test ships live; the other seventeen get a skip naming which of the three it was.",
+      "measured": "mobile functions 44.6% -> 53.2% in that round alone",
+      "probe": "18 unit tests over the two classifiers, including the shapes that must NOT qualify."
+    },
+    {
+      "id": "R-3",
+      "severity": "P1",
+      "title": "A sibling mock resolving to {} poisons the whole mount path",
+      "evidence": "getPoll's Promise<{ poll: PollDetail }> did not resolve, so it mocked to {}. `const [{ poll: p }] = await Promise.all([getPoll(...), listPollComments(...)])` bound p to undefined, `p.my_vote_option_id` threw into the screen's own catch, and the error state rendered while the test looked for a comment row. The failure looked like the component.",
+      "fix": "Two resolver bails were wider than their reasons. `interface X extends Y` bailed because a partial fixture is worse than none \u2014 true, but a base that resolves is not partial; if any base fails the whole thing still bails. `Record<K,V>` bailed as a generic instantiation, though {} is a complete inhabitant needing no substitution. Pick/Omit still bail.",
+      "measured": "dogfood app: 7 uninferred api shapes -> 0",
+      "probe": "Four tests replace the one that pinned the old bail, two of them keeping the invariant (unresolvable base, out-of-scope base)."
+    },
+    {
+      "id": "R-4",
+      "severity": "P1",
+      "title": "A synchronous helper was mocked async, returning an object where the page renders a string",
+      "evidence": "formatZAR(cents: number): string is called inside JSX, so it never becomes a dataDep and nothing looked at its declaration. It got vi.fn(async () => ({})), and every money value on the finance pages rendered as an object.",
+      "fix": "ModuleImportInfo.importedReturns reads the declaration for imported names and records whether it is sync. resolveDepReturns' non-Promise bail now applies only to awaited deps, where its reasoning holds.",
+      "measured": "web TODO markers 116 -> 104"
+    },
+    {
+      "id": "R-5",
+      "severity": "P1",
+      "title": "A missing precondition reported as a defect",
+      "evidence": "After 28 back buttons in the dogfood app gained accessibilityLabel and became addressable, 12 of their handlers ran and failed with \"The action 'GO_BACK' was not handled by any navigator\". renderRouter mounts one screen at one URL with no history, so GO_BACK dispatches into an empty stack.",
+      "fix": "ClickHandler.navBack, set by the same useRouter() receiver check pushTargets uses. A route spec pushes its own URL once before the press; a component spec gets a skip that says there is no router to push into.",
+      "measured": "mobile 12 failed -> 0 failed, 112 -> 124 passing",
+      "probe": "Hardcode needsHistory to false: 2 tests redden. One pin is ordering, not presence \u2014 a push AFTER the press fails exactly as before."
+    },
+    {
+      "id": "R-6",
+      "severity": "P1",
+      "title": "An --out dir outside the project writes machine paths into the user's files",
+      "evidence": "A run wrote `\"flawless:unit\": \"jest --config ../../../../../../../tmp/mockfix2/out/jest.config.cjs\"` into the dogfood app's package.json and ten `../../../../tmp/...` lines into its .gitignore. Both were staged for commit.",
+      "fix": "assertOutDirInsideProject, called from both the --expo and --nextjs branches. A UsageError, because the run would otherwise write those lines into a repo the user then commits.",
+      "note": "This is the rule emitPaths.ts has enforced inside emitted files since a committed vitest.config aliased React to a directory that existed nowhere else. It simply was not enforced at the boundary where the out dir is chosen."
+    }
+  ],
+  "appSideFinding": {
+    "title": "The tool's addressability skips and the app's accessibility gaps are the same list",
+    "evidence": "48 accessibilityLabel and 28 accessibilityRole props were added to apps/mobile (PR #21 there): 20 TextInputs with a visible FieldLabel sibling that was never attached to the control, and 28 icon-only back buttons. Every one was a control a screen reader reaches and announces nothing for \u2014 and every one was a test.skip reading 'add an accessibilityLabel, which makes it announceable as well as addressable'.",
+    "measured": "mobile 96 -> 124 passing, 64 -> 36 skips, functions 40.7% -> 44.6%",
+    "note": "The coverage is a consequence, not the reason. These controls were unusable with VoiceOver and TalkBack either way."
+  },
+  "notFixed": [
+    {
+      "title": "The false side of a boolean guard is never exercised",
+      "why": "Web branch coverage is 56.2% against 74.9% lines, and 8 of 32 page specs still exit through a guard. Covering the other side needs a second mount with the predicate inverted, plus a rule for which predicates are safe to invert. That is a design decision, not a fixture fix.",
+      "backlog": "B-19"
+    },
+    {
+      "title": "cache()-wrapped exports are invisible on the non-dep path too",
+      "why": "annotatedExportReturns uses the same function mapper as resolveDepReturns, so B-10's gap exists one call site further along.",
+      "backlog": "B-18"
+    },
+    {
+      "title": "Fields read off a .find() result contribute nothing",
+      "why": "extractDataDeps reads members off callback parameters. `mine.label`, read off the find RESULT, is invisible \u2014 found while writing the round-6 fixture, which had to render through .map() to exercise the field it wanted.",
+      "backlog": "B-20"
+    }
+  ]
+}
