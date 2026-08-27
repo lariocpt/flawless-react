@@ -1,4 +1,7 @@
 import ts from "typescript";
+import { VOID_ELEMENTS } from "./hostProps.ts";
+import { domOnlyResolver, type HostTagResolver } from "./hostTag.ts";
+import { nativeAcceptsChildrenByName } from "./nativeProps.ts";
 import { initialRenderExpression, type RenderEnv, reachability } from "./renderPath.ts";
 
 /**
@@ -18,15 +21,28 @@ export interface RenderFlows {
   className: boolean;
 }
 
-export function extractFlows(bodyNode: ts.Node, env: RenderEnv): RenderFlows {
+export function extractFlows(
+  bodyNode: ts.Node,
+  env: RenderEnv,
+  hostTag: HostTagResolver = domOnlyResolver,
+): RenderFlows {
   const initial = initialRenderExpression(bodyNode, env);
   if (!initial) return { children: false, className: false };
   const { expr: root, scope } = initial;
   const reached = (n: ts.Node): boolean => reachability(n, root, scope) === "yes";
 
   return {
-    children: childrenFlow(root, reached),
-    className: classNameFlow(root, reached),
+    children: childrenFlow(root, reached, hostTag),
+    // NativeWind compiles className into a `style` at BUILD time, through babel.
+    // The string does not survive to the rendered tree under jest-expo, and
+    // react-native-web consumes it without forwarding anything either (measured:
+    // docs/reviews/2026-08-expo-probes.md, P1). So "a className passed in will
+    // land on some element" is both unfalsifiable AND unsatisfiable on native,
+    // and asserting it would be a test that can never pass.
+    //
+    // childrenFlow is unaffected: a sentinel child under a <View> genuinely renders.
+    className:
+      hostTag("View")?.dialect === "native" ? false : classNameFlow(root, reached, hostTag),
   };
 }
 
@@ -39,7 +55,11 @@ export function extractFlows(bodyNode: ts.Node, env: RenderEnv): RenderFlows {
  * components this rule exists for. Void elements are excluded: <input {...props}/>
  * accepts the prop and renders nothing.
  */
-function childrenFlow(root: ts.Node, reached: (n: ts.Node) => boolean): boolean {
+function childrenFlow(
+  root: ts.Node,
+  reached: (n: ts.Node) => boolean,
+  hostTag: HostTagResolver,
+): boolean {
   let found = false;
   const visit = (n: ts.Node): void => {
     if (found) return;
@@ -57,8 +77,8 @@ function childrenFlow(root: ts.Node, reached: (n: ts.Node) => boolean): boolean 
     }
     if (ts.isJsxSpreadAttribute(n) && reached(n)) {
       const owner = n.parent?.parent;
-      const tag = hostTagOf(owner);
-      if (tag && !VOID_ELEMENTS.has(tag)) {
+      const owned = owner ? resolvedOf(owner, hostTag) : undefined;
+      if (owned && acceptsChildren(owned)) {
         found = true;
         return;
       }
@@ -83,7 +103,11 @@ function childrenFlow(root: ts.Node, reached: (n: ts.Node) => boolean): boolean 
  * attribute on the same element, which overwrites it. That is checked rather
  * than assumed.
  */
-function classNameFlow(root: ts.Node, reached: (n: ts.Node) => boolean): boolean {
+function classNameFlow(
+  root: ts.Node,
+  reached: (n: ts.Node) => boolean,
+  hostTag: HostTagResolver,
+): boolean {
   let found = false;
   const visit = (n: ts.Node): void => {
     if (found) return;
@@ -91,7 +115,7 @@ function classNameFlow(root: ts.Node, reached: (n: ts.Node) => boolean): boolean
       ts.isJsxAttribute(n) &&
       ts.isIdentifier(n.name) &&
       n.name.text === "className" &&
-      hostTagOf(n.parent?.parent) !== undefined &&
+      hostTagOf(n.parent?.parent, hostTag) !== undefined &&
       reached(n) &&
       mentionsClassName(n) &&
       !overwrittenBySpread(n)
@@ -159,7 +183,24 @@ function isClassNameSafeSpread(spread: ts.JsxSpreadAttribute): boolean {
   return false;
 }
 
-function hostTagOf(node: ts.Node | undefined): string | undefined {
+/** Whether a resolved host element can hold children, in either dialect. */
+function acceptsChildren(el: { name: string; dialect: "dom" | "native" }): boolean {
+  return el.dialect === "native"
+    ? nativeAcceptsChildrenByName(el.name)
+    : !VOID_ELEMENTS.has(el.name);
+}
+
+function resolvedOf(node: ts.Node, hostTag: HostTagResolver) {
+  const tagName = ts.isJsxOpeningElement(node)
+    ? node.tagName
+    : ts.isJsxSelfClosingElement(node)
+      ? node.tagName
+      : undefined;
+  if (!tagName || !ts.isIdentifier(tagName)) return undefined;
+  return hostTag(tagName.text);
+}
+
+function hostTagOf(node: ts.Node | undefined, hostTag: HostTagResolver): string | undefined {
   if (!node) return undefined;
   const tagName = ts.isJsxOpeningElement(node)
     ? node.tagName
@@ -167,21 +208,13 @@ function hostTagOf(node: ts.Node | undefined): string | undefined {
       ? node.tagName
       : undefined;
   if (!tagName || !ts.isIdentifier(tagName)) return undefined;
-  return /^[a-z]/.test(tagName.text) ? tagName.text : undefined;
+  return hostTag(tagName.text)?.name;
 }
 
-const VOID_ELEMENTS = new Set([
-  "area",
-  "base",
-  "br",
-  "col",
-  "embed",
-  "hr",
-  "img",
-  "input",
-  "link",
-  "meta",
-  "source",
-  "track",
-  "wbr",
-]);
+/**
+ * The SECOND copy of VOID_ELEMENTS lived here, three lines below its own use,
+ * while hostProps.ts exported the authoritative one — and the two had already
+ * drifted (this copy was missing "param"). Deleted in favour of the table that
+ * also answers the question for React Native, where "does this element take
+ * children" is a per-element fact rather than a list of fourteen tag names.
+ */

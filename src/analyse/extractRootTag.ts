@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { domOnlyResolver, type HostTagResolver } from "./hostTag.ts";
 import { emptyEnv, initialRenderExpression, type RenderEnv } from "./renderPath.ts";
 
 /**
@@ -11,7 +12,15 @@ import { emptyEnv, initialRenderExpression, type RenderEnv } from "./renderPath.
  * The tag is returned as written and may be uppercase (`ButtonPrimitive`); the
  * caller decides whether a component root is useful to it.
  */
-export function extractRootTag(bodyNode: ts.Node, env: RenderEnv = emptyEnv()): string | undefined {
+export function extractRootTag(
+  bodyNode: ts.Node,
+  env: RenderEnv = emptyEnv(),
+  /**
+   * Which tags count as host elements. Defaults to the lowercase-intrinsic rule
+   * this function has always used, so every existing caller is unchanged.
+   */
+  hostTag: HostTagResolver = domOnlyResolver,
+): string | undefined {
   // The INITIAL render, not the last return: a component that opens collapsed
   // renders its guard branch, and describing it by the expanded branch below
   // would name a tag the spec never produces.
@@ -29,9 +38,20 @@ export function extractRootTag(bodyNode: ts.Node, env: RenderEnv = emptyEnv()): 
   // contained an element called "ButtonPrimitive" and no button at all. Every
   // consumer wants a real tag: the spec's querySelector, the content-model
   // wrapper, the ambiguity census.
-  if (!/^[a-z][a-z0-9-]*$/.test(tag)) return undefined;
+  //
+  // The predicate moved to hostTag.ts, and with it the answer for React Native:
+  // <View> is a host element even though it is capitalised, because THIS FILE
+  // imports it from "react-native". Under the default resolver the test is the
+  // same lowercase one it has always been. Without this, rootTag was undefined
+  // for every RN component, which silently took the root-tag contract test, the
+  // WRAP_IN table and the ambiguity census down with it.
+  const resolved = hostTag(tag);
+  if (resolved === undefined) return undefined;
 
-  return everyReturnAgrees(bodyNode, root, tag) ? tag : undefined;
+  // The MODULE-SIDE name, so `import { View as Box }` reports "View". Agreement
+  // between returns is checked on the tag as written, which is what the source
+  // actually repeats.
+  return everyReturnAgrees(bodyNode, root, tag) ? resolved.name : undefined;
 }
 
 function unwrapParens(expr: ts.Expression): ts.Expression {

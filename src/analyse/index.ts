@@ -15,6 +15,8 @@ import { extractRenderMode } from "./extractRenderMode.ts";
 import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
 import { extractStaticText } from "./extractStaticText.ts";
+import { makeHostTagResolver } from "./hostTag.ts";
+import { detectHostDialect } from "./nativeDialect.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
@@ -141,6 +143,12 @@ async function analyseOne(
   const propsShape = { ...typedProps, ...indexKeys.defaults };
   const unresolvedProps = unresolvedFromTypes.filter((p) => !(p in indexKeys.defaults));
 
+  // Decided once, from this file's own imports, before any extractor runs. A
+  // file with host elements to classify always has the import that proves the
+  // dialect, because a React Native element is only ever reachable through one.
+  const hostDialect = detectHostDialect(parsed.imports);
+  const hostTag = makeHostTagResolver(parsed.imports);
+
   const hooks = extractHooks(unit.bodyNode);
   const state = extractState(unit.bodyNode, parsed.sourceFile);
   const scope = buildComponentScope(unit, props, state, unit.bodyNode);
@@ -173,10 +181,11 @@ async function analyseOne(
     unresolvedProps,
     renderEnv,
     tagRootTags,
+    hostTag,
   );
   const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
-  const flows = extractFlows(unit.bodyNode, renderEnv);
-  const rootTag = extractRootTag(unit.bodyNode, renderEnv);
+  const flows = extractFlows(unit.bodyNode, renderEnv, hostTag);
+  const rootTag = extractRootTag(unit.bodyNode, renderEnv, hostTag);
   const staticText = extractStaticText(unit.bodyNode, renderEnv);
   // Sibling components' modes, so a wrapper around a part is recognised as one
   // too. Computed without local modes of their own: one hop is enough for the
@@ -268,6 +277,7 @@ async function analyseOne(
     variantClasses,
     acceptsChildren,
     ...(hostElement ? { hostElement } : {}),
+    ...(hostDialect === "native" ? { hostDialect } : {}),
     state,
     hookDetails,
     propUsage,

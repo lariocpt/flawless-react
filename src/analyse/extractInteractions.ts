@@ -11,6 +11,8 @@ import type {
   SubmitControl,
 } from "../types.ts";
 import { findDisclosures } from "./extractDisclosures.ts";
+import { domOnlyResolver, type HostTagResolver } from "./hostTag.ts";
+import { TEXTLESS_ELEMENTS } from "./nativeProps.ts";
 import { posOf } from "./pos.ts";
 import {
   emptyEnv,
@@ -23,6 +25,21 @@ import {
 
 const EVENT_PATTERN =
   /^on(Click|MouseDown|PointerDown|Submit|Change|Input|Focus|Blur|KeyDown|KeyPress)$/;
+
+/**
+ * React Native events @testing-library/react-native can drive without inventing
+ * a payload.
+ *
+ * Deliberately excluded: onScroll, onEndReached, onLayout, onContentSizeChange.
+ * Each needs a synthetic nativeEvent carrying contentSize/layoutMeasurement, and
+ * a made-up viewport is a guess the resulting assertion then depends on.
+ *
+ * onChange IS included: React Native's TextInput onChange payload is a
+ * documented shape (`{ nativeEvent: { text } }`) — a specification, not a guess.
+ */
+const NATIVE_EVENT_PATTERN =
+  /^on(Press|LongPress|PressIn|PressOut|ChangeText|Change|SubmitEditing|EndEditing|Focus|Blur|ValueChange|Refresh)$/;
+
 const FORM_FIELD_TAGS = new Set(["input", "select", "textarea"]);
 
 export function extractInteractions(
@@ -33,12 +50,82 @@ export function extractInteractions(
   env: RenderEnv = emptyEnv(),
   /** Component tag → the host element it actually renders, where resolvable. */
   tagRootTags: Map<string, string> = new Map(),
+  /** Which tags are host elements. Defaults to the DOM rule, so web is unchanged. */
+  hostTag: HostTagResolver = domOnlyResolver,
 ): InteractionInfo {
   // Handler props are function-typed, which extractProps cannot synthesise and
   // routes to unresolvedProps. Union both so the classifier sees them.
   const propNames = new Set([...Object.keys(propsShape), ...unresolvedProps]);
   const clicks: ClickHandler[] = [];
   const forms: FormInfo[] = [];
+
+  // The dialect, asked once. "View" is the cheapest probe that is true for every
+  // React Native file and false for every DOM one.
+  const native = hostTag("View")?.dialect === "native";
+  const eventPattern = native ? NATIVE_EVENT_PATTERN : EVENT_PATTERN;
+
+  /**
+   * Elements a label harvest may look THROUGH on native.
+   *
+   * A container (View, Text, a layout wrapper) holds the copy one level down, so
+   * descending finds "Sign in" inside `<Pressable><Text>Sign in</Text></Pressable>`.
+   * A textless element (an icon, a spinner) genuinely renders no text, so it
+   * stays an interruption — which is what leaves an icon-only Pressable honestly
+   * unlabelled instead of borrowing a name it does not have.
+   *
+   * An UNKNOWN component tag is also an interruption. It may well render text,
+   * but we cannot see that from here, and claiming a name the render may not
+   * produce is the wrong way to be wrong.
+   */
+  /**
+   * The children of a conditional's taken branch, when it renders a transparent
+   * element.
+   *
+   * Parentheses are the whole reason this is a function. Prettier and biome both
+   * format a multi-line JSX ternary as `cond ? (\n  <A/>\n) : (\n  <B/>\n)`, so
+   * the branch is a ParenthesizedExpression and a bare `isJsxElement` check
+   * misses EVERY real submit button. The fixture was written without parentheses
+   * and passed; the dogfood app has them everywhere and did not.
+   */
+  const childrenOfBranch = (branch: ts.Expression): ts.NodeArray<ts.JsxChild> | undefined => {
+    const el = unwrapParens(branch);
+    if (!ts.isJsxElement(el)) return undefined;
+    return transparent(el) ? el.children : undefined;
+  };
+
+  const transparent = (el: ts.JsxElement): boolean => {
+    const resolved = hostTag(readTagName(el.openingElement.tagName));
+    if (!resolved || resolved.dialect !== "native") return false;
+    return !TEXTLESS_ELEMENTS.has(resolved.name);
+  };
+  const descend = native
+    ? (child: ts.JsxChild): ts.NodeArray<ts.JsxChild> | undefined => {
+        if (ts.isJsxElement(child)) return transparent(child) ? child.children : undefined;
+        // `{busy ? <Spinner/> : <Text>Sign in</Text>}` is the shape of every
+        // submit control in a real app. The condition reduces at the props and
+        // initial state the spec passes — `busy` starts false — so the label IS
+        // knowable, and treating the whole expression as opaque threw away the
+        // one name the button actually has. Same evaluator the visit loop uses
+        // to decide reachability, so the two cannot disagree about which branch
+        // renders.
+        if (!ts.isJsxExpression(child) || !child.expression) return undefined;
+        const inner = unwrapParens(child.expression);
+        // `{busy && <Text>Saving</Text>}` as well as the ternary: both are how a
+        // real screen writes a conditional label.
+        if (
+          ts.isBinaryExpression(inner) &&
+          inner.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+        ) {
+          const gate = evaluate(inner.left, scope);
+          if (gate === undefined || !truthy(gate)) return undefined;
+          return childrenOfBranch(inner.right);
+        }
+        if (!ts.isConditionalExpression(inner)) return undefined;
+        const decided = evaluate(inner.condition, scope);
+        if (decided === undefined) return undefined;
+        return childrenOfBranch(truthy(decided) ? inner.whenTrue : inner.whenFalse);
+      }
+    : undefined;
 
   // Scope the harvest to the JSX that actually mounts. Scanning the whole body
   // collected a "Cancel" button and a #notes field from a disclosure's expanded
@@ -65,8 +152,8 @@ export function extractInteractions(
       const tag = readTagName(n.tagName);
       if (tag !== "<dynamic>") {
         const enclosing = enclosingElement(n);
-        const hints = collectHints(n.attributes, scope);
-        const label = extractLabel(enclosing, hints, propNames);
+        const hints = collectHints(n.attributes, scope, native ? "native" : "dom");
+        const label = extractLabel(enclosing, hints, propNames, descend);
 
         if (tag === "form") {
           forms.push(
@@ -78,7 +165,7 @@ export function extractInteractions(
           if (!ts.isJsxAttribute(attr)) continue;
           if (!ts.isIdentifier(attr.name)) continue;
           const event = attr.name.text;
-          if (!EVENT_PATTERN.test(event)) continue;
+          if (!eventPattern.test(event)) continue;
           if (tag === "form" && event === "onSubmit") continue;
           const binding = classifyBinding(attr.initializer, propNames);
           const gatedBy = gateFor(n);
@@ -177,7 +264,11 @@ function readPropertyAccess(p: ts.PropertyAccessExpression): string {
   return `${head}.${p.name.text}`;
 }
 
-function collectHints(attrs: ts.JsxAttributes, env: RenderEnv = emptyEnv()): ElementHints {
+function collectHints(
+  attrs: ts.JsxAttributes,
+  env: RenderEnv = emptyEnv(),
+  dialect: "dom" | "native" = "dom",
+): ElementHints {
   const hints: ElementHints = {};
   for (const a of attrs.properties) {
     if (!ts.isJsxAttribute(a)) continue;
@@ -188,8 +279,51 @@ function collectHints(attrs: ts.JsxAttributes, env: RenderEnv = emptyEnv()): Ele
       if (state) hints.disabled = state;
       continue;
     }
+    // React Native's disabled equivalent for a text field, with inverted polarity.
+    if (dialect === "native" && name === "editable") {
+      const state = disabledAtInitialRender(a.initializer, env);
+      if (state === "always") hints.disabled = "conditional";
+      else if (state !== undefined) hints.disabled = state;
+      continue;
+    }
     const value = readStringInitializer(a.initializer);
     if (value === undefined) continue;
+    if (dialect === "native") {
+      // The React Native locator surface. `name` and `type` are deliberately
+      // never populated here — they have no React Native equivalent, and leaving
+      // them empty is what makes selectors.ts's DOM-only branches naturally
+      // inert on native data rather than emitting a query that cannot match.
+      switch (name) {
+        case "testID":
+          hints.testid = value;
+          break;
+        case "accessibilityLabel":
+        case "aria-label":
+          hints.ariaLabel = value;
+          break;
+        case "accessibilityRole":
+        case "role":
+          hints.role = value;
+          break;
+        case "accessibilityHint":
+          hints.hint = value;
+          break;
+        case "placeholder":
+          hints.placeholder = value;
+          break;
+        case "value":
+          hints.displayValue = value;
+          break;
+        // `id`/`nativeID` are real facts about the source and DO work under
+        // react-native-web + Playwright, so they are recorded. The RNTL emitter
+        // simply must not read them, and a test pins that.
+        case "id":
+        case "nativeID":
+          hints.id = value;
+          break;
+      }
+      continue;
+    }
     switch (name) {
       case "data-testid":
         hints.testid = value;
@@ -255,6 +389,24 @@ function extractLabel(
   parent: ts.JsxElement | undefined,
   hints: ElementHints,
   propNames: Set<string>,
+  /**
+   * On native, look through container children for the text.
+   *
+   * In the DOM the copy sits inside the handler element: `<button>Save</button>`.
+   * In React Native it is ALWAYS one level down, inside a `<Text>`:
+   *
+   *     <Pressable onPress={...}><Text>Sign in</Text></Pressable>
+   *
+   * Reading direct children only, this loop sees a JsxElement, sets hasDynamic
+   * and returns { kind: "none" } — so on the dogfood app EVERY press handler was
+   * unlabelled, and every interaction spec would have been a skip.
+   *
+   * Descending is not a guess: RNTL's own getTextContent recurses the whole
+   * subtree and joins it, and fireEvent.press walks UP to the nearest press
+   * responder — so the descendant <Text> is a legitimate handle for the ancestor
+   * <Pressable>, which is exactly the canonical RNTL idiom.
+   */
+  descend: ((child: ts.JsxChild) => ts.NodeArray<ts.JsxChild> | undefined) | undefined = undefined,
 ): LabelSource {
   if (parent) {
     // Collect every literal fragment, and note whether anything non-literal sits
@@ -276,25 +428,38 @@ function extractLabel(
       run = "";
     };
 
-    for (const child of parent.children) {
-      if (ts.isJsxText(child)) {
-        run += child.text;
-        continue;
-      }
-      if (ts.isJsxExpression(child) && child.expression) {
-        if (ts.isStringLiteral(child.expression)) {
-          run += child.expression.text;
+    const walk = (children: ts.NodeArray<ts.JsxChild>): void => {
+      for (const child of children) {
+        if (ts.isJsxText(child)) {
+          run += child.text;
           continue;
         }
-        if (ts.isIdentifier(child.expression) && propNames.has(child.expression.text)) {
-          propLabel ??= { kind: "prop", propName: child.expression.text };
+        if (ts.isJsxExpression(child) && child.expression) {
+          if (ts.isStringLiteral(child.expression)) {
+            run += child.expression.text;
+            continue;
+          }
+          if (ts.isIdentifier(child.expression) && propNames.has(child.expression.text)) {
+            propLabel ??= { kind: "prop", propName: child.expression.text };
+          }
         }
+        // On native, a container child is a level to look THROUGH, not a dynamic
+        // interruption — the text lives inside it. `descend` returns the children
+        // to keep walking, or undefined for anything opaque: an icon, a spinner,
+        // an unresolved component, or a conditional whose branch cannot be
+        // decided. So an icon-only Pressable still ends up honestly unlabelled.
+        const through = descend?.(child);
+        if (through) {
+          walk(through);
+          continue;
+        }
+        // An icon element, an interpolation, a call: text we cannot predict, so
+        // whatever ran up to here is a fragment of the real accessible name.
+        hasDynamic = true;
+        endRun();
       }
-      // An icon element, an interpolation, a call: text we cannot predict, so
-      // whatever ran up to here is a fragment of the real accessible name.
-      hasDynamic = true;
-      endRun();
-    }
+    };
+    walk(parent.children);
     endRun();
 
     if (!hasDynamic && runs.length === 1) return { kind: "text", value: runs[0] as string };
@@ -551,4 +716,11 @@ function jsxTextOf(el: ts.JsxElement): string | undefined {
     }
   }
   return undefined;
+}
+
+/** Strip the parentheses a formatter puts around a multi-line JSX branch. */
+function unwrapParens(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+  return cur;
 }
