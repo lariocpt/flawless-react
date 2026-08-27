@@ -140,6 +140,16 @@ export interface ClickHandler {
    */
   pushTargets?: string[];
   /**
+   * The handler navigates BACK — `router.back()`.
+   *
+   * It needs a precondition the harness does not supply by default: renderRouter
+   * mounts a single screen at one URL with no history, so back() fails with
+   * "The action 'GO_BACK' was not handled by any navigator". Recorded so the
+   * emitted test can push an entry first, rather than failing for a reason that
+   * is neither the app's nor the tool's.
+   */
+  navBack?: boolean;
+  /**
    * The element is reached only CONDITIONALLY at the props and state the spec
    * passes — typically one row of a `.map()` over data the component fetches.
    *

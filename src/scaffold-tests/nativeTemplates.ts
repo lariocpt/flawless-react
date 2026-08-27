@@ -373,8 +373,12 @@ function renderNativeSpec(
     return lines.join("\n");
   }
   if (route) {
+    // testRouter only when a handler calls router.back() and therefore needs a
+    // history entry pushed first. Named unconditionally, it is an unused import
+    // in every one of the other specs.
+    const needsRouter = clicks.some((c) => c.navBack);
     lines.push(
-      `import { renderRouter, screen, fireEvent, waitFor } from "expo-router/testing-library";`,
+      `import { renderRouter, screen, fireEvent, waitFor${needsRouter ? ", testRouter" : ""} } from "expo-router/testing-library";`,
     );
   } else {
     lines.push(
@@ -750,10 +754,37 @@ function interactionTests(
     // userEvent — as soon as an async LOCATOR made isAsync true.
     const usesUserEvent = dispatch.startsWith("await user.");
     const isAsync = usesUserEvent || locatorIsAsync;
+    // `router.back()` needs a history entry, and renderRouter mounts ONE screen
+    // at ONE url with no stack behind it — so the press dispatches GO_BACK into
+    // a navigator that has nowhere to go, and react-navigation logs "The action
+    // 'GO_BACK' was not handled by any navigator", which RNTL surfaces as a
+    // failure. Twelve dogfood screens failed that way the moment their back
+    // buttons became addressable: a missing PRECONDITION reported as a defect.
+    // Pushing the same url first makes the stack two deep, so back() has a
+    // destination and the handler is exercised for real. Route specs only —
+    // a component spec has no router to push into, and there the skip below is
+    // the honest answer.
+    const needsHistory = Boolean(h.navBack) && isRoute;
+    if (h.navBack && !isRoute) {
+      todo?.("other");
+      out.push(
+        `  test.skip("${h.event} on <${h.tag}> ${handle} — calls router.back(), which needs a ` +
+          `navigation stack this component spec does not mount", () => {});`,
+        "",
+      );
+      continue;
+    }
     out.push(
       `  test("${h.event} on <${h.tag}> ${handle} can be driven", ${isAsync ? "async " : ""}() => {`,
       ...(usesUserEvent ? ["    const user = userEvent.setup();"] : []),
       "    mount();",
+      ...(needsHistory
+        ? [
+            "    // Give back() somewhere to go — see the note in the emitter: a freshly",
+            "    // mounted router has no history, and GO_BACK into an empty stack fails.",
+            "    testRouter.push(INITIAL_URL);",
+          ]
+        : []),
       `    const ${el} = ${locator};`,
       `    expect(${el}).toBeTruthy();`,
       `    ${dispatch};`,
