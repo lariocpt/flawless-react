@@ -15,7 +15,7 @@
         "branches": "56.2%",
         "functions": "79.4%"
       },
-      "suites": "174 passed; 514 passed / 15 skipped. Two of the skips are the RSC fixture-missing escape, which fires at run time rather than emit time, so that split can move by one without anything changing."
+      "suites": "174 passed; at the end of round 6, 514 passed / 15 skipped. Two of those skips were the RSC fixture-missing escape, which fires at RUN time when a data mock's shape could not be inferred. That is a CAUSE, not noise: an earlier note here called the split able to 'move by one without anything changing', and closing B-10/B-18/B-21 afterwards moved it to 515 / 14 by resolving one more shape. The split tracks how many RSC specs take that escape."
     },
     "mobile": {
       "baseline": {
@@ -107,5 +107,18 @@
       "why": "extractDataDeps reads members off callback parameters. `mine.label`, read off the find RESULT, is invisible \u2014 found while writing the round-6 fixture, which had to render through .map() to exercise the field it wanted.",
       "backlog": "B-20"
     }
-  ]
+  ],
+  "postRounds": {
+    "note": "Fixed after the rounds closed, measured on the same dogfood target.",
+    "items": [
+      {
+        "id": "B-10 / B-18 / B-21",
+        "title": "cache()-wrapped exports, and types re-exported from an import",
+        "evidence": "exportedFunctions skipped any VariableDeclaration with a CallExpression initializer, so `export const getCurrentUser = cache(async (): Promise<User> => \u2026)` \u2014 the standard Next.js DAL idiom, three times in the dogfood app's lib/dal.ts \u2014 was invisible to all five consumers. With that fixed the exports became visible and STILL resolved to nothing: `User` reaches them through `import type { User } \u2026; export type { User };` in lib/users.ts, and the barrel chase looked only for a local declaration of that name. Separated with a three-file probe before either was fixed.",
+        "measured": "web: RSC fixture-missing skips 2 -> 1, tests 514/15 -> 515/14, TODO markers 104 -> 101, lines 74.9% -> 75.0%, branches 56.2% -> 56.4%, functions 79.4% -> 79.8%",
+        "probe": "Empty the wrapper allowlist: 4 redden. Accept a wrapper with two callbacks: 1. Drop the import-then-re-export chase: 1.",
+        "notWidened": "The wrapper set is CLOSED (cache, unstable_cache), not 'any call with one function argument'. The original skip's reasoning holds for most wrappers: withPagination(async (): Promise<Row[]> => \u2026) may return Promise<Page<Row>>, and unwrapping hands the emitter a shape the function never produces."
+      }
+    ]
+  }
 }
