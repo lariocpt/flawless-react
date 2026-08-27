@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { analyseFile } from "../src/analyse/index.ts";
 import { detectExpo } from "../src/expo/detect.ts";
-import { expoNotImplemented } from "../src/expo/refusal.ts";
+import { EXPO_IMPLEMENTED, expoNotImplemented } from "../src/expo/refusal.ts";
 import { allocateRouteStems, expoFileToRoute, routeModuleId } from "../src/expo/routes.ts";
 import { scaffoldNativeUnit } from "../src/scaffold-tests/nativeIndex.ts";
 import { ALL_TASK_IDS } from "../src/tasks/index.ts";
@@ -104,7 +104,7 @@ describe("the refusal helper", () => {
     expect(r.error).toContain("e2e");
     expect(r.error).toContain("wave 6");
     // The escape is spelled as the flag a reader would type, not as prose.
-    expect(r.error).toContain("--tasks perf-static,react-rules");
+    expect(r.error).toContain(`--tasks ${EXPO_IMPLEMENTED.join(",")}`);
   });
 
   test("every task id produces a well-formed refusal", () => {

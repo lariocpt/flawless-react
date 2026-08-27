@@ -32,7 +32,7 @@ a11y: 3 finding(s) across 1 file(s)
     error lint/a11y/useValidAriaRole
 ```
 
-The sweep is alive. All 28 of `a11yScan.ts`'s rules are HTML/ARIA rules — `useAltText`,
+The sweep is alive. All 29 of `a11yScan.ts`'s rules are HTML/ARIA rules — `useAltText`,
 `useAnchorContent`, `useHtmlLang`, `useButtonType`, `useValidAnchor` — and React Native source
 contains no `<img>`, no `<a>`, no `<html>`, no `<button>`. **Biome cannot be the native a11y
 engine.** (Running the same sweep over `apps/web/src/components` also returns 0, but that app was

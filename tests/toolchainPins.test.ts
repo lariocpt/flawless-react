@@ -83,3 +83,32 @@ describe("the lint gate's toolchain is pinned", () => {
     expect(lock).toContain(`@biomejs/biome@${pin}`);
   });
 });
+
+describe("prose counts that name a number in the source", () => {
+  test("every '<N> Biome rules' claim equals the rule set's real size", () => {
+    // README, three skills and the probes doc all said 28. The set has 29, and
+    // has since noLabelWithoutControl was added — wrong the day each was
+    // written. A count in prose is a claim about code, so it is checked like one.
+    const scan = readFileSync(path.join(ROOT, "src/tasks/a11yScan.ts"), "utf8");
+    const body = scan.slice(scan.indexOf("a11y: {"), scan.indexOf("};", scan.indexOf("a11y: {")));
+    const actual = (body.match(/^\s+(no|use)[A-Za-z]+: "/gm) ?? []).length;
+    expect(actual).toBeGreaterThan(0);
+
+    const files = [
+      "README.md",
+      "docs/reviews/2026-08-expo-probes.md",
+      ".claude/skills/flawless-react/SKILL.md",
+      ".claude/skills/flawless-expo/SKILL.md",
+      ".claude/skills/flawless-findings/SKILL.md",
+    ];
+    const wrong: string[] = [];
+    for (const rel of files) {
+      const text = readFileSync(path.join(ROOT, rel), "utf8");
+      // "All 29 rules", "Biome's 29 rules", "All 29 of `a11yScan.ts`'s rules".
+      for (const m of text.matchAll(/(\d+)\s+(?:Biome\s+)?(?:rules|of\s+`a11yScan)/g)) {
+        if (Number(m[1]) !== actual) wrong.push(`${rel}: says ${m[1]}, set has ${actual}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+});

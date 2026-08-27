@@ -189,7 +189,7 @@ warns; scope the script (`bun test tests`).
 `perf-harness`, `a11y`, `e2e` and `load` refuse under `--expo`, naming the wave that
 will implement them. Two of those refusals are load-bearing rather than temporary:
 
-- **`a11y` would be vacuously green.** All 28 Biome rules are HTML/ARIA; over 31 React
+- **`a11y` would be vacuously green.** All 29 Biome rules are HTML/ARIA; over 31 React
   Native files carrying 82 unlabelled `<Pressable>`s they return **zero**, while the
   same config finds 3/3 on this repo's `A11yOffender.tsx`. A clean report that means
   "these rules do not apply" is worse than no report.

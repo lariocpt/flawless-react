@@ -5,7 +5,7 @@ description: Read and burn down flawless-react's reporting tasks — perf-static
 
 # flawless findings
 
-> **`a11y` refuses under `--expo`, and that is the design.** All 28 Biome rules are
+> **`a11y` refuses under `--expo`, and that is the design.** All 29 Biome rules are
 > HTML/ARIA rules; over 31 React Native files carrying 82 unlabelled `<Pressable>`s they
 > return **zero**, while the same config finds 3/3 on this repo's own `A11yOffender.tsx`.
 > A clean report meaning "these rules do not apply" is worse than no report.

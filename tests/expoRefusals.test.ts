@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EXPO_IMPLEMENTED } from "../src/expo/refusal.ts";
 import { ALL_TASK_IDS } from "../src/tasks/index.ts";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -101,7 +102,13 @@ describe("--expo: what refuses, and how", () => {
     // It must name the task AND the escape, or the reader has to read the source
     // to find out what to select instead.
     expect(r?.error).toContain(id);
-    expect(r?.error).toMatch(/perf-static,react-rules/);
+    expect(r?.error).toContain(`--tasks ${EXPO_IMPLEMENTED.join(",")}`);
+    // The escape used to be the literal "perf-static,react-rules", written when
+    // five tasks refused. From wave 3 it was telling every reader to leave out
+    // unit-browser — the whole point of the mode. And it ended "See docs/expo.md",
+    // which has never existed on any ref.
+    expect(r?.error).toContain("unit-browser");
+    expect(r?.error).not.toContain("docs/expo.md");
   }, 120_000);
 
   test("every refusing task names the wave that will implement it", async () => {
@@ -135,4 +142,26 @@ describe("--expo and --nextjs together", () => {
     expect(await proc.exited).toBe(2);
     expect(stderr).toMatch(/mutually exclusive/);
   }, 60_000);
+});
+
+describe("the escape hatch names tasks that really run", () => {
+  test("every task in EXPO_IMPLEMENTED runs under --expo rather than refusing", async () => {
+    // Without this the list is just a string. It was one: `perf-static,
+    // react-rules` stayed in the refusal for two waves after unit-browser
+    // started working, so the tool told every reader to skip the one task the
+    // Expo mode exists for.
+    const { blob } = await run(["--tasks", EXPO_IMPLEMENTED.join(",")], "escape");
+    for (const id of EXPO_IMPLEMENTED) {
+      const r = blob.results.find((x) => x.id === id);
+      expect(`${id}: ${r === undefined ? "absent" : r.ok}`).toBe(`${id}: true`);
+    }
+  }, 180_000);
+
+  test("EXPO_IMPLEMENTED and the refusing set partition the seven tasks", () => {
+    // A wave that lands must move its id from one list to the other; if it moves
+    // it from neither, this reddens.
+    const both = [...EXPO_IMPLEMENTED, ...REFUSING].sort();
+    expect(both).toEqual([...new Set(both)].sort());
+    expect(both.length).toBe(7);
+  });
 });

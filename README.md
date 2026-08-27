@@ -142,7 +142,7 @@ Where the source names a literal route — `onPress={() => router.push("/items/n
 
 **No emitted spec touches the network.** A module that resolves project-locally and performs `fetch()` is `jest.mock`ed with stubs. That is not a nicety: before it existed, the fixture suite made live HTTP calls and crashed a jest worker with `api_error 405` from a real server.
 
-**An unaddressable control becomes a named skip, never a pass.** React Native has no implicit roles — `getByRole("button")` matches nothing on a bare `<Pressable>` — and there is no last-resort locator, so a control with no `testID`, no `accessibilityLabel` and no text under it is skipped with the reason and the fix. On the dogfood app that is 28 of 48 press targets, 12 of them icon-only; each is *also* an accessibility finding, so one `accessibilityLabel` retires both.
+**An unaddressable control becomes a named skip, never a pass.** React Native has no implicit roles — `getByRole("button")` matches nothing on a bare `<Pressable>` — and there is no last-resort locator, so a control with no `testID`, no `accessibilityLabel` and no text under it is skipped with the reason and the fix. On the dogfood app this used to be 28 of 48 press targets, 12 of them icon-only. Because each is *also* an accessibility finding, the app answered them — 48 `accessibilityLabel` and 28 `accessibilityRole` props — and the count is now **3 of 70**. That is the mechanism working: the skip named the fix, the fix was worth making on its own merits, and the test came back for free.
 
 A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the two that work.
 
@@ -150,7 +150,7 @@ Refusing is deliberate. Emitting the DOM suite for a React Native project would 
 
 Two things measured on a real Expo app before any of this was written, both recorded in [`docs/reviews/2026-08-expo-probes.md`](docs/reviews/2026-08-expo-probes.md):
 
-- **The `a11y` task is vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep finds 3/3 on this repo's own offender fixture. All 28 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needs a different engine, not a different config.
+- **The `a11y` task is vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep finds 3/3 on this repo's own offender fixture. All 29 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needs a different engine, not a different config.
 - **The React Compiler changes what `perf-static` should say.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
 
 ## CLI reference
