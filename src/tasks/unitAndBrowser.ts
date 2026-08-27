@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
-import { expoNotImplemented } from "../expo/refusal.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
+import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { AliasEntry } from "../scaffold-tests/templates.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
@@ -14,7 +14,6 @@ export const unitAndBrowser: Task = {
   description: "Vitest + @testing-library/react units, Playwright functional browser specs",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
-    if (ctx.expo) return expoNotImplemented("unit-browser", "wave 3 — the jest-expo unit emitter");
     if (ctx.trees.length === 0) {
       return {
         id: "unit-browser",
@@ -25,6 +24,34 @@ export const unitAndBrowser: Task = {
         error: "no components",
       };
     }
+    // Expo runs the native plane instead of the DOM one. Not "as well as": the
+    // DOM suite pointed at React Native emits specs that run, pass and touch
+    // nothing, which is the one outcome this tool must never produce.
+    if (ctx.expo) {
+      const todos = new TodoCounter();
+      const res = await scaffoldNativeUnit({
+        trees: ctx.trees,
+        outDir: ctx.outDir,
+        expo: ctx.expo,
+        force: ctx.force,
+        todos,
+      });
+      for (const kept of res.kept) todos.drop(kept);
+      const names = flattenTrees(ctx.trees).map((c) => c.info.componentName);
+      const keptNote =
+        res.kept.length > 0
+          ? ` (${res.kept.length} write-once file(s) kept — delete one to regenerate it)`
+          : "";
+      return {
+        id: "unit-browser",
+        ok: true,
+        outputs: res.written,
+        findings: [],
+        summary: `native unit specs for ${names.length} component(s)${keptNote}`,
+        handWork: todos.toTallies(),
+      };
+    }
+
     const projectRoot = ctx.nextjs?.root;
     // Browser specs drive the perf-harness host; emitting them without it
     // would hand the user a suite that cannot start.

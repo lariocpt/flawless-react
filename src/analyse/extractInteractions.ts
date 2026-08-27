@@ -93,6 +93,61 @@ export function extractInteractions(
     return transparent(el) ? el.children : undefined;
   };
 
+  /**
+   * Whether an element renders element children and ALL of them are textless.
+   *
+   * Not simply "has no label": a Pressable whose text sits behind an undecidable
+   * condition is unlabelled too, but adding an accessibilityLabel is not the
+   * whole story there. Icon-only is the case where the remediation is exact.
+   */
+  const isIconOnly = (el: ts.JsxElement): boolean => {
+    let sawElement = false;
+    let allTextless = true;
+    const walk = (children: ts.NodeArray<ts.JsxChild>): void => {
+      for (const c of children) {
+        if (ts.isJsxText(c) && c.text.trim()) allTextless = false;
+        else if (ts.isJsxExpression(c) && c.expression) allTextless = false;
+        else if (ts.isJsxElement(c) || ts.isJsxSelfClosingElement(c)) {
+          const name = readTagName(ts.isJsxElement(c) ? c.openingElement.tagName : c.tagName);
+          const resolved = hostTag(name);
+          sawElement = true;
+          if (!resolved || !TEXTLESS_ELEMENTS.has(resolved.name)) allTextless = false;
+          if (ts.isJsxElement(c)) walk(c.children);
+        } else if (ts.isJsxFragment(c)) walk(c.children);
+      }
+    };
+    walk(el.children);
+    return sawElement && allTextless;
+  };
+
+  /**
+   * Literal navigation targets reached from a handler expression.
+   *
+   * `onPress={() => router.push("/items/new")}` is the shape; the receiver must
+   * be an expo-router router (a local bound from useRouter()), and the argument
+   * must be a string literal. A template literal names a route the spec cannot
+   * predict — `/items/${'${item.id}'}` depends on data — so it is skipped rather
+   * than half-matched.
+   */
+  const NAV_METHODS = new Set(["push", "replace", "navigate"]);
+  const collectPushTargets = (init: ts.JsxAttribute["initializer"]): string[] => {
+    if (!init || !ts.isJsxExpression(init) || !init.expression) return [];
+    const out: string[] = [];
+    const walk = (n: ts.Node): void => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        NAV_METHODS.has(n.expression.name.text)
+      ) {
+        const arg = n.arguments[0];
+        if (arg && ts.isStringLiteral(arg)) out.push(arg.text);
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(init.expression);
+    return [...new Set(out)];
+  };
+
   const transparent = (el: ts.JsxElement): boolean => {
     const resolved = hostTag(readTagName(el.openingElement.tagName));
     if (!resolved || resolved.dialect !== "native") return false;
@@ -177,6 +232,12 @@ export function extractInteractions(
             binding,
             ...(gatedBy ? { gatedBy } : {}),
             ...((tagCounts.get(tag) ?? 0) > 1 ? { ambiguousTag: true } : {}),
+            ...(native && enclosing && isIconOnly(enclosing) ? { iconOnly: true } : {}),
+            ...(() => {
+              if (!native) return {};
+              const targets = collectPushTargets(attr.initializer);
+              return targets.length > 0 ? { pushTargets: targets } : {};
+            })(),
             pos: posOf(attr, sourceFile),
           });
         }

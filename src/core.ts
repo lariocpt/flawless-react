@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
-import { outDirRel } from "./emitPaths.ts";
+import { outDirRel, underOutDir } from "./emitPaths.ts";
 import { detectExpo } from "./expo/detect.ts";
 import {
   detectComponentsGlob,
@@ -20,7 +20,7 @@ import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { restampGenerated } from "./scaffold-tests/stamp.ts";
-import { NEXT_SCRIPT, VITEST_CONFIG } from "./suiteScripts.ts";
+import { EXPO_SCRIPT, JEST_CONFIG, NEXT_SCRIPT, VITEST_CONFIG } from "./suiteScripts.ts";
 import { findTask, TASKS } from "./tasks/index.ts";
 import type {
   ComponentTree,
@@ -588,6 +588,61 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     }
   }
 
+  // Expo mode merges the native test stack into the app, the way Next.js mode
+  // merges the DOM one. The version pairing is the whole point and it is not
+  // cosmetic: a bare `jest` resolves to 30 while jest-expo 54's tooling is all
+  // ^29.2.1, and the mismatch surfaces as
+  // "TypeError: this._moduleMocker.clearMocksOnScope is not a function"
+  // from inside jest-runtime — which names nothing a user could act on. Found by
+  // running the emitted suite, not by reading the manifest.
+  if (expoCtx) {
+    try {
+      const outRel = outDirRel(outDir, expoCtx.root);
+      const merge = await mergeIntoNextPackageJson(
+        expoCtx.root,
+        {},
+        {
+          // Pinned to the project's OWN SDK major. jest-expo@54 pairs with Expo
+          // SDK 54; a fixed range breaks every other adopter, and a guessed one
+          // fails deep inside expo-modules-core.
+          ...(expoCtx.sdkMajor === undefined ? {} : { "jest-expo": `~${expoCtx.sdkMajor}.0.0` }),
+          // ^29, matching jest-expo's own babel-jest/@jest/globals/jest-snapshot.
+          jest: "^29.7.0",
+          // 13, not 14: expo-router 6's testing-library is built against
+          // react-test-renderer, which RNTL 14 replaced with `test-renderer`.
+          "@testing-library/react-native": "^13.3.3",
+          "react-test-renderer": "19.1.0",
+        },
+        {
+          ...(taskIds.includes("unit-browser")
+            ? { [EXPO_SCRIPT.unit]: `jest --config ${underOutDir(outRel, JEST_CONFIG)}` }
+            : {}),
+        },
+      );
+      keptScripts = merge.keptScripts;
+      log(`expo: merged the native test stack into ${path.join(expoCtx.root, "package.json")}`);
+      if (keptScripts.length > 0) {
+        log(
+          `expo: kept ${keptScripts.length} script(s) with commands this tool does not ` +
+            `recognize: ${keptScripts.join(", ")} — delete a key from package.json to take ` +
+            `the tool's current command`,
+        );
+      }
+      for (const collision of detectTestScriptCollisions(expoCtx.root, true)) {
+        warn(`warning: ${collision}`);
+      }
+      const added = updateGitignore(expoCtx.root, ignoreEntries(outRel));
+      if (added.length > 0) {
+        log(`expo: added ${added.length} entry(ies) to .gitignore (${added.join(", ")})`);
+      }
+    } catch (err) {
+      anyFailed = true;
+      const message = `expo emit failed: ${(err as Error).message}`;
+      runErrors.push(message);
+      warn(message);
+    }
+  }
+
   // Outside Next.js mode this used to run at all: updateGitignore was reached
   // only from the branch above, so a plain `flawless-react "src/**/*.tsx"` run
   // ignored NOTHING it generated — not reports/, not heaps/, not
@@ -601,7 +656,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // second, easily-missed ignore file inside generated output. Failing that (a
   // package that is not a repo) the nearest package.json, and failing that the
   // out dir's parent, so something is always ignored rather than nothing.
-  if (!nextCtx) {
+  if (!nextCtx && !expoCtx) {
     const ignoreRoot = ignoreRootFor(outDir);
     const added = updateGitignore(ignoreRoot, ignoreEntries(outDirRel(outDir, ignoreRoot)));
     if (added.length > 0) {
@@ -811,15 +866,79 @@ export function detectTestScriptCollisions(nextRoot: string, colocate: boolean):
     if (name.startsWith("flawless:")) continue;
     const trimmed = cmd.trim();
     // A bare runner with no path/pattern argument globs the whole project.
-    if (/^(bun test|jest|vitest run|vitest)$/.test(trimmed)) {
+    if (selectsAllTests(trimmed)) {
       out.push(
-        `"${name}": "${trimmed}" has no path filter, so it will also collect the colocated ` +
-          `*.flawless.test.tsx specs and run them under the wrong runner. Scope it ` +
-          `(e.g. "bun test tests") or run flawless without --colocate.`,
+        `"${name}": "${trimmed}" names no path, so it will also collect the ` +
+          `*.flawless.test.tsx specs this run emits and execute them under the wrong ` +
+          `runner — which fails on a defect that is not theirs. Scope it ` +
+          `(e.g. "bun test tests"), or point it at a config whose testMatch already does.`,
       );
     }
   }
   return out;
+}
+
+/**
+ * Flags whose argument is NOT a test-selection filter.
+ *
+ * A runner invoked with only these still globs the whole project, so it will
+ * collect the specs this tool emits and run them under the wrong runner.
+ */
+const NON_SELECTING_FLAGS = new Set([
+  "--preload",
+  "--config",
+  "-c",
+  "--root",
+  "--reporter",
+  "--timeout",
+  "--coverage",
+  "--bail",
+  "--env-file",
+  "--setup-files",
+  "--silent",
+  "--watch",
+]);
+
+/**
+ * Whether a test command selects EVERYTHING, rather than a scoped path.
+ *
+ * The old test was a four-spelling regex — `bun test`, `jest`, `vitest run`,
+ * `vitest` — which the dogfood app walked straight past: its script is
+ * `bun test --preload ./tests/setup.ts`, a bare runner with a flag, no path, and
+ * no match. Bun's default discovery then sweeps every emitted spec into the
+ * project suite, where it fails on a runner it was not written for.
+ *
+ * `--config` is the interesting exception: a runner given an explicit config is
+ * scoped BY that config's own testMatch, so `jest --config flawless/jest.config.cjs`
+ * is not a collision even though it names no path.
+ */
+export function selectsAllTests(cmd: string): boolean {
+  const tokens = cmd.trim().split(/\s+/);
+  const runner = tokens[0] === "bun" && tokens[1] === "test" ? 2 : 1;
+  if (!/^(bun|jest|vitest|bunx|npx)$/.test(tokens[0] ?? "")) return false;
+  if (tokens[0] === "bun" && tokens[1] !== "test") return false;
+  let i = runner;
+  let positionals = 0;
+  let configScoped = false;
+  while (i < tokens.length) {
+    const t = tokens[i] as string;
+    if (t === "run" && positionals === 0) {
+      i++;
+      continue;
+    }
+    if (t.startsWith("-")) {
+      const [flag, inline] = t.includes("=") ? t.split("=", 2) : [t, undefined];
+      if (flag === "--config" || flag === "-c") configScoped = true;
+      // A flag that takes a separate argument consumes it, so the argument is
+      // not mistaken for a path filter.
+      if (inline === undefined && NON_SELECTING_FLAGS.has(flag as string)) i++;
+      i++;
+      continue;
+    }
+    positionals++;
+    i++;
+  }
+  return positionals === 0 && !configScoped;
 }
 
 /** True when `file` lives under `dir` (not merely shares its path prefix). */

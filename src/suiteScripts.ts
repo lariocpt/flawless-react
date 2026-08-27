@@ -78,3 +78,33 @@ export const SUITE_COMMAND = {
   headed: "playwright test --project=interactive",
   report: "node ./scripts/report.mjs",
 } as const;
+
+/**
+ * The same actions in Expo mode.
+ *
+ * A separate map from NEXT_SCRIPT, for the reason NEXT_SCRIPT is separate from
+ * SUITE_SCRIPT: these run different commands, not the same commands under
+ * another name. The KEY NAMES match NEXT_SCRIPT's where the action is the same,
+ * so a project that was Next and became Expo upgrades the key rather than
+ * accumulating two namespaces.
+ *
+ * `perf` and `browser` are deliberately absent: nothing emits their targets yet,
+ * and core.ts's whole gating rule is that a script whose target does not exist is
+ * a broken promise.
+ */
+export const EXPO_SCRIPT = {
+  unit: "flawless:unit",
+  e2e: "flawless:e2e",
+  load: "flawless:load",
+  report: "flawless:report",
+} as const;
+
+/**
+ * The emitted jest config's filename — `.cjs`, not `.js`.
+ *
+ * Jest loads `jest.config.js` through `require`, which is CJS unless the nearest
+ * package.json says `"type": "module"`; in Expo mode the nearest one is the
+ * TARGET APP's, whose type we do not control. Exactly the reasoning behind
+ * VITEST_CONFIG being `.mts`.
+ */
+export const JEST_CONFIG = "jest.config.cjs";

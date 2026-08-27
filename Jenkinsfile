@@ -75,8 +75,15 @@ pipeline {
                     # tests/crustGate.test.ts (FR-021) needs the crust binary that the apps
                     # plane on this host serves. FLAWLESS_CI_BROWSER=1 arms the one gated
                     # real-browser case (FR-022).
+                    # FLAWLESS_CI_NATIVE arms tests/nativeExecution.test.ts, which generates
+                    # an Expo suite, really installs jest-expo + RNTL into it, and runs jest.
+                    # ARMED, not merely gated: parsing proves nothing about that plane — every
+                    # defect wave 3 had (a jest major mismatch surfacing as
+                    # clearMocksOnScope, a layout that cannot be render()ed, specs making live
+                    # HTTP calls, a jest.mock specifier resolved from the wrong directory) was
+                    # invisible to tsc and fatal to jest. Measured at ~16s including the install.
                     CID=$(docker create -w /w --add-host apps.in.drlario.org:host-gateway \\
-                        -e FLAWLESS_CI_BROWSER=1 oven/bun:1 sh -c '
+                        -e FLAWLESS_CI_BROWSER=1 -e FLAWLESS_CI_NATIVE=1 oven/bun:1 sh -c '
                         set -eu
                         cd /w
                         apt-get update >/dev/null
@@ -158,6 +165,19 @@ pipeline {
                     # same class of failure as the compile-entry regression above.
                     ./out/flawless-react --flags | grep -qx -- "--expo" \\
                         || { echo "FAIL: --expo did not survive compilation"; exit 1; }
+                    # The flag surviving is necessary, not sufficient: the native TEMPLATES have
+                    # to survive too. `bun build --compile` bundles modules, not sibling assets,
+                    # so a template read from disk would work perfectly from the checkout — which
+                    # is where dogfooding runs — and emit nothing at all from the published
+                    # binary. Generate over the fixture and assert a config appears.
+                    rm -rf /tmp/flawless-expo-compile && cp -r tests/fixtures/expoapp /tmp/flawless-expo-compile
+                    ./out/flawless-react --expo /tmp/flawless-expo-compile --tasks unit-browser \\
+                        --roots exported --ci --no-inline-summary >/dev/null
+                    test -f /tmp/flawless-expo-compile/flawless/jest.config.cjs \\
+                        || { echo "FAIL: the binary emitted no jest config — templates lost to --compile?"; exit 1; }
+                    ls /tmp/flawless-expo-compile/flawless/unit/*.flawless.test.tsx >/dev/null \\
+                        || { echo "FAIL: the binary emitted no native specs"; exit 1; }
+                    rm -rf /tmp/flawless-expo-compile
                 '''
             }
         }
