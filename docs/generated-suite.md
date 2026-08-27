@@ -369,10 +369,16 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   alert-dialog, popover, dropdown-menu, select, tooltip, hover-card,
   context-menu, menubar, collapsible); value-driven families (accordion,
   tabs) and parts without a same-file Root keep the honest skip and its
-  TODO. Two more shapes keep the skip: a `Sub`-prefixed part (SubTrigger,
-  SubContent) needs a `<Sub>` ancestor this wrapper does not build, and a
-  family whose Root is exported by default rather than by name would produce
-  an import that does not resolve. The browser host mounts wrapped parts too:
+  TODO. So do these, all of them cases where a wrapper would be wrong rather
+  than merely absent: a part that renders a `Sub`-prefixed member
+  (`<Menu.SubTrigger>`, `<Menu.SubContent>`) — the rule reads the member the
+  part renders, not the part's own name, and those need a `<Sub>` ancestor this
+  wrapper does not build; a part whose Root sibling is declared as a default
+  export, since both emitters import the wrappers by name and a named import of
+  a default export does not resolve; a part rendering members of two different
+  compound packages, where wrapping one leaves the other throwing; and a part
+  with no unrooted member of its own, which reaches its family through a local
+  hop the analyser does not follow. The browser host mounts wrapped parts too:
   the regenerated `host/registry.ts` composes the wrapper into the part's own
   REGISTRY entry, so a kept `main.tsx` benefits from a plain refresh.
 

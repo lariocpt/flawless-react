@@ -346,7 +346,23 @@ describe("compound part specs mount inside their family", () => {
     // spec asked for; only baseElement shipped.
     const spec = specFor(part("DialogHeader", FAMILY));
     expect(spec).toContain('import { render, screen } from "@testing-library/react"');
-    expect(spec).toContain('expect(screen.getByText("flawless-slot")).toBeInTheDocument()');
+    // getAllByText, not getByText: getByText also demands the child appear
+    // exactly once, and real primitives duplicate it — a radix Select mounted
+    // without its Trigger renders a mirror <option>. getAllByText still throws
+    // on zero matches, so a part that renders nothing is still caught.
+    expect(spec).toContain(
+      'expect(screen.getAllByText("flawless-slot").length).toBeGreaterThan(0)',
+    );
+    expect(spec).not.toContain("getByText");
+  });
+
+  test("a childless spec imports no screen it never uses", () => {
+    // The childless branch has no slot text to query, so it does not use
+    // screen. Importing it anyway would emit an unused import into every such
+    // spec — biome's noUnusedImports is an error in a generated suite.
+    const spec = specFor(part("DialogOverlay", FAMILY, { acceptsChildren: false }));
+    expect(spec).toContain('import { render } from "@testing-library/react"');
+    expect(spec).not.toContain("screen");
   });
 
   test("a part that takes no children still asserts the mount produced DOM", () => {

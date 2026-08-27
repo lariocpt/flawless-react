@@ -955,7 +955,9 @@ test("${name} is exported as a component", () => {
  * visible), everything else inside <Root open> — with the Content sibling
  * in between for parts that live inside the popup. Portal content lands
  * outside the render container, so assertions read the whole document rather
- * than the container — through screen and baseElement both.
+ * than the container: through screen and baseElement both where the part takes
+ * children and there is slot text to look for, and by counting what the mount
+ * put in the document where it does not.
  */
 function compoundPartSpec(
   info: ComponentInfo,
@@ -991,6 +993,14 @@ function compoundPartSpec(
   // baseElement is the same document from the render result's side. A part
   // that rendered nowhere satisfies neither.
   //
+  // getAllByText, not getByText: getByText additionally demands the child appear
+  // EXACTLY once, which is not a property of the part under test. Real
+  // primitives duplicate it — a radix Select mounted without its Trigger renders
+  // a mirror <option> for the bubble select, so getByText made the emitted
+  // SelectItem spec red against a perfectly healthy component. getAllByText
+  // still throws "Unable to find an element with the text" on zero matches, so
+  // a part that renders nothing is still caught.
+  //
   // With no child to witness, count elements instead: render() always appends
   // its own container div to baseElement, so >1 means the composed mount put
   // something in the document. A bare not.toThrow() did not even ask that.
@@ -1002,7 +1012,7 @@ function compoundPartSpec(
   // assertion witnesses the mount, not the part.
   const body = child
     ? `  const { baseElement } = render(${wrapped});
-  expect(screen.getByText("flawless-slot")).toBeInTheDocument();
+  expect(screen.getAllByText("flawless-slot").length).toBeGreaterThan(0);
   expect(baseElement.textContent).toContain("flawless-slot");`
     : `  const { baseElement } = render(${wrapped});
   expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1);`;
@@ -1015,7 +1025,13 @@ ${wrapImport}
 // ${name} ${note}
 // Its own file exports the family, so the spec mounts the part the way call
 // sites do instead of skipping. Portal content lands outside the container, so
-// the assertions read the whole document — via screen and baseElement.
+${
+  child
+    ? "// the assertions read the whole document — via screen and baseElement."
+    : `// the assertion reads the whole document. This part takes no children, so
+// there is no slot text to look for: it asserts the mount put elements in the
+// document at all.`
+}
 const DEFAULTS: Record<string, unknown> = ${JSON.stringify(synthesiseDefaults(info))};
 
 test("${name} mounts inside its family wrapper", () => {
