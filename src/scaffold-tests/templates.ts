@@ -1457,12 +1457,18 @@ ${valueAsserts.join("\n") || "  // no text field whose value could be read back"
 ${isolation || "  // no other handlers to isolate"}
 });`;
   }
+  // The submit was the LAST statement and nothing followed it, so the test
+  // asserted the fills and then fired a submit whose effect nobody checked —
+  // 10 of the dogfood app's live web tests. With no prop handler there is
+  // nothing precise to assert, so this is the same floor the smoke click uses:
+  // the form did not take the component down.
   return `test("${name} form #${idx} accepts input and submits", async () => {
   const { container } = renderTarget();
   void container;
 ${fillSteps.join("\n")}
 ${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   ${submitClick}
+  expect(container.firstElementChild).not.toBeNull(); // the submit did not take the component down
 });`;
 }
 

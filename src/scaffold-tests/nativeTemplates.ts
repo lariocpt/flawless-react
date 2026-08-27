@@ -61,6 +61,26 @@ export function renderNativeUnit(input: NativeRenderOptions): RenderedFile[] {
   ];
 
   const flat = flattenTrees(opts.trees);
+  // Field names this component's SUBTREE renders as text — `{building.name}` in a
+  // row component records propUsage { kind: "jsx-child", member: "name" }.
+  //
+  // Real evidence, replacing a guess. The first cut picked the witness from a
+  // hand-written list of display-ish key names, and 16 of 31 loaded-state tests
+  // asserted a field the row does not render.
+  const renderedFields = new Map<string, Set<string>>();
+  for (const tree of opts.trees) {
+    const members = new Set<string>();
+    const walk = (t: ComponentTree): void => {
+      for (const u of t.entry.propUsage ?? []) {
+        if (u.kind === "jsx-child" && u.member) members.add(u.member);
+      }
+      for (const child of t.children) walk(child);
+    };
+    walk(tree);
+    const existing = renderedFields.get(tree.entry.filePath) ?? new Set<string>();
+    for (const m of members) existing.add(m);
+    renderedFields.set(tree.entry.filePath, existing);
+  }
   const specNames = allocateSpecNames(flat);
   // A component with no export cannot be imported by a spec — the same rule the
   // DOM path applies, and on this app it is 16 of 47 components, every one of
@@ -83,6 +103,7 @@ export function renderNativeUnit(input: NativeRenderOptions): RenderedFile[] {
         specName,
         opts,
         path.dirname(target),
+        renderedFields.get(c.info.filePath) ?? new Set<string>(),
         opts.todos?.for(target),
       ),
     });
@@ -288,6 +309,8 @@ function renderNativeSpec(
   specName: string,
   opts: ResolvedNativeOptions,
   fromDir: string,
+  /** Field names this component's subtree renders as text. */
+  renderedFields: Set<string>,
   todo: TodoRecorder | undefined,
 ): string {
   const route = routeOf(info.filePath, opts.expo);
@@ -298,7 +321,16 @@ function renderNativeSpec(
   const defaults = synthesiseDefaults(info);
   const clicks = info.interactions?.clicks ?? [];
   const providers = requiredNativeProviders(info.hooks ?? []);
-  const mocks = networkModuleMocks(info, fromDir, opts.resolver, opts.cache, todo);
+  const loadedFixtures: LoadedFixture[] = [];
+  const mocks = networkModuleMocks(
+    info,
+    fromDir,
+    opts.resolver,
+    opts.cache,
+    loadedFixtures,
+    renderedFields,
+    todo,
+  );
   // Evidence, not a guess: the component awaits data iff a module the emitter
   // just mocked performs fetch(), or it registers a focus effect.
   const loadsData = mocks.length > 0 || (info.hooks ?? []).includes("useFocusEffect");
@@ -352,6 +384,12 @@ function renderNativeSpec(
   lines.push(`import ${imported} from ${JSON.stringify(importPath)};`);
   if (route) lines.push(...routeContextImports(opts, fromDir, route));
   lines.push("");
+  // The loaded-state tests drive the mock directly, so the spec imports the
+  // mocked names — jest.mock has replaced the module, so these ARE the mocks.
+  for (const imp of [...new Set(loadedFixtures.map((f) => `${f.fn}::${f.from}`))]) {
+    const [fn, from] = imp.split("::") as [string, string];
+    lines.push(`import { ${fn} } from ${JSON.stringify(from)};`);
+  }
   lines.push(...mocks);
   // Record<string, unknown>, not `as const`: the prop rung emits
   // String(DEFAULTS["x"] ?? ""), which under Expo's strict tsconfig is TS7053
@@ -377,6 +415,7 @@ function renderNativeSpec(
   lines.push(...mountTest(specName, route, providers, fnProps, todo));
   lines.push(...staticTextTests(info));
   lines.push(...interactionTests(clicks, Boolean(route), loadsData, todo));
+  lines.push(...loadedStateTests(loadedFixtures, mocks.length > 0, todo));
   lines.push("});");
   lines.push("");
   return lines.join("\n");
@@ -769,11 +808,25 @@ function describeHandle(
  * left alone, because mocking it would strip behaviour the component genuinely
  * has — the same reason the DOM emitter's allowlist refuses to mock `cn`.
  */
+/** A mocked call whose shape carries a collection, and the one-row fixture for it. */
+export interface LoadedFixture {
+  /** Local name of the mocked function, as the component imports it. */
+  fn: string;
+  /** Specifier to import it from, already relativised to the spec. */
+  from: string;
+  /** The resolved shape with ONE row in each collection, as emitted JSON. */
+  rows: string;
+  /** A literal string from inside that row, which the loaded render must display. */
+  witness: string | undefined;
+}
+
 function networkModuleMocks(
   info: Parameters<typeof synthesiseDefaults>[0],
   fromDir: string,
   resolver: ModuleResolver,
   cache: SourceFileCache,
+  loaded: LoadedFixture[],
+  renderedFields: Set<string>,
   todo: TodoRecorder | undefined,
 ): string[] {
   const fs = require("node:fs") as typeof import("node:fs");
@@ -840,6 +893,17 @@ function networkModuleMocks(
         todo?.("uninferred-return-shape");
         return `  ${n}: jest.fn(async () => ({})), // TODO(flawless): give this a realistic return value`;
       }
+      // The same shape with ONE row, kept for a loaded-state test. The default
+      // mock stays empty so the assertions derived from the initial render hold;
+      // this is the declared, deliberate other state.
+      if (hasCollection(value)) {
+        loaded.push({
+          fn: n,
+          from: spec,
+          rows: JSON.stringify(value),
+          witness: displayWitness(value, renderedFields),
+        });
+      }
       return `  ${n}: jest.fn(async () => (${JSON.stringify(emptyCollections(value))})), /* shape inferred from its Promise<T> annotation */`;
     });
     out.push(
@@ -890,4 +954,144 @@ function emptyCollections(value: unknown): unknown {
     );
   }
   return value;
+}
+
+/** Whether a resolved shape contains a collection anywhere. */
+function hasCollection(value: unknown): boolean {
+  if (Array.isArray(value)) return true;
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasCollection);
+  }
+  return false;
+}
+
+/**
+ * A string from the fixture that a row is actually likely to DISPLAY.
+ *
+ * The first string leaf is usually `id`, which almost nothing renders — the first
+ * cut asserted `flawless-id` and 21 suites went red because the row shows a name,
+ * not a key. So the search is by FIELD NAME, over the handful of keys that carry
+ * display text, and it gives up rather than guessing when none is present.
+ *
+ * The synthesised values are `flawless-<field>`, which appear nowhere else in the
+ * app — so finding one on screen proves the ROW rendered, rather than that some
+ * other copy happened to match.
+ */
+/**
+ * Fallback key names, used only when the subtree's own evidence is unavailable —
+ * a component whose rows come from a child the analyser could not reach.
+ */
+const DISPLAY_KEYS = [
+  "name",
+  "title",
+  "label",
+  "subject",
+  "heading",
+  "business_name",
+  "full_name",
+  "display_name",
+  "text",
+  "body",
+  "message",
+  "description",
+  "email",
+];
+
+function displayWitness(value: unknown, rendered: Set<string>): string | undefined {
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const found = displayWitness(v, rendered);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const obj = value as Record<string, unknown>;
+  // The subtree's own evidence first: a field some component renders as text.
+  for (const [key, v] of Object.entries(obj)) {
+    if (rendered.has(key) && typeof v === "string" && v.startsWith("flawless-")) return v;
+  }
+  for (const key of DISPLAY_KEYS) {
+    const v = obj[key];
+    if (typeof v === "string" && v.startsWith("flawless-")) return v;
+  }
+  for (const v of Object.values(obj)) {
+    const found = displayWitness(v, rendered);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * A test for the screen's LOADED state.
+ *
+ * The default mock returns empty collections on purpose — every assertion the
+ * analyser derived describes the render `renderPath` evaluated, which is the
+ * component's initial state. But that leaves the loaded branch of every list
+ * screen unexecuted, and on the dogfood app that branch is where most of the
+ * missing BRANCH coverage lives (39.2% on mobile).
+ *
+ * So the loaded state gets its own test, which declares the state it is setting
+ * up instead of changing the state every other test runs in. The witness is a
+ * synthesised `flawless-<field>` value from the fixture, which appears nowhere
+ * else in the app — so finding it on screen proves the row rendered, rather than
+ * that some other copy happened to match.
+ *
+ * Skipped rather than asserted when the fixture has no string leaf to witness:
+ * a collection of numbers renders nothing uniquely identifiable, and a test that
+ * cannot tell the loaded render from the empty one is not a test.
+ */
+function loadedStateTests(
+  fixtures: LoadedFixture[],
+  mocked: boolean,
+  todo: TodoRecorder | undefined,
+): string[] {
+  if (!mocked || fixtures.length === 0) return [];
+  const out: string[] = [];
+  // ONE recipe per spec, not one per mocked collection. A detail screen mocks
+  // half a dozen api functions and the rest are the same recipe with a different
+  // fixture — repeating it turns a useful pointer into noise, and noise is how a
+  // skip list stops being read. Prefer one with a witness.
+  const chosen = fixtures.find((f) => f.witness !== undefined) ?? fixtures[0];
+  for (const f of chosen ? [chosen] : []) {
+    if (f.witness === undefined) {
+      out.push(
+        `  test.skip("${f.fn}: loaded state — its fixture has no unique string to witness, ` +
+          `so a loaded render cannot be told from an empty one", () => {});`,
+        "",
+      );
+      continue;
+    }
+    // SKIPPED, with the whole recipe, and the reason is worth stating.
+    //
+    // The default mock returns empty collections so that every assertion derived
+    // from the initial render holds. This is the other state, and executing it is
+    // where the missing BRANCH coverage lives — 39% on the dogfood app.
+    //
+    // Measured rather than assumed: enabled live, this passes on 20 of the app's
+    // 31 screens and fails on 11. The witness is correct (it is taken from the
+    // fields the subtree actually renders as text, not guessed), and the row still
+    // does not appear — because those screens hold their rows in an external
+    // store rather than local state, and the store update does not reach the
+    // render inside the harness. Telling which is which at emit time needs
+    // evidence the analyser does not yet carry.
+    //
+    // So: the recipe, ready to enable, rather than a test that fails for a reason
+    // that is neither the app's nor the tool's. Deleting `.skip` is the whole
+    // change on a locally-stateful screen.
+    todo?.("other");
+    out.push(
+      `  test.skip("renders the loaded state when ${f.fn} returns a row — enable by removing .skip; ` +
+        `holds where the screen keeps its rows in local state", async () => {`,
+      `    (${f.fn} as unknown as jest.Mock).mockResolvedValue(${f.rows});`,
+      "    mount();",
+      "    // A synthesised value from the fixture, taken from a field this screen's",
+      "    // own subtree renders as text — so finding it proves the ROW rendered,",
+      "    // not that some other copy happened to match.",
+      `    expect((await screen.findAllByText(${JSON.stringify(f.witness)}, { exact: false })).length).toBeGreaterThan(0);`,
+      "  });",
+      "",
+    );
+  }
+  return out;
 }
