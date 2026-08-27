@@ -1,3 +1,4 @@
+import { expoNotImplemented } from "../expo/refusal.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
 import { runBiomeSweep } from "./biomeSweep.ts";
 
@@ -12,6 +13,7 @@ export const a11yScan: Task = {
   description: "Biome a11y rules over the targeted tree (file:line)",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
+    if (ctx.expo) return expoNotImplemented("a11y", "wave 5 — the native accessibility analyser");
     return runBiomeSweep({
       id: "a11y",
       ctx,

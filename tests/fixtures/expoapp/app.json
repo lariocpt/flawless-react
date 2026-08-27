@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "flawless-expo-fixture",
+    "slug": "flawless-expo-fixture",
+    "scheme": "flawlessfixture",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true, "reactCompiler": true },
+    "web": { "output": "static" }
+  }
+}

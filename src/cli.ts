@@ -54,6 +54,7 @@ export function parseArgs(argv: string[]): CliArgs {
   let runTests = false;
   let inlineSummary = true;
   let nextjs: string | undefined;
+  let expo: string | undefined;
   let appResolver: string | undefined;
   let swaggerUrl: string | undefined;
   let colocate = false;
@@ -133,6 +134,15 @@ export function parseArgs(argv: string[]): CliArgs {
       }
     } else if (a.startsWith("--nextjs=")) {
       nextjs = a.slice("--nextjs=".length) || ".";
+    } else if (a === "--expo") {
+      const peek = argv[i + 1];
+      if (peek !== undefined && !peek.startsWith("-")) {
+        expo = argv[++i] as string;
+      } else {
+        expo = ".";
+      }
+    } else if (a.startsWith("--expo=")) {
+      expo = a.slice("--expo=".length) || ".";
     } else if (a === "--app-resolver") {
       const v = argv[++i];
       if (v === undefined) throw new Error("--app-resolver requires a file path");
@@ -195,6 +205,14 @@ export function parseArgs(argv: string[]): CliArgs {
   }
 
   if (!help && !version) {
+    // A project is one or the other. Checked here rather than in either detector
+    // so the message names the conflict instead of whichever ran first, and so
+    // it costs nothing on the --help path.
+    if (nextjs !== undefined && expo !== undefined) {
+      throw new Error(
+        "--nextjs and --expo are mutually exclusive: a project is a Next.js app or an Expo app, not both.",
+      );
+    }
     if (!Number.isFinite(depth) || depth < 0) throw new Error(`--depth must be >= 0`);
     if (!Number.isFinite(variants) || variants < 0) throw new Error(`--variants must be >= 0`);
   }
@@ -218,6 +236,7 @@ export function parseArgs(argv: string[]): CliArgs {
     runTests,
     inlineSummary,
     nextjs,
+    expo,
     appResolver,
     swaggerUrl,
     colocate,
@@ -388,7 +407,7 @@ export async function main(argv: string[]): Promise<void> {
     taskIds = picked.tasks;
   }
 
-  if (pattern === undefined && args.nextjs === undefined) {
+  if (pattern === undefined && args.nextjs === undefined && args.expo === undefined) {
     process.stderr.write(
       "missing entry path or glob. Pass a .tsx path, a glob, or run in a TTY for the interactive menu. See --help.\n",
     );
@@ -417,6 +436,7 @@ export async function main(argv: string[]): Promise<void> {
       apiSpec: args.apiSpec,
       inlineSummary: args.inlineSummary,
       nextjs: args.nextjs,
+      expo: args.expo,
       swaggerUrl: args.swaggerUrl,
       colocate: args.colocate,
       roots: args.roots,

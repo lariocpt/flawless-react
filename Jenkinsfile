@@ -152,6 +152,12 @@ pipeline {
                     esac
                     ./out/flawless-react --help | grep -q "multi-task quality kit" \\
                         || { echo "FAIL: --help produced nothing — wrong compile entry?"; exit 1; }
+                    # The flag inventory has to survive `bun build --compile`. Dogfooding runs
+                    # from the checkout, so nothing else in this pipeline would notice a mode
+                    # that works there and is absent from the published binary — which is the
+                    # same class of failure as the compile-entry regression above.
+                    ./out/flawless-react --flags | grep -qx -- "--expo" \\
+                        || { echo "FAIL: --expo did not survive compilation"; exit 1; }
                 '''
             }
         }

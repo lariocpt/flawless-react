@@ -1,4 +1,5 @@
 import path from "node:path";
+import { expoNotImplemented } from "../expo/refusal.ts";
 import { scaffold } from "../scaffold/index.ts";
 import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
@@ -10,6 +11,7 @@ export const perfHarness: Task = {
   description: "Playwright + React.Profiler + react-scan suite",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
+    if (ctx.expo) return expoNotImplemented("perf-harness", "wave 4 — the Expo-web host");
     const [first, ...rest] = ctx.trees;
     if (!first) {
       return {

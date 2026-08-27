@@ -641,6 +641,11 @@ export interface RunContext {
   apiSpec: string | undefined;
   inlineSummary: boolean;
   nextjs: NextjsContext | undefined;
+  /**
+   * The Expo project this run targets, or undefined. Mutually exclusive with
+   * `nextjs` — a project is one or the other, and passing both is a UsageError.
+   */
+  expo?: ExpoContext;
   /** Emit unit specs next to the analysed source files instead of <outDir>/unit. */
   colocate?: boolean;
   /** Every task id selected for this run, so tasks can honour cross-task deps. */
@@ -697,6 +702,7 @@ export interface CliArgs {
   runTests: boolean;
   inlineSummary: boolean;
   nextjs: string | undefined;
+  expo: string | undefined;
   appResolver: string | undefined;
   swaggerUrl: string | undefined;
   colocate: boolean;
@@ -725,4 +731,55 @@ export interface NextjsContext {
   router: NextjsRouter;
   appResolver: string | undefined;
   apiRoutes: NextjsApiRoute[];
+}
+
+/**
+ * Which host-element vocabulary a run's components are written in.
+ *
+ * Not a synonym for "which framework mode" — an Expo app can also target web,
+ * and a monorepo sweep can cross both. This names the ELEMENT SET the analysis
+ * and the emitters have to reason about: lowercase DOM intrinsics (`<div>`), or
+ * React Native's imported capitalised components (`<View>` from "react-native").
+ *
+ * "web" is the default everywhere and is what every run has always done.
+ */
+export type Platform = "web" | "native";
+
+/**
+ * An Expo project, as `detectExpo` reads it off disk.
+ *
+ * The peer of NextjsContext, and deliberately shaped like it: a nullable context
+ * object on RunContext rather than a boolean, so a task can branch once and the
+ * facts it needs travel with the decision.
+ */
+export interface ExpoContext {
+  root: string;
+  /** The expo-router app directory, when the project uses expo-router. */
+  routerRoot: string | undefined;
+  /**
+   * Expo SDK major, read from the project's own `expo` dependency and never
+   * defaulted. jest-expo's major must match it (jest-expo@54 <-> SDK 54), so a
+   * guess here produces failures deep inside expo-modules-core that name
+   * nothing. Absent only when the range is unreadable AND expo is not installed,
+   * and the caller must then say so rather than substitute a number.
+   */
+  sdkMajor: number | undefined;
+  /** expo-router major, same rule. */
+  routerMajor: number | undefined;
+  /**
+   * The project compiles with the React Compiler (app.json's
+   * `experiments.reactCompiler`, or babel-plugin-react-compiler in the babel
+   * config).
+   *
+   * Load-bearing for perf-static: the compiler memoises automatically, so
+   * `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
+   * `perf/no-memoisation-with-children` name work it has already done. On the
+   * dogfood app that is 136 of 168 findings — 81% of the task's entire output
+   * (docs/reviews/2026-08-expo-probes.md).
+   */
+  reactCompiler: boolean;
+  /** NativeWind is wired through babel (`jsxImportSource: "nativewind"`). */
+  nativewind: boolean;
+  /** Port `expo start --web` serves on; Metro's default is 8081, not 3000. */
+  webPort: number;
 }

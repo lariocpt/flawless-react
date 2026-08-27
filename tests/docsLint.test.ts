@@ -78,6 +78,7 @@ const FOREIGN_FLAGS: Record<string, string> = {
   "--swagger": "crust mock-server",
   "--registry": "bun add",
   "--timeout": "crust load pipe",
+  "--web": "expo start",
   "--with-deps": "playwright install",
 };
 

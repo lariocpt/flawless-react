@@ -109,6 +109,16 @@ export const FLAGS: readonly FlagDoc[] = [
     ],
   },
   {
+    name: "--expo",
+    value: "[<path>]",
+    summary: [
+      "Treat <path> (or cwd) as an Expo project: read its SDK major,",
+      "expo-router root, React Compiler and NativeWind settings, and",
+      "place everything under <expoRoot>/flawless/. Mutually exclusive",
+      "with --nextjs.",
+    ],
+  },
+  {
     name: "--app-resolver",
     value: "<file>",
     summary: [

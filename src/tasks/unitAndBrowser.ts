@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
+import { expoNotImplemented } from "../expo/refusal.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { AliasEntry } from "../scaffold-tests/templates.ts";
@@ -13,6 +14,7 @@ export const unitAndBrowser: Task = {
   description: "Vitest + @testing-library/react units, Playwright functional browser specs",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
+    if (ctx.expo) return expoNotImplemented("unit-browser", "wave 3 — the jest-expo unit emitter");
     if (ctx.trees.length === 0) {
       return {
         id: "unit-browser",

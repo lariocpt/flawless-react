@@ -107,6 +107,34 @@ Three behaviours worth knowing before the first run:
 - **Point `--api` at a real spec.** Walking `app/api/**/route.ts` finds nothing useful when the API is a catch-all (Hono, tRPC). `--api openapi.json` (or `--swagger-url <url>`) puts real example bodies into both the MSW handlers and each generated fetch spec.
 - **Generated files adopt your formatter.** Everything written is reformatted with the target project's own biome or prettier, and JSON merges preserve the file's existing indentation — generation produces an additive diff, not a reformat of your `package.json`.
 
+## Expo / React Native mode
+
+Pass `--expo [<path>]` to target an Expo project. Pass nothing — or `--expo .` — to use the current directory.
+
+```bash
+cd my-expo-app
+bunx flawless-react --expo
+```
+
+flawless reads the project off disk — Expo SDK major, the expo-router `app/` root, whether the React Compiler is on (`app.json`'s `experiments.reactCompiler`, or `babel-plugin-react-compiler`), whether NativeWind is wired through babel, and the port `expo start --web` serves on — then defaults the entry glob to the router root and writes to `<expoRoot>/flawless/`.
+
+**This mode is being built one task at a time, and it says so rather than pretending.** Today:
+
+| task | under `--expo` |
+|---|---|
+| `perf-static` | **runs** — pure AST analysis, and nothing in it is DOM-specific |
+| `react-rules` | **runs** |
+| `unit-browser`, `perf-harness`, `a11y`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+
+A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the two that work.
+
+Refusing is deliberate. Emitting the DOM suite for a React Native project would produce specs that run, pass, and touch nothing: `container.querySelector("Pressable")` matches no element, and `getByRole("button")` finds nothing because React Native has no implicit roles. A green suite that tested nothing is the one outcome this tool must never produce.
+
+Two things measured on a real Expo app before any of this was written, both recorded in [`docs/reviews/2026-08-expo-probes.md`](docs/reviews/2026-08-expo-probes.md):
+
+- **The `a11y` task is vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep finds 3/3 on this repo's own offender fixture. All 28 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needs a different engine, not a different config.
+- **The React Compiler changes what `perf-static` should say.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
+
 ## CLI reference
 
 ```text
@@ -124,6 +152,7 @@ flawless-react <entry.tsx> [options]
 | `--include-children` | `true` | Walk transitive child components. Pass `--include-children=false` to skip. |
 | `--props '<json>'` | none | Override the synthesized default props. Merged on top of the static-parse result. |
 | `--provider <file>` | none | Path to a `.tsx` file that default-exports a wrapper component. The host renders every mounted component inside it — use this for Redux, React Query, theming, or any other context-based store. |
+| `--expo [<path>]` | Treat `<path>` (or cwd) as an Expo project: read its SDK major, expo-router root, React Compiler and NativeWind settings, and place everything under `<expoRoot>/flawless/`. Mutually exclusive with `--nextjs`. |
 | `--app-resolver <file>` | auto-detected under `--nextjs` | Alias for `--provider` in Next.js mode. Overrides the wrapper derived from `app/layout.tsx` or `pages/_app.tsx`; the file must default-export a wrapper component. |
 | `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. Read by `perf-harness`, and by the MSW emit under `--nextjs` — it does nothing for a `--tasks unit-browser` run outside Next.js mode. |
 | `--colocate` | off | Write unit specs beside their source as `<name>.flawless.test.tsx`. Existing colocated specs are kept unless `--force` — they're the ones you hand-harden. Each opens with a `// @flawless-generated sha256:…` stamp so `--force` can tell an untouched spec from one you edited. |

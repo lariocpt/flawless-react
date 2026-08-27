@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { outDirRel, relativeToEmitted, underOutDir } from "../emitPaths.ts";
+import { expoNotImplemented } from "../expo/refusal.ts";
 import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
 import type { ComponentTree, RunContext, Task, TaskResult, TodoTally } from "../types.ts";
@@ -19,6 +20,7 @@ export const e2eRoutes: Task = {
   description: "One spec per analysed app-router page: error-free load + basic interactions",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
+    if (ctx.expo) return expoNotImplemented("e2e", "wave 6 — expo-router route specs");
     if (!ctx.nextjs) {
       return {
         id: "e2e",
