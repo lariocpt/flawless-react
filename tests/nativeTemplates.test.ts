@@ -37,7 +37,9 @@ async function build(): Promise<void> {
     // exercise the escaping — and the tool was writing files jest could not
     // collect.
     "app/hostile.tsx",
+    "app/props-route.tsx",
     "components/icon.tsx",
+    "components/aliased.tsx",
   ]) {
     trees.push(
       ...(await analyseFile(
@@ -321,5 +323,60 @@ describe("router.back() needs a history entry", () => {
     const skips = src.match(/test\.skip\(/g) ?? [];
     expect(skips.length).toBeGreaterThan(0);
     expect(src).toMatch(/test\.skip\("onPress on <Pressable> — [^"]*only an icon/);
+  });
+});
+
+describe("the emitted spec has to type-check in the app that adopts it", () => {
+  test("the mount spread casts to the component's props, never to `never`", async () => {
+    await build();
+    const src = files.get("unit/Icon.flawless.test.tsx") as string;
+    // `{...(x as never)}` is TS2698 — never is not an object type — and the DOM
+    // emitter says so in a comment of its own. Every native component spec had
+    // it, so every one failed `tsc --noEmit` in the adopting app.
+    expect(src).not.toContain("as never");
+    expect(src).toContain("as unknown as ComponentProps<typeof Icon>");
+    expect(src).toContain('import type { ComponentProps } from "react";');
+  });
+
+  test("a component with NO props gets no spread at all", async () => {
+    await build();
+    const src = files.get("unit/Aliased.flawless.test.tsx") as string;
+    // ComponentProps<typeof X> resolves to `unknown` for a zero-parameter
+    // function, and spreading that is TS2698 + TS2322. There is also nothing to
+    // pass, so omitting it is the honest form as well as the typed one.
+    expect(src).toMatch(/render\(<Aliased \/>\)/);
+    expect(src).not.toContain("DEFAULTS as unknown as ComponentProps<typeof Aliased>");
+  });
+
+  test("a route spec never references the `handlers` it does not declare", async () => {
+    await build();
+    for (const [rel, src] of files) {
+      if (!src.includes("renderRouter(CONTEXT")) continue;
+      // `const fnProps = route ? [] : …` suppresses the declaration for route
+      // files; postDispatchAssertions emitted the reference regardless.
+      expect(`${rel}: ${src.includes("handlers[")}`).toBe(`${rel}: false`);
+    }
+  });
+});
+
+describe("an aliased api import is mocked and classified like any other", () => {
+  test("the mock carries the real inferred shape, not a bare {}", async () => {
+    await build();
+    const src = files.get("unit/Aliased.flawless.test.tsx") as string;
+    // The emitter iterates the module's OWN export names; the classifiers read
+    // the component's subtree, where the LOCAL name appears. Out of step, this
+    // silently became `listItems: jest.fn(async () => ({}))` with NO marker —
+    // R-3's poisoning shape — while the identical unaliased import resolved.
+    expect(src).toContain('listItems: jest.fn(async () => ({"items":[]}))');
+    expect(src).not.toMatch(/listItems: jest\.fn\(async \(\) => \(\{\}\)\)/);
+    expect(src).not.toContain("TODO(flawless): give this a realistic return value");
+  });
+
+  test("and it still reaches the loaded-state test", async () => {
+    await build();
+    const src = files.get("unit/Aliased.flawless.test.tsx") as string;
+    // Querying the subtree facts with the module-side name made the component
+    // vanish from that half of the emitter — no test AND no skip explaining why.
+    expect(src).toContain("renders the loaded state when listItems returns a row");
   });
 });

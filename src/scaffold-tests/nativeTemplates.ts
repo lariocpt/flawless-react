@@ -391,6 +391,10 @@ function renderNativeSpec(
   } else {
     lines.push(
       `import { render, screen, fireEvent, userEvent, waitFor } from "@testing-library/react-native";`,
+      // Type-only, and a NAMED import rather than a React namespace: the spec
+      // has no other reason to name React, and `import type` is erased so it
+      // cannot affect what jest loads or in what order.
+      `import type { ComponentProps } from "react";`,
     );
   }
   lines.push(`import ${imported} from ${JSON.stringify(importPath)};`);
@@ -424,7 +428,9 @@ function renderNativeSpec(
   lines.push("");
   if (route) lines.push(...routeContext(info, specName, opts, route));
   lines.push(`describe(${JSON.stringify(specName)}, () => {`);
-  lines.push(...mountTest(specName, route, providers, fnProps, todo));
+  lines.push(
+    ...mountTest(specName, route, providers, fnProps, Object.keys(defaults).length > 0, todo),
+  );
   lines.push(...staticTextTests(info));
   lines.push(...interactionTests(clicks, Boolean(route), loadsData, todo));
   lines.push(...loadedStateTests(loadedFixtures, rejectedFixtures, mocks.length > 0, todo));
@@ -538,6 +544,8 @@ function mountTest(
   route: ReturnType<typeof routeOf>,
   providers: ReturnType<typeof requiredNativeProviders>,
   fnProps: string[],
+  /** Whether DEFAULTS has anything in it — see the no-props note below. */
+  hasProps: boolean,
   todo: TodoRecorder | undefined,
 ): string[] {
   const out: string[] = [];
@@ -595,10 +603,31 @@ function mountTest(
       "",
     );
   }
+  // `{...(x as never)}` is TS2698 — never is not an object type — so every
+  // component spec this emitter wrote failed `tsc --noEmit` in the adopting app,
+  // which is the one place a generated file being unbuildable actually bites.
+  //
+  // The DOM emitter has known this since its own RSC branch hit it
+  // (templates.ts: "`{...(props as never)}` is a type error … so the spread is
+  // cast to the component's own props instead") and casts to
+  // React.ComponentProps<typeof X>. The native copy used the exact form that
+  // comment names as broken, one line down from a comment about keeping
+  // DEFAULTS a Record so Expo's strict tsconfig stays green.
+  //
+  // Nothing caught it: parse-level checks are happy with a cast, and there was
+  // no ts.Program gate over the native emitter at all until now.
+  const propsCast = `as unknown as ComponentProps<typeof ${specName}>`;
+  // A component that declares NO props makes ComponentProps<typeof X> resolve to
+  // `unknown` — a zero-parameter function does not match JSXElementConstructor —
+  // and spreading that is TS2698 again, plus TS2322 for good measure. The DOM
+  // emitter has always omitted the spread entirely in that case
+  // (`const spread = hasProps ? … : ""`), which is also simply more honest:
+  // there is nothing to pass.
+  const defaultsSpread = hasProps ? ` {...(DEFAULTS ${propsCast})}` : "";
   out.push(
     fnProps.length > 0
-      ? `  const mount = () => render(<${specName} {...(DEFAULTS as never)} {...(handlers as never)} />);`
-      : `  const mount = () => render(<${specName} {...(DEFAULTS as never)} />);`,
+      ? `  const mount = () => render(<${specName}${defaultsSpread} {...(handlers ${propsCast})} />);`
+      : `  const mount = () => render(<${specName}${defaultsSpread} />);`,
     "",
     `  test("mounts and renders something", () => {`,
     "    mount();",
@@ -667,9 +696,25 @@ function staticTextTests(info: Parameters<typeof synthesiseDefaults>[0]): string
  * shape it fails on is an input the app has genuinely wired wrong, and the
  * analyser can already tell that one apart.
  */
-function postDispatchAssertions(h: Parameters<typeof emitNativeSelector>[0], el: string): string[] {
+function postDispatchAssertions(
+  h: Parameters<typeof emitNativeSelector>[0],
+  el: string,
+  /**
+   * A route spec declares no `handlers`. `const fnProps = route ? [] : …` above
+   * suppresses the whole block for route files, and this returned
+   * `expect(handlers["onX"]).toHaveBeenCalled()` regardless — an undeclared
+   * identifier, so TS2304 in the emitted file and a ReferenceError in the one
+   * interaction test that runs it.
+   *
+   * Latent rather than shipped-broken: expo-router hands a route screen no
+   * props, so nothing in the fixture app or the dogfood app has the shape. It
+   * became reachable the moment a route file's default export declared one.
+   */
+  hasHandlers: boolean,
+): string[] {
   // A handler bound to a PROP is the precise case: pass a spy, assert it ran.
   if (h.binding.kind === "prop") {
+    if (!hasHandlers) return [];
     return [`    expect(handlers[${JSON.stringify(h.binding.propName)}]).toHaveBeenCalled();`];
   }
   if (h.event === "onChangeText") {
@@ -796,7 +841,7 @@ function interactionTests(
       `    const ${el} = ${locator};`,
       `    expect(${el}).toBeTruthy();`,
       `    ${dispatch};`,
-      ...postDispatchAssertions(h, el),
+      ...postDispatchAssertions(h, el, !isRoute),
       ...(h.pushTargets?.length
         ? [
             "    // The push target is a literal in the source, so where it lands is",
@@ -941,7 +986,27 @@ function networkModuleMocks(
     // those bodies into every spec — measured at 793 KB across 31 specs against
     // 113 KB, with a single 30 KB file. An export nobody in this render calls
     // only needs to EXIST.
-    const used = new Set(mi.names);
+    // MODULE-SIDE names, because `names` above comes from exportedFunctions and
+    // is what the module exports. `mi.names` is what THIS file bound them to, so
+    // comparing the two silently misses every aliased import:
+    //
+    //   import { listItems as fetchItems } from "../lib/api";
+    //
+    // `used.has("listItems")` was false, so listItems fell to the bare `{}` stub
+    // — with NO marker — while the identical unaliased import got its real
+    // inferred shape. That is R-3's poisoning shape exactly: the destructure
+    // binds undefined, the screen renders its error state, and the failure looks
+    // like the component. The web emitter has read importedNames since it was
+    // added (mocks.ts membershipName); the native copy never did.
+    const used = new Set(mi.names.map((local, i) => mi.importedNames?.[i] ?? local));
+    // The reverse: module-side name -> what THIS file calls it. The three lookups
+    // below all read facts collected from the component's own subtree, where the
+    // name that appears is the LOCAL one. Querying them with the module-side name
+    // made an aliased import lose its loaded-state test AND its skip — the
+    // component simply vanished from that half of the emitter.
+    const localOf = new Map(
+      mi.names.map((local, i) => [mi.importedNames?.[i] ?? local, local] as const),
+    );
     const bodies = names.map((n) => {
       if (!used.has(n)) return `  ${n}: jest.fn(async () => ({})),`;
       const value = annotatedReturnValue(mi.resolvedPath as string, n, resolver, cache);
@@ -967,15 +1032,16 @@ function networkModuleMocks(
       // fails on a healthy screen. Eleven of the dogfood app's thirty-one failed
       // exactly so — `reportJob` is a submit handler's mutation, and
       // `listBuildingInvitations` sits behind `if (isTrustee)`.
-      const rowFields = renderCalls.get(n);
+      const local = localOf.get(n) ?? n;
+      const rowFields = renderCalls.get(local);
       if (
         hasCollection(value) &&
-        (mine?.has(n) ?? true) &&
-        !(mountCalls.has(n) && rowFields !== undefined)
+        (mine?.has(local) ?? true) &&
+        !(mountCalls.has(local) && rowFields !== undefined)
       ) {
         rejected.push({
           fn: n,
-          reason: !mountCalls.has(n)
+          reason: !mountCalls.has(local)
             ? "mounting this screen never calls it — it runs from an event handler, or behind a branch"
             : // Deliberately "nothing this emitter can trace" rather than "it is
               // never rendered". Both are reasons the test cannot be written, and
@@ -987,7 +1053,7 @@ function networkModuleMocks(
               "nothing this emitter can trace connects what it returns to a rendered list",
         });
       }
-      if (hasCollection(value) && mountCalls.has(n) && rowFields !== undefined) {
+      if (hasCollection(value) && mountCalls.has(local) && rowFields !== undefined) {
         loaded.push({
           fn: n,
           from: spec,

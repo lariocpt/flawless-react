@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -94,6 +96,56 @@ const FIXTURES = [
  *    whole file exists to avoid. Adding a line here is the correct fix.
  */
 const PACKAGE_STUBS: Record<string, string> = {
+  // --- the native plane -----------------------------------------------------
+  // Deliberately `any`-typed, like the DOM stubs above: this gate is here to
+  // catch a spec REFERENCING something that is not there (TS2304/TS2305), not to
+  // re-typecheck React Native. Precise types would only add stub-shaped noise.
+  "react-native": `export declare const View: any;
+export declare const Text: any;
+export declare const Pressable: any;
+export declare const TextInput: any;
+export declare const FlatList: any;
+export declare const ScrollView: any;
+export declare const Switch: any;
+export declare const Button: any;
+export declare const ActivityIndicator: any;
+export declare const KeyboardAvoidingView: any;
+export declare const Platform: any;
+export declare const Alert: any;
+export declare const StyleSheet: any;
+`,
+  "react-native-safe-area-context": `export declare const SafeAreaView: any;
+export declare const SafeAreaProvider: any;
+export declare const initialWindowMetrics: any;
+export declare function useSafeAreaInsets(): any;
+`,
+  "@testing-library/react-native": `export declare const render: any;
+export declare const screen: any;
+export declare const fireEvent: any;
+export declare const userEvent: any;
+export declare const waitFor: any;
+export declare const within: any;
+export declare const act: any;
+`,
+  "expo-router": `export declare function useRouter(): any;
+export declare function useLocalSearchParams<T = any>(): T;
+export declare function useFocusEffect(cb: any): void;
+export declare const Stack: any;
+export declare const Tabs: any;
+export declare const Link: any;
+export declare function useSegments(): any;
+`,
+  "expo-router/testing-library": `export declare const renderRouter: any;
+export declare const testRouter: any;
+export declare const screen: any;
+export declare const fireEvent: any;
+export declare const waitFor: any;
+export declare const within: any;
+export declare const act: any;
+`,
+  "@expo/vector-icons": `export declare const Ionicons: any;
+export declare const MaterialIcons: any;
+`,
   vitest: `export declare const describe: any;
 export declare const test: any;
 export declare const it: any;
@@ -595,5 +647,133 @@ describe("the checker catches the generator bugs it exists for", () => {
     const resolved = checker.getTypeAtLocation(props.name);
     const members = checker.getPropertiesOfType(resolved).map((p) => p.getName());
     expect(members.sort()).toEqual(["body", "title"]);
+  });
+});
+
+/**
+ * The NATIVE emitter had no type gate at all.
+ *
+ * `emittedSyntax.test.ts` reads `parseDiagnostics` over what `--expo` writes.
+ * That is a parser, and — as this file's header already says — a parser has no
+ * idea what a module exports or whether an identifier is declared. So the whole
+ * native plane, which is three of the seven tasks today and gains four more
+ * waves, was checked only for syntax.
+ *
+ * It let one through. `postDispatchAssertions` emits
+ * `expect(handlers["onX"]).toHaveBeenCalled()` for any handler bound to a prop,
+ * with no route guard — while the `const handlers` block above it is suppressed
+ * for route files (`const fnProps = route ? [] : functionProps(info)`). TS2304
+ * in the emitted file, ReferenceError in the one interaction test, and every
+ * parse-level check green.
+ */
+describe("the emitted NATIVE suite type-checks, not just parses", () => {
+  const EXPOAPP = path.join(FIXTURES_DIR, "expoapp");
+
+  async function emitNative(root: string): Promise<{ outDir: string; specs: string[] }> {
+    const { detectExpo } = await import("../src/expo/detect.ts");
+    const { renderNativeUnit } = await import("../src/scaffold-tests/nativeTemplates.ts");
+    const { createAnalyseSharedContext, analyseFile } = await import("../src/analyse/index.ts");
+    // The app is COPIED under the stub root, because the emitted specs import
+    // the components by relative path and those files import react-native,
+    // expo-router and friends. Left in tests/fixtures/ they sit outside the
+    // project that has node_modules, and every one of those resolves to TS2307
+    // — which, per `Checked.unresolved` above, turns the symbols they carry into
+    // `any` and makes the errors this gate exists for unreachable.
+    const app = path.join(root, "app-under-test");
+    cpSync(EXPOAPP, app, { recursive: true });
+    rmSync(path.join(app, "flawless"), { recursive: true, force: true });
+    const expo = await detectExpo(app);
+    const shared = createAnalyseSharedContext();
+    const trees: ComponentTree[] = [];
+    for (const rel of [
+      "app/_layout.tsx",
+      "app/(tabs)/_layout.tsx",
+      "app/(tabs)/index.tsx",
+      "app/login.tsx",
+      "app/items/[id].tsx",
+      "app/hostile.tsx",
+      "app/props-route.tsx",
+      "components/icon.tsx",
+      "components/aliased.tsx",
+    ]) {
+      trees.push(
+        ...(await analyseFile(
+          { entry: path.join(app, rel), depth: 3, includeChildren: true, roots: "exported" },
+          shared,
+        )),
+      );
+    }
+    const outDir = path.join(app, "flawless");
+    mkdirSync(outDir, { recursive: true });
+    const specs: string[] = [];
+    for (const f of renderNativeUnit({ trees, outDir, expo })) {
+      const abs = path.join(outDir, f.relPath);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, f.content);
+      if (abs.endsWith(".tsx")) specs.push(abs);
+    }
+    return { outDir, specs };
+  }
+
+  test("every emitted native spec type-checks against a real ts.Program", async () => {
+    const root = stubProject();
+    try {
+      const { outDir, specs } = await emitNative(root);
+      expect(specs.length).toBeGreaterThan(0);
+      // `types: []` so the ambient jest globals do not have to be installed —
+      // the specs' own `jest.fn` reads come through the stub below.
+      writeFileSync(
+        path.join(root, "node_modules", "jest-globals.d.ts"),
+        // `jest` is BOTH a value and a namespace in @types/jest, which jest-expo
+        // pulls in. The specs read `jest.fn(...)` as a value and
+        // `as unknown as jest.Mock` as a TYPE, so a `declare const` alone leaves
+        // the type position unresolvable — a property of this stub, not of the
+        // emitted code.
+        "declare namespace jest { type Mock = any; type Mocked<T> = T; }\ndeclare const jest: any;\ndeclare const describe: any;\ndeclare const test: any;\ndeclare const expect: any;\ndeclare const beforeEach: any;\ndeclare const afterEach: any;\n",
+      );
+      const { errors, unresolved, checked } = checkTypes(outDir, [
+        ...specs,
+        path.join(root, "node_modules", "jest-globals.d.ts"),
+      ]);
+      // Unresolved imports kept apart for the reason the header gives: they turn
+      // every symbol they brought in into `any`, so the errors we came for stop
+      // being reachable.
+      expect(unresolved).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(checked.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("guard the guard: an undeclared identifier in a native spec IS caught", () => {
+    // The exact shape E1 had — a reference the parser is perfectly happy with.
+    // Without this, a green run above could mean "the checker saw nothing".
+    const root = stubProject();
+    try {
+      const outDir = path.join(root, "native");
+      mkdirSync(outDir, { recursive: true });
+      const spec = path.join(outDir, "Probe.flawless.test.tsx");
+      writeFileSync(
+        spec,
+        `import { render, screen, fireEvent } from "@testing-library/react-native";
+const el = screen;
+export const probe = () => {
+  fireEvent(el, "press");
+  return handlers["onPress"];
+};
+void render;
+`,
+      );
+      const { errors, unresolved } = checkTypes(outDir, [spec]);
+      expect(unresolved).toEqual([]);
+      // The MESSAGE, not the code. TypeScript reports an undeclared identifier
+      // as TS2304, or as TS2552 when it can suggest a near-miss — and with
+      // lib.dom loaded, `handlers` suggests `Headers`. Pinning 2304 made this
+      // guard fail for a reason that had nothing to do with what it guards.
+      expect(errors.join(" | ")).toContain("Cannot find name 'handlers'");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
