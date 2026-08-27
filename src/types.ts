@@ -237,6 +237,22 @@ export interface FormInfo {
   /** The button that submits it, when the markup identifies one. */
   submitControl?: SubmitControl;
   hints: { testid?: string; ariaLabel?: string; id?: string };
+  /**
+   * The server action this form's `action={…}` dispatches to, as the module
+   * names it.
+   *
+   * `<form action={action}>` where `const [state, action] = useActionState(
+   * loginAction, undefined)` — React invokes `loginAction` on submit, with no
+   * guard in between, so a spec that submits can assert it fired. That makes it
+   * the one post-dispatch claim on the DOM plane that this app's own shapes
+   * actually support: every CLICK handler here puts its action behind a guard
+   * AND inside a startTransition callback, so the click ladder correctly
+   * declines on all of them.
+   *
+   * Recorded as the MODULE-side name, because that is what the spec imports and
+   * what vi.mock replaced.
+   */
+  actionBinding?: string;
   pos?: SourcePosition;
 }
 

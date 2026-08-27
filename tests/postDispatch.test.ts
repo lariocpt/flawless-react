@@ -127,3 +127,72 @@ describe("the ladder, in order", () => {
     }
   });
 });
+
+describe("a form's action is the one DOM claim this app's shapes support", () => {
+  const ANALYSE = "../src/analyse/index.ts";
+
+  async function formOf(src: string) {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { analyse } = await import(ANALYSE);
+    const dir = mkdtempSync(path.join(os.tmpdir(), "form-"));
+    const f = path.join(dir, "F.tsx");
+    writeFileSync(f, src);
+    try {
+      const t = await analyse({ entry: f, depth: 0, includeChildren: false });
+      return (t.entry.interactions?.forms ?? [])[0];
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("useActionState(action, …) is unwrapped to the action itself", async () => {
+    // React invokes the wrapped action on submit with NO guard in between —
+    // unlike every CLICK handler on the dogfood app, which puts its action
+    // behind a guard AND inside a startTransition callback.
+    const f = await formOf(`import { useActionState } from "react";
+import { loginAction } from "./actions";
+export function F() {
+  const [state, action] = useActionState(loginAction, undefined);
+  void state;
+  return <form action={action}><button type="submit">Go</button></form>;
+}
+`);
+    expect(f?.actionBinding).toBe("loginAction");
+  });
+
+  test("a .bind() wrapper is followed — a bound function calls the original", async () => {
+    // `createAction.bind(null, id)` is how this app passes a route param into an
+    // action. Without following it the binding came back as the local name and
+    // 13 of 19 claims were lost.
+    const f = await formOf(`import { useActionState } from "react";
+import { inviteMemberAction } from "./actions";
+export function F({ id }: { id: string }) {
+  const bound = inviteMemberAction.bind(null, id);
+  const [state, formAction] = useActionState(bound, {});
+  void state;
+  return <form action={formAction}><button type="submit">Go</button></form>;
+}
+`);
+    expect(f?.actionBinding).toBe("inviteMemberAction");
+  });
+
+  test("a direct action={fn} is recorded as itself", async () => {
+    const f = await formOf(`import { createAction } from "./actions";
+export function F() {
+  return <form action={createAction}><button type="submit">Go</button></form>;
+}
+`);
+    expect(f?.actionBinding).toBe("createAction");
+  });
+
+  test("no action attribute means no binding to claim on", async () => {
+    // The control. Without it the field could be set for every form.
+    const f = await formOf(`export function F() {
+  return <form onSubmit={(e) => e.preventDefault()}><button type="submit">Go</button></form>;
+}
+`);
+    expect(f?.actionBinding).toBeUndefined();
+  });
+});

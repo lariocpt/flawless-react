@@ -490,6 +490,17 @@ function unitSpec(
     const claim = decidePostDispatch(info, click, claimCtx.ctx);
     if (claim.kind === "module-spy") assertedBindings.add(claim.binding);
   }
+  for (const form of interactions?.forms ?? []) {
+    const a = form.actionBinding;
+    if (a !== undefined && claimCtx.ctx.mockedBindings.has(a)) assertedBindings.add(a);
+  }
+  // Only when something actually uses it: an unused import fails a project's own
+  // lint gate, which is where these files have to live.
+  const fireEventImport = (interactions?.forms ?? []).some(
+    (f) => f.actionBinding !== undefined && claimCtx.ctx.mockedBindings.has(f.actionBinding),
+  )
+    ? ", fireEvent"
+    : "";
   const assertedImports = (info.moduleImports ?? [])
     .map((mi) => {
       const wanted = mi.names.filter((n) => assertedBindings.has(n));
@@ -552,7 +563,7 @@ function unitSpec(
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   return `import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor${fireEventImport} } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 ${propsTypeBlock}${mswImports}${mockBlock}${providerLine}${emitComponentImport(info, importPath)}
 ${assertedImports.join("\n")}
@@ -1347,7 +1358,7 @@ test.skip("${name}: interactions need a fixture — an early return may render n
   for (let i = 0; i < info.forms.length; i++) {
     const form = info.forms[i];
     if (!form) continue;
-    parts.push(emitFormTest(name, form, allHandlers, i, todo));
+    parts.push(emitFormTest(name, form, allHandlers, i, claimCtx.ctx.mockedBindings, todo));
   }
   if (parts.length === 0) {
     parts.push(`// no interactions detected — render-only smoke is above.`);
@@ -1521,6 +1532,8 @@ function emitFormTest(
   form: FormInfo,
   allHandlers: string[],
   idx: number,
+  /** Bindings this spec mocks, so an action claim is only made when observable. */
+  mockedBindings: Set<string>,
   todo?: TodoRecorder,
 ): string {
   const fillSteps: string[] = [];
@@ -1577,6 +1590,38 @@ ${isolation || "  // no other handlers to isolate"}
   // The isolation asserts are a real claim and are used where there are any. The
   // value assertions above already carry the test on their own, which is how 13
   // of the dogfood app's 23 forms keep a meaningful test with no floor at all.
+  // The one post-dispatch claim this app's own shapes support. `<form
+  // action={action}>` where `const [state, action] = useActionState(loginAction,
+  // …)` — React invokes loginAction on submit with NO guard in between, unlike
+  // every click handler here, which puts its action behind a guard and inside a
+  // startTransition callback. Verified end to end before it was emitted: green on
+  // the real component, red once the form's action is disconnected.
+  const action = form.actionBinding;
+  if (action !== undefined && mockedBindings.has(action)) {
+    return `test("${name} submits form #${idx} → ${action} called", async () => {
+  const { container } = renderTarget();
+  void container;
+${fillSteps.join("\n")}
+${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
+  // Nothing clears module mocks between tests and a mount effect may already have
+  // called this one, so without the clear the assertion is about the file.
+  vi.mocked(${action}).mockClear();
+  // fireEvent.submit, NOT a click on the submit button.
+  //
+  // \`action={…}\` means "this runs when the form submits", and that is the claim.
+  // Clicking the button additionally requires every REQUIRED field to be filled —
+  // and this app's fields are <Input> component tags, which collectFields cannot
+  // see, so the emitter fills nothing and the browser's constraint validation
+  // silently blocks the submit. Executed: the click form of this test failed on a
+  // completely correct LoginForm.
+  //
+  // Whether the BUTTON submits is a separate claim, and the submit-control
+  // detection above is what covers it.
+  fireEvent.submit(container.querySelectorAll("form")[${idx}] as HTMLFormElement);
+  await waitFor(() => expect(vi.mocked(${action})).toHaveBeenCalled());
+${allHandlers.map((h) => `  expect(handlers.${h}).not.toHaveBeenCalled();`).join("\n") || "  // no other handlers to isolate"}
+});`;
+  }
   const submitAfter =
     allHandlers.length > 0
       ? allHandlers.map((h) => `  expect(handlers.${h}).not.toHaveBeenCalled();`).join("\n")
