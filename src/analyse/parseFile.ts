@@ -76,6 +76,39 @@ export async function parseFile(entry: string, cache?: SourceFileCache): Promise
     throw new Error(`parseFile: could not read ${entry}.`);
   }
 
+  // A file TypeScript could not parse cleanly is a file whose AST is a GUESS.
+  //
+  // ts.createSourceFile is error-tolerant by design: `return <div>` with no
+  // closing tag still yields a tree, and every extractor downstream reads it as
+  // if it were the source. Before this check, that file was analysed, described,
+  // and reported as `ok: true, 0 findings` — a clean run over something that
+  // does not compile. That is the silent-pass class this project scores itself
+  // on removing, and it was hiding in plain sight: `parseDiagnostics` is asserted
+  // in FIVE test files, every one of them on the tool's own OUTPUT, and nowhere
+  // on its input.
+  //
+  // Throwing routes it into the caller's existing unparseable channel (core.ts),
+  // which warns and records the file in REPORT.md's accounting — so it is
+  // reported rather than silently dropped, exactly as an unreadable file is.
+  //
+  // Measured before shipping: 111 fixture files and 241 real component files
+  // across both dogfood apps produce ZERO diagnostics, so this fires only on
+  // genuinely broken input.
+  const diagnostics = (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
+    .parseDiagnostics;
+  if (diagnostics && diagnostics.length > 0) {
+    const first = diagnostics[0] as ts.Diagnostic;
+    const where =
+      first.start === undefined
+        ? ""
+        : ` at line ${sourceFile.getLineAndCharacterOfPosition(first.start).line + 1}`;
+    throw new Error(
+      `parseFile: ${entry} has ${diagnostics.length} syntax error(s) and cannot be analysed ` +
+        `honestly — the first is "${ts.flattenDiagnosticMessageText(first.messageText, " ")}"${where}. ` +
+        `Fix the file, or exclude it with --exclude.`,
+    );
+  }
+
   const imports = collectImports(sourceFile);
   const components = findComponents(sourceFile);
   if (components.length === 0) {
