@@ -1,6 +1,7 @@
 import path from "node:path";
+import { collectionRenderingCalls, mountPathCalls } from "../analyse/mountPathCalls.ts";
 import { requiredNativeProviders } from "../analyse/nativeContentModel.ts";
-import { annotatedReturnValue } from "../analyse/resolveDepReturns.ts";
+import { annotatedReturnValue, VOID_RETURN } from "../analyse/resolveDepReturns.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { exportedFunctions } from "../analyse/serverActionReturns.ts";
 import { SourceFileCache } from "../analyse/sourceCache.ts";
@@ -9,7 +10,7 @@ import { expoFileToRoute, routeModuleId } from "../expo/routes.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { JEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, ExpoContext, TodoRecorder } from "../types.ts";
-import { allocateSpecNames, flattenTrees, synthesiseDefaults } from "./registry.ts";
+import { allocateSpecNames, flattenTrees, functionProps, synthesiseDefaults } from "./registry.ts";
 import {
   awaitNativeSelector,
   describeUnlocatableNative,
@@ -61,6 +62,26 @@ export function renderNativeUnit(input: NativeRenderOptions): RenderedFile[] {
   ];
 
   const flat = flattenTrees(opts.trees);
+  // Field names this component's SUBTREE renders as text — `{building.name}` in a
+  // row component records propUsage { kind: "jsx-child", member: "name" }.
+  //
+  // Real evidence, replacing a guess. The first cut picked the witness from a
+  // hand-written list of display-ish key names, and 16 of 31 loaded-state tests
+  // asserted a field the row does not render.
+  const renderedFields = new Map<string, Set<string>>();
+  for (const tree of opts.trees) {
+    const members = new Set<string>();
+    const walk = (t: ComponentTree): void => {
+      for (const u of t.entry.propUsage ?? []) {
+        if (u.kind === "jsx-child" && u.member) members.add(u.member);
+      }
+      for (const child of t.children) walk(child);
+    };
+    walk(tree);
+    const existing = renderedFields.get(tree.entry.filePath) ?? new Set<string>();
+    for (const m of members) existing.add(m);
+    renderedFields.set(tree.entry.filePath, existing);
+  }
   const specNames = allocateSpecNames(flat);
   // A component with no export cannot be imported by a spec — the same rule the
   // DOM path applies, and on this app it is 16 of 47 components, every one of
@@ -83,6 +104,7 @@ export function renderNativeUnit(input: NativeRenderOptions): RenderedFile[] {
         specName,
         opts,
         path.dirname(target),
+        renderedFields.get(c.info.filePath) ?? new Set<string>(),
         opts.todos?.for(target),
       ),
     });
@@ -288,6 +310,8 @@ function renderNativeSpec(
   specName: string,
   opts: ResolvedNativeOptions,
   fromDir: string,
+  /** Field names this component's subtree renders as text. */
+  renderedFields: Set<string>,
   todo: TodoRecorder | undefined,
 ): string {
   const route = routeOf(info.filePath, opts.expo);
@@ -298,7 +322,18 @@ function renderNativeSpec(
   const defaults = synthesiseDefaults(info);
   const clicks = info.interactions?.clicks ?? [];
   const providers = requiredNativeProviders(info.hooks ?? []);
-  const mocks = networkModuleMocks(info, fromDir, opts.resolver, opts.cache, todo);
+  const loadedFixtures: LoadedFixture[] = [];
+  const rejectedFixtures: RejectedFixture[] = [];
+  const mocks = networkModuleMocks(
+    info,
+    fromDir,
+    opts.resolver,
+    opts.cache,
+    loadedFixtures,
+    rejectedFixtures,
+    renderedFields,
+    todo,
+  );
   // Evidence, not a guess: the component awaits data iff a module the emitter
   // just mocked performs fetch(), or it registers a focus effect.
   const loadsData = mocks.length > 0 || (info.hooks ?? []).includes("useFocusEffect");
@@ -341,8 +376,12 @@ function renderNativeSpec(
     return lines.join("\n");
   }
   if (route) {
+    // testRouter only when a handler calls router.back() and therefore needs a
+    // history entry pushed first. Named unconditionally, it is an unused import
+    // in every one of the other specs.
+    const needsRouter = clicks.some((c) => c.navBack);
     lines.push(
-      `import { renderRouter, screen, fireEvent, waitFor } from "expo-router/testing-library";`,
+      `import { renderRouter, screen, fireEvent, waitFor${needsRouter ? ", testRouter" : ""} } from "expo-router/testing-library";`,
     );
   } else {
     lines.push(
@@ -352,19 +391,38 @@ function renderNativeSpec(
   lines.push(`import ${imported} from ${JSON.stringify(importPath)};`);
   if (route) lines.push(...routeContextImports(opts, fromDir, route));
   lines.push("");
+  // The loaded-state tests drive the mock directly, so the spec imports the
+  // mocked names — jest.mock has replaced the module, so these ARE the mocks.
+  for (const imp of [...new Set(loadedFixtures.map((f) => `${f.fn}::${f.from}`))]) {
+    const [fn, from] = imp.split("::") as [string, string];
+    lines.push(`import { ${fn} } from ${JSON.stringify(from)};`);
+  }
   lines.push(...mocks);
   // Record<string, unknown>, not `as const`: the prop rung emits
   // String(DEFAULTS["x"] ?? ""), which under Expo's strict tsconfig is TS7053
   // against a const-asserted literal — so an app running `tsc --noEmit` in CI
   // goes red on the generated file. The DOM emitter has always typed it this way.
   lines.push(`const DEFAULTS: Record<string, unknown> = ${JSON.stringify(defaults, null, 2)};`);
+  // Function props, spread SEPARATELY because DEFAULTS is JSON and a function
+  // cannot ride in it. Without these a prop-bound handler is undefined at mount:
+  // pressing it asserted nothing, and deleting `onPress={onPress}` from the source
+  // left the test green. The DOM emitter has passed spies for exactly this.
+  const fnProps = route ? [] : functionProps(info);
+  if (fnProps.length > 0) {
+    lines.push(
+      "const handlers: Record<string, jest.Mock> = {",
+      ...fnProps.map((n) => `  ${JSON.stringify(n)}: jest.fn(),`),
+      "};",
+    );
+  }
   lines.push(`const SAMPLE_TEXT = "flawless";`);
   lines.push("");
   if (route) lines.push(...routeContext(info, specName, opts, route));
   lines.push(`describe(${JSON.stringify(specName)}, () => {`);
-  lines.push(...mountTest(specName, route, providers, todo));
+  lines.push(...mountTest(specName, route, providers, fnProps, todo));
   lines.push(...staticTextTests(info));
   lines.push(...interactionTests(clicks, Boolean(route), loadsData, todo));
+  lines.push(...loadedStateTests(loadedFixtures, rejectedFixtures, mocks.length > 0, todo));
   lines.push("});");
   lines.push("");
   return lines.join("\n");
@@ -474,6 +532,7 @@ function mountTest(
   specName: string,
   route: ReturnType<typeof routeOf>,
   providers: ReturnType<typeof requiredNativeProviders>,
+  fnProps: string[],
   todo: TodoRecorder | undefined,
 ): string[] {
   const out: string[] = [];
@@ -521,8 +580,20 @@ function mountTest(
     }
     return out;
   }
+  if (fnProps.length > 0) {
+    // Cleared between tests, or "was this handler called" is answered by an
+    // earlier test in the same file rather than by this one.
+    out.push(
+      "  beforeEach(() => {",
+      "    for (const h of Object.values(handlers)) h.mockClear();",
+      "  });",
+      "",
+    );
+  }
   out.push(
-    `  const mount = () => render(<${specName} {...(DEFAULTS as never)} />);`,
+    fnProps.length > 0
+      ? `  const mount = () => render(<${specName} {...(DEFAULTS as never)} {...(handlers as never)} />);`
+      : `  const mount = () => render(<${specName} {...(DEFAULTS as never)} />);`,
     "",
     `  test("mounts and renders something", () => {`,
     "    mount();",
@@ -570,6 +641,44 @@ function staticTextTests(info: Parameters<typeof synthesiseDefaults>[0]): string
  * nothing — the exact failure `emitVitestSelector`'s undefined return was
  * written to prevent, arriving on a second platform.
  */
+/**
+ * What a spec may honestly assert AFTER firing an event.
+ *
+ * Without these the interaction tests were `expect(el).toBeTruthy(); fireEvent(…)`
+ * and stopped — proving the element is addressable and nothing else. Measured on
+ * the dogfood apps: 17 of 87 live mobile tests and 25 of 341 web tests fired an
+ * event and asserted nothing after it, which is a test that cannot fail.
+ *
+ * Every rule below was PROBED under real jest-expo before being emitted, because
+ * reasoning about RNTL's behaviour is how the last three defects got in:
+ *
+ *   controlled TextInput   -> display value reflects the typed text   (1 match)
+ *   uncontrolled TextInput -> so does it                              (1 match)
+ *   frozen (value, no onChangeText) -> it does NOT                    (0 matches)
+ *   prop spy               -> called                                  (1 call)
+ *   throwing handler       -> propagates out of fireEvent
+ *
+ * The frozen case is why the display-value assertion is safe to emit: the only
+ * shape it fails on is an input the app has genuinely wired wrong, and the
+ * analyser can already tell that one apart.
+ */
+function postDispatchAssertions(h: Parameters<typeof emitNativeSelector>[0], el: string): string[] {
+  // A handler bound to a PROP is the precise case: pass a spy, assert it ran.
+  if (h.binding.kind === "prop") {
+    return [`    expect(handlers[${JSON.stringify(h.binding.propName)}]).toHaveBeenCalled();`];
+  }
+  if (h.event === "onChangeText") {
+    // Typing into a wired input changes what it displays. Probed above for all
+    // three wirings; only the frozen one fails, and that is an app defect.
+    return [`    expect(${el}).toHaveDisplayValue(SAMPLE_TEXT);`];
+  }
+  // The floor, for a handler whose effect is not statically knowable: the tree
+  // survived. Weak, but it is a real assertion — a handler that throws, or that
+  // sets state the next render cannot cope with, fails here. It is strictly more
+  // than the nothing that was emitted before.
+  return ["    expect(screen.toJSON()).not.toBeNull();"];
+}
+
 function interactionTests(
   clicks: Parameters<typeof emitNativeSelector>[0][],
   isRoute: boolean,
@@ -648,13 +757,41 @@ function interactionTests(
     // userEvent — as soon as an async LOCATOR made isAsync true.
     const usesUserEvent = dispatch.startsWith("await user.");
     const isAsync = usesUserEvent || locatorIsAsync;
+    // `router.back()` needs a history entry, and renderRouter mounts ONE screen
+    // at ONE url with no stack behind it — so the press dispatches GO_BACK into
+    // a navigator that has nowhere to go, and react-navigation logs "The action
+    // 'GO_BACK' was not handled by any navigator", which RNTL surfaces as a
+    // failure. Twelve dogfood screens failed that way the moment their back
+    // buttons became addressable: a missing PRECONDITION reported as a defect.
+    // Pushing the same url first makes the stack two deep, so back() has a
+    // destination and the handler is exercised for real. Route specs only —
+    // a component spec has no router to push into, and there the skip below is
+    // the honest answer.
+    const needsHistory = Boolean(h.navBack) && isRoute;
+    if (h.navBack && !isRoute) {
+      todo?.("other");
+      out.push(
+        `  test.skip("${h.event} on <${h.tag}> ${handle} — calls router.back(), which needs a ` +
+          `navigation stack this component spec does not mount", () => {});`,
+        "",
+      );
+      continue;
+    }
     out.push(
       `  test("${h.event} on <${h.tag}> ${handle} can be driven", ${isAsync ? "async " : ""}() => {`,
       ...(usesUserEvent ? ["    const user = userEvent.setup();"] : []),
       "    mount();",
+      ...(needsHistory
+        ? [
+            "    // Give back() somewhere to go — see the note in the emitter: a freshly",
+            "    // mounted router has no history, and GO_BACK into an empty stack fails.",
+            "    testRouter.push(INITIAL_URL);",
+          ]
+        : []),
       `    const ${el} = ${locator};`,
       `    expect(${el}).toBeTruthy();`,
       `    ${dispatch};`,
+      ...postDispatchAssertions(h, el),
       ...(h.pushTargets?.length
         ? [
             "    // The push target is a literal in the source, so where it lands is",
@@ -705,15 +842,39 @@ function describeHandle(
  * left alone, because mocking it would strip behaviour the component genuinely
  * has — the same reason the DOM emitter's allowlist refuses to mock `cn`.
  */
+/** A mocked call whose shape carries a collection, and the one-row fixture for it. */
+/** A collection-returning function that did NOT qualify, and why. */
+export interface RejectedFixture {
+  fn: string;
+  reason: string;
+}
+
+export interface LoadedFixture {
+  /** Local name of the mocked function, as the component imports it. */
+  fn: string;
+  /** Specifier to import it from, already relativised to the spec. */
+  from: string;
+  /** The resolved shape with ONE row in each collection, as emitted JSON. */
+  rows: string;
+  /** A literal string from inside that row, which the loaded render must display. */
+  witness: string | undefined;
+}
+
 function networkModuleMocks(
   info: Parameters<typeof synthesiseDefaults>[0],
   fromDir: string,
   resolver: ModuleResolver,
   cache: SourceFileCache,
+  loaded: LoadedFixture[],
+  rejected: RejectedFixture[],
+  renderedFields: Set<string>,
   todo: TodoRecorder | undefined,
 ): string[] {
   const fs = require("node:fs") as typeof import("node:fs");
   const out: string[] = [];
+  const self = cache.get(info.filePath);
+  const mountCalls = self ? mountPathCalls(self) : new Set<string>();
+  const renderCalls = self ? collectionRenderingCalls(self) : new Map<string, Set<string>>();
   for (const mi of info.moduleImports ?? []) {
     if (mi.isTypeOnly || !mi.resolvedPath) continue;
     let src: string;
@@ -770,11 +931,47 @@ function networkModuleMocks(
     const bodies = names.map((n) => {
       if (!used.has(n)) return `  ${n}: jest.fn(async () => ({})),`;
       const value = annotatedReturnValue(mi.resolvedPath as string, n, resolver, cache);
+      // Annotated `Promise<void>`: undefined IS the realistic return value, so
+      // no marker. `logout`, `changePassword` and `forgotPassword` in the
+      // dogfood app each carried a TODO telling the reader to invent a shape
+      // for a function that returns nothing.
+      if (value === VOID_RETURN) {
+        return `  ${n}: jest.fn(async () => undefined), /* annotated Promise<void> */`;
+      }
       if (value === undefined) {
         // No resolvable annotation: an honest empty object plus the marker, which
         // is the same bail resolveDepReturns makes rather than inventing a shape.
         todo?.("uninferred-return-shape");
         return `  ${n}: jest.fn(async () => ({})), // TODO(flawless): give this a realistic return value`;
+      }
+      // The same shape with ONE row, kept for a loaded-state test. The default
+      // mock stays empty so the assertions derived from the initial render hold;
+      // this is the declared, deliberate other state.
+      // Only a function this component actually CALLS when it mounts. The
+      // loaded-state test mocks one to return a row and asserts the row shows;
+      // if mounting never reaches the call, the mock is irrelevant and the test
+      // fails on a healthy screen. Eleven of the dogfood app's thirty-one failed
+      // exactly so — `reportJob` is a submit handler's mutation, and
+      // `listBuildingInvitations` sits behind `if (isTrustee)`.
+      const rowFields = renderCalls.get(n);
+      if (hasCollection(value) && !(mountCalls.has(n) && rowFields !== undefined)) {
+        rejected.push({
+          fn: n,
+          reason: !mountCalls.has(n)
+            ? "mounting this screen never calls it — it runs from an event handler, or behind a branch"
+            : "what it returns is never rendered as a list — the screen reads it for something else",
+        });
+      }
+      if (hasCollection(value) && mountCalls.has(n) && rowFields !== undefined) {
+        loaded.push({
+          fn: n,
+          from: spec,
+          rows: JSON.stringify(value),
+          // The row's OWN fields when this collection is mapped inline, and the
+          // subtree's file-wide set only when it is handed to a FlatList, whose
+          // renderItem is not read here.
+          witness: displayWitness(value, rowFields.size > 0 ? rowFields : renderedFields),
+        });
       }
       return `  ${n}: jest.fn(async () => (${JSON.stringify(emptyCollections(value))})), /* shape inferred from its Promise<T> annotation */`;
     });
@@ -826,4 +1023,159 @@ function emptyCollections(value: unknown): unknown {
     );
   }
   return value;
+}
+
+/** Whether a resolved shape contains a collection anywhere. */
+function hasCollection(value: unknown): boolean {
+  if (Array.isArray(value)) return true;
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasCollection);
+  }
+  return false;
+}
+
+/**
+ * A string from the fixture that a row is actually likely to DISPLAY.
+ *
+ * The first string leaf is usually `id`, which almost nothing renders — the first
+ * cut asserted `flawless-id` and 21 suites went red because the row shows a name,
+ * not a key. So the search is by FIELD NAME, over the handful of keys that carry
+ * display text, and it gives up rather than guessing when none is present.
+ *
+ * The synthesised values are `flawless-<field>`, which appear nowhere else in the
+ * app — so finding one on screen proves the ROW rendered, rather than that some
+ * other copy happened to match.
+ */
+/**
+ * Fallback key names, used only when the subtree's own evidence is unavailable —
+ * a component whose rows come from a child the analyser could not reach.
+ */
+const DISPLAY_KEYS = [
+  "name",
+  "title",
+  "label",
+  "subject",
+  "heading",
+  "business_name",
+  "full_name",
+  "display_name",
+  "text",
+  "body",
+  "message",
+  "description",
+  "email",
+];
+
+function displayWitness(value: unknown, rendered: Set<string>): string | undefined {
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const found = displayWitness(v, rendered);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const obj = value as Record<string, unknown>;
+  // The subtree's own evidence first: a field some component renders as text.
+  for (const [key, v] of Object.entries(obj)) {
+    if (rendered.has(key) && typeof v === "string" && v.startsWith("flawless-")) return v;
+  }
+  for (const key of DISPLAY_KEYS) {
+    const v = obj[key];
+    if (typeof v === "string" && v.startsWith("flawless-")) return v;
+  }
+  for (const v of Object.values(obj)) {
+    const found = displayWitness(v, rendered);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * A test for the screen's LOADED state.
+ *
+ * The default mock returns empty collections on purpose — every assertion the
+ * analyser derived describes the render `renderPath` evaluated, which is the
+ * component's initial state. But that leaves the loaded branch of every list
+ * screen unexecuted, and on the dogfood app that branch is where most of the
+ * missing BRANCH coverage lives (39.2% on mobile).
+ *
+ * So the loaded state gets its own test, which declares the state it is setting
+ * up instead of changing the state every other test runs in. The witness is a
+ * synthesised `flawless-<field>` value from the fixture, which appears nowhere
+ * else in the app — so finding it on screen proves the row rendered, rather than
+ * that some other copy happened to match.
+ *
+ * Skipped rather than asserted when the fixture has no string leaf to witness:
+ * a collection of numbers renders nothing uniquely identifiable, and a test that
+ * cannot tell the loaded render from the empty one is not a test.
+ */
+function loadedStateTests(
+  fixtures: LoadedFixture[],
+  rejected: RejectedFixture[],
+  mocked: boolean,
+  todo: TodoRecorder | undefined,
+): string[] {
+  if (!mocked) return [];
+  if (fixtures.length === 0) {
+    // Nothing qualified. Say which of the three it was, per function, rather
+    // than emitting nothing — the absence of a loaded-state test on a list
+    // screen is the kind of gap that reads as "covered" if it is silent.
+    if (rejected.length === 0) return [];
+    const out: string[] = [];
+    for (const r of rejected.slice(0, 3)) {
+      todo?.("other");
+      out.push(`  test.skip("loaded state via ${r.fn} — ${safeTitle(r.reason)}", () => {});`, "");
+    }
+    return out;
+  }
+  const out: string[] = [];
+  // ONE recipe per spec, not one per mocked collection. A detail screen mocks
+  // half a dozen api functions and the rest are the same recipe with a different
+  // fixture — repeating it turns a useful pointer into noise, and noise is how a
+  // skip list stops being read. Prefer one with a witness.
+  const chosen = fixtures.find((f) => f.witness !== undefined) ?? fixtures[0];
+  for (const f of chosen ? [chosen] : []) {
+    if (f.witness === undefined) {
+      out.push(
+        `  test.skip("${f.fn}: loaded state — its fixture has no unique string to witness, ` +
+          `so a loaded render cannot be told from an empty one", () => {});`,
+        "",
+      );
+      continue;
+    }
+    // A REAL test now, where it used to be a skip carrying a recipe.
+    //
+    // The skip existed because enabling it failed on eleven of the dogfood app's
+    // thirty-one screens, and the note here blamed "an external store the
+    // harness does not reach". That was a guess and it was wrong. Three causes,
+    // all visible in the AST and all now filtered on:
+    //
+    //   the function is never called on mount   `reportJob` is a submit handler
+    //   the call is behind a branch             `if (isTrustee) listBuilding…()`
+    //   what it returns is never rendered       memberships decide a boolean
+    //
+    // plus one that was not a filter but a defect: a SIBLING call on the same
+    // mount path whose shape could not be inferred mocked to `{}`, so
+    // `const [{ poll: p }] = await Promise.all([getPoll(…), …])` bound p to
+    // undefined, `p.my_vote_option_id` threw into the screen's own catch, and
+    // the error state rendered while the test looked for a row. That is fixed at
+    // the source — interface heritage and Record<K,V> resolve now — and the
+    // dogfood app has no uninferred api shapes left.
+    //
+    // Fourteen screens qualify and all fourteen pass. The seventeen that do not
+    // qualify get the skip below, which names which of the three it was.
+    out.push(
+      `  test("renders the loaded state when ${f.fn} returns a row", async () => {`,
+      `    (${f.fn} as unknown as jest.Mock).mockResolvedValue(${f.rows});`,
+      "    mount();",
+      "    // The witness is a synthesised value from a field THIS list's row",
+      "    // renders as a JSX child — so finding it proves the row rendered,",
+      "    // rather than that some other element in the file happened to match.",
+      `    expect((await screen.findAllByText(${JSON.stringify(f.witness)}, { exact: false })).length).toBeGreaterThan(0);`,
+      "  });",
+      "",
+    );
+  }
+  return out;
 }

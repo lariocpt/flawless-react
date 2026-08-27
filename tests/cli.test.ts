@@ -329,7 +329,12 @@ describe("--ci process contract", () => {
     try {
       const app = path.join(dir, "app");
       cpSync(path.resolve(__dirname, "fixtures", "nextapp"), app, { recursive: true });
-      const out = path.join(dir, "out");
+      // INSIDE the app, which is where a leftover suite actually lives — and what
+      // the tool now requires, since a --nextjs/--expo run writes scripts and
+      // .gitignore entries relative to the project and an outside out dir made
+      // those escape the repository. The scenario is unchanged: what triggers the
+      // standalone plan is a package.json in the out dir, not its location.
+      const out = path.join(app, "out");
       mkdirSync(out, { recursive: true });
       // The whole trigger, in one line: an --out dir that happens to be a package.
       await writeFile(path.join(out, "package.json"), JSON.stringify({ name: "leftover" }));

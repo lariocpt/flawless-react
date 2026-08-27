@@ -1,7 +1,7 @@
 // Expo mode's detector and its refusals, checked against a real fixture project
 // and real CLI runs — not against a reading of the source.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "../src/cli.ts";
@@ -162,4 +162,63 @@ describe("platformOf", () => {
     expect(platformOf({})).toBe("web");
     expect(platformOf({ expo: await detectExpo(EXPOAPP) })).toBe("native");
   });
+});
+
+describe("--out outside the project", () => {
+  // Both failures were observed on a real run, and both put a path from THIS
+  // machine into the user's repository:
+  //
+  //   "flawless:unit": "jest --config ../../../../../../../tmp/mockfix2/out/jest.config.cjs"
+  //   .gitignore:      ../../../../tmp/mockfix2/out/reports/   (× 10)
+  //
+  // A project mode does not merely choose a directory — it merges scripts into
+  // the project's package.json and adds entries to its .gitignore, both computed
+  // relative to the project. So an out dir outside it is not a preference, it is
+  // a run that writes paths escaping the repository.
+  test("is refused, naming the escape", async () => {
+    const d = tmp();
+    cpSync(EXPOAPP, path.join(d, "app"), { recursive: true });
+    const proc = Bun.spawn(
+      [
+        "bun",
+        path.resolve(__dirname, "..", "src", "bin.ts"),
+        "--expo",
+        path.join(d, "app"),
+        "--out",
+        path.join(d, "elsewhere"),
+        "--ci",
+        "--tasks",
+        "perf-static",
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const stderr = await new Response(proc.stderr).text();
+    expect(await proc.exited).toBe(2);
+    expect(stderr).toMatch(/is outside the --expo project/);
+    // The message has to name the way out, or the only option is to guess.
+    expect(stderr).toMatch(/Drop --out/);
+  }, 60_000);
+
+  test("an out dir inside the project is fine, and so is the default", async () => {
+    const d = tmp();
+    const app = path.join(d, "app");
+    cpSync(EXPOAPP, app, { recursive: true });
+    for (const args of [["--out", path.join(app, "qa")], []]) {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          path.resolve(__dirname, "..", "src", "bin.ts"),
+          "--expo",
+          app,
+          "--ci",
+          "--tasks",
+          "perf-static",
+          "--no-inline-summary",
+          ...args,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      expect(`${args.join(" ")}:${await proc.exited}`).toBe(`${args.join(" ")}:0`);
+    }
+  }, 120_000);
 });

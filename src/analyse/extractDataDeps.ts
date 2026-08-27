@@ -63,6 +63,10 @@ interface FieldNote {
   rendersAsText: boolean;
   /** Fields read off this one, when it turned out to hold an object. */
   nested?: FieldNotes;
+  /** A literal the component compares this field against — see MockField. */
+  equals?: string | number | boolean;
+  /** A prop path the component compares this field against — see MockField. */
+  equalsProp?: string[];
 }
 
 type FieldNotes = Map<string, FieldNote>;
@@ -231,6 +235,7 @@ function inferShape(
   bodyNode: ts.Node,
   sourceFile: ts.SourceFile,
 ): { shape: MockShape; uncertain: boolean } {
+  const aliases = propAliases(bodyNode);
   let arrayEvidence = false;
   let booleanTest = false;
   let scalar = false;
@@ -251,10 +256,17 @@ function inferShape(
       }
       if (ARRAY_METHODS.has(member)) {
         arrayEvidence = true;
-        collectElementFields(parent, sourceFile, elementFields);
+        collectElementFields(parent, sourceFile, elementFields, aliases);
         continue;
       }
-      noteField(objectFields, member, fieldKind(parent), isJsxTextChild(parent), nestedOf(parent));
+      noteField(
+        objectFields,
+        member,
+        fieldKind(parent),
+        isJsxTextChild(parent),
+        nestedOf(parent),
+        comparedLiteral(parent, aliases),
+      );
       continue;
     }
 
@@ -307,6 +319,7 @@ function collectElementFields(
   access: ts.PropertyAccessExpression,
   sourceFile: ts.SourceFile,
   notes: FieldNotes,
+  aliases: Map<string, string[]>,
 ): void {
   const call = access.parent;
   if (!call || !ts.isCallExpression(call) || call.expression !== access) return;
@@ -326,7 +339,14 @@ function collectElementFields(
     const member = parent.name.text;
     // Builtins name no data field, so mocking them would invent a key.
     if (member === "length" || ARRAY_METHODS.has(member)) continue;
-    noteField(notes, member, fieldKind(parent), isJsxTextChild(parent), nestedOf(parent));
+    noteField(
+      notes,
+      member,
+      fieldKind(parent),
+      isJsxTextChild(parent),
+      nestedOf(parent),
+      comparedLiteral(parent, aliases),
+    );
   }
 }
 
@@ -361,16 +381,80 @@ function fieldKind(access: ts.PropertyAccessExpression): FieldKind {
   return "string";
 }
 
+/**
+ * Locals destructured from another local, as a path: `const { id } = await
+ * params` gives `id → ["params", "id"]`.
+ *
+ * Top-level only, and only from a plain identifier — that is the shape a Next
+ * page uses to read its route params, and anything deeper is a value this
+ * cannot follow. The root is looked up in the props fixture at emit time, so a
+ * root that is not a prop simply resolves to nothing.
+ */
+function propAliases(bodyNode: ts.Node): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const stmt of bodyStatements(bodyNode)) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (!decl.initializer || !ts.isObjectBindingPattern(decl.name)) continue;
+      const init = ts.isAwaitExpression(decl.initializer)
+        ? decl.initializer.expression
+        : decl.initializer;
+      if (!ts.isIdentifier(init)) continue;
+      for (const el of decl.name.elements) {
+        if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name)) continue;
+        const from =
+          el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.name.text;
+        out.set(el.name.text, [init.text, from]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The literal this access is compared against: `m.status === "active"`.
+ *
+ * Strict equality only, and only against a literal — `!==` states what the
+ * value must NOT be, which does not pick one out, and a comparison against
+ * another expression is not a value this can read.
+ */
+function comparedLiteral(
+  access: ts.PropertyAccessExpression,
+  aliases: Map<string, string[]>,
+): { equals?: string | number | boolean; equalsProp?: string[] } {
+  const parent = access.parent;
+  if (!parent || !ts.isBinaryExpression(parent)) return {};
+  if (parent.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return {};
+  const other = parent.left === access ? parent.right : parent.left;
+  if (ts.isStringLiteral(other)) return { equals: other.text };
+  if (ts.isNumericLiteral(other)) return { equals: Number(other.text) };
+  if (other.kind === ts.SyntaxKind.TrueKeyword) return { equals: true };
+  if (other.kind === ts.SyntaxKind.FalseKeyword) return { equals: false };
+  if (ts.isIdentifier(other)) {
+    const path = aliases.get(other.text);
+    if (path) return { equalsProp: path };
+  }
+  return {};
+}
+
 function noteField(
   notes: FieldNotes,
   name: string,
   kind: FieldKind,
   rendersAsText: boolean,
   nestedAccess?: ts.PropertyAccessExpression,
+  compared?: { equals?: string | number | boolean; equalsProp?: string[] },
 ): void {
   const note = notes.get(name) ?? { kinds: new Set<FieldKind>(), rendersAsText: false };
   note.kinds.add(kind);
   note.rendersAsText = note.rendersAsText || rendersAsText;
+  // First comparison wins. Two different literals for one field is the
+  // component testing for two states, and picking the second over the first is
+  // arbitrary — so it keeps the first and stays deterministic.
+  if (compared?.equals !== undefined && note.equals === undefined) note.equals = compared.equals;
+  if (compared?.equalsProp !== undefined && note.equalsProp === undefined) {
+    note.equalsProp = compared.equalsProp;
+  }
   // One level deeper, and only where the source actually read it. `session.user`
   // followed by `.email` gives user: { email: … } rather than a bare {}, which
   // would still be undefined at the read the component performs.
@@ -394,7 +478,13 @@ function toFields(notes: FieldNotes): MockField[] {
       kind === "object" && note.nested && note.nested.size > 0
         ? { kind: "object", fields: toFields(note.nested) }
         : shapeOfFieldKind(kind);
-    out.push({ name, shape, rendersAsText: note.rendersAsText });
+    out.push({
+      name,
+      shape,
+      rendersAsText: note.rendersAsText,
+      ...(note.equals !== undefined ? { equals: note.equals } : {}),
+      ...(note.equalsProp !== undefined ? { equalsProp: note.equalsProp } : {}),
+    });
   }
   return out;
 }

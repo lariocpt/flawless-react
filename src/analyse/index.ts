@@ -20,7 +20,7 @@ import { detectHostDialect } from "./nativeDialect.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
-import { resolveDepReturns } from "./resolveDepReturns.ts";
+import { annotatedExportReturns, resolveDepReturns } from "./resolveDepReturns.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { resolveTagRootTags } from "./resolveTagRootTags.ts";
@@ -241,7 +241,18 @@ async function analyseOne(
     // exports reach for the database, the mailer and next/cache. Flagging it here
     // — where the resolver and the cache are in scope — lets both the spec
     // emitter and the perf host stub it by name rather than by guesswork.
-    if (!cache.hasPrologueDirective(resolvedPath, "use server")) return { ...mi, resolvedPath };
+    if (!cache.hasPrologueDirective(resolvedPath, "use server")) {
+      // Return annotations for the names this component imports, so a helper
+      // called inside JSX rather than awaited into a variable is mocked from its
+      // declaration instead of from `{}`. resolveDepReturns covers the awaited
+      // ones; this is the same evidence for the rest.
+      const importedReturns = annotatedExportReturns(mi, resolvedPath, resolver, cache);
+      return {
+        ...mi,
+        resolvedPath,
+        ...(Object.keys(importedReturns).length > 0 ? { importedReturns } : {}),
+      };
+    }
     const target = cache.get(resolvedPath);
     // Only names with a single literal-derivable return land in the record;
     // the emitters keep {} stubs (and the TODO) for everything absent.

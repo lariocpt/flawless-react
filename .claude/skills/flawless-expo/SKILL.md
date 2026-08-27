@@ -129,11 +129,49 @@ Three DOM assertions have no honest native equivalent and are dropped rather tha
 
 A module that resolves project-locally and performs `fetch()` is `jest.mock`ed. Before
 this existed the fixture suite made live HTTP calls and crashed a jest worker with
-`api_error 405` from a real server. The stub shapes are `{}` plus a `TODO(flawless)`;
-replacing them turns the mount assertions into assertions about loaded state.
+`api_error 405` from a real server.
+
+Each stub's shape comes from the mocked function's own `Promise<T>` annotation, resolved
+through workspace barrels and zod schemas. `Promise<void>` mocks to `undefined` with no
+marker — that IS its realistic return value. Only an unresolvable shape falls back to
+`{}`, and only that one keeps a `TODO(flawless)`. The fallback matters: `const { items }
+= await listBuildings()` against `{}` binds `items` to undefined, and the next
+`buildings.length` throws into the app's own ErrorBoundary, so the screen renders
+"Something went wrong" and the failure looks like the component.
+
+Collections are emptied for the default mock, so assertions derived from the initial
+render hold. The loaded state gets its own test — see below.
 
 The mock specifier is relativised to the **spec**, not the component — `app/login.tsx`
 writes `"../lib/api"`, which from `flawless/unit/` names `flawless/lib/api`.
+
+## The loaded state gets its own test, where that is fair
+
+A separate test re-mocks ONE function to return a single row and asserts a synthesised
+witness appears. Emitted only where three things hold, each checked against the AST:
+
+1. **Mounting calls it** — reachable from a `useEffect`/`useFocusEffect` callback or the
+   component body, and not inside a branch, a `catch`, or a JSX event handler. A mutation
+   called from a submit handler is not a loader; a call behind `if (isTrustee)` does not run.
+2. **What it returns is rendered as a list** — the result reaches a `useState` setter whose
+   state variable is mapped in JSX or handed to a list as `data`. A collection read to decide
+   a permission flag changes a boolean, not the screen.
+3. **The row has a witness** — a string field THIS list's row renders as a JSX child. Not an
+   attribute value (`key={r.id}` is not displayed), and not a field rendered elsewhere in the
+   file over different data.
+
+Where any fails, the emitter writes a `test.skip` naming which. On the dogfood app 14 of 31
+screens qualify and all 14 pass.
+
+An earlier version shipped this as a blanket skip, blaming "an external store the harness
+does not reach". That was a guess and it was wrong — every cause was visible in the AST.
+
+## `router.back()` needs a history entry
+
+`renderRouter` mounts one screen at one URL with nothing behind it, so `GO_BACK` into an
+empty stack fails with *The action 'GO_BACK' was not handled by any navigator*. A route
+spec pushes its own URL once before the press. A component spec has no router to push into,
+so the handler is a skip that says so.
 
 ## Colocation is impossible under `app/`
 

@@ -148,6 +148,24 @@ export function extractInteractions(
    * than half-matched.
    */
   const NAV_METHODS = new Set(["push", "replace", "navigate"]);
+  /** `router.back()` — same receiver rule, no argument to read. */
+  const callsBack = (init: ts.JsxAttribute["initializer"]): boolean => {
+    if (!init || !ts.isJsxExpression(init) || !init.expression) return false;
+    let found = false;
+    const walk = (n: ts.Node): void => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === "back" &&
+        routerNames.has(rootIdentifierOf(n.expression.expression))
+      ) {
+        found = true;
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(init.expression);
+    return found;
+  };
   /**
    * Locals bound from expo-router's useRouter(), so a `.push` on anything else
    * is not read as navigation. `const router = useRouter()` is the only shape
@@ -292,6 +310,7 @@ export function extractInteractions(
               const targets = collectPushTargets(attr.initializer);
               return targets.length > 0 ? { pushTargets: targets } : {};
             })(),
+            ...(native && callsBack(attr.initializer) ? { navBack: true } : {}),
             pos: posOf(attr, sourceFile),
           });
         }

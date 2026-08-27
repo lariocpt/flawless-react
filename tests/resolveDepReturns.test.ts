@@ -452,10 +452,52 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
     ).toBeUndefined();
   });
 
-  test("an interface with heritage bails (v1) — silently partial would be worse", () => {
+  test("an interface with heritage merges the base, own members last", () => {
+    // Was a bail, on the reasoning that a partial fixture is worse than none.
+    // The reasoning holds; the bail was wider than it — a base that resolves is
+    // complete, not partial. Seven api functions in the dogfood app mocked to
+    // `{}` for this, and one poisoned a whole screen: `const [{ poll: p }] =
+    // await Promise.all([getPoll(…)])` bound p to undefined and the screen
+    // rendered its error state.
     expect(
       fixtureOf("interface B1 { b: string }\ninterface A1 extends B1 { a: string }", "A1"),
+    ).toEqual({ b: "flawless-b", a: "flawless-a" });
+  });
+
+  test("own members win over the base's — they are the more specific", () => {
+    expect(
+      fixtureOf("interface B2 { v: number }\ninterface A2 extends B2 { v: string }", "A2"),
+    ).toEqual({ v: "flawless-v" });
+  });
+
+  test("heritage whose BASE does not resolve still bails — the invariant kept", () => {
+    // The base has a member with two non-null arms, which bails on its own. The
+    // derived interface must not come back holding only its own members.
+    expect(
+      fixtureOf(
+        "interface B3 { pick: { a: string } | { b: string } }\ninterface A3 extends B3 { a: string }",
+        "A3",
+      ),
     ).toBeUndefined();
+  });
+
+  test("a base that is not in scope bails rather than resolving to own members", () => {
+    expect(fixtureOf("interface A4 extends Nowhere { a: string }", "A4")).toBeUndefined();
+  });
+
+  test("Record<K,V> resolves to {} — a complete inhabitant, not a partial one", () => {
+    // `read_by: Record<string, number>` bailed MessageSummary entirely, and with
+    // it every mock of the three api functions returning one.
+    expect(fixtureOf("interface R1 { read_by: Record<string, number>; id: string }", "R1")).toEqual(
+      {
+        read_by: {},
+        id: "flawless-id",
+      },
+    );
+  });
+
+  test("a generic that is NOT Record/Partial still bails — substitution is real work", () => {
+    expect(fixtureOf("interface R2 { p: Pick<{ a: string }, 'a'> }", "R2")).toBeUndefined();
   });
 });
 

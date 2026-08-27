@@ -140,6 +140,16 @@ export interface ClickHandler {
    */
   pushTargets?: string[];
   /**
+   * The handler navigates BACK — `router.back()`.
+   *
+   * It needs a precondition the harness does not supply by default: renderRouter
+   * mounts a single screen at one URL with no history, so back() fails with
+   * "The action 'GO_BACK' was not handled by any navigator". Recorded so the
+   * emitted test can push an entry first, rather than failing for a reason that
+   * is neither the app's nor the tool's.
+   */
+  navBack?: boolean;
+  /**
    * The element is reached only CONDITIONALLY at the props and state the spec
    * passes — typically one row of a `.map()` over data the component fetches.
    *
@@ -343,6 +353,34 @@ export interface MockField {
   shape: MockShape;
   /** Field is rendered as JSX text, so a spec can assert its value. */
   rendersAsText: boolean;
+  /**
+   * The component compares this field to a literal, so the fixture uses it.
+   *
+   * Twenty-two of the dogfood web app's thirty-two page specs never rendered
+   * anything: the page looked up the viewer's own membership with
+   *
+   *   memberships.find((m) => m.building_id === id && m.status === "active")
+   *
+   * and the synthesised row carried `status: "flawless-status"`, so the find
+   * returned undefined and the page called notFound(). The spec then reported
+   * the guard exit as a pass, and 117 of the page's 158 lines never ran.
+   *
+   * Not coverage-chasing: a membership row whose status is a placeholder is not
+   * a valid instance of what this page reads. The literal is written in the
+   * component's own source — the same class of evidence as every other field
+   * here, just read from a comparison rather than from a use.
+   */
+  equals?: string | number | boolean;
+  /**
+   * The component compares this field to one of its own props, by path.
+   *
+   * `memberships.find((m) => m.building_id === id)` where `const { id } = await
+   * params` — so the row only matches when its building_id IS the route param
+   * the page was rendered for, which is the only membership row that page is
+   * ever looking at. Resolved at emit time against the same props fixture the
+   * spec's DEFAULTS carries, so the two cannot drift apart.
+   */
+  equalsProp?: string[];
 }
 
 /** A module-level data dependency awaited by an async server component. */
@@ -365,7 +403,16 @@ export interface DataDepInfo {
    * annotation ("annotation"); "openapi" values are joined at emit time from
    * wrapsFetch and never stored here. See analyse/resolveDepReturns.ts.
    */
-  inferredReturn?: { value: PropValue; provenance: "annotation" | "openapi" };
+  inferredReturn?: {
+    value: PropValue;
+    provenance: "annotation" | "openapi";
+    /**
+     * The declaration is synchronous, so the mock must be too. Only ever set
+     * for a dep that is not awaited — `formatZAR(cents): string` mocked as
+     * `async () => ({})` made every money value on the page an object.
+     */
+    sync?: boolean;
+  };
   /**
    * The dep is an unannotated wrapper whose body performs exactly one
    * fetch(); the emitter joins method+path to the OpenAPI response example
@@ -441,6 +488,20 @@ export interface ModuleImportInfo {
    * keep the honest {} stub and the server-action-stub TODO.
    */
   serverActionReturns?: Record<string, PropValue>;
+  /**
+   * Module-side export name → its own return annotation, for names this
+   * component IMPORTS but that never became a dataDep — a helper called inside
+   * JSX rather than awaited into a variable.
+   *
+   * Those got `vi.fn(async () => ({}))` on the reasoning that `{}` beats
+   * undefined. It does, against nothing; against the declaration it does not.
+   * `formatZAR(cents: number): string` was mocked async returning an object, so
+   * every money value on the dogfood app's finance pages rendered as one.
+   *
+   * `sync` mirrors the declaration: a synchronous function mocked as async
+   * hands the component a promise where it expects a value.
+   */
+  importedReturns?: Record<string, { value: PropValue; sync: boolean }>;
   pos: SourcePosition;
 }
 

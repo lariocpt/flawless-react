@@ -284,3 +284,42 @@ describe("defects the production-readiness review found", () => {
     expect(s).toMatch(/listItems: jest\.fn\(async \(\) => \(\{"items":\[\]\}\)\)/);
   });
 });
+
+describe("router.back() needs a history entry", () => {
+  test("the emitted test pushes one before pressing", async () => {
+    await build();
+    const spec = files.get("unit/ItemDetail.flawless.test.tsx");
+    expect(spec).toBeDefined();
+    const src = spec as string;
+    // The labelled back button is addressable, so it gets a REAL test rather
+    // than a skip — that is the a11y fix paying off, and the precondition below
+    // is only needed because it did.
+    expect(src).toContain("[Go back] can be driven");
+    const body = src.slice(src.indexOf("[Go back] can be driven"));
+    const press = body.indexOf("fireEvent(");
+    const push = body.indexOf("testRouter.push(INITIAL_URL)");
+    expect(push).toBeGreaterThan(-1);
+    // Order matters, not mere presence: a push AFTER the press gives back()
+    // nothing to go to and the test fails exactly as it did before the fix.
+    expect(push).toBeLessThan(press);
+    expect(src).toContain("testRouter");
+  });
+
+  test("a spec with no back handler does not import testRouter", async () => {
+    await build();
+    for (const [rel, src] of files) {
+      if (src.includes("router.back") || src.includes("testRouter.push(INITIAL_URL)")) continue;
+      expect(`${rel}: ${src.includes("testRouter")}`).toBe(`${rel}: false`);
+    }
+  });
+
+  test("the unlabelled back button is still an honest skip", async () => {
+    await build();
+    const src = files.get("unit/ItemDetail.flawless.test.tsx") as string;
+    // Two back buttons in the fixture, one labelled and one not. The unlabelled
+    // one must NOT acquire a test just because its labelled twin has one.
+    const skips = src.match(/test\.skip\(/g) ?? [];
+    expect(skips.length).toBeGreaterThan(0);
+    expect(src).toMatch(/test\.skip\("onPress on <Pressable> — [^"]*only an icon/);
+  });
+});

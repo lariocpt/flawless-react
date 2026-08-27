@@ -332,7 +332,13 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   it came from:
   - `/* inferred from <fn>'s return annotation */` — the dep declares
     `Promise<T>` and `T` resolved completely (any unresolved member bails the
-    whole value; generics bail; `T[]` yields a one-element array). A union is
+    whole value; `T[]` yields a one-element array). An `interface X extends Y`
+    resolves its bases and merges them, own members last — but if *any* base
+    fails to resolve, the whole value still bails, because a fixture missing
+    half its fields is worse than none. `Record<K, V>` and `Partial<T>` resolve
+    to `{}`, which is a complete inhabitant of both and needs no substitution;
+    every other generic instantiation bails, because for those it is not. A
+    union is
     resolved from its non-nullish arms: `Promise<Case[] | null>` yields the
     `Case[]` fixture, because `null`/`undefined` arms are values the type
     already admits, not holes. A union of two *shapes* still bails — the
@@ -355,6 +361,44 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   coverage: its spec has no skip escape, so a wrong inferred fixture fails
   red instead of hiding. Usage-derived shapes always outrank declarations —
   the component's own reads are better testimony than a type annotation.
+
+  A helper that is imported and called but never becomes a dep — a formatter
+  invoked inside JSX rather than awaited into a variable — is also read from
+  its declaration, and **synchronously when the declaration is synchronous**.
+  `formatZAR(cents: number): string` was previously stubbed
+  `vi.fn(async () => ({}))`, so every money value on a page rendered as an
+  object; it is now `vi.fn(() => ("flawless-value"))`. A sync annotation on an
+  *awaited* dep is still refused — that is somebody's refactor in progress,
+  not a thing to build a fixture on.
+- **The fixture has to satisfy the component's own code.** When it does not, the
+  component takes its guard, the spec records that as a legitimate outcome, and a
+  green test reports having rendered nothing.
+
+  A page that filters `memberships.find((m) => m.building_id === id && m.status
+  === "active")` rejects a row carrying `status: "flawless-status"`. It then
+  calls `notFound()`, the RSC template recognises that as a declared guard path,
+  and the spec passes having rendered nothing. On the dogfood app that was **22
+  of 32 page specs**.
+
+  Two rules close it, both reading the component's own source:
+  - A field compared with `===` to a **literal** takes that literal.
+    `m.status === "active"` yields `status: "active"`. `!==` is not used — it
+    says what a value must not be, which does not pick one out.
+  - A field compared to one of the component's **props** takes that prop's
+    value, resolved from the same fixture the spec's `DEFAULTS` carries — so
+    the two agree by construction rather than by both spelling `flawless-id`.
+
+  And a Next page's `params` never contains an empty string. `mapType`'s default
+  for a string prop is `""`, which is right for a caption and impossible for a
+  route segment: Next does not match a dynamic segment against an empty string,
+  so `{ params: { id: "" } }` is a request that cannot happen. Empty leaves under
+  `params` — and only there — are filled with `flawless-<key>`; a catch-all's
+  empty array becomes one segment. A value the analyser actually resolved is
+  evidence and is left alone.
+
+  This is not coverage-chasing. A membership row whose status is a placeholder is
+  not a valid instance of what the page reads. The `notFound()` path keeps its own
+  test, which mocks the lookup to return nothing.
 - Components that cannot mount standalone — a `<Dialog.Content>` outside its
   Root, a layout returning `<html>` — get a spec that asserts what IS true and
   states the reason in the file. **Compound parts whose own file exports the
@@ -567,11 +611,29 @@ Three DOM assertions have **no honest native equivalent and are dropped rather t
 
 A module that resolves project-locally and performs `fetch()` is `jest.mock`ed with stubs. This is not a nicety: before it existed the fixture suite made live HTTP calls and crashed a jest worker with `api_error 405` from a real server. The mock's specifier is relativised to the **spec**, not to the component — `app/login.tsx` writes `"../lib/api"`, which from `flawless/unit/` names `flawless/lib/api` and does not exist.
 
-The stub shapes are `{}` with a `TODO(flawless)` until the dep collector runs for non-async components; replacing them turns the mount assertions into assertions about loaded state.
+Each stub's shape comes from the mocked function's own `Promise<T>` return annotation, resolved through workspace barrels and zod schemas. A function that returns `Promise<void>` mocks to `undefined` and carries no marker — undefined *is* its realistic return value. Only a shape that could not be resolved falls back to `{}`, and that one keeps a `TODO(flawless)`.
+
+That fallback is not cosmetic. `const { items } = await listBuildings()` against `{}` binds `items` to undefined, `setBuildings(undefined)` follows, and the next `buildings.length` throws into the app's own ErrorBoundary — so the screen renders "Something went wrong" and every copy assertion fails, looking like a defect in the component. A freshly generated suite was red on 3 of 31 real screens for that reason alone.
+
+Collections in those fixtures are emptied for the default mock, so every assertion derived from the initial render holds. The loaded state gets its own test — see below.
 
 ### Unaddressable controls become named skips
 
 React Native has **no implicit roles** — `getByRole("button")` matches nothing on a bare `<Pressable>` — and there is deliberately **no last-resort locator**. The two candidates are both unsound: `UNSAFE_getByType(Pressable)` compares component identity, and under NativeWind's `jsxImportSource` the `Pressable` the source rendered went through `cssInterop`'s wrapper while the one a spec imports is the bare component, so it matches zero elements; and "the first pressable in the tree" is wrong for the same reason the DOM ladder refuses an ambiguous bare tag, only more often.
 
 So a control with no `testID`, no `accessibilityLabel`, no `accessibilityRole` and no text under it is a `test.skip` carrying the reason and the fix. The icon-only wording wins over the ambiguous one when both apply, because one `accessibilityLabel` resolves both — and the same absence is what makes the control silent to a screen reader.
+
+### The loaded state gets its own test, on the screens where that is fair
+
+The default mock returns empty collections, so a list screen renders its empty branch and nothing exercises the row markup. A separate test re-mocks **one** function to return a single row and asserts a synthesised witness value appears.
+
+It is only emitted where three things hold, each checked against the component's AST:
+
+1. **Mounting calls the function.** Reachable from a `useEffect` / `useFocusEffect` callback or evaluated in the component body — and not inside a branch, a `catch`, or a JSX event handler. A mutation called from a submit handler is not a loader, and a call behind `if (isTrustee)` does not run.
+2. **What it returns is rendered as a list.** The result reaches a `useState` setter whose state variable is mapped in JSX or handed to a list as `data`. A collection the screen reads to decide a permission flag changes a boolean, not the screen.
+3. **The row has a witness.** A string field that *this* list's row renders as a JSX child — not an attribute value, and not a field rendered elsewhere in the file over different data.
+
+Where any of the three fails, the emitter writes a `test.skip` naming which one. On the dogfood app 14 of 31 screens qualify and all 14 pass; the other 17 say why.
+
+`router.back()` gets a history entry pushed before the press. `renderRouter` mounts one screen at one URL with nothing behind it, so `GO_BACK` into an empty stack fails with *The action 'GO_BACK' was not handled by any navigator* — a missing precondition reported as a defect. In a component spec, which has no router, the handler is a skip that says so.
 

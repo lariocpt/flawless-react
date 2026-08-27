@@ -125,3 +125,66 @@ describe("mockLiteral", () => {
     ).toBe('{ createdAt: "2024-01-01T00:00:00.000Z", floors: 1, notes: "flawless-notes" }');
   });
 });
+
+describe("a fixture the component's own predicate accepts", () => {
+  test("a field compared to a string literal takes that literal", async () => {
+    const deps = await loadDeps("MembershipGuardPage.tsx");
+    const shape = byVar(deps, "memberships").shape;
+    expect(shape.kind).toBe("array");
+    const element = shape.kind === "array" ? shape.element : undefined;
+    expect(element?.kind).toBe("object");
+    const status = element?.kind === "object" && element.fields.find((f) => f.name === "status");
+    expect(status && status.equals).toBe("active");
+  });
+
+  test("a field compared to a route param records the PATH, not a value", async () => {
+    // Recorded as a path so the emitter reads it out of the same props fixture
+    // the spec's DEFAULTS carries — two places spelling "flawless-id"
+    // independently is exactly how they drift.
+    const deps = await loadDeps("MembershipGuardPage.tsx");
+    const shape = byVar(deps, "memberships").shape;
+    const element = shape.kind === "array" ? shape.element : undefined;
+    const bid = element?.kind === "object" && element.fields.find((f) => f.name === "building_id");
+    expect(bid && bid.equalsProp).toEqual(["params", "id"]);
+    expect(bid && bid.equals).toBeUndefined();
+  });
+
+  test("!== is not recorded — it says what the value must NOT be", async () => {
+    const deps = await loadDeps("MembershipGuardPage.tsx");
+    const shape = byVar(deps, "memberships").shape;
+    const element = shape.kind === "array" ? shape.element : undefined;
+    // `label` is rendered in the map callback and never compared, so it keeps
+    // its synthesised value — the control that proves `equals` is not set for
+    // every field just because one field on the row has it.
+    const label = element?.kind === "object" && element.fields.find((f) => f.name === "label");
+    expect(label && label.equals).toBeUndefined();
+    expect(label && label.equalsProp).toBeUndefined();
+  });
+
+  test("mockLiteral resolves equalsProp against the props fixture", async () => {
+    const deps = await loadDeps("MembershipGuardPage.tsx");
+    const shape = byVar(deps, "memberships").shape;
+    const lit = mockLiteral(shape, "memberships", { params: { id: "flawless-id" } });
+    expect(lit).toContain('building_id: "flawless-id"');
+    expect(lit).toContain('status: "active"');
+    expect(lit).toContain('label: "flawless-label"');
+  });
+
+  test("without a props fixture the path resolves to nothing and the field keeps its default", () => {
+    // A component whose prop is not there must not emit `undefined` — that is
+    // the crash-on-any-access failure mode mockLiteral exists to avoid.
+    const shape: MockShape = {
+      kind: "object",
+      fields: [
+        {
+          name: "building_id",
+          shape: { kind: "unknown" },
+          rendersAsText: false,
+          equalsProp: ["params", "id"],
+        },
+      ],
+    };
+    expect(mockLiteral(shape, "x")).toBe('{ building_id: "flawless-building_id" }');
+    expect(mockLiteral(shape, "x", { other: 1 })).toBe('{ building_id: "flawless-building_id" }');
+  });
+});

@@ -23,6 +23,21 @@ export default function ItemDetail() {
         <Pressable onPress={() => router.push("/signup")} className="p-2">
           <Icon name="forward" />
         </Pressable>
+        {/* The same back button AFTER the a11y fix that dogfooding produced: an
+            accessibilityLabel makes it addressable, and the moment it is, its
+            handler runs for real — router.back() into a stack renderRouter
+            mounts one screen deep. That failed with "The action 'GO_BACK' was
+            not handled by any navigator" on twelve real screens, so the emitted
+            test has to push a history entry first. Kept beside the unlabelled
+            one above: the pair is the before/after. */}
+        <Pressable
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+          onPress={() => router.back()}
+          className="p-2"
+        >
+          <Ionicons name="chevron-back" size={24} />
+        </Pressable>
         <Text className="text-xl">Item {id}</Text>
       </View>
     </SafeAreaView>

@@ -26,6 +26,7 @@ import type {
   TodoRecorder,
 } from "../types.ts";
 import { mockLiteral } from "./mockValues.ts";
+import { withRouteParams } from "./registry.ts";
 
 export type MockMode = "client" | "rsc";
 
@@ -74,6 +75,9 @@ const PURE_UTILITY_BINDINGS = new Set(["cn", "clsx", "cva", "twMerge", "tw"]);
 const PURE_UTILITY_STUB = `vi.fn((...args: unknown[]) => args.filter(Boolean).join(" "))`;
 
 interface MergedBinding {
+  /** Module-side export name — `cn` for `import { cn as cx }`. The returns map
+   * is keyed by it, since that is what the declaration is named. */
+  moduleName?: string;
   local: string;
   isDefault: boolean;
   pure: boolean;
@@ -83,6 +87,9 @@ interface MergedModule {
   /** Original specifier texts (dataDeps records these, not the re-based one). */
   specifiers: Set<string>;
   bindings: MergedBinding[];
+  /** Module-side export name → its own return annotation, merged across the
+   * declarations that import from this module. See ModuleImportInfo. */
+  returns: Map<string, { value: PropValue; sync: boolean }>;
 }
 
 /** Default and namespace entries have no module-side name; the local stands in. */
@@ -93,14 +100,16 @@ function membershipName(mi: ModuleImportInfo, index: number): string {
 function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key: string): void {
   let group = groups.get(key);
   if (!group) {
-    group = { specifiers: new Set(), bindings: [] };
+    group = { specifiers: new Set(), bindings: [], returns: new Map() };
     groups.set(key, group);
   }
   group.specifiers.add(mi.specifier);
+  for (const [name, r] of Object.entries(mi.importedReturns ?? {})) group.returns.set(name, r);
   mi.names.forEach((local, i) => {
     if (group.bindings.some((b) => b.local === local)) return;
     group.bindings.push({
       local,
+      moduleName: membershipName(mi, i),
       isDefault: mi.hasDefault && i === 0,
       pure: PURE_UTILITY_BINDINGS.has(membershipName(mi, i)),
     });
@@ -481,7 +490,9 @@ function dataModuleMock(
       return dep.awaited ? "vi.fn(async () => ({}))" : "vi.fn(() => ({}))";
     }
     // Shape inferred from how the awaited value is actually used in the body.
-    const literal = mockLiteral(dep.shape, seed);
+    // The props fixture the spec's own DEFAULTS is built from, so a field
+    // compared against a route param gets that param's value.
+    const literal = mockLiteral(dep.shape, seed, withRouteParams(info.propsShape));
     return dep.awaited ? `vi.fn(async () => (${literal}))` : `vi.fn(() => (${literal}))`;
   };
 
@@ -498,9 +509,21 @@ function dataModuleMock(
     const dep = deps[0];
     if (!dep) {
       if (b.isDefault) return "default: vi.fn()";
-      // Imported and called, but no evidence of how its result is used. {} is a
-      // better stand-in than undefined: it survives member access and only
-      // fails on .length/.map, which is a legible failure rather than a crash.
+      // No usage evidence — but the DECLARATION may still say. A formatter
+      // called inside JSX never becomes a dataDep, and `formatZAR(cents:
+      // number): string` was stubbed `async () => ({})`: asynchronous for a
+      // synchronous function, and an object where the page renders a string.
+      const ann = group.returns.get(b.moduleName ?? b.local);
+      if (ann) {
+        const lit = JSON.stringify(ann.value);
+        const prov = `/* inferred from ${commentSafe(b.local)}'s return annotation */`;
+        return ann.sync
+          ? `${key}: vi.fn(() => (${lit})) ${prov}`
+          : `${key}: vi.fn(async () => (${lit})) ${prov}`;
+      }
+      // Neither usage nor declaration. {} is a better stand-in than undefined:
+      // it survives member access and only fails on .length/.map, which is a
+      // legible failure rather than a crash.
       uncertain = true;
       return `${key}: vi.fn(async () => ({}))`;
     }
