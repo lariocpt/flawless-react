@@ -20,7 +20,9 @@ import {
   dottedMockConflicts,
   emitModuleMocks,
   inferredDepReturn,
+  mockSpecifier,
 } from "./mocks.ts";
+import { decidePostDispatch, describeNoClaim, type PostDispatchContext } from "./postDispatch.ts";
 import {
   allocateSpecNames,
   compoundWrappable,
@@ -464,12 +466,45 @@ function unitSpec(
   const handlerObjectLiteral =
     allHandlers.length > 0 ? `{ ${allHandlers.map((h) => `${h}: vi.fn()`).join(", ")} }` : `{}`;
 
+  // What THIS spec mocks, which is what it can assert on. Derived from
+  // moduleImports rather than from emitModuleMocks' result, because that runs
+  // later in this function and the ladder is needed here — the two agree because
+  // client mode mocks the allowlist plus "use server" modules, and both read the
+  // same field.
+  const claimCtx = {
+    info,
+    ctx: {
+      mockedBindings: new Set(
+        (info.moduleImports ?? []).filter((mi) => mi.isServerAction).flatMap((mi) => mi.names),
+      ),
+      routerMocked: (info.moduleImports ?? []).some((mi) => mi.specifier === "next/navigation"),
+    },
+  };
+
+  // Bindings a rung-2 claim will assert on. They have to be IMPORTED into the
+  // spec: vi.mock replaces the module, so importing the name yields the mock —
+  // but without the import the assertion is a ReferenceError. Computed by
+  // running the same ladder the emitter will, so the two cannot disagree.
+  const assertedBindings = new Set<string>();
+  for (const click of interactions?.clicks ?? []) {
+    const claim = decidePostDispatch(info, click, claimCtx.ctx);
+    if (claim.kind === "module-spy") assertedBindings.add(claim.binding);
+  }
+  const assertedImports = (info.moduleImports ?? [])
+    .map((mi) => {
+      const wanted = mi.names.filter((n) => assertedBindings.has(n));
+      if (wanted.length === 0) return undefined;
+      return `import { ${wanted.join(", ")} } from "${mockSpecifier(mi, specDir)}";`;
+    })
+    .filter((l): l is string => l !== undefined);
+
   const interactionTests = interactions
     ? emitInteractionTests(
         name,
         interactions,
         allHandlers,
         firstClickTrigger(info),
+        claimCtx,
         info.renderGuarded === true,
         todo,
       )
@@ -520,6 +555,7 @@ function unitSpec(
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 ${propsTypeBlock}${mswImports}${mockBlock}${providerLine}${emitComponentImport(info, importPath)}
+${assertedImports.join("\n")}
 ${propsAlias}${childTextConst}
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
@@ -1281,6 +1317,7 @@ function emitInteractionTests(
   info: NonNullable<ComponentInfo["interactions"]>,
   allHandlers: string[],
   trigger: string | undefined,
+  claimCtx: { info: ComponentInfo; ctx: PostDispatchContext },
   renderGuarded = false,
   todo?: TodoRecorder,
 ): string {
@@ -1305,7 +1342,7 @@ test.skip("${name}: interactions need a fixture — an early return may render n
     if (!click) continue;
     // Later interactions often live behind UI state the first click opens.
     const prelude = i !== firstClickIdx && trigger ? trigger : undefined;
-    parts.push(emitClickTest(name, click, allHandlers, i, prelude, todo));
+    parts.push(emitClickTest(name, click, allHandlers, i, claimCtx, prelude, todo));
   }
   for (let i = 0; i < info.forms.length; i++) {
     const form = info.forms[i];
@@ -1323,6 +1360,8 @@ function emitClickTest(
   click: ClickHandler,
   allHandlers: string[],
   idx: number,
+  /** The component and the spec's mocking surface, for decidePostDispatch. */
+  claimCtx: { info: ComponentInfo; ctx: PostDispatchContext },
   prelude?: string,
   todo?: TodoRecorder,
 ): string {
@@ -1389,23 +1428,79 @@ ${isolationAsserts || "  // no other handlers to isolate"}
   const isolationAsserts = allHandlers
     .map((h) => `  expect(handlers.${h}).not.toHaveBeenCalled();`)
     .join("\n");
-  // A component with no prop handlers had NOTHING after the dispatch — the test
-  // fired an event and asserted nothing, so it could not fail. Measured on the
-  // dogfood app: 25 of 341 live web tests were this shape.
-  //
-  // The floor is that the component still renders. Modest, but real: a thrown
-  // handler already fails at the dispatch, and this additionally catches one that
-  // sets state the next render cannot cope with, or that blanks the tree. It is
-  // strictly more than nothing, and it is the most that is knowable about a
-  // handler whose effect the analyser cannot see.
-  const after =
-    isolationAsserts ||
-    "  expect(container.firstElementChild).not.toBeNull(); // the click did not take the component down";
-  return `test("${name} ${click.event} on ${labelDesc} #${idx} is a smoke click", async () => {
+  // What this click provably does — a module the spec mocks, or the router — or
+  // an admission that it does nothing observable. The old floor here was
+  // `expect(container.firstElementChild).not.toBeNull()`, which under a provider
+  // is answered by the PROVIDER's node and so cannot fail, and without one goes
+  // red on a component that legitimately unmounts. See postDispatch.ts.
+  const claim = decidePostDispatch(claimCtx.info, click, claimCtx.ctx);
+  if (claim.kind === "skip") {
+    todo?.("other");
+    return `test.skip("${name} ${click.event} on ${labelDesc} #${idx} — ${titleSafe(describeNoClaim(claim.reason))}", () => {
+  // TODO(flawless): ${describeNoClaim(claim.reason)}, so any assertion after the
+  // dispatch would be about something this spec never caused. Supply props that
+  // make it reachable and this becomes a real interaction test.
+});`;
+  }
+  // The isolation asserts are a real claim and are APPENDED to whichever rung
+  // fires — they never replace one.
+  const isolation = isolationAsserts ? `\n${isolationAsserts}` : "";
+  if (claim.kind === "module-spy") {
+    return `test("${name} ${click.event} on ${labelDesc} #${idx} → ${claim.binding} called", async () => {
   const { container } = renderTarget();
   void container;${preludeLines}
+  // The mount path may already have called this module and nothing clears module
+  // mocks between tests, so without this the assertion is about the file rather
+  // than about this click.
+  vi.mocked(${claim.binding}).mockClear();
   ${dispatch};
-${after}
+  await waitFor(() => expect(vi.mocked(${claim.binding})).toHaveBeenCalled());${isolation}
+});`;
+  }
+  if (claim.kind === "router") {
+    // toHaveBeenCalledWith(target) when the source names a literal, and a bare
+    // toHaveBeenCalled() when it does not — asserting an argument the source
+    // never states would be inventing one.
+    const matcher =
+      claim.target === undefined
+        ? "toHaveBeenCalled()"
+        : `toHaveBeenCalledWith(${JSON.stringify(claim.target)})`;
+    // Single quotes in the TITLE: it is interpolated into a double-quoted test
+    // name, and a JSON.stringify'd path ends it.
+    const shown = claim.target === undefined ? "" : `'${titleSafe(claim.target)}'`;
+    return `test("${name} ${click.event} on ${labelDesc} #${idx} → router.${claim.method}(${shown})", async () => {
+  const { container } = renderTarget();
+  void container;${preludeLines}
+  routerMock.${claim.method}.mockClear();
+  ${dispatch};
+  await waitFor(() => expect(routerMock.${claim.method}).${matcher});${isolation}
+});`;
+  }
+  // Canary: drive it, and assert only that nothing escaped — which the old floor
+  // did NOT do. Executed: a throwing handler leaves today's vitest test green and
+  // fails only the run, so this is strictly more than the floor it replaces.
+  // prop-spy is handled by the branch above, which runs before decide is called.
+  const reason = claim.kind === "canary" ? claim.reason : "opaque-callback";
+  todo?.("other");
+  return `test("${name} ${click.event} on ${labelDesc} #${idx} — drives the ${click.event}; asserts only that nothing escaped it", async () => {
+  // TODO(flawless): ${describeNoClaim(reason)}. Nothing in the source says
+  // what this ${click.event} should DO, and "the component still rendered" would
+  // pass whatever the handler did. It becomes a real test as soon as the callback
+  // is a prop (the spec passes a spy), or the work goes through a module this
+  // spec mocks.
+  const escaped: string[] = [];
+  // Bubble phase only: a failed <img> load also fires \`error\` on the element and
+  // must not be read as the handler throwing.
+  const onError = (e: ErrorEvent) => { escaped.push(e.message); e.preventDefault(); };
+  window.addEventListener("error", onError);
+  try {
+    const { container } = renderTarget();
+    void container;${preludeLines}
+    ${dispatch};
+  } finally {
+    window.removeEventListener("error", onError);
+  }
+  expect(escaped, "the ${click.event} threw out of its handler").toEqual([]);${isolation}
 });`;
 }
 
@@ -1473,18 +1568,28 @@ ${valueAsserts.join("\n") || "  // no text field whose value could be read back"
 ${isolation || "  // no other handlers to isolate"}
 });`;
   }
-  // The submit was the LAST statement and nothing followed it, so the test
-  // asserted the fills and then fired a submit whose effect nobody checked —
-  // 10 of the dogfood app's live web tests. With no prop handler there is
-  // nothing precise to assert, so this is the same floor the smoke click uses:
-  // the form did not take the component down.
+  // No prop handler on the form. The floor here was
+  // `expect(container.firstElementChild).not.toBeNull()` — and unlike the smoke
+  // click it had no isolation fallback at all, so it fired even when prop spies
+  // existed and something precise WAS available. Under a provider it cannot
+  // fail; without one it reddens a form that navigates away on submit.
+  //
+  // The isolation asserts are a real claim and are used where there are any. The
+  // value assertions above already carry the test on their own, which is how 13
+  // of the dogfood app's 23 forms keep a meaningful test with no floor at all.
+  const submitAfter =
+    allHandlers.length > 0
+      ? allHandlers.map((h) => `  expect(handlers.${h}).not.toHaveBeenCalled();`).join("\n")
+      : valueAsserts.length > 0
+        ? "  // the value assertions above are the claim; the submit itself asserts nothing\n  // this spec can observe — see postDispatch.ts for the ladder that decides."
+        : "  // TODO(flawless): nothing observable follows this submit — no prop handler,\n  // no field whose value can be read back, and no module this spec mocks. Give\n  // the form an onSubmit prop or route it through a mocked action to make it real.";
   return `test("${name} form #${idx} accepts input and submits", async () => {
   const { container } = renderTarget();
   void container;
 ${fillSteps.join("\n")}
 ${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   ${submitClick}
-  expect(container.firstElementChild).not.toBeNull(); // the submit did not take the component down
+${submitAfter}
 });`;
 }
 

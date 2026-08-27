@@ -14,6 +14,30 @@ export interface SourcePosition {
   column: number;
 }
 
+/**
+ * Something a handler provably does, for deciding what a spec may assert AFTER
+ * dispatching it.
+ *
+ * The emitters used to fall back to `expect(container.firstElementChild)
+ * .not.toBeNull()` — "the click did not take the component down". Under a
+ * provider that is answered by the PROVIDER's node, so it cannot fail (30 of 30
+ * spec files carrying it on the dogfood app); without one it goes red on a
+ * component that legitimately unmounts. Vacuous or wrong, never useful.
+ *
+ * These are the crossings a spec can actually observe: a call into a module it
+ * mocks, a router navigation, a state setter. Anything else is honestly nothing,
+ * and the emitter says so rather than inventing a claim.
+ */
+export type HandlerEffect =
+  | { kind: "call"; root: string; dominated: boolean }
+  | {
+      kind: "router";
+      method: "push" | "replace" | "navigate" | "back";
+      target?: string;
+      dominated: boolean;
+    }
+  | { kind: "setState"; setter: string; dominated: boolean };
+
 export type HandlerBinding =
   | { kind: "prop"; propName: string }
   | { kind: "local"; localName: string }
@@ -115,6 +139,15 @@ export interface ClickHandler {
    * click waited for it to become enabled until the test timed out.
    */
   ambiguousTag?: boolean;
+  /**
+   * What this handler provably does — see HandlerEffect.
+   *
+   * `dominated` on each entry means the effect is reached with no branch and no
+   * earlier return in front of it, so a spec that dispatches the event can
+   * assert it happened. An effect that is NOT dominated is real but conditional,
+   * and asserting it would be a claim about a path the defaults may not take.
+   */
+  effects?: HandlerEffect[];
   /**
    * The element renders element children and every one of them is textless — an
    * icon, a spinner — so nothing under it can name it.

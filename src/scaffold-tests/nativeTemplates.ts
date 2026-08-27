@@ -15,6 +15,7 @@ import { expoFileToRoute, routeModuleId } from "../expo/routes.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { JEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, ExpoContext, TodoRecorder } from "../types.ts";
+import { describeNoClaim } from "./postDispatch.ts";
 import { allocateSpecNames, flattenTrees, functionProps, synthesiseDefaults } from "./registry.ts";
 import {
   awaitNativeSelector,
@@ -739,7 +740,29 @@ function postDispatchAssertions(
   // survived. Weak, but it is a real assertion — a handler that throws, or that
   // sets state the next render cannot cope with, fails here. It is strictly more
   // than the nothing that was emitted before.
-  return ["    expect(screen.toJSON()).not.toBeNull();"];
+  // The native floor, and the half of E5 that goes RED rather than vacuous: this
+  // plane has no provider, so `screen.toJSON()` really is the screen's own tree
+  // and a component that legitimately unmounts fails here on correct code.
+  //
+  // Replaced by the canary: drive the press, and assert only that nothing escaped
+  // it. Strictly more than the floor — a throwing handler previously failed the
+  // RUN with no assertion involved, and now names the test that caused it.
+  // The native floor, and the half of E5 that goes RED rather than vacuous: this
+  // plane has no provider, so `screen.toJSON()` really is the screen's own tree
+  // and a component that legitimately unmounts fails here on correct code.
+  //
+  // Nothing replaces it, deliberately. RNTL's fireEvent calls the handler
+  // SYNCHRONOUSLY, so a throw already fails this test at the dispatch line above
+  // — the test has a falsifier without inventing a claim. The locator assertion
+  // that precedes the dispatch is the other one. Adding a survival check here
+  // would be re-adding the thing this removes.
+  return [
+    `    // TODO(flawless): ${describeNoClaim("opaque-callback")}, so nothing is`,
+    "    // asserted after the press. The press itself is still checked: it throws",
+    "    // out of this test if the handler throws, and the locator above must find",
+    "    // the control. It becomes a real test as soon as the callback is a prop",
+    "    // (the spec passes a spy) or the work goes through a module this spec mocks.",
+  ];
 }
 
 function interactionTests(
