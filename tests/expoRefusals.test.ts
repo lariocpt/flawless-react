@@ -16,7 +16,7 @@ const EXPOAPP = path.join(REPO_ROOT, "tests", "fixtures", "expoapp");
 const BIN = path.join(REPO_ROOT, "src", "bin.ts");
 
 /** Tasks that have a real Expo implementation today. Grows by one per wave. */
-const IMPLEMENTED = new Set(["perf-static", "react-rules"]);
+const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser"]);
 const REFUSING = ALL_TASK_IDS.filter((id) => !IMPLEMENTED.has(id));
 
 let tmpRoot: string;

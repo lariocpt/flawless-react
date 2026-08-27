@@ -122,9 +122,27 @@ flawless reads the project off disk — Expo SDK major, the expo-router `app/` r
 
 | task | under `--expo` |
 |---|---|
+| `unit-browser` | **runs** — jest-expo + `@testing-library/react-native` specs |
 | `perf-static` | **runs** — pure AST analysis, and nothing in it is DOM-specific |
 | `react-rules` | **runs** |
-| `unit-browser`, `perf-harness`, `a11y`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+| `perf-harness`, `a11y`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+
+### The native unit plane
+
+`--expo --tasks unit-browser` writes `jest.config.cjs`, a write-once `jest.setup.ts`, and one spec per exported component under `<outDir>/unit/`, then merges the runner into the app's `package.json` as `flawless:unit`.
+
+The version pairing is derived, not guessed. `jest-expo` is pinned to the project's **own** SDK major — `jest-expo@54` pairs with Expo SDK 54, and a fixed range breaks every other adopter. `jest` is pinned to `^29` because that is what jest-expo's own tooling uses; a bare `jest` resolves to 30 and the mismatch surfaces as `this._moduleMocker.clearMocksOnScope is not a function` from inside jest-runtime, which names nothing you could act on. `@testing-library/react-native` is **13**, not 14, because expo-router 6's testing-library is built against `react-test-renderer` and RNTL 14 replaced it.
+
+Two spec shapes, chosen from the file:
+
+- **A route screen** mounts through `renderRouter` from `expo-router/testing-library`, at its own URL. Not a preference: `useFocusEffect` reaches `useNavigation()`, which throws `Couldn't find a navigation object` outside a navigator, and `useLocalSearchParams` is empty. Mounted inside a real navigator the screen is *focused*, so focus effects actually run — and the spec can assert the loaded state instead of the loading skeleton.
+- **Everything else** mounts through RNTL's `render()`. A `_layout` is a third case: `<Tabs>` and `<Stack>` call `useContextKey` and throw `No filename found` on their own, so a layout is mounted through its own navigator with one synthesised child.
+
+Where the source names a literal route — `onPress={() => router.push("/items/new")}` — the spec asserts the resulting pathname. That is the React Native analogue of asserting a link's `href`, and the emitted `renderRouter` context carries a stub for every such target, because a push to a route the context does not know lands on expo-router's injected `+not-found` and would fail for the wrong reason.
+
+**No emitted spec touches the network.** A module that resolves project-locally and performs `fetch()` is `jest.mock`ed with stubs. That is not a nicety: before it existed, the fixture suite made live HTTP calls and crashed a jest worker with `api_error 405` from a real server.
+
+**An unaddressable control becomes a named skip, never a pass.** React Native has no implicit roles — `getByRole("button")` matches nothing on a bare `<Pressable>` — and there is no last-resort locator, so a control with no `testID`, no `accessibilityLabel` and no text under it is skipped with the reason and the fix. On the dogfood app that is 28 of 48 press targets, 12 of them icon-only; each is *also* an accessibility finding, so one `accessibilityLabel` retires both.
 
 A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the two that work.
 

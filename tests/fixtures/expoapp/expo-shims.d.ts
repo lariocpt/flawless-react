@@ -85,3 +85,19 @@ declare module "expo-router" {
   export function useLocalSearchParams<T = Record<string, string>>(): T;
   export function useFocusEffect(effect: () => void | (() => void)): void;
 }
+
+declare module "@expo/vector-icons" {
+  import type { ComponentType } from "react";
+  interface IconProps {
+    name: string;
+    size?: number;
+    color?: string;
+    testID?: string;
+    accessibilityLabel?: string;
+    className?: string;
+  }
+  export const Ionicons: ComponentType<IconProps>;
+  export const MaterialIcons: ComponentType<IconProps>;
+  export const Feather: ComponentType<IconProps>;
+}
+

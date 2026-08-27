@@ -110,6 +110,30 @@ export interface ClickHandler {
    * click waited for it to become enabled until the test timed out.
    */
   ambiguousTag?: boolean;
+  /**
+   * The element renders element children and every one of them is textless — an
+   * icon, a spinner — so nothing under it can name it.
+   *
+   * Native only, and it is the same absence twice: an icon-only control is
+   * unaddressable to a spec AND unannounced to a screen reader, so one
+   * accessibilityLabel retires both. Recorded here so the skip's wording and the
+   * a11y finding can agree without either re-deriving it.
+   */
+  iconOnly?: boolean;
+  /**
+   * Literal route paths this handler navigates to — `router.push("/items/new")`.
+   *
+   * The React Native analogue of a link's href, and statically knowable in
+   * exactly the cases that matter. Only LITERALS: a template like
+   * `/items/${'${item.id}'}` names a route the spec cannot predict, so it is
+   * omitted rather than guessed at.
+   *
+   * Two consumers: the emitted spec asserts the resulting pathname, and the
+   * renderRouter context must carry a stub for each target — without one the push
+   * lands on expo-router's injected +not-found and the assertion fails for a
+   * reason that has nothing to do with the component.
+   */
+  pushTargets?: string[];
   pos?: SourcePosition;
 }
 
