@@ -373,3 +373,37 @@ may well return `Promise<Page<Row>>` — and widening it means showing the added
 wrapper preserves the call signature, which there is no type checker here to do.
 
 **Weighted total: unchanged at 60/70.**
+
+
+### Addendum — the native type gate (PR #51)
+
+The `--expo` emitter had no `ts.Program` gate. `emittedTypes.test.ts` imported the
+DOM renderer only, so three of the seven tasks — and the platform scheduled to
+gain four more waves — were checked for syntax and nothing else.
+
+Building it found three defects, two of them on the first run:
+
+- `{...(DEFAULTS as never)}` on **every** component spec. TS2698, so every one
+  failed `tsc --noEmit` in the adopting app. The DOM emitter documented this exact
+  form as a type error in its own RSC branch; the native copy used it one line
+  below a comment about keeping Expo's strict tsconfig green.
+- `ComponentProps<typeof X>` resolving to `unknown` for a props-less component.
+- A route spec referencing `handlers`, which route specs never declare.
+
+**#2 Emitted-artefact correctness — held at 5, third time earned rather than
+carried.** The pattern is now three for three: round 8 closed the assertion side,
+rounds 1–6 found the fixture side, and this found the *buildability* side. Each
+time the score was already 5 and the class had simply not been looked for on that
+surface. That is worth writing down as a caution about the number rather than a
+reason to move it — 5 means "nothing this project knows how to check is wrong",
+and its history is that the checking keeps getting wider.
+
+**#7 Test suite & CI rigor — held at 5.** The gate is a real addition, but the
+honest reading is that its absence was a hole in a dimension already scored 5, so
+filling it restores rather than raises.
+
+The route-guard probe deserves recording on its own: it came back **0 fail** until
+a fixture with the shape existed. A probe that stays green is a coverage gap, not
+a pass — the rule this repo already had, applied to itself and caught.
+
+**Weighted total: unchanged at 60/70.**
