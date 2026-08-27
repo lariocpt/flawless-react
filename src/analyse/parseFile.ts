@@ -286,6 +286,14 @@ function findComponents(sf: ts.SourceFile): ParsedComponentUnit[] {
       continue;
     }
 
+    if (ts.isClassDeclaration(stmt) && stmt.name) {
+      const unit = classComponentUnit(stmt, sf);
+      if (unit) {
+        add(unit);
+        continue;
+      }
+    }
+
     if (ts.isVariableStatement(stmt)) {
       const hasExport = (stmt.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
       for (const decl of stmt.declarationList.declarations) {
@@ -706,4 +714,69 @@ function orderPrimaryFirst(units: ParsedComponentUnit[], filePath: string): void
     units.splice(idx, 1);
     units.unshift(pick);
   }
+}
+
+/**
+ * A React CLASS component, or undefined.
+ *
+ * findComponents handled function declarations and variable statements only, so
+ * `class X extends React.Component` was skipped and parseFile threw "could not
+ * locate a React component" — caught by core.ts as a silent warning and exit 0.
+ * sourceCache has counted an exported class as an export since it was written,
+ * so the two layers disagreed about the same file.
+ *
+ * Detected from EVIDENCE, not a name: it must extend Component or PureComponent
+ * (bare, or through a namespace as `React.Component`) AND its render() must
+ * contain JSX. A class that extends something else is not a React component, and
+ * this refuses to guess that it might be.
+ */
+function classComponentUnit(
+  stmt: ts.ClassDeclaration,
+  sf: ts.SourceFile,
+): ParsedComponentUnit | undefined {
+  if (!stmt.name) return undefined;
+  const base = (stmt.heritageClauses ?? [])
+    .filter((h) => h.token === ts.SyntaxKind.ExtendsKeyword)
+    .flatMap((h) => h.types)[0];
+  if (!base) return undefined;
+  const baseName = ts.isIdentifier(base.expression)
+    ? base.expression.text
+    : ts.isPropertyAccessExpression(base.expression) && ts.isIdentifier(base.expression.name)
+      ? base.expression.name.text
+      : undefined;
+  if (baseName !== "Component" && baseName !== "PureComponent") return undefined;
+
+  const render = stmt.members.find(
+    (m): m is ts.MethodDeclaration =>
+      ts.isMethodDeclaration(m) && ts.isIdentifier(m.name) && m.name.text === "render",
+  );
+  if (!render?.body || !containsJsx(render)) return undefined;
+
+  const mods = ts.getModifiers(stmt) ?? [];
+  // `class X extends Component<Props, State>` — the props type is the FIRST type
+  // argument, which is the class analogue of a function's first parameter.
+  const propsArg = base.typeArguments?.[0];
+  return {
+    componentName: stmt.name.text,
+    // render(), not the class: it is where the JSX is, and every downstream
+    // extractor walks bodyNode looking for exactly that.
+    bodyNode: render,
+    propsTypeNode: propsArg,
+    propsTypeRef: propsArg && ts.isTypeReferenceNode(propsArg) ? propsArg : undefined,
+    propsTypeLiteral: propsArg && ts.isTypeLiteralNode(propsArg) ? propsArg : undefined,
+    // A class reads `this.props.x`. There is no parameter to name and nothing is
+    // destructured, and saying otherwise would have the prop extractors look for
+    // bindings that are not there.
+    paramName: undefined,
+    destructuredProps: [],
+    destructuredAliases: new Map<string, string>(),
+    exportKind: mods.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+      ? "default"
+      : mods.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
+        ? "named"
+        : "none",
+    isAsync: false,
+    wrappers: [],
+    pos: posOf(stmt, sf),
+  };
 }

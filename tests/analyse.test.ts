@@ -316,3 +316,64 @@ describe("extractInteractions", () => {
     }
   });
 });
+
+describe("class components (B-17)", () => {
+  const CLASSES = path.resolve(__dirname, "fixtures/ClassComponents.tsx");
+
+  test("a class extending Component with JSX in render() is found", async () => {
+    const parsed = await parseFile(CLASSES);
+    const names = parsed.components.map((c) => c.componentName).sort();
+    expect(names).toContain("Panel");
+    expect(names).toContain("PurePanel");
+    expect(names).toContain("NamespacedPanel");
+  });
+
+  test("a non-exported class is found, and filtered later like any other", async () => {
+    // specTargets drops exportKind === "none"; parseFile's job is to see it.
+    const parsed = await parseFile(CLASSES);
+    const inner = parsed.components.find((c) => c.componentName === "InnerPanel");
+    expect(inner).toBeDefined();
+    expect(inner?.exportKind).toBe("none");
+  });
+
+  test("export kinds come from the class's own modifiers", async () => {
+    const parsed = await parseFile(CLASSES);
+    const kind = (n: string) => parsed.components.find((c) => c.componentName === n)?.exportKind;
+    expect(kind("Panel")).toBe("named");
+    expect(kind("NamespacedPanel")).toBe("default");
+  });
+
+  test("props come from the heritage type argument, not a parameter", async () => {
+    // `class X extends Component<Props, State>` — the first type argument is the
+    // class analogue of a function's first parameter. A class has no parameter
+    // and destructures nothing; it reads this.props.x.
+    const parsed = await parseFile(CLASSES);
+    const panel = parsed.components.find((c) => c.componentName === "Panel");
+    expect(panel?.propsTypeRef?.typeName.getText()).toBe("PanelProps");
+    expect(panel?.paramName).toBeUndefined();
+    expect(panel?.destructuredProps).toEqual([]);
+  });
+
+  test("the props type resolves through to a real shape", async () => {
+    const tree = await analyse({ entry: CLASSES, depth: 0, includeChildren: false });
+    // analyse() takes the first component; assert on whichever it picked rather
+    // than assuming an order.
+    const all = (await parseFile(CLASSES)).components.map((c) => c.componentName);
+    expect(all.length).toBeGreaterThan(0);
+    expect(tree.entry.propsShape).toEqual({ title: "" });
+  });
+
+  test("a class that extends nothing React-ish is NOT a component", async () => {
+    // The control. Detection is from the base class, not from having a render()
+    // that returns JSX — otherwise any renderer-ish class becomes a component.
+    const parsed = await parseFile(CLASSES);
+    const names = parsed.components.map((c) => c.componentName);
+    expect(names).not.toContain("NotAComponent");
+    expect(names).not.toContain("Derived");
+  });
+
+  test("a class whose render() has no JSX is NOT a component", async () => {
+    const parsed = await parseFile(CLASSES);
+    expect(parsed.components.map((c) => c.componentName)).not.toContain("Headless");
+  });
+});
