@@ -230,7 +230,19 @@ function fixtureValue(
       const r = resolveZodSchemaConst(zi.schemaName, seed, ctx);
       return r === undefined ? undefined : zodResultToValue(r);
     }
-    // A generic instantiation would need type-parameter substitution.
+    // Two generic instantiations whose EMPTY OBJECT is a complete inhabitant,
+    // not a partial one — no substitution needed to know that. `read_by:
+    // Record<string, number>` was enough to bail MessageSummary entirely, and
+    // with it every mock of the three api functions that return one.
+    //
+    // Deliberately just these two. `Pick`/`Omit`/`Readonly<T>` all need the
+    // argument resolved before anything can be said about their members, and a
+    // guess there is the partial fixture this function refuses to produce.
+    if (ts.isIdentifier(node.typeName) && (node.typeArguments?.length ?? 0) > 0) {
+      const g = node.typeName.text;
+      if (g === "Record" || g === "Partial") return {};
+    }
+    // Any other generic instantiation would need type-parameter substitution.
     if ((node.typeArguments?.length ?? 0) > 0) return undefined;
     if (!ts.isIdentifier(node.typeName)) return undefined;
     return fixtureReference(node.typeName.text, ctx);
@@ -324,10 +336,39 @@ function fixtureDecl(
     if (decl.typeParameters?.length) return undefined;
     return fixtureValue(decl.type, decl.name.text, ctx);
   }
-  // `extends` would need the base's members merged in; a partial fixture is
-  // worse than none, so heritage bails until it is resolved for real.
-  if (decl.typeParameters?.length || decl.heritageClauses?.length) return undefined;
-  return fixtureMembers(decl.members, ctx);
+  if (decl.typeParameters?.length) return undefined;
+  const own = fixtureMembers(decl.members, ctx);
+  if (own === undefined) return undefined;
+  if (!decl.heritageClauses?.length) return own;
+  // `interface PollDetail extends PollSummary { … }` — resolve the base and
+  // merge, own members last because they are the more specific.
+  //
+  // This used to bail, on the reasoning that a partial fixture is worse than
+  // none. The reasoning is right and the bail was too wide: a base that DOES
+  // resolve is not partial, it is complete. Seven of the dogfood app's api
+  // functions mocked to `{}` for this, and one of them poisoned a whole screen —
+  // `const [{ poll: p }] = await Promise.all([getPoll(…), …])` bound `p` to
+  // undefined, `p.my_vote_option_id` threw into the catch, and the screen
+  // rendered its error state while the test looked for a row.
+  //
+  // If ANY base fails to resolve the whole thing still bails, which is the
+  // original invariant kept where it belongs.
+  const merged: { [k: string]: PropValue } = {};
+  for (const heritage of decl.heritageClauses) {
+    if (heritage.token !== ts.SyntaxKind.ExtendsKeyword) return undefined;
+    for (const t of heritage.types) {
+      // A heritage entry is an ExpressionWithTypeArguments, NOT a TypeReference
+      // — `ts.isTypeReferenceNode` is false for it however it is cast, so
+      // routing it through fixtureValue silently produced undefined and bailed
+      // every interface with an `extends`. Resolve the name directly.
+      if (!ts.isIdentifier(t.expression) || (t.typeArguments?.length ?? 0) > 0) return undefined;
+      const base = fixtureReference(t.expression.text, ctx);
+      if (base === null || typeof base !== "object" || Array.isArray(base)) return undefined;
+      Object.assign(merged, base);
+    }
+  }
+  if (own === null || typeof own !== "object" || Array.isArray(own)) return undefined;
+  return { ...merged, ...own };
 }
 
 function finalise(p: PartialProps): ExtractedProps {

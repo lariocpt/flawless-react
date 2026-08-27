@@ -180,8 +180,27 @@ export function annotatedReturnValue(
   const { sf, file: declFile, decl: fn } = located;
   const promiseArg = promiseTypeArg(fn.type);
   if (!promiseArg) return undefined;
+  // `Promise<void>` resolves to nothing AND needs nothing: a mock returning
+  // undefined is exactly right, and the caller's "give this a realistic return
+  // value" marker was advice with no work behind it. Reported separately from
+  // "could not infer" so the caller can tell them apart.
+  if (
+    promiseArg.kind === ts.SyntaxKind.VoidKeyword ||
+    promiseArg.kind === ts.SyntaxKind.UndefinedKeyword
+  ) {
+    return VOID_RETURN;
+  }
   return resolveTypeNodeValue(promiseArg, sf, declFile, resolver, cache);
 }
+
+/**
+ * The answer for a function annotated `Promise<void>`.
+ *
+ * A distinct object rather than `undefined`, because undefined already means
+ * "could not be inferred" and the two want different mock bodies and different
+ * markers. Compared by identity — never serialise it.
+ */
+export const VOID_RETURN = Object.freeze({ __flawlessVoid: true }) as unknown as PropValue;
 
 function promiseTypeArg(type: ts.TypeNode | undefined): ts.TypeNode | undefined {
   if (

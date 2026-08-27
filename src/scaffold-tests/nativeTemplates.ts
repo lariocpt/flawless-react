@@ -1,6 +1,7 @@
 import path from "node:path";
+import { collectionRenderingCalls, mountPathCalls } from "../analyse/mountPathCalls.ts";
 import { requiredNativeProviders } from "../analyse/nativeContentModel.ts";
-import { annotatedReturnValue } from "../analyse/resolveDepReturns.ts";
+import { annotatedReturnValue, VOID_RETURN } from "../analyse/resolveDepReturns.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { exportedFunctions } from "../analyse/serverActionReturns.ts";
 import { SourceFileCache } from "../analyse/sourceCache.ts";
@@ -322,12 +323,14 @@ function renderNativeSpec(
   const clicks = info.interactions?.clicks ?? [];
   const providers = requiredNativeProviders(info.hooks ?? []);
   const loadedFixtures: LoadedFixture[] = [];
+  const rejectedFixtures: RejectedFixture[] = [];
   const mocks = networkModuleMocks(
     info,
     fromDir,
     opts.resolver,
     opts.cache,
     loadedFixtures,
+    rejectedFixtures,
     renderedFields,
     todo,
   );
@@ -419,7 +422,7 @@ function renderNativeSpec(
   lines.push(...mountTest(specName, route, providers, fnProps, todo));
   lines.push(...staticTextTests(info));
   lines.push(...interactionTests(clicks, Boolean(route), loadsData, todo));
-  lines.push(...loadedStateTests(loadedFixtures, mocks.length > 0, todo));
+  lines.push(...loadedStateTests(loadedFixtures, rejectedFixtures, mocks.length > 0, todo));
   lines.push("});");
   lines.push("");
   return lines.join("\n");
@@ -840,6 +843,12 @@ function describeHandle(
  * has — the same reason the DOM emitter's allowlist refuses to mock `cn`.
  */
 /** A mocked call whose shape carries a collection, and the one-row fixture for it. */
+/** A collection-returning function that did NOT qualify, and why. */
+export interface RejectedFixture {
+  fn: string;
+  reason: string;
+}
+
 export interface LoadedFixture {
   /** Local name of the mocked function, as the component imports it. */
   fn: string;
@@ -857,11 +866,15 @@ function networkModuleMocks(
   resolver: ModuleResolver,
   cache: SourceFileCache,
   loaded: LoadedFixture[],
+  rejected: RejectedFixture[],
   renderedFields: Set<string>,
   todo: TodoRecorder | undefined,
 ): string[] {
   const fs = require("node:fs") as typeof import("node:fs");
   const out: string[] = [];
+  const self = cache.get(info.filePath);
+  const mountCalls = self ? mountPathCalls(self) : new Set<string>();
+  const renderCalls = self ? collectionRenderingCalls(self) : new Map<string, Set<string>>();
   for (const mi of info.moduleImports ?? []) {
     if (mi.isTypeOnly || !mi.resolvedPath) continue;
     let src: string;
@@ -918,6 +931,13 @@ function networkModuleMocks(
     const bodies = names.map((n) => {
       if (!used.has(n)) return `  ${n}: jest.fn(async () => ({})),`;
       const value = annotatedReturnValue(mi.resolvedPath as string, n, resolver, cache);
+      // Annotated `Promise<void>`: undefined IS the realistic return value, so
+      // no marker. `logout`, `changePassword` and `forgotPassword` in the
+      // dogfood app each carried a TODO telling the reader to invent a shape
+      // for a function that returns nothing.
+      if (value === VOID_RETURN) {
+        return `  ${n}: jest.fn(async () => undefined), /* annotated Promise<void> */`;
+      }
       if (value === undefined) {
         // No resolvable annotation: an honest empty object plus the marker, which
         // is the same bail resolveDepReturns makes rather than inventing a shape.
@@ -927,12 +947,30 @@ function networkModuleMocks(
       // The same shape with ONE row, kept for a loaded-state test. The default
       // mock stays empty so the assertions derived from the initial render hold;
       // this is the declared, deliberate other state.
-      if (hasCollection(value)) {
+      // Only a function this component actually CALLS when it mounts. The
+      // loaded-state test mocks one to return a row and asserts the row shows;
+      // if mounting never reaches the call, the mock is irrelevant and the test
+      // fails on a healthy screen. Eleven of the dogfood app's thirty-one failed
+      // exactly so — `reportJob` is a submit handler's mutation, and
+      // `listBuildingInvitations` sits behind `if (isTrustee)`.
+      const rowFields = renderCalls.get(n);
+      if (hasCollection(value) && !(mountCalls.has(n) && rowFields !== undefined)) {
+        rejected.push({
+          fn: n,
+          reason: !mountCalls.has(n)
+            ? "mounting this screen never calls it — it runs from an event handler, or behind a branch"
+            : "what it returns is never rendered as a list — the screen reads it for something else",
+        });
+      }
+      if (hasCollection(value) && mountCalls.has(n) && rowFields !== undefined) {
         loaded.push({
           fn: n,
           from: spec,
           rows: JSON.stringify(value),
-          witness: displayWitness(value, renderedFields),
+          // The row's OWN fields when this collection is mapped inline, and the
+          // subtree's file-wide set only when it is handed to a FlatList, whose
+          // renderItem is not read here.
+          witness: displayWitness(value, rowFields.size > 0 ? rowFields : renderedFields),
         });
       }
       return `  ${n}: jest.fn(async () => (${JSON.stringify(emptyCollections(value))})), /* shape inferred from its Promise<T> annotation */`;
@@ -1074,10 +1112,23 @@ function displayWitness(value: unknown, rendered: Set<string>): string | undefin
  */
 function loadedStateTests(
   fixtures: LoadedFixture[],
+  rejected: RejectedFixture[],
   mocked: boolean,
   todo: TodoRecorder | undefined,
 ): string[] {
-  if (!mocked || fixtures.length === 0) return [];
+  if (!mocked) return [];
+  if (fixtures.length === 0) {
+    // Nothing qualified. Say which of the three it was, per function, rather
+    // than emitting nothing — the absence of a loaded-state test on a list
+    // screen is the kind of gap that reads as "covered" if it is silent.
+    if (rejected.length === 0) return [];
+    const out: string[] = [];
+    for (const r of rejected.slice(0, 3)) {
+      todo?.("other");
+      out.push(`  test.skip("loaded state via ${r.fn} — ${safeTitle(r.reason)}", () => {});`, "");
+    }
+    return out;
+  }
   const out: string[] = [];
   // ONE recipe per spec, not one per mocked collection. A detail screen mocks
   // half a dozen api functions and the rest are the same recipe with a different
@@ -1093,32 +1144,34 @@ function loadedStateTests(
       );
       continue;
     }
-    // SKIPPED, with the whole recipe, and the reason is worth stating.
+    // A REAL test now, where it used to be a skip carrying a recipe.
     //
-    // The default mock returns empty collections so that every assertion derived
-    // from the initial render holds. This is the other state, and executing it is
-    // where the missing BRANCH coverage lives — 39% on the dogfood app.
+    // The skip existed because enabling it failed on eleven of the dogfood app's
+    // thirty-one screens, and the note here blamed "an external store the
+    // harness does not reach". That was a guess and it was wrong. Three causes,
+    // all visible in the AST and all now filtered on:
     //
-    // Measured rather than assumed: enabled live, this passes on 20 of the app's
-    // 31 screens and fails on 11. The witness is correct (it is taken from the
-    // fields the subtree actually renders as text, not guessed), and the row still
-    // does not appear — because those screens hold their rows in an external
-    // store rather than local state, and the store update does not reach the
-    // render inside the harness. Telling which is which at emit time needs
-    // evidence the analyser does not yet carry.
+    //   the function is never called on mount   `reportJob` is a submit handler
+    //   the call is behind a branch             `if (isTrustee) listBuilding…()`
+    //   what it returns is never rendered       memberships decide a boolean
     //
-    // So: the recipe, ready to enable, rather than a test that fails for a reason
-    // that is neither the app's nor the tool's. Deleting `.skip` is the whole
-    // change on a locally-stateful screen.
-    todo?.("other");
+    // plus one that was not a filter but a defect: a SIBLING call on the same
+    // mount path whose shape could not be inferred mocked to `{}`, so
+    // `const [{ poll: p }] = await Promise.all([getPoll(…), …])` bound p to
+    // undefined, `p.my_vote_option_id` threw into the screen's own catch, and
+    // the error state rendered while the test looked for a row. That is fixed at
+    // the source — interface heritage and Record<K,V> resolve now — and the
+    // dogfood app has no uninferred api shapes left.
+    //
+    // Fourteen screens qualify and all fourteen pass. The seventeen that do not
+    // qualify get the skip below, which names which of the three it was.
     out.push(
-      `  test.skip("renders the loaded state when ${f.fn} returns a row — enable by removing .skip; ` +
-        `holds where the screen keeps its rows in local state", async () => {`,
+      `  test("renders the loaded state when ${f.fn} returns a row", async () => {`,
       `    (${f.fn} as unknown as jest.Mock).mockResolvedValue(${f.rows});`,
       "    mount();",
-      "    // A synthesised value from the fixture, taken from a field this screen's",
-      "    // own subtree renders as text — so finding it proves the ROW rendered,",
-      "    // not that some other copy happened to match.",
+      "    // The witness is a synthesised value from a field THIS list's row",
+      "    // renders as a JSX child — so finding it proves the row rendered,",
+      "    // rather than that some other element in the file happened to match.",
       `    expect((await screen.findAllByText(${JSON.stringify(f.witness)}, { exact: false })).length).toBeGreaterThan(0);`,
       "  });",
       "",
