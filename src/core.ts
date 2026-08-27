@@ -3,6 +3,7 @@ import path from "node:path";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import { outDirRel } from "./emitPaths.ts";
+import { detectExpo } from "./expo/detect.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
@@ -23,6 +24,7 @@ import { NEXT_SCRIPT, VITEST_CONFIG } from "./suiteScripts.ts";
 import { findTask, TASKS } from "./tasks/index.ts";
 import type {
   ComponentTree,
+  ExpoContext,
   HeapMode,
   NextjsApiRoute,
   NextjsContext,
@@ -58,6 +60,8 @@ export interface CoreOptions {
   inlineSummary?: boolean;
   /** Next.js project root; enables Next.js mode. */
   nextjs?: string;
+  /** Expo project root; enables Expo mode. Mutually exclusive with `nextjs`. */
+  expo?: string;
   swaggerUrl?: string;
   colocate?: boolean;
   runTests?: boolean;
@@ -239,10 +243,35 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const taskIds: TaskId[] =
     opts.taskIds === undefined || opts.taskIds.length === 0 ? ["perf-harness"] : opts.taskIds;
 
+  let expoCtx: ExpoContext | undefined;
   let nextCtx: NextjsContext | undefined;
   let liveSpec: unknown;
   const providerExplicit = opts.provider !== undefined;
   let providerOverride = opts.provider;
+
+  // Belt and braces: the CLI already refuses both flags, but runCore is a public
+  // API (src/index.ts) and a programmatic caller reaches here without parseArgs.
+  if (opts.nextjs !== undefined && opts.expo !== undefined) {
+    throw new UsageError(
+      "nextjs and expo are mutually exclusive: a project is a Next.js app or an Expo app, not both.",
+    );
+  }
+
+  if (opts.expo !== undefined) {
+    expoCtx = await detectExpo(opts.expo); // throws UsageError on bad input
+    if (outDir === undefined) outDir = path.join(expoCtx.root, "flawless");
+    if (pattern === undefined && expoCtx.routerRoot !== undefined) {
+      pattern = path.join(expoCtx.routerRoot, "**/*.tsx");
+      log(`expo: no entry passed — defaulting to ${path.relative(expoCtx.root, pattern)}`);
+    }
+    log(
+      `expo: ${expoCtx.root} (sdk=${expoCtx.sdkMajor ?? "unknown"}` +
+        `, expo-router=${expoCtx.routerMajor ?? "none"}` +
+        `, react-compiler=${expoCtx.reactCompiler}` +
+        `, nativewind=${expoCtx.nativewind}` +
+        `, web-port=${expoCtx.webPort})`,
+    );
+  }
 
   if (opts.nextjs !== undefined) {
     nextCtx = await detectNextjs(opts.nextjs); // throws UsageError on bad input
@@ -390,6 +419,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     apiSpec: opts.apiSpec,
     inlineSummary: opts.inlineSummary ?? true,
     nextjs: nextCtx,
+    ...(expoCtx ? { expo: expoCtx } : {}),
     colocate: opts.colocate ?? false,
     selectedTasks: taskIds,
     // Changed-mode reaches the tasks so perf-harness can keep an existing

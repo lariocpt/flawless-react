@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { outDirRel, underOutDir } from "../emitPaths.ts";
+import { expoNotImplemented } from "../expo/refusal.ts";
 import { findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
 import { ensureParamDefaults } from "./e2eRoutes.ts";
@@ -18,6 +19,7 @@ export const loadPipes: Task = {
   description: "Load-test pipes for analysed routes + their API calls (crust)",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
+    if (ctx.expo) return expoNotImplemented("load", "wave 7 — API-only load pipes");
     if (!ctx.nextjs) {
       return {
         id: "load",
