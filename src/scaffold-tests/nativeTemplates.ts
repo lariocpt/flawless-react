@@ -321,7 +321,20 @@ function renderNativeSpec(
 ): string {
   const route = routeOf(info.filePath, opts.expo);
   const layout = layoutRouteOf(info.filePath, opts.expo);
-  const importPath = relativeToEmitted(fromDir, info.filePath).replace(/\.(tsx|jsx|ts|js)$/, "");
+  // Native read renderMode nowhere at all — grep was empty — so an undecidable
+  // render reached the emitter as though it were an ordinary one and produced a
+  // spec driving controls from a branch the defaults never take. A layout is
+  // exempt: it is mounted through its own navigator with a synthesised child and
+  // never described from its own render.
+  if (info.renderUndecidable === true && !layout) {
+    todo?.("other");
+    return undecidableNativeSpec(
+      specName,
+      info.exportKind === "default" ? specName : `{ ${info.componentName} as ${specName} }`,
+      importPathOf(fromDir, info),
+    );
+  }
+  const importPath = importPathOf(fromDir, info);
   const imported =
     info.exportKind === "default" ? specName : `{ ${info.componentName} as ${specName} }`;
   const defaults = synthesiseDefaults(info);
@@ -1269,4 +1282,36 @@ function loadedStateTests(
     );
   }
   return out;
+}
+
+/** The spec's import path for a component, relative to where the spec is written. */
+function importPathOf(fromDir: string, info: { filePath: string }): string {
+  return relativeToEmitted(fromDir, info.filePath).replace(/\.(tsx|jsx|ts|js)$/, "");
+}
+
+/**
+ * The native peer of undecidableRenderSpec.
+ *
+ * Same reasoning: with no decidable initial render there is nothing to assert
+ * that is not a claim about a branch the defaults may never take. On this plane
+ * the mount test is `expect(screen.toJSON()).not.toBeNull()`, which is exactly
+ * the assertion that fails on a boundary rendering its children — so emitting it
+ * would be the false-red half of the same defect.
+ */
+function undecidableNativeSpec(specName: string, imported: string, importPath: string): string {
+  return `// @flawless-generated
+// Component — regenerate with --force.
+
+import ${imported} from ${JSON.stringify(importPath)};
+
+void ${specName};
+
+// render() branches on a condition the analyser could not decide, and every
+// branch returns content — so there is no single render to describe.
+//
+// To make it assertable, give the deciding value a knowable initial state (a
+// useState with a literal, or a class \`state = { … }\` field this can read), or
+// pass it as a prop the spec controls.
+test.skip("${specName} — render() branches on a condition this analysis could not decide (class state, or a value from a hook it does not follow); no render can be described", () => {});
+`;
 }

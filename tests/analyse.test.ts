@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { extractHooks } from "../src/analyse/extractHooks.ts";
 import { extractProps } from "../src/analyse/extractProps.ts";
@@ -375,5 +377,86 @@ describe("class components (B-17)", () => {
   test("a class whose render() has no JSX is NOT a component", async () => {
     const parsed = await parseFile(CLASSES);
     expect(parsed.components.map((c) => c.componentName)).not.toContain("Headless");
+  });
+});
+
+describe("an undecidable render is recorded, not guessed at", () => {
+  const BOUNDARY = path.resolve(__dirname, "fixtures/ClassBoundary.tsx");
+  const CLASSES = path.resolve(__dirname, "fixtures/ClassComponents.tsx");
+
+  test("renderUndecidable is set when no branch can be decided", async () => {
+    // `if (this.state.hasError)` — the analyser cannot value this.state, and
+    // BOTH branches return content, so there is no render to describe. README
+    // has always said such a component "produces no description at all";
+    // nothing recorded it until now.
+    const tree = await analyse({ entry: BOUNDARY, depth: 0, includeChildren: false });
+    expect(tree.entry.renderUndecidable).toBe(true);
+  });
+
+  test("and NOT set when the render is unconditional", async () => {
+    // The control. Without it this is a field that is always true.
+    const tree = await analyse({ entry: CLASSES, depth: 0, includeChildren: false });
+    expect(tree.entry.renderUndecidable).toBeUndefined();
+  });
+
+  test("clicks harvested from the whole-body fallback are marked conditional", async () => {
+    // With no decidable render the walk falls back to the whole body. `initial &&`
+    // short-circuited, so those clicks arrived UNMARKED and read as certainly
+    // present — which is how a spec came to drive a button inside a branch the
+    // defaults never take.
+    const tree = await analyse({ entry: BOUNDARY, depth: 0, includeChildren: false });
+    const clicks = tree.entry.interactions?.clicks ?? [];
+    expect(clicks.length).toBeGreaterThan(0);
+    expect(clicks.every((c) => c.conditional === true)).toBe(true);
+  });
+
+  test("componentDidCatch's logging is visible, so the spec does not demand a clean console", async () => {
+    // detectSelfLogging reads bodyNode, which for a class is render() — so an
+    // error boundary's console.error was invisible and the emitted spec asserted
+    // expect(errors).toEqual([]) against a component whose contract is to log.
+    const tree = await analyse({ entry: BOUNDARY, depth: 0, includeChildren: false });
+    expect(tree.entry.logsErrors).toBeDefined();
+  });
+
+  test("useActionState's initial state is read from its second argument", async () => {
+    // useReducer's shape exactly. Without it `state` was opaque, every guard on
+    // it was undecidable, and two correct React 19 form components lost their
+    // whole spec to a refusal that was simply wrong.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "uas-"));
+    const f = path.join(dir, "Form.tsx");
+    writeFileSync(
+      f,
+      `import { useActionState } from "react";
+export function Form() {
+  const [state, action] = useActionState(async () => ({ ok: true }), { ok: false });
+  void action;
+  if (state.ok) return <p>done</p>;
+  return <form><button type="submit">Send</button></form>;
+}
+`,
+    );
+    const tree = await analyse({ entry: f, depth: 0, includeChildren: false });
+    // state.ok is false at defaults, so the guard IS decidable and the form is
+    // the render — no refusal.
+    expect(tree.entry.renderUndecidable).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a base class that is not react's is not a component", async () => {
+    // The detection comment claimed evidence; the code matched on the NAME, so a
+    // local `class Component {}` made `class Sneaky extends Component` a React
+    // component.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "shadow-"));
+    const f = path.join(dir, "Shadow.tsx");
+    writeFileSync(
+      f,
+      `class Component { render() { return null; } }
+export class Sneaky extends Component {
+  render() { return <div>not react</div>; }
+}
+`,
+    );
+    await expect(parseFile(f)).rejects.toThrow(/could not locate a React component/);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

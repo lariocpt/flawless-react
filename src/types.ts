@@ -238,7 +238,7 @@ export interface PropUsage {
   member?: string;
 }
 
-export type StateKind = "useState" | "useReducer" | "useRef";
+export type StateKind = "useState" | "useReducer" | "useRef" | "useActionState";
 
 export interface SetterCallSite {
   pos: SourcePosition;
@@ -520,6 +520,21 @@ export interface ComponentInfo {
    * synthesise, it may well render nothing at all.
    */
   renderGuarded?: boolean;
+  /**
+   * renderPath could not decide WHICH branch renders, and the branches return
+   * content rather than nothing — so there is no render to describe at all.
+   *
+   * Distinct from `renderGuarded`, which means "a render was found, and an
+   * undecidable early return stands in front of it". This is the case where no
+   * render was found: `if (this.state.error) return <Fallback/>; return children;`
+   * is the canonical shape, and it arrives on every class component whose render
+   * branches on state, and on any function with an opaque guard returning content.
+   *
+   * README has always said such a component "produces no description at all".
+   * Nothing recorded that, so the emitters harvested the fallback branch and
+   * wrote assertions against markup the defaults never render.
+   */
+  renderUndecidable?: boolean;
   /** A sentinel child passed to this component appears in the markup. */
   childrenFlow?: boolean;
   /** A className passed to this component lands on some rendered element. */
