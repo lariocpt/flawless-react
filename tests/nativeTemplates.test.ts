@@ -5,6 +5,8 @@
 // end-to-end run, or not at all. The end-to-end run stays (nativeExecution.test.ts
 // proves the output RUNS); this proves the output is what it should be.
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { analyseFile, createAnalyseSharedContext } from "../src/analyse/index.ts";
@@ -30,6 +32,11 @@ async function build(): Promise<void> {
     "app/(tabs)/index.tsx",
     "app/login.tsx",
     "app/items/[id].tsx",
+    // Quotes and slashes in copy, testIDs and placeholders. Without this the
+    // "every emitted spec parses" test below passed over a fixture too clean to
+    // exercise the escaping — and the tool was writing files jest could not
+    // collect.
+    "app/hostile.tsx",
     "components/icon.tsx",
   ]) {
     trees.push(
@@ -207,5 +214,73 @@ describe("the invariants a native spec has to hold", () => {
     // as "Cannot use import statement outside a module" from inside a dependency.
     expect(cfg).toContain("throw new Error");
     expect(cfg).toContain("refusing to guess");
+  });
+});
+
+describe("defects the production-readiness review found", () => {
+  test("a file that does not import `View` still has its interactions harvested", async () => {
+    // The dialect was probed as hostTag("View")?.dialect === "native", which is
+    // only true when the file imports View UNDER THAT EXACT LOCAL NAME. Every
+    // `import { Pressable, Text }` file answered "dom", so onPress matched
+    // nothing and clicks came back EMPTY — a spec with a mount assertion, no
+    // interaction tests, and NO SKIP naming the gap. Green, touching nothing,
+    // silent about it, on the commonest file shape in a React Native app.
+    const { analyseFile } = await import("../src/analyse/index.ts");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-noview-"));
+    const f = path.join(dir, "Row.tsx");
+    writeFileSync(
+      f,
+      'import { Pressable, Text } from "react-native";\n' +
+        "export default function Row({ onPress }: { onPress: () => void }) {\n" +
+        '  return (<Pressable onPress={onPress} testID="go"><Text>Continue</Text></Pressable>);\n' +
+        "}\n",
+    );
+    const trees = await analyseFile({ entry: f, depth: 0, includeChildren: false });
+    const info = trees[0]?.entry;
+    expect(info?.hostDialect).toBe("native");
+    expect(info?.interactions?.clicks).toHaveLength(1);
+    expect(info?.interactions?.clicks[0]?.hints.testid).toBe("go");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("quotes and slashes in app copy cannot break the emitted spec", async () => {
+    await build();
+    const s = get("unit/HostileScreen.flawless.test.tsx");
+    // A `"` in a testID or label ends the test title's string; a `/` in a partial
+    // label closes the regex literal. Either takes the WHOLE FILE out of the run,
+    // and the fixture that existed before had neither character in it.
+    expect(s).not.toMatch(/test(\.skip)?\("[^"\n]*"[^"\n]*"[^)]*\)/);
+    for (const m of s.matchAll(/getAllByText\((\/[^)]*\/)\)/g)) {
+      const body = (m[1] as string).slice(1, -1);
+      expect(() => new RegExp(body)).not.toThrow();
+      // An unescaped `/` inside the literal is the specific failure.
+      expect(body.replace(/\\\//g, "")).not.toContain("/");
+    }
+  });
+
+  test("an await never lands in a non-async callback", async () => {
+    await build();
+    for (const [rel, content] of files) {
+      if (!rel.endsWith(".tsx")) continue;
+      // `(await …)[0]` needs the parens for precedence, and the isAsync check
+      // that decides whether the callback is `async` missed that form — emitting
+      // a SyntaxError that took the whole suite file out.
+      for (const block of content.split(/\n {2}test(?:\.skip)?\(/).slice(1)) {
+        const body = block.slice(0, block.indexOf("\n  });"));
+        if (!/\bawait\b/.test(body)) continue;
+        expect(`${rel}:${body.split("\n")[0]?.includes("async")}`).toBe(`${rel}:true`);
+      }
+    }
+  });
+
+  test("the mock keeps the shape but empties the collections", async () => {
+    await build();
+    const s = get("unit/ItemsTab.flawless.test.tsx");
+    // The SHAPE has to be real, or `const { items } = await listItems()` binds
+    // undefined and the next `items.length` throws into the app's ErrorBoundary.
+    // The ARRAYS have to be empty, or the component flips into its loaded branch
+    // and every assertion the analyser derived from the INITIAL render is
+    // describing a screen that is no longer there.
+    expect(s).toMatch(/listItems: jest\.fn\(async \(\) => \(\{"items":\[\]\}\)\)/);
   });
 });
