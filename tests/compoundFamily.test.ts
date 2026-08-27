@@ -338,6 +338,58 @@ describe("compound part specs mount inside their family", () => {
     expect(spec).not.toContain("TODO(flawless)");
   });
 
+  test("the assertion reads BOTH portal surfaces — screen as well as baseElement", () => {
+    // baseElement alone is one witness of a portal. screen is the query the
+    // rest of the emitted suite uses, and it is bound to document.body, so a
+    // part that renders through a portal is visible to it while a part that
+    // renders nowhere is visible to neither. Asserting both is what the B-2
+    // spec asked for; only baseElement shipped.
+    const spec = specFor(part("DialogHeader", FAMILY));
+    expect(spec).toContain('import { render, screen } from "@testing-library/react"');
+    // getAllByText, not getByText: getByText also demands the child appear
+    // exactly once, and real primitives duplicate it — a radix Select mounted
+    // without its Trigger renders a mirror <option>. getAllByText still throws
+    // on zero matches, so a part that renders nothing is still caught.
+    expect(spec).toContain(
+      'expect(screen.getAllByText("flawless-slot").length).toBeGreaterThan(0)',
+    );
+    expect(spec).not.toContain("getByText");
+  });
+
+  test("a childless spec imports no screen it never uses", () => {
+    // The childless branch has no slot text to query, so it does not use
+    // screen. Importing it anyway would emit an unused import into every such
+    // spec — biome's noUnusedImports is an error in a generated suite.
+    const spec = specFor(part("DialogOverlay", FAMILY, { acceptsChildren: false }));
+    expect(spec).toContain('import { render } from "@testing-library/react"');
+    expect(spec).not.toContain("screen");
+  });
+
+  test("a part that takes no children still asserts the mount produced DOM", () => {
+    // The whole assertion for a childless part used to be
+    // `expect(() => render(...)).not.toThrow()`, which a part rendering null
+    // inside a working Root satisfies just as well as a real one. Counting
+    // elements under baseElement catches that: render() always appends its own
+    // container div, so >1 means the part (or its portal) actually rendered.
+    const spec = specFor(part("DialogOverlay", FAMILY, { acceptsChildren: false }));
+    expect(spec).not.toContain("not.toThrow()");
+    expect(spec).toContain('expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1)');
+  });
+
+  test("a childless trigger mounts under a Root that contributes no DOM of its own", () => {
+    // Where the count assertion actually bites. A Root is a context provider
+    // and renders nothing, so a trigger that rendered null leaves the document
+    // at just render()'s own container div and the spec goes red. Wrapping in
+    // a Content sibling — the "other" shape — would supply that DOM instead,
+    // which is why this shape is pinned separately.
+    const spec = specFor(
+      part("DialogTrigger", { ...FAMILY, part: "trigger" }, { acceptsChildren: false }),
+    );
+    expect(spec).toContain("<Dialog>");
+    expect(spec).not.toContain("<DialogContent>");
+    expect(spec).toContain('expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1)');
+  });
+
   test("a trigger mounts inside a CLOSED Root — it is the part that shows closed", () => {
     const spec = specFor(part("DialogTrigger", { ...FAMILY, part: "trigger" }));
     expect(spec).toContain("<Dialog>");
@@ -418,7 +470,11 @@ describe("the host wraps family parts instead of excluding them", () => {
       report: false,
     });
     const registry = files.find((f) => f.relPath === "host/registry.ts")?.content ?? "";
-    expect(registry).toContain("COMPOUND_WRAP");
+    // No COMPOUND_WRAP table. It was emitted as a reader's aid, but nothing
+    // imports it — main.tsx pulls REGISTRY, FN_PROPS and WRAP_IN only — so it
+    // was dead code in every generated suite, and the composed REGISTRY entry
+    // below already shows a reader which wrapper the part mounted inside.
+    expect(registry).not.toContain("COMPOUND_WRAP");
     // Aliased imports: the Root may itself be a registry entry imported under
     // its own name from the same module — unaliased would collide.
     expect(registry).toContain("Dialog as DialogHeader__Root");
@@ -428,5 +484,17 @@ describe("the host wraps family parts instead of excluding them", () => {
     expect(registry).toContain("createElement(DialogHeader__Content");
     // The part mounts through its wrapped entry, so it must be IN the registry.
     expect(registry).toMatch(/"DialogHeader":/);
+
+    // "main.tsx stays untouched" is half this test's title, and it asserted
+    // nothing about main.tsx. The composition lives entirely in the
+    // regenerated registry, so the write-once host keeps its three spreads and
+    // gains no compound-specific import or table.
+    const main = files.find((f) => f.relPath === "host/main.tsx")?.content ?? "";
+    expect(main).not.toBe("");
+    expect(main).toContain(
+      'import { type Component, FN_PROPS, REGISTRY, WRAP_IN } from "./registry"',
+    );
+    expect(main).not.toContain("COMPOUND_WRAP");
+    expect(main).not.toContain("DialogHeader");
   });
 });

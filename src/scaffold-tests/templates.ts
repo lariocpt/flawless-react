@@ -954,7 +954,10 @@ test("${name} is exported as a component", () => {
  * sites do: the Trigger inside a closed Root (the state where a trigger is
  * visible), everything else inside <Root open> — with the Content sibling
  * in between for parts that live inside the popup. Portal content lands
- * outside the render container, so assertions read baseElement.
+ * outside the render container, so assertions read the whole document rather
+ * than the container: through screen and baseElement both where the part takes
+ * children and there is slot text to look for, and by counting what the mount
+ * put in the document where it does not.
  */
 function compoundPartSpec(
   info: ComponentInfo,
@@ -985,20 +988,50 @@ function compoundPartSpec(
       ? `<${family.root}${open}><${family.content}>${partJsx}</${family.content}></${family.root}>`
       : `<${family.root}${open}>${partJsx}</${family.root}>`;
 
+  // Both portal surfaces. screen is bound to document.body, so it sees a part
+  // that rendered through a portal and a part that rendered inline alike;
+  // baseElement is the same document from the render result's side. A part
+  // that rendered nowhere satisfies neither.
+  //
+  // getAllByText, not getByText: getByText additionally demands the child appear
+  // EXACTLY once, which is not a property of the part under test. Real
+  // primitives duplicate it — a radix Select mounted without its Trigger renders
+  // a mirror <option> for the bubble select, so getByText made the emitted
+  // SelectItem spec red against a perfectly healthy component. getAllByText
+  // still throws "Unable to find an element with the text" on zero matches, so
+  // a part that renders nothing is still caught.
+  //
+  // With no child to witness, count elements instead: render() always appends
+  // its own container div to baseElement, so >1 means the composed mount put
+  // something in the document. A bare not.toThrow() did not even ask that.
+  //
+  // Honest about its reach: a Root is a context provider and renders no DOM of
+  // its own, so for a trigger or the content part this fails when the part
+  // renders nothing. An "other" part is wrapped in the Content sibling too,
+  // and that sibling's own DOM satisfies the count on its own — there the
+  // assertion witnesses the mount, not the part.
   const body = child
     ? `  const { baseElement } = render(${wrapped});
+  expect(screen.getAllByText("flawless-slot").length).toBeGreaterThan(0);
   expect(baseElement.textContent).toContain("flawless-slot");`
-    : `  expect(() => render(${wrapped})).not.toThrow();`;
+    : `  const { baseElement } = render(${wrapped});
+  expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1);`;
 
   return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
-import { render } from "@testing-library/react";
+import { render${child ? ", screen" : ""} } from "@testing-library/react";
 import type * as React from "react";
 ${mockBlock}${emitComponentImport(info, importPath)}
 ${wrapImport}
 // ${name} ${note}
 // Its own file exports the family, so the spec mounts the part the way call
-// sites do instead of skipping. Portal content lands outside the container —
-// assertions read baseElement.
+// sites do instead of skipping. Portal content lands outside the container, so
+${
+  child
+    ? "// the assertions read the whole document — via screen and baseElement."
+    : `// the assertion reads the whole document. This part takes no children, so
+// there is no slot text to look for: it asserts the mount put elements in the
+// document at all.`
+}
 const DEFAULTS: Record<string, unknown> = ${JSON.stringify(synthesiseDefaults(info))};
 
 test("${name} mounts inside its family wrapper", () => {

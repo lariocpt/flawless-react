@@ -665,18 +665,6 @@ function hostRegistry(flat: FlatComponent[]): string {
     })
     .join(NL);
 
-  const compoundWrap = sorted
-    .map((c) => ({ name: c.specName, fam: wrappedOf(c) }))
-    .filter((e) => e.fam !== undefined)
-    .map(
-      (e) =>
-        `  ${JSON.stringify(e.name)}: ${JSON.stringify({
-          root: e.fam?.root,
-          ...(e.fam?.part === "other" && e.fam.content ? { content: e.fam.content } : {}),
-        })},`,
-    )
-    .join(NL);
-
   // Function props cannot cross page.evaluate's structured clone, so a spec's
   // DEFAULTS can never carry one. The component then calls undefined: AuthError
   // renders <Button onClick={reset}> and threw the moment the click landed. The
@@ -717,15 +705,6 @@ ${fnProps}
 /** Ancestors HTML requires around a component's root tag, outermost first. */
 export const WRAP_IN: Record<string, string[]> = {
 ${wrapIn}
-};
-
-/**
- * Compound parts mounted through a composed family wrapper (the REGISTRY
- * entry above already applies it) — recorded here so a reader can see WHICH
- * wrapper a part profile ran inside.
- */
-export const COMPOUND_WRAP: Record<string, { root: string; content?: string }> = {
-${compoundWrap}
 };
 `;
 }

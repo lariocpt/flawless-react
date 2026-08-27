@@ -39,6 +39,14 @@ export function DialogContent({ children }: { children?: React.ReactNode }) {
 export function DialogHeader({ children }: { children?: React.ReactNode }) {
   return <DialogPrimitive.Title>{children}</DialogPrimitive.Title>;
 }
+
+export function DialogOverlay() {
+  return <DialogPrimitive.Overlay />;
+}
+
+export function DialogDismiss() {
+  return <DialogPrimitive.Trigger />;
+}
 `;
 
 /**
@@ -75,7 +83,19 @@ exports.Overlay = function Overlay(props) {
 exports.Content = function Content({ children, ...props }) {
   const ctx = useCtx("Content");
   if (!ctx.open) return null;
-  return React.createElement("div", { role: "dialog", ...props }, children);
+  // Renders the child TWICE, on purpose. Real primitives do: a radix Select
+  // mounted without its Trigger renders a mirror <option> for the bubble
+  // select, and radix Tooltip 1.0.x renders children again inside a
+  // VisuallyHidden node. getByText throws on multiple matches, so an emitted
+  // assertion built on it goes red against a perfectly healthy component —
+  // which is exactly what shipped until the review caught it. Duplicating here
+  // is what keeps this gate able to see that class at all.
+  return React.createElement(
+    "div",
+    { role: "dialog", ...props },
+    children,
+    React.createElement("span", { hidden: true }, children),
+  );
 };
 exports.Title = function Title({ children, ...props }) {
   useCtx("Title");
@@ -89,6 +109,26 @@ import { DialogHeader } from "../../src/dialog";
 
 test("a bare part outside its Root", () => {
   render(<DialogHeader>bare</DialogHeader>);
+});
+`;
+
+// The childless branch's assertion, applied to a part that renders nothing.
+// A trigger's wrapper is a bare <Root> — a context provider that renders no DOM
+// of its own — so the only element left under baseElement is render()'s own
+// container div and the count is 1. If this control ever goes GREEN, the
+// assertion the generator emits for every childless part has stopped meaning
+// anything, and DialogDismiss passing below proves nothing.
+const NULL_PART_CONTROL = `import { test, expect } from "vitest";
+import { render } from "@testing-library/react";
+import { Dialog } from "../../src/dialog";
+
+function NullPart() {
+  return null;
+}
+
+test("a childless part that renders nothing", () => {
+  const { baseElement } = render(<Dialog><NullPart /></Dialog>);
+  expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1);
 });
 `;
 
@@ -150,6 +190,14 @@ describe("family-wrapped compound specs, executed", () => {
     const triggerSpec = readFileSync(path.join(outDir, "unit", "DialogTrigger.test.tsx"), "utf8");
     expect(triggerSpec).toContain("<Dialog>");
     expect(triggerSpec).not.toContain("<Dialog open>");
+    // A part taking no children takes the other emission branch, which has no
+    // child text to witness and counts document elements instead. Pin that the
+    // branch was actually taken, so the run below is executing it.
+    const overlaySpec = readFileSync(path.join(outDir, "unit", "DialogOverlay.test.tsx"), "utf8");
+    expect(overlaySpec).toContain(
+      'expect(baseElement.querySelectorAll("*").length).toBeGreaterThan(1)',
+    );
+    expect(overlaySpec).not.toContain("flawless-slot");
 
     const install = Bun.spawn(["bun", "add", "-d", ...suitePins()], {
       cwd: app,
@@ -190,14 +238,19 @@ describe("family-wrapped compound specs, executed", () => {
       return { code, output: out + err };
     };
 
-    // The three wrapped part specs, green against the throwing primitive.
-    // (The Root's OWN spec is out of scope: a context-provider Root with no
-    // children legitimately renders nothing, and its default smoke spec is a
-    // pre-existing question B-2 does not touch.)
+    // The five wrapped part specs, green against the throwing primitive.
+    // DialogOverlay and DialogDismiss take no children and so exercise the
+    // other emission branch; DialogDismiss is a trigger, whose wrapper is a
+    // bare Root that renders no DOM, which is the shape where that branch's
+    // count assertion can actually fail. (The Root's OWN spec is out of scope:
+    // a context-provider Root with no children legitimately renders nothing,
+    // and its default smoke spec is a pre-existing question B-2 does not touch.)
     const generated = await vitest(
       "unit/DialogHeader.test.tsx",
       "unit/DialogTrigger.test.tsx",
       "unit/DialogContent.test.tsx",
+      "unit/DialogOverlay.test.tsx",
+      "unit/DialogDismiss.test.tsx",
     );
     if (generated.code !== 0) console.error(generated.output);
     expect(generated.code).toBe(0);
@@ -210,5 +263,14 @@ describe("family-wrapped compound specs, executed", () => {
     const control = await vitest("unit/zBareControl.test.tsx");
     expect(control.code).not.toBe(0);
     expect(control.output).toContain("DialogContext missing");
+
+    // Second control, for the childless branch: the same assertion the
+    // generator emits for DialogDismiss, applied to a part that renders
+    // nothing, must be RED. Green here would mean the count assertion passes
+    // whatever the part does, and DialogDismiss's green above is worth nothing.
+    writeFileSync(path.join(outDir, "unit", "zNullPartControl.test.tsx"), NULL_PART_CONTROL);
+    const nullPart = await vitest("unit/zNullPartControl.test.tsx");
+    expect(nullPart.code).not.toBe(0);
+    expect(nullPart.output).toContain("to be greater than 1");
   }, 120_000);
 });
