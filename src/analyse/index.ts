@@ -182,6 +182,7 @@ async function analyseOne(
     renderEnv,
     tagRootTags,
     hostTag,
+    hostDialect,
   );
   const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
   const flows = extractFlows(unit.bodyNode, renderEnv, hostTag);

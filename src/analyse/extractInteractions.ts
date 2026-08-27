@@ -12,7 +12,8 @@ import type {
 } from "../types.ts";
 import { findDisclosures } from "./extractDisclosures.ts";
 import { domOnlyResolver, type HostTagResolver } from "./hostTag.ts";
-import { TEXTLESS_ELEMENTS } from "./nativeProps.ts";
+import type { HostDialect } from "./nativeDialect.ts";
+import { NATIVE_TAG_TO_ROLE, TEXTLESS_ELEMENTS } from "./nativeProps.ts";
 import { posOf } from "./pos.ts";
 import {
   emptyEnv,
@@ -52,6 +53,12 @@ export function extractInteractions(
   tagRootTags: Map<string, string> = new Map(),
   /** Which tags are host elements. Defaults to the DOM rule, so web is unchanged. */
   hostTag: HostTagResolver = domOnlyResolver,
+  /**
+   * The file's element vocabulary, decided by detectHostDialect from its whole
+   * import list. Passed rather than probed: no single tag name is present in
+   * every React Native file.
+   */
+  dialect: HostDialect = "dom",
 ): InteractionInfo {
   // Handler props are function-typed, which extractProps cannot synthesise and
   // routes to unresolvedProps. Union both so the classifier sees them.
@@ -59,9 +66,20 @@ export function extractInteractions(
   const clicks: ClickHandler[] = [];
   const forms: FormInfo[] = [];
 
-  // The dialect, asked once. "View" is the cheapest probe that is true for every
-  // React Native file and false for every DOM one.
-  const native = hostTag("View")?.dialect === "native";
+  // The dialect, taken from the caller.
+  //
+  // This was `hostTag("View")?.dialect === "native"`, which is only true when the
+  // file imports View UNDER THAT EXACT LOCAL NAME. `import { Pressable, Text }`,
+  // `import { View as Box }` and `import * as RN` all answered "dom", so the DOM
+  // EVENT_PATTERN was used, onPress matched nothing, and clicks came back EMPTY —
+  // producing a spec with a mount assertion, no interaction tests, and NO SKIP
+  // naming the gap. Green, touching nothing, silent about it: the exact failure
+  // this tool exists to refuse, on the commonest file shape in a React Native app.
+  //
+  // detectHostDialect already answers this correctly from the file's whole import
+  // list, and analyse/index.ts computes it one line before building the resolver.
+  // It just was not passed.
+  const native = dialect === "native";
   const eventPattern = native ? NATIVE_EVENT_PATTERN : EVENT_PATTERN;
 
   /**
@@ -130,6 +148,28 @@ export function extractInteractions(
    * than half-matched.
    */
   const NAV_METHODS = new Set(["push", "replace", "navigate"]);
+  /**
+   * Locals bound from expo-router's useRouter(), so a `.push` on anything else
+   * is not read as navigation. `const router = useRouter()` is the only shape
+   * this recognises; anything less direct bails rather than guesses.
+   */
+  const routerNames = new Set<string>();
+  {
+    const findRouters = (n: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(n) &&
+        ts.isIdentifier(n.name) &&
+        n.initializer &&
+        ts.isCallExpression(n.initializer) &&
+        ts.isIdentifier(n.initializer.expression) &&
+        n.initializer.expression.text === "useRouter"
+      ) {
+        routerNames.add(n.name.text);
+      }
+      ts.forEachChild(n, findRouters);
+    };
+    findRouters(bodyNode);
+  }
   const collectPushTargets = (init: ts.JsxAttribute["initializer"]): string[] => {
     if (!init || !ts.isJsxExpression(init) || !init.expression) return [];
     const out: string[] = [];
@@ -137,7 +177,13 @@ export function extractInteractions(
       if (
         ts.isCallExpression(n) &&
         ts.isPropertyAccessExpression(n.expression) &&
-        NAV_METHODS.has(n.expression.name.text)
+        NAV_METHODS.has(n.expression.name.text) &&
+        // The RECEIVER has to be a router, not merely something with a method of
+        // that name. String.prototype.replace and Array.prototype.push share the
+        // namespace, so `setRaw(raw.replace("$", ""))` was captured as a
+        // navigation to "$" and emitted `toHavePathname("$")` — a guaranteed
+        // failure on a screen that navigates nowhere.
+        routerNames.has(rootIdentifierOf(n.expression.expression))
       ) {
         const arg = n.arguments[0];
         if (arg && ts.isStringLiteral(arg)) out.push(arg.text);
@@ -207,7 +253,12 @@ export function extractInteractions(
       const tag = readTagName(n.tagName);
       if (tag !== "<dynamic>") {
         const enclosing = enclosingElement(n);
-        const hints = collectHints(n.attributes, scope, native ? "native" : "dom");
+        const hints = collectHints(
+          n.attributes,
+          scope,
+          native ? "native" : "dom",
+          hostTag(tag)?.name,
+        );
         const label = extractLabel(enclosing, hints, propNames, descend);
 
         if (tag === "form") {
@@ -233,6 +284,9 @@ export function extractInteractions(
             ...(gatedBy ? { gatedBy } : {}),
             ...((tagCounts.get(tag) ?? 0) > 1 ? { ambiguousTag: true } : {}),
             ...(native && enclosing && isIconOnly(enclosing) ? { iconOnly: true } : {}),
+            ...(initial && reachability(n, initial.expr, scope) !== "yes"
+              ? { conditional: true }
+              : {}),
             ...(() => {
               if (!native) return {};
               const targets = collectPushTargets(attr.initializer);
@@ -329,6 +383,8 @@ function collectHints(
   attrs: ts.JsxAttributes,
   env: RenderEnv = emptyEnv(),
   dialect: "dom" | "native" = "dom",
+  /** Resolved host element name, for the one RN element that carries an implicit role. */
+  element: string | undefined = undefined,
 ): ElementHints {
   const hints: ElementHints = {};
   for (const a of attrs.properties) {
@@ -355,6 +411,10 @@ function collectHints(
       // them empty is what makes selectors.ts's DOM-only branches naturally
       // inert on native data rather than emitting a query that cannot match.
       switch (name) {
+        case "title":
+          // RN's <Button title="Save"/> renders no children; `title` IS the name.
+          hints.buttonTitle = value;
+          break;
         case "testID":
           hints.testid = value;
           break;
@@ -408,6 +468,17 @@ function collectHints(
         hints.placeholder = value;
         break;
     }
+  }
+  // React Native's own <Button> is the ONE element whose source sets an
+  // accessibilityRole unconditionally, and it names itself with `title` rather
+  // than with children. Without this it fell to the bottom of the ladder and was
+  // skipped as "nothing identifies it: no testID, no accessibilityLabel, no
+  // accessibilityRole" — a remediation that is factually wrong, on an element
+  // that getByRole("button", { name }) addresses perfectly. NATIVE_TAG_TO_ROLE
+  // existed for this and had no production caller.
+  if (dialect === "native" && element !== undefined) {
+    const implicitRole = NATIVE_TAG_TO_ROLE[element];
+    if (implicitRole !== undefined && hints.role === undefined) hints.role = implicitRole;
   }
   return hints;
 }
@@ -784,4 +855,13 @@ function unwrapParens(expr: ts.Expression): ts.Expression {
   let cur = expr;
   while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
   return cur;
+}
+
+/** The root identifier of an expression, for deciding what a `.push` was called on. */
+function rootIdentifierOf(expr: ts.Expression): string {
+  let cur: ts.Expression = expr;
+  while (ts.isPropertyAccessExpression(cur) || ts.isCallExpression(cur)) {
+    cur = ts.isCallExpression(cur) ? cur.expression : cur.expression;
+  }
+  return ts.isIdentifier(cur) ? cur.text : "";
 }

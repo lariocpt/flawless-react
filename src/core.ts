@@ -884,19 +884,37 @@ export function detectTestScriptCollisions(nextRoot: string, colocate: boolean):
  * A runner invoked with only these still globs the whole project, so it will
  * collect the specs this tool emits and run them under the wrong runner.
  */
-const NON_SELECTING_FLAGS = new Set([
+const VALUE_FLAGS = new Set([
   "--preload",
   "--config",
   "-c",
   "--root",
   "--reporter",
   "--timeout",
-  "--coverage",
-  "--bail",
   "--env-file",
   "--setup-files",
+  "--coverage-reporter",
+  "--max-workers",
+  "-w",
+]);
+
+/**
+ * Flags that take NO argument.
+ *
+ * Kept separate from VALUE_FLAGS because conflating them was wrong in the
+ * expensive direction: treating `--coverage` as value-taking made
+ * `jest --coverage tests/` consume "tests/" as the flag's argument, so a
+ * correctly-scoped script was reported as a collision.
+ */
+const BOOLEAN_FLAGS = new Set([
+  "--coverage",
+  "--bail",
   "--silent",
   "--watch",
+  "--watchAll",
+  "--ci",
+  "--verbose",
+  "--run",
 ]);
 
 /**
@@ -914,10 +932,30 @@ const NON_SELECTING_FLAGS = new Set([
  */
 export function selectsAllTests(cmd: string): boolean {
   const tokens = cmd.trim().split(/\s+/);
-  const runner = tokens[0] === "bun" && tokens[1] === "test" ? 2 : 1;
-  if (!/^(bun|jest|vitest|bunx|npx)$/.test(tokens[0] ?? "")) return false;
-  if (tokens[0] === "bun" && tokens[1] !== "test") return false;
-  let i = runner;
+  const head = tokens[0] ?? "";
+  if (!/^(bun|jest|vitest|bunx|npx)$/.test(head)) return false;
+
+  // Where the runner's ARGUMENTS begin.
+  //
+  // This was `bun test ? 2 : 1`, which counted the runner's own name as a
+  // positional path filter for every `npx`/`bunx` form — so `npx jest` and
+  // `bunx vitest` were reported as scoped when they glob the whole project,
+  // which is precisely the collision this function exists to catch. `npx` and
+  // `bunx` are in the accepted-runner regex above, so covering them was always
+  // the intent.
+  let i: number;
+  if (head === "bun") {
+    if (tokens[1] !== "test") return false;
+    i = 2;
+  } else if (head === "npx" || head === "bunx") {
+    // `npx jest`, `bunx vitest run`, and `bunx bun test` — skip the launcher and
+    // whatever runner it names.
+    if (!/^(jest|vitest|bun)$/.test(tokens[1] ?? "")) return false;
+    i = tokens[1] === "bun" ? (tokens[2] === "test" ? 3 : -1) : 2;
+    if (i === -1) return false;
+  } else {
+    i = 1;
+  }
   let positionals = 0;
   let configScoped = false;
   while (i < tokens.length) {
@@ -929,9 +967,16 @@ export function selectsAllTests(cmd: string): boolean {
     if (t.startsWith("-")) {
       const [flag, inline] = t.includes("=") ? t.split("=", 2) : [t, undefined];
       if (flag === "--config" || flag === "-c") configScoped = true;
-      // A flag that takes a separate argument consumes it, so the argument is
-      // not mistaken for a path filter.
-      if (inline === undefined && NON_SELECTING_FLAGS.has(flag as string)) i++;
+      // A flag that takes a SEPARATE argument consumes it, so the argument is not
+      // mistaken for a path filter. Boolean flags must not, or the path after one
+      // disappears and a scoped script reads as a collision.
+      if (
+        inline === undefined &&
+        VALUE_FLAGS.has(flag as string) &&
+        !BOOLEAN_FLAGS.has(flag as string)
+      ) {
+        i++;
+      }
       i++;
       continue;
     }

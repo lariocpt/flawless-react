@@ -1,11 +1,17 @@
 import path from "node:path";
 import { requiredNativeProviders } from "../analyse/nativeContentModel.ts";
+import { annotatedReturnValue } from "../analyse/resolveDepReturns.ts";
+import { ModuleResolver } from "../analyse/resolveModule.ts";
+import { exportedFunctions } from "../analyse/serverActionReturns.ts";
+import { SourceFileCache } from "../analyse/sourceCache.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { expoFileToRoute, routeModuleId } from "../expo/routes.ts";
+import { titleSafe } from "../scaffold/templates.ts";
 import { JEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, ExpoContext, TodoRecorder } from "../types.ts";
 import { allocateSpecNames, flattenTrees, synthesiseDefaults } from "./registry.ts";
 import {
+  awaitNativeSelector,
   describeUnlocatableNative,
   emitNativeDispatch,
   emitNativeSelector,
@@ -27,6 +33,14 @@ export interface NativeRenderOptions {
   outDir: string;
   expo: ExpoContext;
   todos?: TodoCounterLike;
+  /** Shared across the whole render: an api module is read once, not once per spec. */
+  resolver?: ModuleResolver;
+  cache?: SourceFileCache;
+}
+
+interface ResolvedNativeOptions extends NativeRenderOptions {
+  resolver: ModuleResolver;
+  cache: SourceFileCache;
 }
 
 interface TodoCounterLike {
@@ -35,7 +49,12 @@ interface TodoCounterLike {
 
 const JEST_SETUP = "jest.setup.ts";
 
-export function renderNativeUnit(opts: NativeRenderOptions): RenderedFile[] {
+export function renderNativeUnit(input: NativeRenderOptions): RenderedFile[] {
+  const opts: ResolvedNativeOptions = {
+    ...input,
+    resolver: input.resolver ?? new ModuleResolver(),
+    cache: input.cache ?? new SourceFileCache(),
+  };
   const files: RenderedFile[] = [
     { relPath: JEST_CONFIG, content: jestConfig(opts) },
     { relPath: JEST_SETUP, content: jestSetup(opts), skipIfExists: true },
@@ -267,7 +286,7 @@ function layoutRouteOf(filePath: string, expo: ExpoContext) {
 function renderNativeSpec(
   info: Parameters<typeof synthesiseDefaults>[0],
   specName: string,
-  opts: NativeRenderOptions,
+  opts: ResolvedNativeOptions,
   fromDir: string,
   todo: TodoRecorder | undefined,
 ): string {
@@ -279,6 +298,10 @@ function renderNativeSpec(
   const defaults = synthesiseDefaults(info);
   const clicks = info.interactions?.clicks ?? [];
   const providers = requiredNativeProviders(info.hooks ?? []);
+  const mocks = networkModuleMocks(info, fromDir, opts.resolver, opts.cache, todo);
+  // Evidence, not a guess: the component awaits data iff a module the emitter
+  // just mocked performs fetch(), or it registers a focus effect.
+  const loadsData = mocks.length > 0 || (info.hooks ?? []).includes("useFocusEffect");
 
   const header = `// @flawless-generated
 // ${route ? `Route screen for ${route.urlPath}` : "Component"} — regenerate with --force.
@@ -295,7 +318,7 @@ function renderNativeSpec(
       `import { renderRouter, screen, fireEvent, waitFor } from "expo-router/testing-library";`,
       `import ${imported} from ${JSON.stringify(importPath)};`,
       "",
-      `const DEFAULTS = {} as const;`,
+      `const DEFAULTS: Record<string, unknown> = {};`,
       `const SAMPLE_TEXT = "flawless";`,
       "",
       "// A layout is not mountable on its own: <Tabs>/<Stack> call useContextKey,",
@@ -329,15 +352,19 @@ function renderNativeSpec(
   lines.push(`import ${imported} from ${JSON.stringify(importPath)};`);
   if (route) lines.push(...routeContextImports(opts, fromDir, route));
   lines.push("");
-  lines.push(...networkModuleMocks(info, fromDir, todo));
-  lines.push(`const DEFAULTS = ${JSON.stringify(defaults, null, 2)} as const;`);
+  lines.push(...mocks);
+  // Record<string, unknown>, not `as const`: the prop rung emits
+  // String(DEFAULTS["x"] ?? ""), which under Expo's strict tsconfig is TS7053
+  // against a const-asserted literal — so an app running `tsc --noEmit` in CI
+  // goes red on the generated file. The DOM emitter has always typed it this way.
+  lines.push(`const DEFAULTS: Record<string, unknown> = ${JSON.stringify(defaults, null, 2)};`);
   lines.push(`const SAMPLE_TEXT = "flawless";`);
   lines.push("");
-  if (route) lines.push(...routeContext(info, opts, route));
+  if (route) lines.push(...routeContext(info, specName, opts, route));
   lines.push(`describe(${JSON.stringify(specName)}, () => {`);
   lines.push(...mountTest(specName, route, providers, todo));
   lines.push(...staticTextTests(info));
-  lines.push(...interactionTests(clicks, Boolean(route), todo));
+  lines.push(...interactionTests(clicks, Boolean(route), loadsData, todo));
   lines.push("});");
   lines.push("");
   return lines.join("\n");
@@ -382,6 +409,7 @@ function routeContextImports(
  */
 function routeContext(
   info: Parameters<typeof synthesiseDefaults>[0],
+  specName: string,
   opts: NativeRenderOptions,
   route: NonNullable<ReturnType<typeof routeOf>>,
 ): string[] {
@@ -390,7 +418,10 @@ function routeContext(
   const entries = existingLayouts(opts, route).map(
     (id, i) => `  ${JSON.stringify(id)}: Layout${i},`,
   );
-  entries.push(`  ${JSON.stringify(selfId)}: { default: ${info.componentName} },`);
+  // specName, not componentName: the import above binds the ALIASED name when
+  // allocateSpecNames renamed on a collision, so referencing componentName here
+  // emitted a spec that parses fine and throws ReferenceError at module load.
+  entries.push(`  ${JSON.stringify(selfId)}: { default: ${specName} },`);
   // A literal push target that is not in the context lands on expo-router's
   // injected +not-found, so a navigation assertion would fail for the wrong
   // reason. Stub every one this component navigates to.
@@ -542,6 +573,12 @@ function staticTextTests(info: Parameters<typeof synthesiseDefaults>[0]): string
 function interactionTests(
   clicks: Parameters<typeof emitNativeSelector>[0][],
   isRoute: boolean,
+  /**
+   * The component awaits data before its final render — it has a focus effect,
+   * or a module the emitter mocked performs fetch(). Its targets may not exist
+   * at mount, so the query has to be the async one.
+   */
+  loadsData: boolean,
   todo: TodoRecorder | undefined,
 ): string[] {
   const out: string[] = [];
@@ -551,20 +588,50 @@ function interactionTests(
   const useUserEvent = !isRoute;
   let n = 0;
   for (const h of clicks) {
+    // A conditionally-reached target on a data-loading screen is one row of a
+    // list the fixture leaves empty, so it does not render and cannot be driven.
+    // The analyser is right to keep it — dropping every mapped row would lose most
+    // of a list screen — but a test that presses it fails for a reason that is
+    // neither the tool's nor the component's. A skip that names the gap is the
+    // honest form, and the fix is a fixture with rows, which is hand-work.
+    if (h.conditional && loadsData) {
+      todo?.("other");
+      out.push(
+        `  test.skip("${h.event} on <${h.tag}> — renders once per row, and the generated ` +
+          `fixture has no rows; give the mock a non-empty collection to drive it", () => {});`,
+        "",
+      );
+      continue;
+    }
     const target = emitNativeSelector(h);
     if (!target) {
       todo?.("unaddressable-target");
       out.push(
-        `  test.skip("${h.event} on <${h.tag}> — ${describeUnlocatableNative(h)}", () => {});`,
+        `  test.skip("${h.event} on <${h.tag}> — ${safeTitle(describeUnlocatableNative(h))}", () => {});`,
         "",
       );
       continue;
     }
     const el = `el${n++}`;
+    // A screen that loads in a focus effect renders its empty state first and
+    // its rows only after the awaited fetch resolves, so a synchronous query at
+    // mount fails with "Unable to find an element with text" — which reads as a
+    // missing element and is really a missing await.
+    const locator = loadsData ? awaitNativeSelector(target.locator) : target.locator;
+    // `(await …)[0]` as well as `await …`: the indexed form needs the parens for
+    // precedence, and a startsWith("await") check missed it — emitting an `await`
+    // inside a non-async callback, which is a SyntaxError that takes the whole
+    // suite file out of the run.
+    const locatorIsAsync = /^\(?await /.test(locator);
     // The handle, so two identical handlers on two different elements do not
     // produce two identically-named tests — a duplicate name makes a failure
     // report ambiguous about which one broke.
-    const handle = describeHandle(h, target);
+    // Sanitised, because it is interpolated into a double-quoted test title and
+    // its content is the APP's: a testID or a label containing a `"` produced an
+    // unparseable spec, and jest then failed to collect the whole file. The DOM
+    // emitter has done `titleSafe(s.replace(/"/g, "'"))` since FR-012 for exactly
+    // this; the native copy did not.
+    const handle = safeTitle(describeHandle(h, target));
     const dispatch = emitNativeDispatch(h.event, target, el, useUserEvent);
     if (!dispatch) {
       todo?.("other");
@@ -574,12 +641,18 @@ function interactionTests(
       );
       continue;
     }
-    const isAsync = dispatch.startsWith("await");
+    // Two separate questions that used to share one answer. `isAsync` decides
+    // whether the callback is `async`; `usesUserEvent` decides whether to set up
+    // a user instance. Conflating them emitted `userEvent.setup()` into route
+    // specs — which import from expo-router/testing-library and never name
+    // userEvent — as soon as an async LOCATOR made isAsync true.
+    const usesUserEvent = dispatch.startsWith("await user.");
+    const isAsync = usesUserEvent || locatorIsAsync;
     out.push(
       `  test("${h.event} on <${h.tag}> ${handle} can be driven", ${isAsync ? "async " : ""}() => {`,
-      ...(isAsync ? ["    const user = userEvent.setup();"] : []),
+      ...(usesUserEvent ? ["    const user = userEvent.setup();"] : []),
       "    mount();",
-      `    const ${el} = ${target.locator};`,
+      `    const ${el} = ${locator};`,
       `    expect(${el}).toBeTruthy();`,
       `    ${dispatch};`,
       ...(h.pushTargets?.length
@@ -635,6 +708,8 @@ function describeHandle(
 function networkModuleMocks(
   info: Parameters<typeof synthesiseDefaults>[0],
   fromDir: string,
+  resolver: ModuleResolver,
+  cache: SourceFileCache,
   todo: TodoRecorder | undefined,
 ): string[] {
   const fs = require("node:fs") as typeof import("node:fs");
@@ -648,9 +723,33 @@ function networkModuleMocks(
       continue;
     }
     if (!/\bfetch\s*\(/.test(src)) continue;
-    const names = mi.names.filter((n) => n !== "default");
+    // EVERY exported function of the module, not just the ones this component
+    // imports — the same rule serverActionExports follows on the web path, for
+    // the same reason its comment gives: "a transitive importer needs the
+    // others". jest.mock replaces the module in the whole registry, so a name
+    // this component happens not to import still has to be there, or the other
+    // importer receives undefined and fails somewhere unrelated.
+    //
+    // Taking the module's own exports rather than the import list ALSO drops
+    // type-only names. `import { listMessages, type AshaMessage }` is not a
+    // type-only DECLARATION, so mi.names carries "AshaMessage" and the mock was
+    // stubbing a type as though it were a function.
+    const target = cache.get(mi.resolvedPath);
+    const names = target
+      ? [...new Map(exportedFunctions(target)).keys()]
+      : mi.names.filter((n) => n !== "default");
     if (names.length === 0) continue;
-    todo?.("uninferred-return-shape");
+    // The mocked function's OWN `Promise<T>` annotation, read by exactly the rules
+    // resolveDepReturns' Path A uses — including through a workspace package's
+    // barrel, which is what B-8 and B-9 were built for.
+    //
+    // This is not a nicety either. A `{}` placeholder is not merely uninformative:
+    // `const { items } = await listBuildings()` then binds `items` to undefined,
+    // `setBuildings(undefined)` follows, and the next `buildings.length` throws
+    // into the app's own ErrorBoundary — so the screen renders "Something went
+    // wrong" and every copy assertion fails. A freshly generated suite was RED on
+    // 3 of 31 real screens for that reason alone, and the failure looked like the
+    // component rather than like the fixture.
     // Relative to the SPEC, not to the component. `app/login.tsx` writes
     // "../lib/api"; from flawless/unit/ that names flawless/lib/api, which does
     // not exist. A bare specifier (a package, a tsconfig alias) is left as
@@ -658,16 +757,73 @@ function networkModuleMocks(
     const spec = mi.specifier.startsWith(".")
       ? relativeToEmitted(fromDir, mi.resolvedPath).replace(/\.(tsx|jsx|ts|js)$/, "")
       : mi.specifier;
+    // A name this component actually imports gets a REAL fixture; every other
+    // export of the module gets a bare stub.
+    //
+    // Both halves matter. The full surface is what stops a transitive importer
+    // receiving undefined from a module jest.mock has replaced wholesale. But
+    // resolving a fixture for all ~70 exports of a real api client duplicates
+    // those bodies into every spec — measured at 793 KB across 31 specs against
+    // 113 KB, with a single 30 KB file. An export nobody in this render calls
+    // only needs to EXIST.
+    const used = new Set(mi.names);
+    const bodies = names.map((n) => {
+      if (!used.has(n)) return `  ${n}: jest.fn(async () => ({})),`;
+      const value = annotatedReturnValue(mi.resolvedPath as string, n, resolver, cache);
+      if (value === undefined) {
+        // No resolvable annotation: an honest empty object plus the marker, which
+        // is the same bail resolveDepReturns makes rather than inventing a shape.
+        todo?.("uninferred-return-shape");
+        return `  ${n}: jest.fn(async () => ({})), // TODO(flawless): give this a realistic return value`;
+      }
+      return `  ${n}: jest.fn(async () => (${JSON.stringify(emptyCollections(value))})), /* shape inferred from its Promise<T> annotation */`;
+    });
     out.push(
       `// ${spec} performs fetch(), so an unmocked render would make a LIVE`,
-      "// HTTP call — which is not a test. The shapes are {} until the dep collector",
-      "// runs for non-async components; replace them with the real ones and the",
-      "// assertions above become assertions about loaded state.",
+      "// HTTP call — which is not a test.",
       `jest.mock(${JSON.stringify(spec)}, () => ({`,
-      ...names.map((n) => `  ${n}: jest.fn(async () => ({})), // TODO(flawless): real shape`),
+      ...bodies,
       "}));",
       "",
     );
   }
   return out;
+}
+
+/** A string safe to interpolate into a double-quoted, non-template test title. */
+function safeTitle(s: string): string {
+  return titleSafe(s.replace(/"/g, "'"));
+}
+
+/**
+ * The resolved shape, with every array emptied.
+ *
+ * Both halves matter, and neither is optional.
+ *
+ * The SHAPE has to be real: a bare `{}` means `const { items } = await list()`
+ * binds items to undefined, `setItems(undefined)` follows, and the next
+ * `items.length` throws into the app's own ErrorBoundary — so the screen renders
+ * "Something went wrong" and every assertion fails for a reason that looks like
+ * the component.
+ *
+ * The arrays have to be EMPTY, and this is the subtler half. Every assertion in
+ * the spec describes the render `renderPath` evaluated, and it evaluates at the
+ * component's INITIAL state — `useState([])`, an empty store. A fixture carrying
+ * one row flips the component into its loaded branch, so the empty-state copy the
+ * analyser harvested is genuinely no longer on screen and the spec fails while
+ * both halves are behaving correctly. Measured: a one-row fixture put three of
+ * the dogfood app's screens into exactly that mismatch.
+ *
+ * So the fixture is the richest one that does not change which branch renders.
+ * Describing the loaded branch means teaching the analyser about it, which is a
+ * different piece of work than mocking.
+ */
+function emptyCollections(value: unknown): unknown {
+  if (Array.isArray(value)) return [];
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, emptyCollections(v)]),
+    );
+  }
+  return value;
 }

@@ -47,6 +47,11 @@ export interface ElementHints {
   /** `accessibilityHint`. Native only; RNTL queries it with getByHintText. */
   hint?: string;
   /**
+   * `title` on React Native's own `<Button>`, which renders no children — so the
+   * prop IS the accessible name, and the usual descendant-text rung finds nothing.
+   */
+  buttonTitle?: string;
+  /**
    * A literal `value` on a TextInput. Native only; RNTL queries it with
    * getByDisplayValue, which has no DOM-side equivalent in this ladder.
    */
@@ -134,6 +139,17 @@ export interface ClickHandler {
    * reason that has nothing to do with the component.
    */
   pushTargets?: string[];
+  /**
+   * The element is reached only CONDITIONALLY at the props and state the spec
+   * passes — typically one row of a `.map()` over data the component fetches.
+   *
+   * `reachability` returns "unknown" for those and the harvest keeps them, which
+   * is right: dropping every mapped row would lose most of a list screen. But a
+   * spec cannot DRIVE what does not render, and on a screen whose collection the
+   * fixture leaves empty the row is genuinely absent — so the emitter turns these
+   * into a skip that says so rather than a test that fails.
+   */
+  conditional?: boolean;
   pos?: SourcePosition;
 }
 

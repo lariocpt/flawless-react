@@ -53,7 +53,12 @@ const j = (v: string): string => JSON.stringify(v);
  * icon contributes nothing knowable — can only be matched as a substring.
  */
 function partialRegex(value: string): string {
-  return `/${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`;
+  // The class includes `/`, which the DOM twin (selectors.ts) has had all along
+  // and this copy did not. An unescaped `/` CLOSES the regex literal, so copy
+  // like "24/7" or "and/or" emitted `screen.getAllByText(/Save 50/50 split/)` —
+  // a syntax error that takes the WHOLE SPEC FILE out of the run, not just that
+  // one assertion.
+  return `/${value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/`;
 }
 
 /**
@@ -110,6 +115,15 @@ export function emitNativeSelector(h: ClickHandler): NativeTarget | undefined {
     return {
       locator: `screen.getAllByDisplayValue(${j(h.hints.displayValue)})[0]`,
       rung: "displayValue",
+      self: true,
+    };
+  }
+  // RN's <Button title="Save"/> renders no children, so no text rung can see it;
+  // its role and its name both come off its props.
+  if (h.hints.buttonTitle) {
+    return {
+      locator: `screen.getAllByText(${j(h.hints.buttonTitle)})[0]`,
+      rung: "text",
       self: true,
     };
   }
@@ -224,3 +238,25 @@ export function emitNativeDispatch(
 
 /** Elements that render no text, re-exported so the emitter can explain a skip. */
 export { TEXTLESS_ELEMENTS };
+
+/**
+ * The async form of a locator: `getAllBy*` -> `findAllBy*`.
+ *
+ * A screen that loads in a focus effect renders its empty state first and its
+ * rows only after the awaited fetch resolves. Querying synchronously at mount
+ * then fails with "Unable to find an element with text: …" — which reads as a
+ * missing element and is really a missing await. Three of the dogfood app's
+ * screens failed exactly this way.
+ *
+ * Applied only where the component actually awaits something, so a screen with
+ * no data loading keeps the synchronous query and its faster failure.
+ */
+export function awaitNativeSelector(locator: string): string {
+  // The parentheses are the whole point. `await screen.findAllByText(x)[0]`
+  // indexes the PROMISE, not the resolved array, so el is undefined and every
+  // assertion after it fails — 30 tests, from a rewrite that looked right.
+  const async = locator.replace(/screen\.get(All)?By/, (_m, all) => `screen.find${all ?? ""}By`);
+  const suffix = /\)(\[\d+\])$/.exec(async)?.[1];
+  if (suffix !== undefined) return `(await ${async.slice(0, -suffix.length)})${suffix}`;
+  return `await ${async}`;
+}

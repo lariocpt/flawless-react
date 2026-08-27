@@ -1,5 +1,5 @@
 import ts from "typescript";
-import type { DataDepInfo } from "../types.ts";
+import type { DataDepInfo, PropValue } from "../types.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
 import { resolveTypeNodeValue } from "./extractProps.ts";
 import { ownReturns } from "./ownReturns.ts";
@@ -151,6 +151,36 @@ function isJsonCallOn(expr: ts.Expression, fetchVars: Set<string>): boolean {
   const receiver = unwrapAwait(callee.expression);
   if (ts.isIdentifier(receiver)) return fetchVars.has(receiver.text);
   return isFetchCall(receiver);
+}
+
+/**
+ * The fixture value an exported function's `Promise<T>` annotation describes, or
+ * undefined when it cannot be resolved to one concrete value.
+ *
+ * Extracted from Path A above so the native mock emitter reads the SAME
+ * annotation by the SAME rules. A second implementation of "what does this
+ * function return" would drift from this one, and the two would disagree about
+ * the fixture a spec is built on.
+ */
+export function annotatedReturnValue(
+  module: string,
+  exportName: string,
+  resolver: ModuleResolver,
+  cache: SourceFileCache,
+): PropValue | undefined {
+  const located = findExportedDecl(
+    module,
+    exportName,
+    cache,
+    resolver,
+    (sf, name) => new Map(exportedFunctions(sf)).get(name),
+    true,
+  );
+  if (!located) return undefined;
+  const { sf, file: declFile, decl: fn } = located;
+  const promiseArg = promiseTypeArg(fn.type);
+  if (!promiseArg) return undefined;
+  return resolveTypeNodeValue(promiseArg, sf, declFile, resolver, cache);
 }
 
 function promiseTypeArg(type: ts.TypeNode | undefined): ts.TypeNode | undefined {
