@@ -39,9 +39,18 @@ export interface ElementHints {
   ariaLabel?: string;
   role?: string;
   id?: string;
+  /** Never populated on native — React Native elements have no `name`. */
   name?: string;
+  /** Never populated on native — there is no input `type`. */
   type?: string;
   placeholder?: string;
+  /** `accessibilityHint`. Native only; RNTL queries it with getByHintText. */
+  hint?: string;
+  /**
+   * A literal `value` on a TextInput. Native only; RNTL queries it with
+   * getByDisplayValue, which has no DOM-side equivalent in this ladder.
+   */
+  displayValue?: string;
   /**
    * Whether the element is disabled at the initial render, decided by evaluating
    * the `disabled` attribute — "conditional" means the expression did not reduce.
@@ -105,12 +114,37 @@ export interface ClickHandler {
 }
 
 export interface FieldInfo {
-  tag: "input" | "select" | "textarea";
+  /** DOM tag on web; the module-side React Native export name on native. */
+  tag: "input" | "select" | "textarea" | "TextInput" | "Switch";
   type?: string;
+  /** Never set on native — React Native inputs have no `name`. */
   name?: string;
   id?: string;
   placeholder?: string;
+  /**
+   * Never set on native, and the negative result matters.
+   *
+   * React Native's idiom is a preceding sibling `<Text>Email</Text>`, but RNTL's
+   * getByLabelText matches `accessibilityLabel`/`aria-label`/`aria-labelledby`
+   * and NOTHING else — there is no htmlFor and no positional association. So
+   * treating a nearby `<Text>` as a label would emit a query that ALWAYS throws,
+   * which is worse than a check that cannot fail: it is a check that cannot pass.
+   */
   label?: string;
+  /**
+   * Native only. How the field is bound, which decides whether it can be typed
+   * into at all:
+   *
+   * - "controlled"   — `value={x}` with a matching `onChangeText={setX}`.
+   * - "uncontrolled" — `defaultValue`, or neither.
+   * - "frozen"       — `value` with NO onChangeText. React Native issues no
+   *   controlled-input warning (unlike the DOM), so the input is simply inert and
+   *   `fireEvent.changeText` is a silent no-op that still passes. Recorded rather
+   *   than dropped so the emitter can say why it skipped.
+   */
+  control?: "controlled" | "frozen" | "uncontrolled";
+  /** Native only: the useState variable `value` is bound to. */
+  stateVar?: string;
   pos?: SourcePosition;
 }
 
@@ -409,6 +443,14 @@ export interface ComponentInfo {
   unresolvedTypes?: string[];
   /** Host element the props type is anchored to: "div", "button", "input". */
   hostElement?: string;
+  /**
+   * Which host-element vocabulary THIS FILE's JSX is written in — "dom" for
+   * lowercase intrinsics, "native" for React Native's imported capitalised
+   * elements. Decided per file from its own imports, because an Expo app can also
+   * target web and a monorepo sweep crosses both. Absent means "dom", which is
+   * what every file analysed before this existed was.
+   */
+  hostDialect?: "dom" | "native";
   /** Component renders JSX children (declared prop, or a children-taking host). */
   acceptsChildren?: boolean;
   /** prop → full literal option list, for grouped variant describes. */

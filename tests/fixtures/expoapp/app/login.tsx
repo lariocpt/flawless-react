@@ -35,7 +35,11 @@ export default function LoginScreen() {
       {/* The submit control: a ternary whose condition reduces at the initial
           render, so the label IS knowable — "Sign in", not "unaddressable". */}
       <Pressable onPress={onSubmit} disabled={busy} className="mt-4 rounded-md py-3">
-        {busy ? <ActivityIndicator /> : <Text className="text-center">Sign in</Text>}
+        {busy ? (
+          <ActivityIndicator />
+        ) : (
+          <Text className="text-center">Sign in</Text>
+        )}
       </Pressable>
       <Link href="/signup" className="mt-4 text-center">
         Create an account
