@@ -16,6 +16,7 @@ import { domOnlyResolver, type HostTagResolver } from "./hostTag.ts";
 import type { HostDialect } from "./nativeDialect.ts";
 import { NATIVE_TAG_TO_ROLE, TEXTLESS_ELEMENTS } from "./nativeProps.ts";
 import { posOf } from "./pos.ts";
+import { hookCalleeName } from "./refs.ts";
 import {
   emptyEnv,
   evaluate,
@@ -289,7 +290,15 @@ export function extractInteractions(
 
         if (tag === "form") {
           forms.push(
-            buildForm(enclosing, n.attributes, propNames, posOf(n, sourceFile), sourceFile, scope),
+            buildForm(
+              enclosing,
+              n.attributes,
+              propNames,
+              posOf(n, sourceFile),
+              sourceFile,
+              scope,
+              bodyNode,
+            ),
           );
         }
 
@@ -716,20 +725,33 @@ function buildForm(
   pos: FormInfo["pos"],
   sourceFile: ts.SourceFile,
   env: RenderEnv,
+  /** The component body, for resolving `action={x}` back to the action itself. */
+  componentBody?: ts.Node,
 ): FormInfo {
   let submit: HandlerBinding | undefined;
+  let actionLocal: string | undefined;
   const hints: { testid?: string; ariaLabel?: string; id?: string } = {};
   for (const a of attrs.properties) {
     if (!ts.isJsxAttribute(a)) continue;
     const name = ts.isIdentifier(a.name) ? a.name.text : undefined;
     if (name === "onSubmit") submit = classifyBinding(a.initializer, propNames);
+    if (name === "action") actionLocal = readIdentifierInitializer(a.initializer);
     if (name === "data-testid") hints.testid = readStringInitializer(a.initializer);
     if (name === "aria-label") hints.ariaLabel = readStringInitializer(a.initializer);
     if (name === "id") hints.id = readStringInitializer(a.initializer);
   }
   const fields = parent ? collectFields(parent, sourceFile) : [];
   const submitControl = parent ? findSubmitControl(parent, propNames, env) : undefined;
-  return { submit, fields, ...(submitControl ? { submitControl } : {}), hints, pos };
+  const actionBinding =
+    actionLocal === undefined ? undefined : actionSourceOf(actionLocal, componentBody);
+  return {
+    submit,
+    fields,
+    ...(submitControl ? { submitControl } : {}),
+    ...(actionBinding ? { actionBinding } : {}),
+    hints,
+    pos,
+  };
 }
 
 /**
@@ -1109,4 +1131,97 @@ function localFunctionBody(name: string, scope: ts.Node): ts.Node | undefined {
   };
   visit(scope);
   return found;
+}
+
+/** A JSX attribute whose value is a bare identifier: `action={formAction}`. */
+function readIdentifierInitializer(init: ts.JsxAttribute["initializer"]): string | undefined {
+  if (!init || !ts.isJsxExpression(init) || !init.expression) return undefined;
+  return ts.isIdentifier(init.expression) ? init.expression.text : undefined;
+}
+
+/**
+ * The server action behind a form's `action={local}`.
+ *
+ * Two shapes, both statically decidable and both present in real code:
+ *
+ *   const [state, action] = useActionState(loginAction, undefined);  ->  loginAction
+ *   <form action={loginAction}>                                      ->  loginAction
+ *
+ * The FIRST is what matters: React calls the wrapped action on submit, with
+ * nothing in between to guard it. Only `useActionState` is unwrapped — a local
+ * function assigned to `action` may do anything before dispatching, and claiming
+ * otherwise would be exactly the guess the click ladder refuses to make.
+ */
+function actionSourceOf(local: string, scope?: ts.Node): string | undefined {
+  if (!scope) return local;
+  let found: string | undefined;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isArrayBindingPattern(n.name) &&
+      n.initializer &&
+      ts.isCallExpression(n.initializer) &&
+      hookCalleeName(n.initializer.expression) === "useActionState"
+    ) {
+      const el1 = n.name.elements[1];
+      if (el1 && ts.isBindingElement(el1) && ts.isIdentifier(el1.name) && el1.name.text === local) {
+        const arg0 = n.initializer.arguments[0];
+        if (arg0) found = actionRootOf(arg0, scope);
+      }
+      if (found) return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  // No useActionState binding: the attribute names the action directly, or names
+  // a local this cannot follow. Returning the local is right for the first and
+  // harmless for the second — the emitter only asserts on a name it has ALSO
+  // confirmed is a mocked import.
+  return found ?? local;
+}
+
+/**
+ * The action an expression handed to useActionState ultimately calls.
+ *
+ * Three shapes, all in the dogfood app:
+ *
+ *   useActionState(loginAction, undefined)                    -> loginAction
+ *   useActionState(createAction.bind(null, id), {})           -> createAction
+ *   const a = createAction.bind(null, id); useActionState(a)  -> createAction
+ *
+ * `.bind` is followed because a bound function calls the original — asserting the
+ * original fired is exactly true. One hop through a local const, for the same
+ * reason handlerEffects takes one: it is how people write it, and a miss costs a
+ * weaker test rather than a wrong one.
+ */
+function actionRootOf(expr: ts.Expression, scope: ts.Node, depth = 0): string | undefined {
+  if (depth > 2) return undefined;
+  if (
+    ts.isCallExpression(expr) &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    expr.expression.name.text === "bind" &&
+    ts.isIdentifier(expr.expression.expression)
+  ) {
+    return expr.expression.expression.text;
+  }
+  if (!ts.isIdentifier(expr)) return undefined;
+  const name = expr.text;
+  let via: string | undefined;
+  const visit = (n: ts.Node): void => {
+    if (via) return;
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      n.initializer
+    ) {
+      via = actionRootOf(n.initializer, scope, depth + 1);
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  // No local binding to follow: the name IS the action.
+  return via ?? name;
 }
