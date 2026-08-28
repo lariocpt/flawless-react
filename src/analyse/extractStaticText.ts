@@ -101,3 +101,59 @@ function normalise(found: string[]): string[] {
   }
   return out;
 }
+
+/**
+ * Literal copy in the branch an error boundary renders once it has caught.
+ *
+ * extractStaticText walks the INITIAL render, and an error boundary has none —
+ * its render branches on `this.state`, which is exactly why the whole component
+ * refuses. But this branch is not undecidable in the way the others are: React's
+ * own contract says getDerivedStateFromError puts the component into that state,
+ * so a spec reaches it by rendering a child that throws.
+ *
+ * The branch is the consequent of the first `if` whose condition reads
+ * `this.state`. Anything else — a guard on props, a loading flag — is not the
+ * error branch and is left alone.
+ */
+export function errorFallbackText(renderBody: ts.Node): string[] {
+  let branch: ts.Node | undefined;
+  const find = (n: ts.Node): void => {
+    if (branch) return;
+    if (ts.isIfStatement(n) && readsThisState(n.expression)) {
+      branch = n.thenStatement;
+      return;
+    }
+    ts.forEachChild(n, find);
+  };
+  find(renderBody);
+  if (!branch) return [];
+  const out: string[] = [];
+  const collect = (n: ts.Node): void => {
+    if (ts.isJsxText(n)) {
+      const t = n.text.trim();
+      if (t) out.push(t);
+    }
+    ts.forEachChild(n, collect);
+  };
+  collect(branch);
+  return [...new Set(out)];
+}
+
+/** `this.state` / `this.state.x` anywhere in an expression. */
+function readsThisState(expr: ts.Expression): boolean {
+  let found = false;
+  const walk = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isPropertyAccessExpression(n) &&
+      n.expression.kind === ts.SyntaxKind.ThisKeyword &&
+      n.name.text === "state"
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(expr);
+  return found;
+}

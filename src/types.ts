@@ -584,6 +584,15 @@ export interface ComponentInfo {
    * wrote assertions against markup the defaults never render.
    */
   renderUndecidable?: boolean;
+  /**
+   * The component is a React error boundary, and this is the literal copy its
+   * caught state renders.
+   *
+   * The one undecidable render whose BOTH branches a spec can reach: React's
+   * contract for getDerivedStateFromError says a throwing child puts the
+   * component here, so the fallback is assertable rather than refused.
+   */
+  errorBoundary?: { fallbackText: string[] };
   /** A sentinel child passed to this component appears in the markup. */
   childrenFlow?: boolean;
   /** A className passed to this component lands on some rendered element. */
