@@ -39,7 +39,14 @@ export async function scaffoldNativeUnit(
   // Emitted unconditionally: it costs three bytes and its absence kills every
   // route spec at import time with an error that names the stylesheet, not the cause.
   const stub = path.join(outDir, "styleStub.js");
-  await Bun.write(stub, "module.exports = {};\n");
+  await Bun.write(
+    stub,
+    // CommonJS deliberately: jest loads this through moduleNameMapper, and a
+    // `.js` file in a package without `"type": "module"` IS CommonJS — an
+    // `export default` here would not load. The suppression keeps the
+    // adopting repo's linter green without rewriting it into something broken.
+    "// biome-ignore lint/style/noCommonJs: jest moduleNameMapper target; .js here is CJS.\nmodule.exports = {};\n",
+  );
   written.push(stub);
   return { written, kept };
 }

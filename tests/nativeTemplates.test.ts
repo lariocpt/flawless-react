@@ -380,3 +380,47 @@ describe("an aliased api import is mocked and classified like any other", () => 
     expect(src).toContain("renders the loaded state when listItems returns a row");
   });
 });
+
+describe("a generated spec declares only what it reads", () => {
+  // Adopting the suite into mybodycorpai/apps/mobile put 55 `noUnusedVariables`
+  // errors into THAT repo's lint gate: DEFAULTS and SAMPLE_TEXT are pushed
+  // unconditionally, but only a spread/prop-rung reads the first and only a
+  // filled TextInput reads the second. Dead code the tool writes is the tool's
+  // defect, not the adopter's.
+  test("no emitted native spec carries an unreferenced top-level const", async () => {
+    await build();
+    const offenders: string[] = [];
+    for (const [name, src] of files) {
+      if (!name.endsWith(".tsx")) continue;
+      const sf = ts.createSourceFile(name, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      for (const st of sf.statements) {
+        if (!ts.isVariableStatement(st)) continue;
+        for (const decl of st.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          const id = decl.name.text;
+          let uses = 0;
+          const walk = (n: ts.Node): void => {
+            if (ts.isIdentifier(n) && n.text === id && n !== decl.name) uses++;
+            ts.forEachChild(n, walk);
+          };
+          walk(sf);
+          if (uses === 0) offenders.push(`${name}: ${id}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  // The anti-vacuous half. The test above would pass just as well if every
+  // fixture component happened to read both constants — it would then be
+  // asserting nothing about the filter. This pins that the fixture app really
+  // does contain a spec on each side of the decision.
+  test("and the fixture exercises BOTH sides of that filter", async () => {
+    await build();
+    const specs = [...files].filter(([n]) => n.endsWith(".test.tsx"));
+    const reads = specs.filter(([, s]) => /\bSAMPLE_TEXT\b/.test(s)).map(([n]) => n);
+    const omits = specs.filter(([, s]) => !/\bSAMPLE_TEXT\b/.test(s)).map(([n]) => n);
+    expect(reads.length).toBeGreaterThan(0);
+    expect(omits.length).toBeGreaterThan(0);
+  });
+});

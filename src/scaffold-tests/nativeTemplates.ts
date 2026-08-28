@@ -225,6 +225,11 @@ import { jest } from "@jest/globals";
 // cannot reach. This choice and the selector ladder's refusal to guess a
 // last-resort locator have to agree, or one of them is wrong.
 jest.mock("@expo/vector-icons", () => {
+  // jest hoists jest.mock factories above imports, so a factory may not
+  // reference an imported binding — require is the only legal way to reach
+  // React from inside one. The suppression has to be the LAST comment line
+  // before the statement or biome does not attach it.
+  // biome-ignore lint/style/noCommonJs: jest.mock factory; require is mandatory here.
   const React = require("react");
   const handle = (props: Record<string, unknown>) =>
     React.createElement("Icon", {
@@ -405,7 +410,7 @@ function renderNativeSpec(
       "});",
       "",
     );
-    return lines.join("\n");
+    return withoutUnreferencedConsts(lines).join("\n");
   }
   if (route) {
     // testRouter only when a handler calls router.back() and therefore needs a
@@ -463,7 +468,58 @@ function renderNativeSpec(
   lines.push(...loadedStateTests(loadedFixtures, rejectedFixtures, mocks.length > 0, todo));
   lines.push("});");
   lines.push("");
-  return lines.join("\n");
+  return withoutUnreferencedConsts(lines).join("\n");
+}
+
+/**
+ * Drop `const X = …` lines the emitted body never reads.
+ *
+ * The two banner constants are pushed unconditionally, but whether anything
+ * USES them depends on the rungs that fire: DEFAULTS is read only when props
+ * are spread or a prop-rung locator resolves, and SAMPLE_TEXT only when a
+ * TextInput gets filled. A props-less component with no text input therefore
+ * carried both as dead code — 55 `noUnusedVariables` errors across the 32
+ * specs of the dogfood app, which is a lint failure in the ADOPTING repo, not
+ * here. The DOM emitter never had this because it spreads DEFAULTS on every
+ * mount.
+ *
+ * Written as "keep what is referenced" rather than "predict who needs it", so
+ * a new rung that starts reading SAMPLE_TEXT keeps it automatically instead of
+ * silently losing its declaration.
+ *
+ * Only SELF-CONTAINED entries are eligible — a complete statement whose
+ * brackets balance and which ends in `;`. The multi-line openers pushed as
+ * their own entries (`const CONTEXT = {`, `const handlers… = {`) are left
+ * alone; dropping one would orphan the lines that close it.
+ */
+function withoutUnreferencedConsts(lines: string[]): string[] {
+  const balanced = (s: string): boolean => {
+    let depth = 0;
+    for (const ch of s) {
+      if (ch === "{" || ch === "[" || ch === "(") depth++;
+      else if (ch === "}" || ch === "]" || ch === ")") depth--;
+    }
+    return depth === 0;
+  };
+  const declaredName = (entry: string): string | undefined => {
+    const m = /^const ([A-Za-z_$][\w$]*)\b/.exec(entry.trim());
+    if (!m) return undefined;
+    if (!entry.trimEnd().endsWith(";") || !balanced(entry)) return undefined;
+    return m[1];
+  };
+
+  // Fixpoint: dropping one declaration can make another unreferenced.
+  let kept = lines;
+  for (;;) {
+    const next = kept.filter((entry, i) => {
+      const name = declaredName(entry);
+      if (!name) return true;
+      const used = new RegExp(`\\b${name}\\b`);
+      return kept.some((other, j) => j !== i && used.test(other));
+    });
+    if (next.length === kept.length) return kept;
+    kept = next;
+  }
 }
 
 /**
