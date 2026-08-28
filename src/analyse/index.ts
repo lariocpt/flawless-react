@@ -14,7 +14,7 @@ import { extractPropUsage } from "./extractPropUsage.ts";
 import { extractRenderMode } from "./extractRenderMode.ts";
 import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
-import { extractStaticText } from "./extractStaticText.ts";
+import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
 import { parseFile } from "./parseFile.ts";
@@ -311,6 +311,12 @@ async function analyseOne(
     // unconditional render. Downstream that means a spec asserting on markup
     // from a branch the defaults never take.
     ...(initialRender ? {} : { renderUndecidable: true as const }),
+    // An error boundary is the exception to the refusal above: its fallback
+    // branch is reachable by construction, so the spec asserts both paths
+    // instead of declining both.
+    ...(unit.isErrorBoundary
+      ? { errorBoundary: { fallbackText: errorFallbackText(unit.bodyNode) } }
+      : {}),
     childrenFlow: flows.children,
     classNameFlow: flows.className,
     renderMode: render.mode,

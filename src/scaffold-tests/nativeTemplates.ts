@@ -328,6 +328,19 @@ function renderNativeSpec(
   // exempt: it is mounted through its own navigator with a synthesised child and
   // never described from its own render.
   if (info.renderUndecidable === true && !layout) {
+    // An error boundary is the one undecidable render whose BOTH branches are
+    // reachable: React's getDerivedStateFromError contract says a throwing child
+    // puts it into the caught state. The dogfood app's ErrorBoundary is the only
+    // named export in it, and this is what turns its refusal into a real spec.
+    const fallback = info.errorBoundary?.fallbackText ?? [];
+    if (info.errorBoundary && fallback.length > 0) {
+      return errorBoundaryNativeSpec(
+        specName,
+        info.exportKind === "default" ? specName : `{ ${info.componentName} as ${specName} }`,
+        importPathOf(fromDir, info),
+        fallback[0] as string,
+      );
+    }
     todo?.("other");
     return undecidableNativeSpec(
       specName,
@@ -1340,5 +1353,60 @@ void ${specName};
 // useState with a literal, or a class \`state = { … }\` field this can read), or
 // pass it as a prop the spec controls.
 test.skip("${specName} — render() branches on a condition this analysis could not decide (class state, or a value from a hook it does not follow); no render can be described", () => {});
+`;
+}
+
+/**
+ * The native peer of errorBoundarySpec.
+ *
+ * Same contract, same two paths. RNTL's getByText throws when it finds nothing,
+ * so `toBeTruthy()` on the result is a real assertion rather than a formality.
+ */
+function errorBoundaryNativeSpec(
+  specName: string,
+  imported: string,
+  importPath: string,
+  witness: string,
+): string {
+  return `// @flawless-generated
+// Error boundary — regenerate with --force.
+
+import { render, screen } from "@testing-library/react-native";
+import { Text } from "react-native";
+import ${imported} from ${JSON.stringify(importPath)};
+
+const CHILD_TEXT = "flawless child";
+
+/** A child that throws on render — the only way into a boundary's caught state. */
+function Boom(): never {
+  throw new Error("flawless: thrown by a child");
+}
+
+describe(${JSON.stringify(specName)}, () => {
+  test("renders its children when nothing throws", () => {
+    render(
+      <${specName}>
+        <Text>{CHILD_TEXT}</Text>
+      </${specName}>,
+    );
+    expect(screen.getByText(CHILD_TEXT)).toBeTruthy();
+  });
+
+  test("renders its fallback when a child throws", () => {
+    // React logs every error a boundary catches. Silenced HERE only — around the
+    // happy path it would hide a real one.
+    const logged = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(
+        <${specName}>
+          <Boom />
+        </${specName}>,
+      );
+      expect(screen.getByText(${JSON.stringify(witness)}, { exact: false })).toBeTruthy();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+});
 `;
 }

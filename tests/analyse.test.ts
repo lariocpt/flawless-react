@@ -460,3 +460,36 @@ export class Sneaky extends Component {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("error boundaries are the one reachable undecidable render", () => {
+  const BOUNDARY = path.resolve(__dirname, "fixtures/ClassBoundary.tsx");
+  const CLASSES = path.resolve(__dirname, "fixtures/ClassComponents.tsx");
+
+  test("detected from the members React itself dispatches on", async () => {
+    // getDerivedStateFromError / componentDidCatch, never a class NAME. A class
+    // called SomethingBoundary that implements neither is not one.
+    const parsed = await parseFile(BOUNDARY);
+    const cb = parsed.components.find((c) => c.componentName === "ClassBoundary");
+    expect(cb?.isErrorBoundary).toBe(true);
+  });
+
+  test("an ordinary class component is not one", async () => {
+    const parsed = await parseFile(CLASSES);
+    for (const c of parsed.components) {
+      expect(`${c.componentName}: ${c.isErrorBoundary ?? false}`).toBe(`${c.componentName}: false`);
+    }
+  });
+
+  test("the fallback branch's copy is captured, so a spec can assert it", async () => {
+    // extractStaticText walks the INITIAL render, and a boundary has none. The
+    // caught branch is the consequent of the first `if` reading this.state —
+    // which is reachable by construction, unlike every other undecidable render.
+    const tree = await analyse({ entry: BOUNDARY, depth: 0, includeChildren: false });
+    expect(tree.entry.errorBoundary?.fallbackText).toEqual(["Something went wrong", "Try again"]);
+  });
+
+  test("it still records renderUndecidable — the emitter decides, not the analyser", async () => {
+    const tree = await analyse({ entry: BOUNDARY, depth: 0, includeChildren: false });
+    expect(tree.entry.renderUndecidable).toBe(true);
+  });
+});

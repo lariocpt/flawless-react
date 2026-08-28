@@ -42,6 +42,18 @@ export interface ParsedComponentUnit {
   isAsync: boolean;
   wrappers: Array<"memo" | "forwardRef">;
   /**
+   * The class is a React ERROR BOUNDARY, proven by its own members.
+   *
+   * It is the one undecidable-render shape whose branches are BOTH reachable by
+   * construction: `getDerivedStateFromError` is React's contract for "put me in
+   * the error state when a child throws", so a spec can reach the fallback by
+   * rendering a child that throws, and the happy path by not doing that.
+   *
+   * Decided from the member names React itself dispatches on, never from the
+   * class being called something with "Boundary" in it.
+   */
+  isErrorBoundary?: boolean;
+  /**
    * The class declaration, for a class component only.
    *
    * bodyNode is render(), which is what every JSX/hook walk wants — but it hides
@@ -805,6 +817,14 @@ function classComponentUnit(
         : "none",
     isAsync: false,
     wrappers: [],
+    ...(stmt.members.some(
+      (m) =>
+        (ts.isMethodDeclaration(m) || ts.isPropertyDeclaration(m)) &&
+        ts.isIdentifier(m.name) &&
+        (m.name.text === "getDerivedStateFromError" || m.name.text === "componentDidCatch"),
+    )
+      ? { isErrorBoundary: true as const }
+      : {}),
     classNode: stmt,
     pos: posOf(stmt, sf),
   };

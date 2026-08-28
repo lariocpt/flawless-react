@@ -135,7 +135,9 @@ describe("emitted specs never wait on something that may not be there", () => {
 });
 
 describe("an undecidable render emits a named refusal, not a spec that cannot pass", () => {
-  const BOUNDARY = path.resolve(__dirname, "fixtures/ClassBoundary.tsx");
+  // NOT ClassBoundary: that is an error boundary and now gets a real two-path
+  // spec, so it stopped being an example of a refusal.
+  const BOUNDARY = path.resolve(__dirname, "fixtures/UndecidableRender.tsx");
 
   async function specFor(entry: string): Promise<string> {
     const out = mkdtempSync(path.join(os.tmpdir(), "undecidable-"));
@@ -162,8 +164,8 @@ describe("an undecidable render emits a named refusal, not a spec that cannot pa
     // "Unable to find an accessible element with the role 'button' and name
     // 'Try again'".
     const src = await specFor(BOUNDARY);
-    expect(src).not.toContain("Try again");
-    expect(src).not.toContain("Something went wrong");
+    expect(src).not.toContain("Flagged action");
+    expect(src).not.toContain("Behind the flag");
   });
 
   test("a component whose render IS decidable still gets its real spec", async () => {
@@ -282,6 +284,33 @@ describe("the mount path makes no claim it cannot back", () => {
     const src = await specFor("fixtures/A11yOffender.tsx");
     if (src.includes("mounts at defaults without throwing")) {
       expect(src).toContain("not.toThrow()");
+    }
+  });
+});
+
+describe("an error boundary gets a real two-path spec, not a refusal", () => {
+  test("both branches are driven, and the caught one silences React's log", async () => {
+    const out = mkdtempSync(path.join(os.tmpdir(), "eb-"));
+    try {
+      const tree = await analyse({
+        entry: path.resolve(__dirname, "fixtures/ClassBoundary.tsx"),
+        depth: 0,
+        includeChildren: false,
+      });
+      const src =
+        renderUnitBrowser({ trees: [tree], outDir: out, variants: 3 }).find((f) =>
+          f.relPath.endsWith(".test.tsx"),
+        )?.content ?? "";
+      expect(src).not.toContain("no render can be described");
+      expect(src).toContain("renders its children when nothing throws");
+      expect(src).toContain("renders its fallback when a child throws");
+      expect(src).toContain("Something went wrong");
+      // The spy is scoped to the caught case only — around the happy path it
+      // would hide a real console error.
+      expect(src).toContain('vi.spyOn(console, "error")');
+      expect(src).toContain("logged.mockRestore()");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
     }
   });
 });

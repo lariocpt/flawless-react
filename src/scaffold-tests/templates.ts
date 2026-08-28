@@ -450,6 +450,14 @@ function unitSpec(
   // mount is the same claim in a weaker voice, and for a class whose props are
   // required it does not even compile.
   if (info.renderUndecidable === true) {
+    // An error boundary is the one undecidable render whose BOTH branches a spec
+    // can reach — React's contract for getDerivedStateFromError says a throwing
+    // child puts it into the caught state — so it gets a real two-path spec
+    // rather than the refusal.
+    const fallback = info.errorBoundary?.fallbackText ?? [];
+    if (info.errorBoundary && fallback.length > 0) {
+      return errorBoundarySpec(name, importPath, info, fallback);
+    }
     todo?.("other");
     return undecidableRenderSpec(name, importPath, info);
   }
@@ -2013,5 +2021,59 @@ void ${name};
 // useState with a literal, or a class \`state = { … }\` field this can read), or
 // pass it as a prop the spec controls.
 test.skip("${name} — render() branches on a condition this analysis could not decide (class state, or a value from a hook it does not follow); no render can be described", () => {});
+`;
+}
+
+/**
+ * The spec for a React error boundary.
+ *
+ * Every other undecidable render is refused, because a spec cannot know which
+ * branch the defaults take. This one it can: `getDerivedStateFromError` is
+ * React's contract for "a child threw", so rendering a child that throws reaches
+ * the fallback and not doing so reaches the children. Both paths are asserted.
+ *
+ * console.error is silenced for the caught case only. React logs every error a
+ * boundary catches, and a spec whose own output is drowned in an expected stack
+ * is a spec people stop reading — but silencing it around the HAPPY path would
+ * hide a real one.
+ */
+function errorBoundarySpec(
+  name: string,
+  importPath: string,
+  info: ComponentInfo,
+  fallbackText: string[],
+): string {
+  // The first line of the caught branch. Matched as a substring, since the
+  // surrounding copy may interpolate.
+  const witness = fallbackText[0] as string;
+  return `${emitComponentImport(info, importPath)}
+import { describe, expect, test, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+
+const CHILD_TEXT = "flawless child";
+
+/** A child that throws on render — the only way into a boundary's caught state. */
+function Boom(): never {
+  throw new Error("flawless: thrown by a child");
+}
+
+describe(${JSON.stringify(name)}, () => {
+  test("renders its children when nothing throws", () => {
+    render(<${name}><span>{CHILD_TEXT}</span></${name}>);
+    expect(screen.getByText(CHILD_TEXT)).toBeInTheDocument();
+  });
+
+  test("renders its fallback when a child throws", () => {
+    // React logs every error a boundary catches. Silenced HERE only — around the
+    // happy path it would hide a real one.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(<${name}><Boom /></${name}>);
+      expect(screen.getByText(${JSON.stringify(witness)}, { exact: false })).toBeInTheDocument();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+});
 `;
 }
