@@ -70,7 +70,15 @@ beforeAll(async () => {
     devDependencies?: Record<string, string>;
   };
   const dev = pkg.devDependencies ?? {};
-  const want = ["jest", "jest-expo", "@testing-library/react-native", "react-test-renderer"];
+  const want = [
+    "jest",
+    "jest-expo",
+    "@testing-library/react-native",
+    "react-test-renderer",
+    // The specs do not type-check without it, and the type gate below is the
+    // only place in the suite where real types exist to prove that.
+    "@types/jest",
+  ];
   const missing = want.filter((d) => dev[d] === undefined);
   if (missing.length > 0) {
     throw new Error(`the run did not declare ${missing.join(", ")} — nothing to install`);
@@ -140,4 +148,82 @@ describe.skipIf(!GATED)("the emitted native suite runs under real jest-expo", ()
     const r = await jest();
     expect(r.out).not.toMatch(/api_error|ECONNREFUSED|fetch failed/);
   }, 600_000);
+
+  test("the emitted suite type-checks against the REAL installed types", async () => {
+    // emittedTypes.test.ts cannot see this class. It has no types to install, so
+    // it stubs `declare const expect: any` — which makes EVERY matcher call in
+    // every spec type-check trivially. `expect(screen).toHavePathname(x)` passed
+    // that gate and then failed in the adopting app with TS2339 on all 30 of its
+    // route specs, because expo-router 6 ships toHavePathname at RUNTIME while
+    // its expect.d.ts is `export {}`. A matcher that exists but is untyped is
+    // invisible to a program where the matcher's receiver is `any`.
+    //
+    // So this is not a duplicate of that gate — it is the half of it that needs
+    // node_modules, and it lives here because this is the only test that pays
+    // for a real install.
+    // @types/react is the APP's dependency, not the test stack's — every real
+    // Expo project has it, and the tool does not emit it. The minimal fixture
+    // does not, so without this the gate reports TS7016 on react/jsx-runtime
+    // and never reaches the emitted code it exists to check.
+    const ts = await sh(["bun", "add", "-d", "typescript", "@types/react"], app);
+    expect(ts.code).toBe(0);
+    writeFileSync(
+      path.join(app, "tsconfig.spec.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            // jest, NOT bun: both declare describe/test/expect globally, and a
+            // program carrying both reports TS2403 on every one of them.
+            types: ["jest", "node"],
+            jsx: "react-jsx",
+            strict: true,
+            noEmit: true,
+            moduleResolution: "bundler",
+            module: "esnext",
+            target: "esnext",
+            skipLibCheck: true,
+            paths: { "@/*": ["./*"] },
+          },
+          include: ["flawless/**/*.ts", "flawless/**/*.tsx"],
+        },
+        null,
+        2,
+      ),
+    );
+    const r = await sh(["bunx", "tsc", "-p", "tsconfig.spec.json", "--noEmit"], app);
+    // Scoped to the EMITTED tree on purpose. The specs import the components, so
+    // the app's own source is pulled into the program, and this fixture's source
+    // does not type-check on its own: it writes NativeWind `className` on
+    // <Pressable> without the `nativewind-env.d.ts` augmentation a real project
+    // has. Those are the FIXTURE's errors, not the tool's, and the tool's
+    // contract is that what it WRITES type-checks — the adopting app's own type
+    // health is its business. (mybodycorpai/apps/mobile is clean at 0 errors, so
+    // the real adoption gets the strict version of this for free.)
+    //
+    // The scoping is not a way to pass: the guard below plants its error inside
+    // an emitted spec, which is squarely in scope.
+    const emitted = r.out
+      .split("\n")
+      .filter((l) => l.startsWith("flawless/"))
+      .join("\n");
+    expect(emitted).toBe("");
+  }, 300_000);
+
+  test("guard the guard: a type error in an emitted spec IS caught here", async () => {
+    // Without this, the test above passes just as well when tsc silently checks
+    // an empty file set — which is exactly how the `any` stub next door went
+    // unnoticed. Planting a real error proves the program reaches the specs.
+    const victim = path.join(app, "flawless", "unit", "LoginScreen.flawless.test.tsx");
+    const original = readFileSync(victim, "utf8");
+    try {
+      writeFileSync(victim, `${original}\nconst _probe: number = "not a number";\n`);
+      const r = await sh(["bunx", "tsc", "-p", "tsconfig.spec.json", "--noEmit"], app);
+      // Scoped the same way, and to the VICTIM file — the fixture's own errors
+      // would satisfy a bare /TS2322/ match without the planted one existing.
+      const emitted = r.out.split("\n").filter((l) => l.startsWith("flawless/"));
+      expect(emitted.join("\n")).toMatch(/LoginScreen\.flawless\.test\.tsx.*TS2322/);
+    } finally {
+      writeFileSync(victim, original);
+    }
+  }, 300_000);
 });

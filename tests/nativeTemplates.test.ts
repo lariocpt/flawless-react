@@ -11,7 +11,10 @@ import path from "node:path";
 import ts from "typescript";
 import { analyseFile, createAnalyseSharedContext } from "../src/analyse/index.ts";
 import { detectExpo } from "../src/expo/detect.ts";
-import { renderNativeUnit } from "../src/scaffold-tests/nativeTemplates.ts";
+import {
+  renderNativeUnit,
+  withoutUnreferencedConsts,
+} from "../src/scaffold-tests/nativeTemplates.ts";
 import type { ComponentTree, ExpoContext } from "../src/types.ts";
 
 const EXPOAPP = path.resolve(__dirname, "fixtures/expoapp");
@@ -130,7 +133,11 @@ describe("the three spec shapes", () => {
     expect(s).toContain('from "expo-router/testing-library"');
     expect(s).toContain("renderRouter(CONTEXT");
     expect(s).toContain('const INITIAL_URL = "/login"');
-    expect(s).toContain('toHavePathname("/login")');
+    // getPathname() off renderRouter's own result, not the toHavePathname
+    // matcher: expo-router ships that matcher at runtime but its expect.d.ts is
+    // empty, so the matcher form does not type-check in the adopting app.
+    expect(s).toContain('expect(nav.getPathname()).toBe("/login")');
+    expect(s).not.toContain("toHavePathname");
     // expo-router/testing-library calls jest.mock() at REQUIRE time, not hoisted,
     // so it has to be imported before the component under test.
     expect(s.indexOf("expo-router/testing-library")).toBeLessThan(s.indexOf("import LoginScreen"));
@@ -195,7 +202,7 @@ describe("the invariants a native spec has to hold", () => {
   test("a literal push target is asserted AND stubbed in the context", async () => {
     await build();
     const s = get("unit/ItemsTab.flawless.test.tsx");
-    expect(s).toContain('toHavePathname("/items/new")');
+    expect(s).toContain('expect(nav.getPathname()).toBe("/items/new")');
     // Without the stub the push lands on expo-router's injected +not-found and
     // the assertion fails for a reason that has nothing to do with the component.
     expect(s).toMatch(/"items\/new": \{ default: \(\) => null \}/);
@@ -422,5 +429,38 @@ describe("a generated spec declares only what it reads", () => {
     const omits = specs.filter(([, s]) => !/\bSAMPLE_TEXT\b/.test(s)).map(([n]) => n);
     expect(reads.length).toBeGreaterThan(0);
     expect(omits.length).toBeGreaterThan(0);
+  });
+});
+
+describe("dropping a dead const must never drop a side effect", () => {
+  // The filter above removes `const X = …` when nothing reads X. Applied
+  // naively that also removes `const nav = mount();` — and with the mount gone
+  // the screen is never rendered, so the spec fails with
+  // `screen.getPathname is not a function`, which names nothing a reader could
+  // act on. Found by probe, not by review: reverting an assertion to its old
+  // form left `nav` unreferenced and the filter quietly deleted the mount
+  // underneath it.
+  test("a call initialiser is kept even when nothing reads the binding", () => {
+    const kept = withoutUnreferencedConsts(["const nav = mount();", "expect(1).toBe(1);"]);
+    expect(kept).toContain("const nav = mount();");
+  });
+
+  test("await and member calls are kept too", () => {
+    const kept = withoutUnreferencedConsts([
+      "const user = userEvent.setup();",
+      "const r = await render(<X />);",
+      "void 0;",
+    ]);
+    expect(kept.length).toBe(3);
+  });
+
+  test("but a pure literal with no reader is still dropped", () => {
+    const kept = withoutUnreferencedConsts([
+      'const SAMPLE_TEXT = "flawless";',
+      "const DEFAULTS: Record<string, unknown> = {};",
+      "const KEEP = { a: 1 };",
+      "use(KEEP);",
+    ]);
+    expect(kept).toEqual(["const KEEP = { a: 1 };", "use(KEEP);"]);
   });
 });

@@ -614,6 +614,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           // react-test-renderer, which RNTL 14 replaced with `test-renderer`.
           "@testing-library/react-native": "^13.3.3",
           "react-test-renderer": "19.1.0",
+          // The suite does not type-check without it. jest ships no types of its
+          // own, so an adopting app running `tsc --noEmit` over the emitted
+          // specs reports TS2593 on every describe/test and TS2304 on every
+          // expect — 2366 errors across the 32 specs of the dogfood app, none of
+          // them the adopter's fault. Majored to the jest pin above: @types/jest
+          // 30 against jest 29 is a mismatch nobody asked for.
+          "@types/jest": "^29.5.14",
         },
         {
           ...(taskIds.includes("unit-browser")
