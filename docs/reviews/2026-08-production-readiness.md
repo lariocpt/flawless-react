@@ -407,3 +407,30 @@ a fixture with the shape existed. A probe that stays green is a coverage gap, no
 a pass — the rule this repo already had, applied to itself and caught.
 
 **Weighted total: unchanged at 60/70.**
+
+
+### Correction — how the post-dispatch floor was vacuous
+
+PR #55's commit message and body said `container.firstElementChild` is "the
+PROVIDER's node, so it is answered whatever the component did". The count (30 of
+30 spec files) and the conclusion (unfalsifiable on this app) are both right, and
+were verified by execution. The mechanism was not.
+
+The derived provider renders no wrapper element — it is context providers all the
+way down, and those emit no DOM. What actually answers the assertion is
+**next-themes' ThemeProvider injecting a `<script>` tag**. Verified: a component
+whose entire body is `return null`, rendered under that provider, passes the
+emitted assertion.
+
+This matters beyond pedantry. "Under a provider it is vacuous" implies the floor
+was at least predictable. It was not: whether it was vacuous or a false red
+depended on whether some provider in the tree happened to emit a DOM node. An
+assertion whose falsifiability turns on an unrelated library's implementation
+detail is worse than either half alone, and that is the stronger argument for
+removing it.
+
+**Still open, same class, same expression:** 25 mount-path and 11 variant-matrix
+assertions on the dogfood app use `expect(container.firstElementChild).not
+.toBeNull()`, across 124 specs that mount under the provider. Proven vacuous by
+the same execution. They are the design round's "design-1 subject boundary" item
+and are not yet fixed.

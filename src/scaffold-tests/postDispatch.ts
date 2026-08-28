@@ -10,11 +10,22 @@ import type { ClickHandler, ComponentInfo, HandlerEffect } from "../types.ts";
  *   expect(container.firstElementChild).not.toBeNull();  // DOM
  *   expect(screen.toJSON()).not.toBeNull();              // native
  *
- * Under a provider `container.firstElementChild` is the PROVIDER's node, so it
- * is answered whatever the component did — 30 of 30 spec files carrying it on
- * the dogfood app, all unfalsifiable. Without a provider, and on the whole
- * native plane, the same line goes RED on a component that legitimately
- * unmounts. Executed both ways before this was written.
+ * On the dogfood app that line is answered by something the component never
+ * rendered, so it cannot fail — 30 of 30 spec files carrying it. Without that,
+ * and on the whole native plane, the same line goes RED on a component that
+ * legitimately unmounts. Executed both ways before this was written.
+ *
+ * The MECHANISM is worth stating precisely, because a first reading of it here
+ * was wrong. The derived provider renders no wrapper element of its own — it is
+ * context providers all the way down. What answers the assertion is next-themes'
+ * ThemeProvider injecting a <script> tag, which `container.firstElementChild`
+ * then finds. Verified by rendering a component whose whole body is
+ * `return null` under that provider: the emitted assertion passes.
+ *
+ * So the floor was never reliably one thing or the other. Whether it was vacuous
+ * or a false red depended on whether some provider in the tree happened to emit
+ * a DOM node — which is exactly the kind of accidental dependence an assertion
+ * must not have, and a stronger reason to remove it than either half alone.
  *
  * Four independent designs for a smarter survival check were proposed and every
  * one was broken by an adversarial reviewer, in both directions. The surviving
