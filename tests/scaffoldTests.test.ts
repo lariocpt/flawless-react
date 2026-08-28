@@ -68,7 +68,7 @@ describe("scaffoldUnitBrowser (file writes)", () => {
     expect(skipped).toEqual([]);
     for (const file of expected) expect(existsSync(file)).toBe(true);
     expect(readFileSync(path.join(outDir, "unit", "Widget.test.tsx"), "utf8")).toContain(
-      "Widget renders at defaults without crashing",
+      "Widget mounts at defaults without throwing",
     );
   });
 
@@ -212,7 +212,7 @@ describe("scaffoldUnitBrowser colocate", () => {
     // The component without a pre-existing spec is still written next to its source.
     const chipSpec = path.join(src, "Chip.flawless.test.tsx");
     expect(written).toContain(chipSpec);
-    expect(readFileSync(chipSpec, "utf8")).toContain("Chip renders at defaults without crashing");
+    expect(readFileSync(chipSpec, "utf8")).toContain("Chip mounts at defaults without throwing");
     // Shared config still lands in outDir.
     expect(existsSync(path.join(outDir, "vitest.config.mts"))).toBe(true);
     expect(existsSync(path.join(outDir, "browser", "Card.spec.ts"))).toBe(true);
@@ -245,7 +245,7 @@ describe("scaffoldUnitBrowser colocate", () => {
     expect(STAMP_RE.test(text)).toBe(true);
     const { hash, body } = splitStamp(text);
     expect(hash).toBe(hashBody(body));
-    expect(body).toContain("Card renders at defaults without crashing");
+    expect(body).toContain("Card mounts at defaults without throwing");
     // The regenerated set is identified by rewriting it, not by stamping it.
     expect(STAMP_RE.test(readFileSync(path.join(root, "flawless", "setup.ts"), "utf8"))).toBe(
       false,
