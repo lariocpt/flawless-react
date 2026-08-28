@@ -492,7 +492,51 @@ function renderNativeSpec(
  * their own entries (`const CONTEXT = {`, `const handlers… = {`) are left
  * alone; dropping one would orphan the lines that close it.
  */
-function withoutUnreferencedConsts(lines: string[]): string[] {
+/**
+ * The "where did this navigate to" claim, or the named reason there isn't one.
+ *
+ * Two defects met here, both invisible on a dogfood app whose screens are all
+ * routes:
+ *
+ * 1. It was emitted as `expect(screen).toHavePathname(x)`. expo-router 6 ships
+ *    that matcher at RUNTIME but its `expect.d.ts` is `export {}` — the type
+ *    augmentation is empty. So the assertion is correct and passes, and the
+ *    adopting app's `tsc --noEmit` reports TS2339 on every one of them (30 in
+ *    mybodycorpai/apps/mobile). `getPathname()` is declared on renderRouter's
+ *    OWN return type, so reading it off the captured result asserts the same
+ *    thing through typed public API — no ambient patch of a dependency, and
+ *    nothing to conflict with if expo-router later ships the missing types.
+ *
+ * 2. It was not gated on isRoute. A non-route component that calls
+ *    router.push() mounts through plain RNTL render(), which has no router and
+ *    no pathname — the claim would have been asserted against a store nothing
+ *    populated. Refusing by name is the honest answer; the dispatch itself is
+ *    still covered by the post-dispatch ladder above.
+ */
+function pathnameClaim(
+  h: { pushTargets?: string[] },
+  assertsPathname: boolean,
+  isRoute: boolean,
+): string[] {
+  if (assertsPathname && h.pushTargets?.length) {
+    return [
+      "    // The push target is a literal in the source, so where it lands is",
+      "    // knowable — the React Native analogue of asserting a link's href.",
+      `    expect(nav.getPathname()).toBe(${JSON.stringify(h.pushTargets[0])});`,
+    ];
+  }
+  if (h.pushTargets?.length && !isRoute) {
+    return [
+      "    // Where this push LANDS is not asserted: a component spec mounts through",
+      `    // render(), not renderRouter(), so there is no router store holding a`,
+      `    // pathname. The target is known (${h.pushTargets[0]}) — reaching it needs`,
+      "    // this component mounted as part of a route.",
+    ];
+  }
+  return [];
+}
+
+export function withoutUnreferencedConsts(lines: string[]): string[] {
   const balanced = (s: string): boolean => {
     let depth = 0;
     for (const ch of s) {
@@ -502,10 +546,21 @@ function withoutUnreferencedConsts(lines: string[]): string[] {
     return depth === 0;
   };
   const declaredName = (entry: string): string | undefined => {
-    const m = /^const ([A-Za-z_$][\w$]*)\b/.exec(entry.trim());
+    const m = /^const ([A-Za-z_$][\w$]*)(?::[^=]*)? = ([\s\S]*);$/.exec(entry.trim());
     if (!m) return undefined;
-    if (!entry.trimEnd().endsWith(";") || !balanced(entry)) return undefined;
-    return m[1];
+    if (!balanced(entry)) return undefined;
+    // Only a PURE initialiser may be dropped. `const nav = mount();` is
+    // unreferenced whenever nothing reads the render result, and deleting it
+    // deletes the mount — the screen is then never rendered and the spec fails
+    // with `screen.getPathname is not a function`, which names nothing a reader
+    // could act on. Found by probe: reverting an assertion to its old form made
+    // this filter silently remove the mount call underneath it.
+    const init = (m[2] as string).trim();
+    const pure =
+      /^(\{[\s\S]*\}|\[[\s\S]*\]|"[^"]*"|'[^']*'|-?\d[\d._]*|true|false|null|undefined)$/.test(
+        init,
+      );
+    return pure ? m[1] : undefined;
   };
 
   // Fixpoint: dropping one declaration can make another unreferenced.
@@ -637,14 +692,14 @@ function mountTest(
       `  const mount = () => renderRouter(CONTEXT, { initialUrl: INITIAL_URL });`,
       "",
       `  test("mounts at ${route.urlPath}", () => {`,
-      "    mount();",
+      "    const nav = mount();",
       "    // The pathname is the claim. `expect(screen.toJSON()).not.toBeNull()`",
       '    // used to stand here calling itself "the direct analogue of the DOM',
       "    // spec's container.firstElementChild check\" — it is not. renderRouter",
       "    // mounts the screen inside a navigator, so the NAVIGATOR's tree answers",
       "    // it whatever the screen returns. Executed: a route screen whose whole",
       "    // body is `return null` passes that assertion.",
-      `    expect(screen).toHavePathname(${JSON.stringify(seededUrl(route))});`,
+      `    expect(nav.getPathname()).toBe(${JSON.stringify(seededUrl(route))});`,
       "  });",
       "",
     );
@@ -927,6 +982,11 @@ function interactionTests(
     // a component spec has no router to push into, and there the skip below is
     // the honest answer.
     const needsHistory = Boolean(h.navBack) && isRoute;
+    // A pathname belongs to a ROUTER, and only a route spec mounts one. A
+    // component spec renders through plain RNTL render(), so there is no
+    // router store to read and the claim is not available to it — see
+    // pathnameClaim below for what it emits instead.
+    const assertsPathname = isRoute && Boolean(h.pushTargets?.length);
     if (h.navBack && !isRoute) {
       todo?.("other");
       out.push(
@@ -939,7 +999,7 @@ function interactionTests(
     out.push(
       `  test("${h.event} on <${h.tag}> ${handle} can be driven", ${isAsync ? "async " : ""}() => {`,
       ...(usesUserEvent ? ["    const user = userEvent.setup();"] : []),
-      "    mount();",
+      assertsPathname ? "    const nav = mount();" : "    mount();",
       ...(needsHistory
         ? [
             "    // Give back() somewhere to go — see the note in the emitter: a freshly",
@@ -951,13 +1011,7 @@ function interactionTests(
       `    expect(${el}).toBeTruthy();`,
       `    ${dispatch};`,
       ...postDispatchAssertions(h, el, !isRoute),
-      ...(h.pushTargets?.length
-        ? [
-            "    // The push target is a literal in the source, so where it lands is",
-            "    // knowable — the React Native analogue of asserting a link's href.",
-            `    expect(screen).toHavePathname(${JSON.stringify(h.pushTargets[0])});`,
-          ]
-        : []),
+      ...pathnameClaim(h, assertsPathname, isRoute),
       "  });",
       "",
     );
