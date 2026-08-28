@@ -549,6 +549,14 @@ function unitSpec(
   const renderExpr = providerImport
     ? `render(<AppProvider>${element}</AppProvider>)`
     : `render(${element})`;
+  // The variant matrix asserts the component's OWN root where one is known.
+  // `container.firstElementChild` used to stand here and cannot fail — see the
+  // mount branch for why.
+  const variantRootTag =
+    info.rootTag && /^[a-z]/.test(info.rootTag) && !info.renderGuarded ? info.rootTag : undefined;
+  const variantAssert = variantRootTag
+    ? `const { container } = renderTarget(v);\n      expect(container.querySelector(${JSON.stringify(variantRootTag)}), \`\${JSON.stringify(v)} rendered no <${variantRootTag}>\`).not.toBeNull();`
+    : "expect(() => renderTarget(v), `${JSON.stringify(v)} threw on mount`).not.toThrow();";
 
   // `Props` exists only to type the props spread, and the React import exists
   // only to declare it. A zero-prop component renders bare, so emitting either
@@ -591,14 +599,14 @@ function renderTarget(extra: Record<string, unknown> = {}) {
   return ${renderExpr};
 }
 
+
 ${emitContractTests(name, info)}
 ${
   info.variants.slice(0, variants).length > 0
     ? `describe("${name} variants", () => {
   for (const v of VARIANTS) {
     test(\`renders with \${JSON.stringify(v)}\`, () => {
-      const { container } = renderTarget(v);
-      expect(container.firstElementChild, \`\${JSON.stringify(v)} rendered nothing\`).not.toBeNull();
+      ${variantAssert}
     });
   }
 });`
@@ -648,9 +656,13 @@ test("${name} mounts at defaults without throwing", () => {
 });`);
   } else {
     parts.push(`
-test("${name} renders at defaults without crashing", () => {
-  const { container } = renderTarget();
-  expect(container.firstElementChild).not.toBeNull();
+test("${name} mounts at defaults without throwing", () => {
+  // No host root tag resolved for this component, so nothing here claims it
+  // rendered one. \`expect(container.firstElementChild).not.toBeNull()\` stood
+  // here and is not that claim either: any wrapper in the render tree — a
+  // provider injecting a <script>, say — answers it whether or not the component
+  // rendered anything at all.
+  expect(() => renderTarget()).not.toThrow();
   void screen;
 });`);
   }

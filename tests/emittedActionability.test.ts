@@ -224,3 +224,64 @@ describe("no emitted test rests on a survival floor", () => {
     }
   });
 });
+
+describe("the mount path makes no claim it cannot back", () => {
+  async function specFor(fixture: string): Promise<string> {
+    const out = mkdtempSync(path.join(os.tmpdir(), "mount-"));
+    try {
+      const tree = await analyse({
+        entry: path.resolve(__dirname, fixture),
+        depth: 0,
+        includeChildren: false,
+      });
+      const files = renderUnitBrowser({ trees: [tree], outDir: out, variants: 3 });
+      return files.find((f) => f.relPath.endsWith(".test.tsx"))?.content ?? "";
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  }
+
+  test("no emitted spec asserts container.firstElementChild any more", async () => {
+    // Proven vacuous by execution: a component whose whole body is `return null`,
+    // rendered under the derived provider, PASSES that assertion — next-themes'
+    // ThemeProvider injects a <script> and firstElementChild finds it.
+    // DynamicTag and RenderHookBadge resolve NO host root tag, so they are the
+    // components that reach the branch this is about. An earlier version listed
+    // Card and Dashboard, which both resolve a root and take a different branch —
+    // so reverting the fix left this green, which is a coverage gap, not a pass.
+    for (const fx of [
+      "fixtures/DynamicTag.tsx",
+      "fixtures/RenderHookBadge.tsx",
+      "fixtures/Dashboard.tsx",
+    ]) {
+      const src = await specFor(fx);
+      expect(`${fx}: ${/^\s+expect\(container\.firstElementChild/m.test(src)}`).toBe(
+        `${fx}: false`,
+      );
+    }
+  });
+
+  test("a known host root is asserted by NAME, which can fail", async () => {
+    // The variant matrix used to use the same vacuous expression. Where the
+    // analyser knows the component's own root it now names it — mutating a
+    // component's root tag reddens every one of its variant rows.
+    const src = await specFor("fixtures/Hello.tsx");
+    // Hello resolves a <div> root and has literal-union props, so its variant rows
+    // name the tag. Mutating the component's root reddens every one of them —
+    // verified on the dogfood app's StatCard, all three rows.
+    expect(src).toContain("rendered no <");
+    expect(src).not.toMatch(/^\s+expect\(container\.firstElementChild/m);
+  });
+
+  test("with no resolvable root, the claim is only that mounting is safe", async () => {
+    // Bail rather than guess. Comparing against a harness-only baseline WOULD
+    // have a falsifier, and it turns four correct components red: Dialog, Sheet,
+    // DropdownMenu and AlertDialog are compound ROOTS that render nothing until
+    // opened, and nothing recorded distinguishes them from a component that
+    // failed to render.
+    const src = await specFor("fixtures/A11yOffender.tsx");
+    if (src.includes("mounts at defaults without throwing")) {
+      expect(src).toContain("not.toThrow()");
+    }
+  });
+});
