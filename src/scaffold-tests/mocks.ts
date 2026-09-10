@@ -25,7 +25,7 @@ import type {
   PropValue,
   TodoRecorder,
 } from "../types.ts";
-import { mockLiteral } from "./mockValues.ts";
+import { type DepFieldResolver, fieldValueLiteral, mockLiteral } from "./mockValues.ts";
 import { withRouteParams } from "./registry.ts";
 
 export type MockMode = "client" | "rsc";
@@ -485,6 +485,29 @@ function dataModuleMock(
   );
   let uncertain = false;
 
+  // Resolves an `equalsDep` note — `m.user_id === user.id` — to the literal
+  // the referenced dep's own fixture holds, whichever channel that fixture
+  // came from. All of the component's deps count, not just this module's:
+  // `members` and `user` usually come from different modules. One hop only
+  // (fieldValueLiteral's rule); anything unreadable drops the note.
+  const depFieldValue: DepFieldResolver = (varName, field) => {
+    const dep = (info.dataDeps ?? []).find((d) => d.varName === varName);
+    if (!dep) return undefined;
+    if (dep.uncertain || dep.shape.kind === "unknown") {
+      const v = inferredDepReturn(dep, apiRoutes)?.value;
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        const fv = (v as Record<string, unknown>)[field];
+        if (fv !== undefined) return JSON.stringify(fv);
+      }
+      return undefined;
+    }
+    if (dep.shape.kind === "object") {
+      const f = dep.shape.fields.find((x) => x.name === field);
+      if (f) return fieldValueLiteral(f, withRouteParams(info.propsShape));
+    }
+    return undefined;
+  };
+
   // The stub expression for ONE dep — shared by root-level bindings and the
   // leaves of a dotted tree. Sets the module-level `uncertain` flag exactly
   // where the old inline logic did.
@@ -510,7 +533,7 @@ function dataModuleMock(
     // Shape inferred from how the awaited value is actually used in the body.
     // The props fixture the spec's own DEFAULTS is built from, so a field
     // compared against a route param gets that param's value.
-    const literal = mockLiteral(dep.shape, seed, withRouteParams(info.propsShape));
+    const literal = mockLiteral(dep.shape, seed, withRouteParams(info.propsShape), depFieldValue);
     return dep.awaited ? `vi.fn(async () => (${literal}))` : `vi.fn(() => (${literal}))`;
   };
 

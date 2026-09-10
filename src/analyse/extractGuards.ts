@@ -56,6 +56,16 @@ export function extractGuards(
   return out;
 }
 
+/**
+ * Whether this if-statement's branch aborts the render the way a guard does —
+ * the same classification extractGuards applies, exposed so the fixture side
+ * can reason about comparison polarity: inside `if (cond) notFound()`, a
+ * fixture that makes `cond` true renders nothing.
+ */
+export function isGuardExit(stmt: ts.IfStatement, imports: Map<string, ImportBinding>): boolean {
+  return classifyEffect(stmt.thenStatement, imports) !== undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Effect
 // ---------------------------------------------------------------------------

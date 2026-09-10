@@ -93,3 +93,42 @@ export function formatMoney(cents: number): string {
 export async function recordVisit(id: string): Promise<void> {
   void id;
 }
+
+// ---------------------------------------------------------------------------
+// The shapes behind the guard-exit residue (dogfood 2026-09): a detail page
+// guarded by `!== routeParam`, and a membership lookup against another dep.
+// ---------------------------------------------------------------------------
+
+export interface AppUser {
+  id: string;
+  name: string;
+}
+
+export async function getCurrentUser(): Promise<AppUser> {
+  return { id: "u1", name: "Alice" };
+}
+
+export interface Invoice {
+  building_id: string;
+  kind: string;
+  status: string;
+  number: string;
+}
+
+export async function getInvoiceById(id: string): Promise<Invoice | undefined> {
+  return { building_id: id, kind: "levy", status: "due", number: "INV-1" };
+}
+
+export interface BuildingMembership {
+  id: string;
+  user_id: string;
+  status: string;
+  label: string;
+}
+
+export async function listMembershipsForBuilding(
+  buildingId: string,
+): Promise<BuildingMembership[]> {
+  void buildingId;
+  return [{ id: "m1", user_id: "u1", status: "active", label: "Trustee" }];
+}

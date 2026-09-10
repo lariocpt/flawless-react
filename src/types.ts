@@ -430,6 +430,17 @@ export interface MockField {
    * spec's DEFAULTS carries, so the two cannot drift apart.
    */
   equalsProp?: string[];
+  /**
+   * The component compares this field to a field of another top-level data
+   * dependency: `members.find((m) => m.user_id === user.id)` with `const user
+   * = await getCurrentUser()` two lines above. Neither side is a literal or a
+   * prop, so `equals`/`equalsProp` cannot see it — and the two synthesised
+   * values ("flawless-user_id" vs "flawless-id") never match, so the lookup
+   * fails and the page guard-exits. Resolved at emit time against the fixture
+   * the referenced dep actually mocks with, so the two agree by construction;
+   * dropped silently when that dep (or its field) resolves to no value.
+   */
+  equalsDep?: { var: string; field: string };
 }
 
 /** A module-level data dependency awaited by an async server component. */
