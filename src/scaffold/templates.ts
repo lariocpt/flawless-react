@@ -171,6 +171,15 @@ interface ServerActionStub {
   names: string[];
   /** Module-side name → the literal that action returns, where resolved. */
   returns: Record<string, PropValue>;
+  /**
+   * Bare (non-relative) specifiers that import this module. The analyser
+   * resolves a workspace package to its SOURCE tree — that is where the
+   * annotations live — but the bundler resolves the same bare specifier
+   * through package.json `main`/`exports` to `dist/`, so a path-keyed stub
+   * never fires for it (B-11). These specifiers are intercepted BEFORE
+   * resolution instead, the way the unit plane's vi.mock always has.
+   */
+  specifiers: string[];
 }
 
 function selectHostComponents(
@@ -201,15 +210,22 @@ function selectHostComponents(
     }
     for (const mi of c.info.moduleImports ?? []) {
       if (!mi.isServerAction || !mi.resolvedPath || mi.isTypeOnly) continue;
-      const entry = serverActionStubs.get(mi.resolvedPath) ?? { names: [], returns: {} };
+      const entry = serverActionStubs.get(mi.resolvedPath) ?? {
+        names: [],
+        returns: {},
+        specifiers: [],
+      };
       const names = new Set(entry.names);
       for (const n of mi.serverActionExports ?? mi.names) names.add(n);
+      const specifiers = new Set(entry.specifiers);
+      if (!mi.specifier.startsWith(".")) specifiers.add(mi.specifier);
       // Sorted, not Set order: the emitted file has to be byte-identical across
       // runs or the idempotence gate churns. Returns merge trivially — every
       // importer's record was extracted from the same file.
       serverActionStubs.set(mi.resolvedPath, {
         names: [...names].sort(),
         returns: { ...entry.returns, ...(mi.serverActionReturns ?? {}) },
+        specifiers: [...specifiers].sort(),
       });
     }
     hosted.push({
@@ -425,6 +441,7 @@ function hostServer(
   // guessing is involved, and each stub carries the real export names: ESM named
   // imports have to bind, which a catch-all default export cannot satisfy.
   const stubEntries = [...serverActionStubs.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+  const specifierSources = new Map<string, string>();
   const stubSources = stubEntries
     .map(([abs, stub]) => {
       // A name the analyser resolved returns the action's real literal; the
@@ -438,6 +455,11 @@ function hostServer(
             : `export const ${n} = async () => (${stubValue(n)});`,
         )
         .join("\n");
+      // A module imported by a BARE specifier (a workspace package) is also
+      // stubbed at the specifier itself: the analyser resolved it to src, the
+      // bundler would resolve it to package.json's dist — two paths, neither
+      // of which the path key below can cover (B-11).
+      for (const spec of stub.specifiers) specifierSources.set(spec, body || "export {};");
       // Relative to this file, resolved back to absolute when the map is built.
       // Bun's onLoad hands us an absolute `args.path`, so the KEYS must be
       // absolute at runtime — but an absolute key in the committed source names
@@ -447,6 +469,19 @@ function hostServer(
       return `  ${JSON.stringify(key)}: ${JSON.stringify(body || "export {};")},`;
     })
     .join("\n");
+  const specifierEntries = [...specifierSources.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+  const specifierSourceLines = specifierEntries
+    .map(([spec, body]) => `  ${JSON.stringify(spec)}: ${JSON.stringify(body)},`)
+    .join("\n");
+  // Escaped at GENERATION time so the emitted file carries a plain literal;
+  // /$^/ when empty, so the (never-entered) registration still parses.
+  const specifierFilter = specifierEntries
+    .map(([spec]) => spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const specifierFilterLiteral =
+    specifierEntries.length > 0
+      ? `new RegExp(${JSON.stringify(`^(?:${specifierFilter})$`)})`
+      : "/$^/";
   const stubPlugin = `
 // Path relative to this file -> replacement source, resolved to the absolute
 // paths Bun's onLoad reports. See the comment where this was generated.
@@ -457,18 +492,39 @@ const SERVER_STUBS: Record<string, string> = Object.fromEntries(
   Object.entries(SERVER_STUB_SOURCES).map(([rel, src]) => [path.resolve(HOST_DIR, rel), src]),
 );
 
+// Bare specifiers (workspace packages) -> replacement source. Intercepted at
+// RESOLUTION, before package.json main/exports can route them to a dist build
+// the path-keyed map has never heard of.
+const SERVER_STUB_SPECIFIERS: Record<string, string> = {
+${specifierSourceLines}
+};
+
 const stubServerModules: BunPlugin = {
   name: "flawless-server-stubs",
   setup(build) {
+    if (Object.keys(SERVER_STUB_SPECIFIERS).length > 0) {
+      build.onResolve({ filter: ${specifierFilterLiteral} }, (args) => ({
+        path: args.path,
+        namespace: "flawless-server-stub",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "flawless-server-stub" }, (args) => ({
+        contents: SERVER_STUB_SPECIFIERS[args.path] ?? "export {};",
+        loader: "ts",
+      }));
+    }
     build.onLoad({ filter: /\\.(ts|tsx)$/ }, (args) => {
       const src = SERVER_STUBS[args.path];
       return src ? { contents: src, loader: "ts" } : undefined;
     });
   },
 };
-if (Object.keys(SERVER_STUBS).length > 0) {
+const stubCount = Object.keys(SERVER_STUBS).length;
+if (stubCount > 0) {
   console.log(
-    "[flawless] stubbed " + Object.keys(SERVER_STUBS).length + " server-action module(s) for the browser bundle",
+    "[flawless] stubbed " + stubCount + " server-action module(s) for the browser bundle" +
+      (Object.keys(SERVER_STUB_SPECIFIERS).length > 0
+        ? " (" + Object.keys(SERVER_STUB_SPECIFIERS).length + " by bare specifier)"
+        : ""),
   );
 }
 `;
