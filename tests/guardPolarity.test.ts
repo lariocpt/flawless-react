@@ -107,6 +107,28 @@ describe("a field compared against another dep's field", () => {
   });
 });
 
+describe("a dep assigned inside a top-level try", () => {
+  test("the assignment is a dep, and guard polarity reaches its fields", async () => {
+    // `let ticket; try { ticket = await getTicketDetail(…) } catch …` — the
+    // try body always runs, so the dep is as real as a const; the `!== id`
+    // guard on it then lands its equalsProp exactly like the const case.
+    const deps = await loadDeps("TryAssignPage.tsx");
+    const ticket = byVar(deps, "ticket");
+    expect(ticket.calleeRoot).toBe("getTicketDetail");
+    expect(ticket.awaited).toBe(true);
+    const bid = objectField(ticket.shape, "building_id");
+    expect(bid.equalsProp).toEqual(["params", "id"]);
+  });
+
+  test("reduce() is array evidence", async () => {
+    // `options.reduce(…)` used to classify the field as an object, mock it
+    // {}, and crash the page on `.reduce is not a function` — into the skip
+    // escape, so nobody saw it.
+    const deps = await loadDeps("TryAssignPage.tsx");
+    expect(byVar(deps, "options").shape.kind).toBe("array");
+  });
+});
+
 describe("fields read off a find() result", () => {
   test("a guard comparison on the result reaches the element fixture", async () => {
     // `const myMembership = members.find(…); if (!myMembership ||

@@ -35,7 +35,21 @@ const SKIP_CALLEE_ROOTS = new Set([
 ]);
 
 /** Members that prove a value is an array without naming a data field. */
-const ARRAY_METHODS = new Set(["map", "filter", "forEach", "find", "slice", "some", "every"]);
+const ARRAY_METHODS = new Set([
+  "map",
+  "filter",
+  "forEach",
+  "find",
+  "slice",
+  "some",
+  "every",
+  // Unambiguously array-only (unlike includes/indexOf/at, which strings share):
+  // `poll.options.reduce(…)` classified options as an object, mocked it {},
+  // and the page crashed on `.reduce is not a function` into the skip escape.
+  "reduce",
+  "flatMap",
+  "findIndex",
+]);
 
 /** String methods that prove the receiver is a string rather than an object. */
 const STRING_METHODS = new Set([
@@ -92,8 +106,18 @@ export function extractDataDeps(
   const out: DataDepInfo[] = [];
   // Top-level statements only. A call nested in a branch or a closure runs
   // conditionally, so a mock for it would have to fire on paths that never
-  // reach it — and we cannot tell which paths those are without a checker.
+  // reach it — and we cannot tell which paths those are without a checker. A
+  // top-level TRY body is the one exception: it always runs, and `let ticket;
+  // try { ticket = await getTicketDetail(…) } catch …` is how a page fetches
+  // when the data layer throws domain errors — the dep is as real as a const.
   for (const stmt of bodyStatements(bodyNode)) {
+    if (ts.isTryStatement(stmt)) {
+      for (const inner of stmt.tryBlock.statements) {
+        const dep = buildTryAssignDep(inner, bodyNode, sourceFile, imports);
+        if (dep && !out.some((d) => d.varName === dep.varName)) out.push(dep);
+      }
+      continue;
+    }
     if (!ts.isVariableStatement(stmt)) continue;
     for (const decl of stmt.declarationList.declarations) {
       const parallel = buildPromiseAllDeps(decl, bodyNode, sourceFile, imports);
@@ -106,6 +130,53 @@ export function extractDataDeps(
     }
   }
   return out;
+}
+
+/**
+ * `ticket = await getTicketDetail(…)` inside a top-level try, assigning a
+ * top-level `let` declared WITHOUT an initializer (one with an initializer is
+ * already a dep, and would be recorded twice). Everything downstream — field
+ * notes, guard polarity, equals capture — then reads the variable the same
+ * way it reads a const-awaited one.
+ */
+function buildTryAssignDep(
+  stmt: ts.Statement,
+  bodyNode: ts.Node,
+  sourceFile: ts.SourceFile,
+  imports: Map<string, ImportBinding>,
+): DataDepInfo | undefined {
+  if (!ts.isExpressionStatement(stmt) || !ts.isBinaryExpression(stmt.expression)) return undefined;
+  const assign = stmt.expression;
+  if (assign.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+  if (!ts.isIdentifier(assign.left)) return undefined;
+  const varName = assign.left.text;
+  const declaredBare = bodyStatements(bodyNode).some(
+    (s) =>
+      ts.isVariableStatement(s) &&
+      s.declarationList.declarations.some(
+        (d) => ts.isIdentifier(d.name) && d.name.text === varName && !d.initializer,
+      ),
+  );
+  if (!declaredBare) return undefined;
+
+  const init = assign.right;
+  const awaited = ts.isAwaitExpression(init);
+  const source = awaited ? init.expression : init;
+  if (!ts.isCallExpression(source)) return undefined;
+  const callee = dottedName(source.expression);
+  if (!callee || SKIP_CALLEE_ROOTS.has(callee.root)) return undefined;
+  const specifier = imports.get(callee.root)?.specifier;
+  const inferred = inferShape(varName, bodyNode, sourceFile, imports);
+  return {
+    varName,
+    callee: callee.text,
+    calleeRoot: callee.root,
+    ...(specifier !== undefined ? { specifier } : {}),
+    awaited,
+    pos: posOf(stmt, sourceFile),
+    shape: inferred.shape,
+    uncertain: inferred.uncertain,
+  };
 }
 
 /**

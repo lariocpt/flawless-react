@@ -147,3 +147,21 @@ export interface Job {
 export async function getJob(id: string): Promise<Job> {
   return { status: "open", note: id };
 }
+
+export interface TicketDetail {
+  building_id: string;
+  title: string;
+}
+
+export async function getTicketDetail(id: string): Promise<TicketDetail | undefined> {
+  return { building_id: id, title: "Leaky tap" };
+}
+
+export interface WeightedOption {
+  w: number;
+}
+
+export async function listOptions(id: string): Promise<WeightedOption[]> {
+  void id;
+  return [{ w: 2 }];
+}
