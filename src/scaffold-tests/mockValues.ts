@@ -121,6 +121,48 @@ export function fieldValueLiteral(field: MockField, props?: PropsShape): string 
   return fieldLiteral(field, props);
 }
 
+/**
+ * The VALUE mirror of mockLiteral — the same fixture, as a PropValue instead
+ * of source text, so the predicate certifier can evaluate a page's conditions
+ * against the values the spec will actually mock with. Kept beside
+ * mockLiteral on purpose: if the two ever disagree, the certifier claims a
+ * side the mount does not take. `equalsDep` notes resolve to their synthesised
+ * default here (the emit-side resolver is one hop of emit-only knowledge);
+ * for evaluating a CONDITION that is the right call — both fixtures hold the
+ * SAME value there, whichever it is.
+ */
+export function mockValue(shape: MockShape, seed: string, props?: PropsShape): PropValue {
+  switch (shape.kind) {
+    case "array":
+      return shape.element ? [mockValue(shape.element, seed, props)] : [];
+    case "object": {
+      const out: Record<string, PropValue> = {};
+      for (const f of shape.fields) out[f.name] = fieldValue(f, props);
+      return out;
+    }
+    case "number":
+      return 1;
+    case "date-string":
+      return "2024-01-01T00:00:00.000Z";
+    case "string":
+      return `flawless-${seed}`;
+    case "truthy-object":
+      return {};
+    case "unknown":
+      return {};
+  }
+}
+
+function fieldValue(field: MockField, props?: PropsShape): PropValue {
+  if (field.equals !== undefined) return field.equals;
+  if (field.equalsProp && props) {
+    const v = atPath(props, field.equalsProp);
+    if (v !== undefined) return v;
+  }
+  if (field.shape.kind === "unknown") return `flawless-${field.name}`;
+  return mockValue(field.shape, field.name, props);
+}
+
 function plainObject(v: unknown): Record<string, unknown> | undefined {
   return v !== null && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)

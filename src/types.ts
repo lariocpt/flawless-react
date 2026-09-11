@@ -472,6 +472,17 @@ export interface DataDepInfo {
      * `async () => ({})` made every money value on the page an object.
      */
     sync?: boolean;
+    /**
+     * The return TypeNode is the `boolean` KEYWORD (or Promise<boolean>) —
+     * read at the declaration, because the stored value cannot say: a
+     * `(): true` literal annotation and a `(): boolean` both store `true`,
+     * and only the second admits `false`. What makes a predicate flip
+     * provably reachable under the dep's own contract (B-19).
+     */
+    booleanAnnotated?: true;
+    /** The annotation is a union with a null/undefined arm — `null` is a
+     * legal return, so a truthy guard on this dep has a reachable false side. */
+    nullableAnnotated?: true;
   };
   /**
    * The dep is an unannotated wrapper whose body performs exactly one
@@ -480,6 +491,83 @@ export interface DataDepInfo {
    * analyse() has no route table.
    */
   wrapsFetch?: { method: string; path: string };
+  pos: SourcePosition;
+}
+
+// ---------------------------------------------------------------------------
+// B-19: both sides of a decidable predicate
+// ---------------------------------------------------------------------------
+
+/** How a spec flips one predicate: which mock (or prop) moves, and to what. */
+export type PredicateFlipKind =
+  /** A dep whose boolean-KEYWORD annotation admits false: `isTrustee(…)`. */
+  | "dep-bool"
+  /** A nullable-annotated dep behind a truthy exit guard: `if (session) redirect(…)`. */
+  | "dep-null"
+  /** An array dep flipped to [] so the empty side renders. */
+  | "dep-empty"
+  /** A prop (or destructured awaited-prop field) overridden via buildProps. */
+  | "prop";
+
+/**
+ * One render branch a certified flip moves. `baselineSide` is the side the
+ * DEFAULT fixture evaluates to — the flip takes the other. Witnesses are
+ * text-position literals unconditional WITHIN their arm; a side with none
+ * can still be asserted by the other side's absence, but never stands alone.
+ */
+export interface PredicateSiteInfo {
+  /** Value of the condition under the default fixture env. */
+  baselineSide: boolean;
+  trueWitness?: string;
+  falseWitness?: string;
+  /** Data-selection ternary: the single mocked callee each arm invokes. */
+  trueCallee?: string;
+  falseCallee?: string;
+  /** The site's own position is reachable under that leg's env. */
+  reachableAtDefaults: boolean;
+  reachableWhenFlipped: boolean;
+  pos: SourcePosition;
+}
+
+/**
+ * A predicate the emitter can invert with one per-test override, plus the
+ * sites that provably change side when it does. Only evidence-certified
+ * flips appear here; everything detected-but-refused lands in
+ * `predicateRefusals` with a named reason (the renderUndecidable rule:
+ * refusals are named, never silent).
+ */
+export interface PredicateInversionInfo {
+  kind: PredicateFlipKind;
+  /** Local the value binds to ("userIsTrustee", "contractors", "session"),
+   * or the dotted prop path for a prop flip. */
+  varName: string;
+  /** Mocked binding the override targets (dep kinds). */
+  calleeRoot?: string;
+  specifier?: string;
+  /** mockResolvedValueOnce vs mockReturnValueOnce. */
+  awaited?: boolean;
+  /** buildProps override path (prop kind). */
+  propPath?: string[];
+  /** The flipped value; absent = `undefined` (a prop omitted). */
+  flip?: PropValue;
+  sites: PredicateSiteInfo[];
+  pos: SourcePosition;
+}
+
+export interface PredicateRefusal {
+  varName: string;
+  reason: /** The controlling callee has more than one call site — a Once-override
+   * would flip an unpredictable one. */
+    | "multi-call"
+    /** The control also decides an exit guard — that false side EXITS, and
+     * emitGuardTests owns it. */
+    | "guard-entangled"
+    /** Flipping provably does not change any site's side. */
+    | "invisible"
+    /** Every moved site lost its witnesses — nothing falsifiable to assert. */
+    | "unwitnessed"
+    /** Certified, but over the per-spec inversion cap. */
+    | "capped";
   pos: SourcePosition;
 }
 
@@ -561,7 +649,18 @@ export interface ModuleImportInfo {
    * `sync` mirrors the declaration: a synchronous function mocked as async
    * hands the component a promise where it expects a value.
    */
-  importedReturns?: Record<string, { value: PropValue; sync: boolean }>;
+  importedReturns?: Record<
+    string,
+    {
+      value: PropValue;
+      sync: boolean;
+      /** Return TypeNode is the boolean KEYWORD (not a `true` literal) —
+       * `false` is a legal return, so a predicate flip is contract-backed. */
+      booleanAnnotated?: true;
+      /** Annotation is a union with a null/undefined arm. */
+      nullableAnnotated?: true;
+    }
+  >;
   /**
    * Module-side export names whose declarations are ASYNC functions, for
    * imports used as JSX tags. React's client renderer refuses an async
@@ -675,6 +774,11 @@ export interface ComponentInfo {
   dataDeps?: DataDepInfo[];
   /** Early-exit guards: `if (!x) notFound()`. */
   guards?: GuardInfo[];
+  /** Predicates a spec can invert with one override, with the sites that
+   * provably change side (async server components only). B-19. */
+  predicateInversions?: PredicateInversionInfo[];
+  /** Detected-but-refused inversions, each with a named reason. */
+  predicateRefusals?: PredicateRefusal[];
   /** Declaration site of every prop seen on the props type (resolved or not). */
   propPositions?: Record<string, SourcePosition>;
   /** Props whose declared type is Promise<...> (e.g. Next.js 15 `params`). */

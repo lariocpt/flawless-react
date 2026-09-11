@@ -165,3 +165,48 @@ export async function listOptions(id: string): Promise<WeightedOption[]> {
   void id;
   return [{ w: 2 }];
 }
+
+// ---------------------------------------------------------------------------
+// B-19: predicates a spec can invert, and the shapes that must refuse.
+// ---------------------------------------------------------------------------
+
+/** boolean KEYWORD — false is a legal return, the flip is contract-backed. */
+export function isTrusteeOf(id: string): boolean {
+  return id.length > 0;
+}
+
+/** `true` LITERAL — false is NOT legal; a flip here would be type-illegal. */
+export function isManagerOf(id: string): true {
+  void id;
+  return true;
+}
+
+/** Called twice on the page — a Once-override would flip only the first. */
+export async function canModerate(id: string): Promise<boolean> {
+  return id.length > 0;
+}
+
+export interface Session2 {
+  user: string;
+}
+
+/** Nullable union — null is the annotation's own other arm. */
+export async function verifySession2(): Promise<Session2 | null> {
+  return { user: "u1" };
+}
+
+export interface Contractor {
+  name: string;
+}
+
+export async function listContractors(id: string): Promise<Contractor[]> {
+  return [{ name: id }];
+}
+
+export async function listAllItems(id: string): Promise<string[]> {
+  return [id];
+}
+
+export async function listMyItems(id: string): Promise<string[]> {
+  return [id];
+}

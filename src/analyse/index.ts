@@ -9,6 +9,7 @@ import { extractGuards } from "./extractGuards.ts";
 import { extractHookDetails, extractHooks } from "./extractHooks.ts";
 import { extractInteractions } from "./extractInteractions.ts";
 import { detectSelfLogging } from "./extractLogging.ts";
+import { extractPredicates } from "./extractPredicates.ts";
 import { extractProps } from "./extractProps.ts";
 import { extractPropUsage } from "./extractPropUsage.ts";
 import { extractRenderMode } from "./extractRenderMode.ts";
@@ -282,6 +283,22 @@ async function analyseOne(
     };
   });
 
+  // B-19: predicates a spec can invert, certified against the same values the
+  // emitted mocks will hold. Async server components only — the same gate as
+  // dataDeps/guards, and the plane where the one-mount-all-true problem lives.
+  const predicates = unit.isAsync
+    ? extractPredicates({
+        bodyNode: unit.bodyNode,
+        sourceFile: parsed.sourceFile,
+        dataDeps,
+        guards,
+        moduleImports,
+        propsShape,
+        unresolvedProps,
+        staticText,
+      })
+    : { inversions: [], refusals: [] };
+
   const info: ComponentInfo = {
     componentName: unit.componentName,
     filePath: absPath,
@@ -312,6 +329,8 @@ async function analyseOne(
     staticText,
     dataDeps,
     guards,
+    ...(predicates.inversions.length > 0 ? { predicateInversions: predicates.inversions } : {}),
+    ...(predicates.refusals.length > 0 ? { predicateRefusals: predicates.refusals } : {}),
     ...(rootTag ? { rootTag } : {}),
     ...(initialRender?.guarded ? { renderGuarded: true } : {}),
     // The THIRD state. renderGuarded is set only when an initial render EXISTS
