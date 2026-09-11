@@ -25,7 +25,7 @@ import type {
   PropValue,
   TodoRecorder,
 } from "../types.ts";
-import { mockLiteral } from "./mockValues.ts";
+import { type DepFieldResolver, fieldValueLiteral, mockLiteral } from "./mockValues.ts";
 import { withRouteParams } from "./registry.ts";
 
 export type MockMode = "client" | "rsc";
@@ -240,6 +240,18 @@ export function emitModuleMocks(
 
     // --- everything else: server specs only -----------------------------------
     if (mode === "client") continue;
+    // An async server CHILD cannot mount here: React's client renderer refuses
+    // an async function component, and a page containing one renders an empty
+    // container — every assertion after that is against nothing. The child is
+    // a data-fetching unit with its own spec, so this spec stubs it to null
+    // rather than claiming anything about its markup. Only when EVERY name
+    // imported from the module is such a component — a module mixing async and
+    // sync exports would need a factory half stub, half real, which lies about
+    // one of the halves.
+    if (mi.kind === "component" && allAsyncComponents(mi)) {
+      push(mi, (spec) => asyncChildStubMock(mi, spec));
+      continue;
+    }
     if (!reachesDataPath(mi)) continue;
     const group = dataGroups.get(mockSpecifier(mi, specDir));
     if (!group) continue;
@@ -323,6 +335,31 @@ function dottedDepTree(
  * The rsc-mode gates ahead of the data-module mock, shared by the merge
  * pre-pass — grouping an allowlisted statement here would double-mock it.
  */
+/** Every name this declaration imports resolves to an async function. */
+function allAsyncComponents(mi: ModuleImportInfo): boolean {
+  const asyncSet = new Set(mi.asyncComponents ?? []);
+  if (asyncSet.size === 0 || mi.names.length === 0) return false;
+  return mi.names.every((_, i) => {
+    const moduleName = mi.hasDefault && i === 0 ? "default" : membershipName(mi, i);
+    return asyncSet.has(moduleName);
+  });
+}
+
+/**
+ * Replaces a module whose every imported name is an async server component
+ * with null-rendering stubs. `() => null` and not a marker element: the page
+ * spec claims nothing about the child, and any markup here could collide with
+ * text the page's own assertions look for.
+ */
+function asyncChildStubMock(mi: ModuleImportInfo, spec: string): string {
+  const entries = mi.names.map((_, i) => {
+    const key = mi.hasDefault && i === 0 ? "default" : membershipName(mi, i);
+    return `${key}: () => null`;
+  });
+  return `// ${mi.names.join(", ")}: async server child(ren) with their own specs — a client render cannot await them.
+vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
+}
+
 function reachesDataPath(mi: ModuleImportInfo): boolean {
   if (mi.isTypeOnly || mi.isServerAction) return false;
   if (
@@ -485,10 +522,37 @@ function dataModuleMock(
   );
   let uncertain = false;
 
+  // Resolves an `equalsDep` note — `m.user_id === user.id` — to the literal
+  // the referenced dep's own fixture holds, whichever channel that fixture
+  // came from. All of the component's deps count, not just this module's:
+  // `members` and `user` usually come from different modules. One hop only
+  // (fieldValueLiteral's rule); anything unreadable drops the note.
+  const depFieldValue: DepFieldResolver = (varName, field) => {
+    const dep = (info.dataDeps ?? []).find((d) => d.varName === varName);
+    if (!dep) return undefined;
+    if (dep.uncertain || dep.shape.kind === "unknown") {
+      const v = inferredDepReturn(dep, apiRoutes)?.value;
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        const fv = (v as Record<string, unknown>)[field];
+        if (fv !== undefined) return JSON.stringify(fv);
+      }
+      return undefined;
+    }
+    if (dep.shape.kind === "object") {
+      const f = dep.shape.fields.find((x) => x.name === field);
+      if (f) return fieldValueLiteral(f, withRouteParams(info.propsShape));
+    }
+    return undefined;
+  };
+
   // The stub expression for ONE dep — shared by root-level bindings and the
   // leaves of a dotted tree. Sets the module-level `uncertain` flag exactly
-  // where the old inline logic did.
-  const depStub = (dep: DataDepInfo, seed: string): string => {
+  // where the old inline logic did. `fill` is the dep's own return-annotation
+  // value, when one resolved: usage testimony still decides the SHAPE and any
+  // compared value, but a field usage could only synthesise a placeholder for
+  // takes the declaration's value — `job.status` read into a lookup says
+  // nothing about legal statuses, while `Promise<Job>`'s z.enum names one.
+  const depStub = (dep: DataDepInfo, seed: string, fill?: unknown): string => {
     if (dep.uncertain || dep.shape.kind === "unknown") {
       // Usage said nothing, but the dep's own declaration may have: the
       // annotation-derived value, or the OpenAPI example for the fetch the
@@ -510,7 +574,13 @@ function dataModuleMock(
     // Shape inferred from how the awaited value is actually used in the body.
     // The props fixture the spec's own DEFAULTS is built from, so a field
     // compared against a route param gets that param's value.
-    const literal = mockLiteral(dep.shape, seed, withRouteParams(info.propsShape));
+    const literal = mockLiteral(
+      dep.shape,
+      seed,
+      withRouteParams(info.propsShape),
+      depFieldValue,
+      fill,
+    );
     return dep.awaited ? `vi.fn(async () => (${literal}))` : `vi.fn(() => (${literal}))`;
   };
 
@@ -558,7 +628,7 @@ function dataModuleMock(
       uncertain = true;
       return `${key}: vi.fn(async () => ({}))`;
     }
-    return `${key}: ${depStub(dep, b.local)}`;
+    return `${key}: ${depStub(dep, b.local, group.returns.get(b.moduleName ?? b.local)?.value)}`;
   };
 
   const entries = [

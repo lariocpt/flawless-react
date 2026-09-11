@@ -93,3 +93,75 @@ export function formatMoney(cents: number): string {
 export async function recordVisit(id: string): Promise<void> {
   void id;
 }
+
+// ---------------------------------------------------------------------------
+// The shapes behind the guard-exit residue (dogfood 2026-09): a detail page
+// guarded by `!== routeParam`, and a membership lookup against another dep.
+// ---------------------------------------------------------------------------
+
+export interface AppUser {
+  id: string;
+  name: string;
+}
+
+export async function getCurrentUser(): Promise<AppUser> {
+  return { id: "u1", name: "Alice" };
+}
+
+export interface Invoice {
+  building_id: string;
+  kind: string;
+  status: string;
+  number: string;
+}
+
+export async function getInvoiceById(id: string): Promise<Invoice | undefined> {
+  return { building_id: id, kind: "levy", status: "due", number: "INV-1" };
+}
+
+export interface BuildingMembership {
+  id: string;
+  user_id: string;
+  status: string;
+  label: string;
+}
+
+export async function listMembershipsForBuilding(
+  buildingId: string,
+): Promise<BuildingMembership[]> {
+  void buildingId;
+  return [{ id: "m1", user_id: "u1", status: "active", label: "Trustee" }];
+}
+
+// ---------------------------------------------------------------------------
+// The residue's second layer: a field whose only legal values live in the
+// return annotation, discovered when the guard-polarity round un-vacuous-ed
+// the job-detail page and its child crashed on ALLOWED_TRANSITIONS[status].
+// ---------------------------------------------------------------------------
+
+export interface Job {
+  status: "open" | "closed";
+  note: string;
+}
+
+export async function getJob(id: string): Promise<Job> {
+  return { status: "open", note: id };
+}
+
+export interface TicketDetail {
+  building_id: string;
+  title: string;
+}
+
+export async function getTicketDetail(id: string): Promise<TicketDetail | undefined> {
+  return { building_id: id, title: "Leaky tap" };
+}
+
+export interface WeightedOption {
+  w: number;
+}
+
+export async function listOptions(id: string): Promise<WeightedOption[]> {
+  void id;
+  return [{ w: 2 }];
+}

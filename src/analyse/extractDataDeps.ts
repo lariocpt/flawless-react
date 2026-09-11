@@ -1,5 +1,6 @@
 import ts from "typescript";
 import type { DataDepInfo, MockField, MockShape } from "../types.ts";
+import { isGuardExit } from "./extractGuards.ts";
 import type { ImportBinding } from "./parseFile.ts";
 import { posOf } from "./pos.ts";
 import { bodyStatements, collectRefs } from "./refs.ts";
@@ -34,7 +35,21 @@ const SKIP_CALLEE_ROOTS = new Set([
 ]);
 
 /** Members that prove a value is an array without naming a data field. */
-const ARRAY_METHODS = new Set(["map", "filter", "forEach", "find", "slice", "some", "every"]);
+const ARRAY_METHODS = new Set([
+  "map",
+  "filter",
+  "forEach",
+  "find",
+  "slice",
+  "some",
+  "every",
+  // Unambiguously array-only (unlike includes/indexOf/at, which strings share):
+  // `poll.options.reduce(…)` classified options as an object, mocked it {},
+  // and the page crashed on `.reduce is not a function` into the skip escape.
+  "reduce",
+  "flatMap",
+  "findIndex",
+]);
 
 /** String methods that prove the receiver is a string rather than an object. */
 const STRING_METHODS = new Set([
@@ -67,9 +82,21 @@ interface FieldNote {
   equals?: string | number | boolean;
   /** A prop path the component compares this field against — see MockField. */
   equalsProp?: string[];
+  /** Another dep's field the component compares this one against — see MockField. */
+  equalsDep?: { var: string; field: string };
 }
 
 type FieldNotes = Map<string, FieldNote>;
+
+/**
+ * What comparedLiteral needs beyond the comparison itself: the component body
+ * (to tell whether the comparison sits in a top-level guard condition) and the
+ * file's imports (to tell whether that guard's branch really aborts).
+ */
+interface CompareCtx {
+  bodyNode: ts.Node;
+  imports: Map<string, ImportBinding>;
+}
 
 export function extractDataDeps(
   bodyNode: ts.Node,
@@ -79,8 +106,18 @@ export function extractDataDeps(
   const out: DataDepInfo[] = [];
   // Top-level statements only. A call nested in a branch or a closure runs
   // conditionally, so a mock for it would have to fire on paths that never
-  // reach it — and we cannot tell which paths those are without a checker.
+  // reach it — and we cannot tell which paths those are without a checker. A
+  // top-level TRY body is the one exception: it always runs, and `let ticket;
+  // try { ticket = await getTicketDetail(…) } catch …` is how a page fetches
+  // when the data layer throws domain errors — the dep is as real as a const.
   for (const stmt of bodyStatements(bodyNode)) {
+    if (ts.isTryStatement(stmt)) {
+      for (const inner of stmt.tryBlock.statements) {
+        const dep = buildTryAssignDep(inner, bodyNode, sourceFile, imports);
+        if (dep && !out.some((d) => d.varName === dep.varName)) out.push(dep);
+      }
+      continue;
+    }
     if (!ts.isVariableStatement(stmt)) continue;
     for (const decl of stmt.declarationList.declarations) {
       const parallel = buildPromiseAllDeps(decl, bodyNode, sourceFile, imports);
@@ -93,6 +130,53 @@ export function extractDataDeps(
     }
   }
   return out;
+}
+
+/**
+ * `ticket = await getTicketDetail(…)` inside a top-level try, assigning a
+ * top-level `let` declared WITHOUT an initializer (one with an initializer is
+ * already a dep, and would be recorded twice). Everything downstream — field
+ * notes, guard polarity, equals capture — then reads the variable the same
+ * way it reads a const-awaited one.
+ */
+function buildTryAssignDep(
+  stmt: ts.Statement,
+  bodyNode: ts.Node,
+  sourceFile: ts.SourceFile,
+  imports: Map<string, ImportBinding>,
+): DataDepInfo | undefined {
+  if (!ts.isExpressionStatement(stmt) || !ts.isBinaryExpression(stmt.expression)) return undefined;
+  const assign = stmt.expression;
+  if (assign.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+  if (!ts.isIdentifier(assign.left)) return undefined;
+  const varName = assign.left.text;
+  const declaredBare = bodyStatements(bodyNode).some(
+    (s) =>
+      ts.isVariableStatement(s) &&
+      s.declarationList.declarations.some(
+        (d) => ts.isIdentifier(d.name) && d.name.text === varName && !d.initializer,
+      ),
+  );
+  if (!declaredBare) return undefined;
+
+  const init = assign.right;
+  const awaited = ts.isAwaitExpression(init);
+  const source = awaited ? init.expression : init;
+  if (!ts.isCallExpression(source)) return undefined;
+  const callee = dottedName(source.expression);
+  if (!callee || SKIP_CALLEE_ROOTS.has(callee.root)) return undefined;
+  const specifier = imports.get(callee.root)?.specifier;
+  const inferred = inferShape(varName, bodyNode, sourceFile, imports);
+  return {
+    varName,
+    callee: callee.text,
+    calleeRoot: callee.root,
+    ...(specifier !== undefined ? { specifier } : {}),
+    awaited,
+    pos: posOf(stmt, sourceFile),
+    shape: inferred.shape,
+    uncertain: inferred.uncertain,
+  };
 }
 
 /**
@@ -136,7 +220,7 @@ function buildPromiseAllDeps(
     if (!elementCallee || SKIP_CALLEE_ROOTS.has(elementCallee.root)) return undefined;
 
     const varName = binding.name.text;
-    const inferred = inferShape(varName, bodyNode, sourceFile);
+    const inferred = inferShape(varName, bodyNode, sourceFile, imports);
     const specifier = imports.get(elementCallee.root)?.specifier;
     out.push({
       varName,
@@ -202,7 +286,7 @@ function buildDep(
   if (!ts.isIdentifier(decl.name)) return undefined;
 
   const varName = decl.name.text;
-  const inferred = inferShape(varName, bodyNode, sourceFile);
+  const inferred = inferShape(varName, bodyNode, sourceFile, imports);
   return { varName, ...common, shape: inferred.shape, uncertain: inferred.uncertain };
 }
 
@@ -234,8 +318,10 @@ function inferShape(
   varName: string,
   bodyNode: ts.Node,
   sourceFile: ts.SourceFile,
+  imports: Map<string, ImportBinding>,
 ): { shape: MockShape; uncertain: boolean } {
   const aliases = propAliases(bodyNode);
+  const ctx: CompareCtx = { bodyNode, imports };
   let arrayEvidence = false;
   let booleanTest = false;
   let scalar = false;
@@ -256,7 +342,10 @@ function inferShape(
       }
       if (ARRAY_METHODS.has(member)) {
         arrayEvidence = true;
-        collectElementFields(parent, sourceFile, elementFields, aliases);
+        collectElementFields(parent, sourceFile, elementFields, aliases, ctx);
+        if (member === "find") {
+          collectFindResultFields(parent, bodyNode, sourceFile, elementFields, aliases, ctx);
+        }
         continue;
       }
       noteField(
@@ -265,7 +354,7 @@ function inferShape(
         fieldKind(parent),
         isJsxTextChild(parent),
         nestedOf(parent),
-        comparedLiteral(parent, aliases),
+        comparedLiteral(parent, aliases, ctx),
       );
       continue;
     }
@@ -320,6 +409,7 @@ function collectElementFields(
   sourceFile: ts.SourceFile,
   notes: FieldNotes,
   aliases: Map<string, string[]>,
+  ctx: CompareCtx,
 ): void {
   const call = access.parent;
   if (!call || !ts.isCallExpression(call) || call.expression !== access) return;
@@ -331,8 +421,50 @@ function collectElementFields(
   const param = cb.parameters[0];
   if (!param || !ts.isIdentifier(param.name)) return;
 
-  const elementName = param.name.text;
-  for (const ref of collectRefs(cb.body, sourceFile, new Set([elementName]), undefined)) {
+  noteAccessesOf(param.name.text, cb.body, sourceFile, notes, aliases, ctx);
+}
+
+/**
+ * Fields read off the RESULT of `const mine = xs.find(…)` count as element
+ * fields of `xs`: the result IS one element, so `mine.status !== "active"` in
+ * a guard, or `mine.label` in the JSX, describes the row the fixture has to
+ * hold just as surely as the same read inside the callback would.
+ *
+ * Only the exact shape `const <identifier> = xs.find(…)` as a top-level
+ * statement qualifies — a chained `.find(…).x`, an optional `?.find`, or a
+ * result bound inside a branch runs under conditions this walk cannot
+ * reconstruct, and the note would describe a row that may never be looked at.
+ */
+function collectFindResultFields(
+  access: ts.PropertyAccessExpression,
+  bodyNode: ts.Node,
+  sourceFile: ts.SourceFile,
+  notes: FieldNotes,
+  aliases: Map<string, string[]>,
+  ctx: CompareCtx,
+): void {
+  const call = access.parent;
+  if (!call || !ts.isCallExpression(call) || call.expression !== access) return;
+  const decl = call.parent;
+  if (!decl || !ts.isVariableDeclaration(decl) || decl.initializer !== call) return;
+  if (!ts.isIdentifier(decl.name)) return;
+  const stmt = decl.parent?.parent;
+  if (!stmt || !ts.isVariableStatement(stmt)) return;
+  if (!bodyStatements(bodyNode).includes(stmt)) return;
+
+  noteAccessesOf(decl.name.text, bodyNode, sourceFile, notes, aliases, ctx);
+}
+
+/** Every `name.field` read under `scope`, noted the way element fields are. */
+function noteAccessesOf(
+  name: string,
+  scope: ts.Node,
+  sourceFile: ts.SourceFile,
+  notes: FieldNotes,
+  aliases: Map<string, string[]>,
+  ctx: CompareCtx,
+): void {
+  for (const ref of collectRefs(scope, sourceFile, new Set([name]), undefined)) {
     const parent = ref.node.parent;
     if (!parent || !ts.isPropertyAccessExpression(parent)) continue;
     if (parent.expression !== ref.node || !ts.isIdentifier(parent.name)) continue;
@@ -345,7 +477,7 @@ function collectElementFields(
       fieldKind(parent),
       isJsxTextChild(parent),
       nestedOf(parent),
-      comparedLiteral(parent, aliases),
+      comparedLiteral(parent, aliases, ctx),
     );
   }
 }
@@ -411,20 +543,36 @@ function propAliases(bodyNode: ts.Node): Map<string, string[]> {
   return out;
 }
 
+interface ComparedNote {
+  equals?: string | number | boolean;
+  equalsProp?: string[];
+  equalsDep?: { var: string; field: string };
+}
+
 /**
- * The literal this access is compared against: `m.status === "active"`.
+ * The value this access is compared against: `m.status === "active"`.
  *
- * Strict equality only, and only against a literal — `!==` states what the
- * value must NOT be, which does not pick one out, and a comparison against
- * another expression is not a value this can read.
+ * Strict comparisons only, and polarity depends on where the comparison sits.
+ * In render position, `===` names the value the fixture should hold and `!==`
+ * only states what it must NOT be, which does not pick one out. Inside a
+ * top-level `if (cond) notFound()` guard the polarity inverts: there `===`
+ * names the value that would abort the render — capturing it re-creates the
+ * green-test-over-an-empty-render failure — while `!==` uniquely names the one
+ * value that passes (`invoice.building_id !== id` passes only when the field
+ * IS the route param).
  */
 function comparedLiteral(
   access: ts.PropertyAccessExpression,
   aliases: Map<string, string[]>,
-): { equals?: string | number | boolean; equalsProp?: string[] } {
+  ctx: CompareCtx,
+): ComparedNote {
   const parent = access.parent;
   if (!parent || !ts.isBinaryExpression(parent)) return {};
-  if (parent.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return {};
+  const op = parent.operatorToken.kind;
+  const strictEquals = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  if (!strictEquals && op !== ts.SyntaxKind.ExclamationEqualsEqualsToken) return {};
+  if (strictEquals === inGuardExitCondition(parent, ctx)) return {};
+
   const other = parent.left === access ? parent.right : parent.left;
   if (ts.isStringLiteral(other)) return { equals: other.text };
   if (ts.isNumericLiteral(other)) return { equals: Number(other.text) };
@@ -434,7 +582,50 @@ function comparedLiteral(
     const path = aliases.get(other.text);
     if (path) return { equalsProp: path };
   }
+  // `m.user_id === user.id` — the other side is a field of another local.
+  // Recorded by name; the emitter resolves it against that dep's own fixture,
+  // and drops the note when the name turns out not to be a dep it can read.
+  if (
+    ts.isPropertyAccessExpression(other) &&
+    ts.isIdentifier(other.expression) &&
+    ts.isIdentifier(other.name)
+  ) {
+    return { equalsDep: { var: other.expression.text, field: other.name.text } };
+  }
   return {};
+}
+
+/**
+ * Whether this comparison sits — possibly under parens and `&&`/`||`, in
+ * positive position — in the condition of a top-level guard whose branch
+ * aborts the render. Anything else on the way up (a `!`, a ternary, a
+ * callback boundary) makes the comparison's polarity something this cannot
+ * read, so it is not guard context; a comparison inside a `find()` callback
+ * keeps its render-position polarity even when the call feeds a guard.
+ */
+function inGuardExitCondition(comparison: ts.BinaryExpression, ctx: CompareCtx): boolean {
+  let cur: ts.Node = comparison;
+  let parent = cur.parent;
+  while (parent) {
+    if (ts.isParenthesizedExpression(parent)) {
+      cur = parent;
+      parent = parent.parent;
+      continue;
+    }
+    if (
+      ts.isBinaryExpression(parent) &&
+      (parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        parent.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+    ) {
+      cur = parent;
+      parent = parent.parent;
+      continue;
+    }
+    break;
+  }
+  if (!parent || !ts.isIfStatement(parent) || parent.expression !== cur) return false;
+  if (!bodyStatements(ctx.bodyNode).includes(parent)) return false;
+  return isGuardExit(parent, ctx.imports);
 }
 
 function noteField(
@@ -443,7 +634,7 @@ function noteField(
   kind: FieldKind,
   rendersAsText: boolean,
   nestedAccess?: ts.PropertyAccessExpression,
-  compared?: { equals?: string | number | boolean; equalsProp?: string[] },
+  compared?: ComparedNote,
 ): void {
   const note = notes.get(name) ?? { kinds: new Set<FieldKind>(), rendersAsText: false };
   note.kinds.add(kind);
@@ -454,6 +645,9 @@ function noteField(
   if (compared?.equals !== undefined && note.equals === undefined) note.equals = compared.equals;
   if (compared?.equalsProp !== undefined && note.equalsProp === undefined) {
     note.equalsProp = compared.equalsProp;
+  }
+  if (compared?.equalsDep !== undefined && note.equalsDep === undefined) {
+    note.equalsDep = compared.equalsDep;
   }
   // One level deeper, and only where the source actually read it. `session.user`
   // followed by `.email` gives user: { email: … } rather than a bare {}, which
@@ -484,6 +678,7 @@ function toFields(notes: FieldNotes): MockField[] {
       rendersAsText: note.rendersAsText,
       ...(note.equals !== undefined ? { equals: note.equals } : {}),
       ...(note.equalsProp !== undefined ? { equalsProp: note.equalsProp } : {}),
+      ...(note.equalsDep !== undefined ? { equalsDep: note.equalsDep } : {}),
     });
   }
   return out;

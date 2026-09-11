@@ -245,6 +245,40 @@ function promiseTypeArg(type: ts.TypeNode | undefined): ts.TypeNode | undefined 
  * Only names with a resolvable annotation appear. An absent name keeps the
  * honest {} stub and the TODO that goes with it, exactly as before.
  */
+/**
+ * Which of this import's names declare ASYNC functions — the evidence the RSC
+ * emitter needs to stub an async server CHILD instead of mounting it: React's
+ * client renderer refuses an async function component, and the page that
+ * contains one renders an empty container. Returns module-side names
+ * ("default" for a default export), same convention as importedReturns.
+ */
+export function asyncComponentExports(
+  mi: { names: string[]; importedNames?: string[]; isTypeOnly: boolean; hasDefault: boolean },
+  resolvedPath: string,
+  resolver: ModuleResolver,
+  cache: SourceFileCache,
+): string[] {
+  const out: string[] = [];
+  if (mi.isTypeOnly) return out;
+  for (const [i, local] of mi.names.entries()) {
+    const exported = mi.hasDefault && i === 0 ? "default" : (mi.importedNames?.[i] ?? local);
+    if (!exported) continue;
+    const located = findExportedDecl(
+      resolvedPath,
+      exported,
+      cache,
+      resolver,
+      (sf, name) => new Map(exportedFunctions(sf)).get(name),
+      true,
+    );
+    if (!located) continue;
+    const decl = located.decl;
+    const mods = ts.canHaveModifiers(decl) ? ts.getModifiers(decl) : undefined;
+    if (mods?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) out.push(exported);
+  }
+  return out;
+}
+
 export function annotatedExportReturns(
   mi: { names: string[]; importedNames?: string[]; isTypeOnly: boolean },
   resolvedPath: string,
