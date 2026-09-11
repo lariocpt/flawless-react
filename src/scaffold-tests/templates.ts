@@ -1274,7 +1274,10 @@ describe("${name} static content", () => {
   for (const t of ${JSON.stringify(texts)}) {
     test(\`renders \${JSON.stringify(t)}\`, async () => {
       ${render}
-      expect(screen.getByText(t)).toBeInTheDocument();
+      // getAllByText, not getByText: the claim is "this text renders", and a
+      // page legitimately rendering the same literal twice (an eyebrow above
+      // a card title) must not fail it on multiplicity.
+      expect(screen.getAllByText(t).length).toBeGreaterThan(0);
     });
   }
 });
