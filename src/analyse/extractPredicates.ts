@@ -628,7 +628,12 @@ function harvestWitness(arm: ts.Expression, sourceFile: ts.SourceFile): string |
   const node = unwrap(arm);
   const found: string[] = [];
   const note = (raw: string): void => {
-    const text = raw.replace(/\s+/g, " ").trim();
+    // JsxText arrives source-raw, but the DOM the assertion reads is DECODED:
+    // `/invite/&lt;token&gt;` renders as `/invite/<token>`. Decode what we
+    // know; an entity we don't is a witness we refuse rather than misquote.
+    const decoded = decodeJsxEntities(raw);
+    if (decoded === undefined) return;
+    const text = decoded.replace(/\s+/g, " ").trim();
     if (text.length >= 3 && /\w/.test(text)) found.push(text);
   };
   if (ts.isStringLiteral(node)) note(node.text);
@@ -662,6 +667,46 @@ function harvestWitness(arm: ts.Expression, sourceFile: ts.SourceFile): string |
   void sourceFile;
   if (found.length === 0) return undefined;
   return found.reduce((a, b) => (b.length > a.length ? b : a));
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  rarr: "→",
+  larr: "←",
+  times: "×",
+  middot: "·",
+  bull: "•",
+  copy: "©",
+};
+
+/** Decoded text, or undefined when an entity we cannot decode remains. */
+function decodeJsxEntities(raw: string): string | undefined {
+  let bad = false;
+  const out = raw.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) => {
+    if (body.startsWith("#x") || body.startsWith("#X")) {
+      return String.fromCodePoint(Number.parseInt(body.slice(2), 16));
+    }
+    if (body.startsWith("#")) return String.fromCodePoint(Number.parseInt(body.slice(1), 10));
+    const named = NAMED_ENTITIES[body];
+    if (named === undefined) {
+      bad = true;
+      return whole;
+    }
+    return named;
+  });
+  return bad ? undefined : out;
 }
 
 /** At least one leg can make a POSITIVE claim — pure absence is B-26's form. */

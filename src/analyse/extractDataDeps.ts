@@ -488,16 +488,31 @@ function noteAccessesOf(
  * survives the access instead of inventing a sub-object that specs assert on.
  */
 function fieldKind(access: ts.PropertyAccessExpression): FieldKind {
-  const parent = access.parent;
+  // Casts and parens are transparent: `(meeting.agenda_items as Item[]).map`
+  // is array evidence exactly as the bare access would be — reading the cast
+  // as the parent classified the field a string, mocked it one, and the page
+  // crashed on `.map is not a function` behind the skip escape.
+  let node: ts.Expression = access;
+  let parent = access.parent;
+  while (
+    parent &&
+    (ts.isAsExpression(parent) ||
+      ts.isParenthesizedExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent))
+  ) {
+    node = parent as ts.Expression;
+    parent = parent.parent;
+  }
   if (!parent) return "string";
 
   if (ts.isNewExpression(parent) && isNamedCallee(parent.expression, "Date")) {
-    if ((parent.arguments ?? []).some((a) => a === access)) return "date-string";
+    if ((parent.arguments ?? []).some((a) => a === node)) return "date-string";
   }
   if (ts.isCallExpression(parent) && isNamedCallee(parent.expression, "Number")) {
-    if (parent.arguments.some((a) => a === access)) return "number";
+    if (parent.arguments.some((a) => a === node)) return "number";
   }
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === access) {
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
     if (!ts.isIdentifier(parent.name)) return "unknown";
     const inner = parent.name.text;
     if (inner === "toFixed") return "number";
