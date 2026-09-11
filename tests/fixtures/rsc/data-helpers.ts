@@ -132,3 +132,18 @@ export async function listMembershipsForBuilding(
   void buildingId;
   return [{ id: "m1", user_id: "u1", status: "active", label: "Trustee" }];
 }
+
+// ---------------------------------------------------------------------------
+// The residue's second layer: a field whose only legal values live in the
+// return annotation, discovered when the guard-polarity round un-vacuous-ed
+// the job-detail page and its child crashed on ALLOWED_TRANSITIONS[status].
+// ---------------------------------------------------------------------------
+
+export interface Job {
+  status: "open" | "closed";
+  note: string;
+}
+
+export async function getJob(id: string): Promise<Job> {
+  return { status: "open", note: id };
+}

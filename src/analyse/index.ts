@@ -20,7 +20,11 @@ import { detectHostDialect } from "./nativeDialect.ts";
 import { parseFile } from "./parseFile.ts";
 import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
-import { annotatedExportReturns, resolveDepReturns } from "./resolveDepReturns.ts";
+import {
+  annotatedExportReturns,
+  asyncComponentExports,
+  resolveDepReturns,
+} from "./resolveDepReturns.ts";
 import { resolveIndexKeyProps } from "./resolveIndexKeys.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import { resolveTagRootTags } from "./resolveTagRootTags.ts";
@@ -252,10 +256,15 @@ async function analyseOne(
       // declaration instead of from `{}`. resolveDepReturns covers the awaited
       // ones; this is the same evidence for the rest.
       const importedReturns = annotatedExportReturns(mi, resolvedPath, resolver, cache);
+      // Async-ness of JSX-tag imports: the RSC emitter stubs an async child
+      // rather than mounting what React's client renderer refuses.
+      const asyncComponents =
+        mi.kind === "component" ? asyncComponentExports(mi, resolvedPath, resolver, cache) : [];
       return {
         ...mi,
         resolvedPath,
         ...(Object.keys(importedReturns).length > 0 ? { importedReturns } : {}),
+        ...(asyncComponents.length > 0 ? { asyncComponents } : {}),
       };
     }
     const target = cache.get(resolvedPath);

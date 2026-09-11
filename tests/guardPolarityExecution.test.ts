@@ -88,6 +88,51 @@ function suitePins(): string[] {
   });
 }
 
+const STATUS_PAGE = `import { getJob } from "./jobs";
+import { Controls } from "./Controls";
+import { AsyncPanel } from "./AsyncPanel";
+
+export default async function StatusPage() {
+  const job = await getJob("j1");
+  return (
+    <main>
+      <h1>{job.title}</h1>
+      <Controls status={job.status} />
+      <AsyncPanel />
+    </main>
+  );
+}
+`;
+
+const JOBS = `export interface Job {
+  status: "open" | "closed";
+  title: string;
+}
+
+export async function getJob(id: string): Promise<Job> {
+  throw new Error("the real data layer must never run under jsdom: " + id);
+}
+`;
+
+const CONTROLS = `"use client";
+
+const NEXT: Record<string, string[]> = { open: ["close"], closed: [] };
+
+export function Controls({ status }: { status: string }) {
+  const allowed = NEXT[status];
+  if (allowed.length === 0) return <p>nothing to do</p>;
+  return <p>next: {allowed.join(", ")}</p>;
+}
+`;
+
+const ASYNC_PANEL = `import { getJob } from "./jobs";
+
+export async function AsyncPanel() {
+  const job = await getJob("panel");
+  return <aside>panel for {job.title}</aside>;
+}
+`;
+
 let tmpRoot: string | undefined;
 
 afterAll(() => {
@@ -198,5 +243,101 @@ test("the emitted fixtures take the page past every guard", async () => {
     const staleUser = await vitest("unit/GuardProbe.test.tsx");
     expect(staleUser.code).not.toBe(0);
     expect(staleUser.output).toContain("not found: membership");
+  }, 120_000);
+
+  test("annotation fill and the async-child stub keep an un-vacuous page rendering", async () => {
+    if (!tmpRoot) throw new Error("runs after the first test's tmp root exists");
+    const app = path.join(tmpRoot, "app2");
+    mkdirSync(path.join(app, "src"), { recursive: true });
+    writeFileSync(
+      path.join(app, "tsconfig.json"),
+      `${JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true } }, null, 2)}\n`,
+    );
+    writeFileSync(path.join(app, "src", "StatusPage.tsx"), STATUS_PAGE);
+    writeFileSync(path.join(app, "src", "jobs.ts"), JOBS);
+    writeFileSync(path.join(app, "src", "Controls.tsx"), CONTROLS);
+    writeFileSync(path.join(app, "src", "AsyncPanel.tsx"), ASYNC_PANEL);
+    const outDir = path.join(app, "flawless");
+
+    const result = await runCore({
+      pattern: path.join(app, "src", "StatusPage.tsx"),
+      outDir,
+      taskIds: ["unit-browser"],
+      force: true,
+      log: false,
+      inlineSummary: false,
+    });
+    expect(result.exitCode).toBe(0);
+
+    const spec = readFileSync(path.join(outDir, "unit", "StatusPage.test.tsx"), "utf8");
+    // The annotation's literal union filled the placeholder, and the async
+    // child is stubbed instead of mounted.
+    expect(spec).toContain('status: "open"');
+    expect(spec).toContain("AsyncPanel: () => null");
+
+    const mockLines = spec
+      .split("\n")
+      .filter((l) => l.startsWith("vi.mock(") || l.startsWith("// AsyncPanel"))
+      .join("\n");
+    const probe = `import { expect, test, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import type * as React from "react";
+${mockLines}
+import StatusPage from "../../src/StatusPage";
+
+test("the page renders through its real sync child, past the stubbed async one", async () => {
+  const ui: React.ReactNode = await StatusPage();
+  render(<>{ui}</>);
+  // The REAL Controls child indexed its transition map with the filled enum
+  // member and rendered; "flawless-status" here crashes on undefined.length.
+  expect(screen.getByText("next: close")).toBeInTheDocument();
+  expect(screen.queryByText(/panel for/)).toBeNull();
+});
+`;
+    const probePath = path.join(outDir, "unit", "StatusProbe.test.tsx");
+    writeFileSync(probePath, probe);
+
+    // The first test already installed the runners into tmpRoot's sibling app;
+    // this app needs its own copy of the same pins.
+    const install = Bun.spawn(["bun", "add", "-d", ...suitePins()], {
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [installErr, installCode] = await Promise.all([
+      new Response(install.stderr).text(),
+      install.exited,
+    ]);
+    if (installCode !== 0) {
+      throw new Error(
+        `could not install the suite's runners (needs registry access):\n${installErr}`,
+      );
+    }
+    const vitestBin = path.join(app, "node_modules", ".bin", "vitest");
+    if (!existsSync(vitestBin)) throw new Error(`vitest did not install at ${vitestBin}`);
+    const vitest = async (specFile: string): Promise<{ code: number; output: string }> => {
+      const run = Bun.spawn([vitestBin, "run", specFile], {
+        cwd: outDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([
+        new Response(run.stdout).text(),
+        new Response(run.stderr).text(),
+        run.exited,
+      ]);
+      return { code, output: out + err };
+    };
+
+    const green = await vitest("unit/StatusProbe.test.tsx");
+    if (green.code !== 0) console.error(green.output);
+    expect(green.code).toBe(0);
+
+    // Mutation: put the placeholder back — the real child crashes on the
+    // unmapped status, proving the filled member is load-bearing.
+    writeFileSync(probePath, probe.replace('status: "open"', 'status: "flawless-status"'));
+    const unmapped = await vitest("unit/StatusProbe.test.tsx");
+    expect(unmapped.code).not.toBe(0);
+    expect(unmapped.output).toContain("length");
   }, 120_000);
 });

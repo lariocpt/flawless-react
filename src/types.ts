@@ -562,6 +562,14 @@ export interface ModuleImportInfo {
    * hands the component a promise where it expects a value.
    */
   importedReturns?: Record<string, { value: PropValue; sync: boolean }>;
+  /**
+   * Module-side export names whose declarations are ASYNC functions, for
+   * imports used as JSX tags. React's client renderer refuses an async
+   * function component outright, so a server page rendering `<InsightsCard>`
+   * under jsdom produces an empty container — the RSC spec must stub such a
+   * child rather than mount it. "default" names a default export.
+   */
+  asyncComponents?: string[];
   pos: SourcePosition;
 }
 
