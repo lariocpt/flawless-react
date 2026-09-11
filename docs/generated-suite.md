@@ -380,13 +380,25 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   and the spec passes having rendered nothing. On the dogfood app that was **22
   of 32 page specs**.
 
-  Two rules close it, both reading the component's own source:
+  Four rules close it, all reading the component's own source:
   - A field compared with `===` to a **literal** takes that literal.
-    `m.status === "active"` yields `status: "active"`. `!==` is not used — it
-    says what a value must not be, which does not pick one out.
+    `m.status === "active"` yields `status: "active"`. In render position
+    `!==` is not used — it says what a value must not be, which does not pick
+    one out.
   - A field compared to one of the component's **props** takes that prop's
     value, resolved from the same fixture the spec's `DEFAULTS` carries — so
     the two agree by construction rather than by both spelling `flawless-id`.
+  - Inside a top-level guard condition the polarity inverts: `if (!invoice ||
+    invoice.building_id !== id) notFound()` renders only when the field IS the
+    route param, so `!==` there captures the way `===` does in render position
+    — and a guard's `===` captures nothing, since the value it names would
+    fire the very exit the fixture exists to avoid. A comparison inside a
+    `find()` callback keeps render polarity even when the call feeds a guard.
+  - A field compared to **another dependency's field** — `members.find((m) =>
+    m.user_id === user.id)` — takes the value that dep's own fixture holds
+    there (one hop; an unreadable note is dropped). Fields read off a `find()`
+    **result** (`const mine = members.find(…)` and then `mine.status`) count
+    as element fields of the collection, so every rule above reaches them.
 
   And a Next page's `params` never contains an empty string. `mapType`'s default
   for a string prop is `""`, which is right for a caption and impossible for a
