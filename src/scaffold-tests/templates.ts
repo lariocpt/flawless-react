@@ -10,6 +10,7 @@ import type {
   FormInfo,
   LabelSource,
   NextjsApiRoute,
+  PredicateSiteInfo,
   PropsShape,
   StateInfo,
   TodoCounter,
@@ -1170,6 +1171,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
   const staticTextTests = emitStaticTextTests(name, info, "rsc");
   const guardTests = emitGuardTests(name, info);
+  const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir);
 
   return `import { describe, test, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -1199,7 +1201,7 @@ ${uncertainEscape(info, apiRoutes)}    // Not a guard and not an admitted gap: a
   expect(rendered?.container.innerHTML.length ?? 0).toBeGreaterThan(0);
   void screen;
 });
-${staticTextTests}${guardTests}`;
+${staticTextTests}${guardTests}${inversionTests}`;
 }
 
 /**
@@ -1322,6 +1324,184 @@ test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () 
   ];
   // vi.mock is hoisted, so these resolve to the mocks declared above.
   return `\n${imports.join("\n")}\n${parts.join("\n")}\n`;
+}
+
+/** The import names emitGuardTests already emitted, so nothing binds twice. */
+function guardTestImportNames(info: ComponentInfo): Set<string> {
+  const deps = info.dataDeps ?? [];
+  return new Set(
+    (info.guards ?? [])
+      .filter((g) => g.triggerValue !== undefined && g.depVars.length === 1)
+      .map((g) => deps.find((d) => d.varName === g.depVars[0]))
+      .filter((d): d is NonNullable<typeof d> => Boolean(d?.specifier))
+      .map((d) => d.calleeRoot),
+  );
+}
+
+/**
+ * B-19: the OTHER side of every certified predicate. One test per control,
+ * two legs in it: the defaults leg proves each witness the inverted leg will
+ * assert against actually renders (B-26's lesson — an absence over text that
+ * never rendered passes vacuously), then a single Once-override flips the
+ * predicate and the second mount asserts the sides that changed. No guard
+ * catch on the inverted mount: the analyser certified the flip stays on the
+ * render path, so an exit there is the certification being wrong — a tool
+ * gap that must fail red, never pass.
+ */
+function emitPredicateInversionTests(
+  name: string,
+  info: ComponentInfo,
+  providerImport: string | undefined,
+  specDir?: string,
+): string {
+  const controls = info.predicateInversions ?? [];
+  const refusals = info.predicateRefusals ?? [];
+  if (controls.length === 0 && refusals.length === 0) return "";
+
+  const callArgs = rscCallArgs(info);
+  const renderOf = (uiVar: string): string =>
+    providerImport ? `render(<AppProvider>{${uiVar}}</AppProvider>)` : `render(<>{${uiVar}}</>)`;
+  const staticText = info.staticText ?? [];
+  const mountProof = staticText[0];
+  const parts: string[] = [];
+  const importNames = new Map<string, string>(); // callee → import specifier
+  const already = guardTestImportNames(info);
+
+  // The import must spell the module the way the vi.mock above did — a
+  // relative specifier re-based onto the spec's own directory — or an
+  // out-dir spec imports a path that does not exist there.
+  const needImport = (callee: string | undefined): boolean => {
+    if (!callee) return false;
+    const mi = (info.moduleImports ?? []).find((m) => !m.isTypeOnly && m.names.includes(callee));
+    if (!mi) return false;
+    if (!already.has(callee)) importNames.set(callee, mockSpecifier(mi, specDir));
+    return true;
+  };
+
+  for (const c of controls) {
+    const flippedWitnessOf = (s: PredicateSiteInfo): string | undefined =>
+      s.baselineSide ? s.falseWitness : s.trueWitness;
+    const baselineWitnessOf = (s: PredicateSiteInfo): string | undefined =>
+      s.baselineSide ? s.trueWitness : s.falseWitness;
+    // An absence claim over text the page also renders unconditionally would
+    // red on correct code; those witnesses assert presence only.
+    const absenceSafe = (w: string): boolean => !staticText.some((t) => t.includes(w));
+
+    if (c.kind === "dep-null") {
+      if (!c.calleeRoot || !needImport(c.calleeRoot) || !mountProof) continue;
+      const texts = staticText.slice(0, 3);
+      parts.push(`
+test("${name}: ${c.varName} = null — the guard's other side renders", async () => {
+  // null is a legal return of ${c.calleeRoot}'s own annotation, so the page
+  // below the guard is reachable by contract — and only this flip reaches it.
+  vi.mocked(${c.calleeRoot}).mockResolvedValueOnce(null as never);
+  const ui: React.ReactNode = await ${name}(${callArgs});
+  const view = ${renderOf("ui")};
+  const text = (view.container.textContent ?? "").replace(/\\s+/g, " ");
+${texts.map((t) => `  expect(text).toContain(${JSON.stringify(t)});`).join("\n")}
+});`);
+      continue;
+    }
+
+    // The single override that flips this predicate.
+    let override = "";
+    let mountExpr = `${name}(${callArgs})`;
+    if (c.kind === "prop") {
+      const path = c.propPath ?? [];
+      const lit = c.flip === undefined ? "undefined" : JSON.stringify(c.flip);
+      if (path.length === 1) {
+        mountExpr = `${name}(buildProps({ ${path[0]}: ${lit} }) as never)`;
+      } else if (path.length === 2) {
+        const root = JSON.stringify(path[0]);
+        mountExpr = `${name}(buildProps({ ${path[0]}: { ...(DEFAULTS[${root}] as Record<string, unknown>), ${path[1]}: ${lit} } }) as never)`;
+      } else {
+        continue;
+      }
+    } else {
+      if (!c.calleeRoot || !needImport(c.calleeRoot)) continue;
+      const lit = c.kind === "dep-empty" ? "[]" : "false";
+      override = c.awaited
+        ? `vi.mocked(${c.calleeRoot}).mockResolvedValueOnce(${lit} as never);`
+        : `vi.mocked(${c.calleeRoot}).mockReturnValueOnce(${lit} as never);`;
+    }
+
+    const leg1: string[] = [];
+    const leg2: string[] = [];
+    const counters: string[] = [];
+    for (const [i, s] of c.sites.entries()) {
+      const bw = baselineWitnessOf(s);
+      const fw = flippedWitnessOf(s);
+      if (s.reachableAtDefaults && bw !== undefined) {
+        leg1.push(`  expect(t0).toContain(${JSON.stringify(bw)});`);
+        if (s.reachableWhenFlipped && absenceSafe(bw)) {
+          leg2.push(`  expect(t1).not.toContain(${JSON.stringify(bw)});`);
+        }
+      }
+      if (s.reachableWhenFlipped && fw !== undefined) {
+        leg2.push(`  expect(t1).toContain(${JSON.stringify(fw)});`);
+      }
+      const bc = s.baselineSide ? s.trueCallee : s.falseCallee;
+      const fc = s.baselineSide ? s.falseCallee : s.trueCallee;
+      if (bc && needImport(bc)) {
+        counters.push(`  const n${i}b = vi.mocked(${bc}).mock.calls.length;`);
+        leg2.push(`  expect(vi.mocked(${bc}).mock.calls.length).toBe(n${i}b);`);
+      }
+      if (fc && needImport(fc)) {
+        counters.push(`  const n${i}f = vi.mocked(${fc}).mock.calls.length;`);
+        leg2.push(`  expect(vi.mocked(${fc}).mock.calls.length).toBeGreaterThan(n${i}f);`);
+      }
+    }
+    if (leg2.length === 0) continue;
+    if (mountProof) leg2.unshift(`  expect(t1).toContain(${JSON.stringify(mountProof)});`);
+
+    const what =
+      c.kind === "dep-empty" ? `${c.varName} = [] — the empty side` : `${c.varName} flipped`;
+    const textLine =
+      leg1.length > 0
+        ? `  const t0 = (first.container.textContent ?? "").replace(/\\s+/g, " ");\n`
+        : "";
+    const legOne =
+      leg1.length + counters.length === 0
+        ? ""
+        : `  // Leg 1 — defaults. Asserting the witnesses HERE is what keeps the
+  // inverted leg's absences honest: text that never rendered cannot
+  // meaningfully "go absent".
+  const ui0: React.ReactNode = await ${name}(${callArgs});
+  const first = ${renderOf("ui0")};
+${textLine}${[...leg1, ...counters].join("\n")}
+  first.unmount();
+`;
+    parts.push(`
+test("${name}: ${what} — ${c.sites.length} branch site(s) change side", async () => {
+${legOne}  // ${legOne ? "Leg 2 — one" : "One"} override, the other side. No guard catch: the flip was
+  // certified to stay on the render path, so an exit here is a tool gap
+  // and must be red.
+  ${override}
+  const ui1: React.ReactNode = await ${mountExpr};
+  const second = ${renderOf("ui1")};
+  const t1 = (second.container.textContent ?? "").replace(/\\s+/g, " ");
+${leg2.join("\n")}
+});`);
+  }
+
+  for (const r of refusals) {
+    const reason: Record<typeof r.reason, string> = {
+      "multi-call": "its callee is called more than once, and a Once-override flips only the first",
+      "guard-entangled": "its value decides an exit guard — that false side exits, not renders",
+      invisible: "flipping it provably changes no rendered branch",
+      unwitnessed: "no branch it moves carries an assertable witness",
+      capped: "certified, but over this spec's inversion cap",
+    };
+    parts.push(`
+test.skip("${name}: ${r.varName} inversion refused — ${reason[r.reason]}", () => {});`);
+  }
+
+  if (parts.length === 0) return "";
+  const importLines = [...importNames].map(
+    ([callee, spec]) => `import { ${callee} } from ${JSON.stringify(spec)};`,
+  );
+  // vi.mock is hoisted, so these resolve to the mocks declared above.
+  return `\n${importLines.join("\n")}\n${parts.join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------

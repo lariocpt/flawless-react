@@ -261,6 +261,45 @@ export function renderReportMarkdown(input: ReportInput): string {
     }
   }
 
+  // --- inverted predicates (B-19) ------------------------------------------
+  {
+    const emitted = new Map<string, number>();
+    const refused = new Map<string, { count: number; exemplar: string }>();
+    for (const c of flat) {
+      for (const inv of c.info.predicateInversions ?? []) {
+        emitted.set(inv.kind, (emitted.get(inv.kind) ?? 0) + 1);
+      }
+      for (const r of c.info.predicateRefusals ?? []) {
+        const row = refused.get(r.reason);
+        const at = `${rel(r.pos.file)}:${r.pos.line}`;
+        if (!row) refused.set(r.reason, { count: 1, exemplar: at });
+        else row.count += 1;
+      }
+    }
+    if (emitted.size > 0 || refused.size > 0) {
+      lines.push(
+        "## Inverted predicates",
+        "",
+        "Second mounts that exercise the OTHER side of a decidable predicate — a",
+        "boolean dep flipped false, a nullable dep flipped null, a list flipped",
+        "empty, a prop overridden. Each flip is certified against the values the",
+        "mocks actually hold; refusals are the certifier declining by name, not",
+        "hand-work to fill.",
+        "",
+        "| Outcome | Count | Example |",
+        "| --- | ---: | --- |",
+      );
+      for (const kind of [...emitted.keys()].sort()) {
+        lines.push(`| emitted \`${kind}\` | ${emitted.get(kind)} | — |`);
+      }
+      for (const reason of [...refused.keys()].sort()) {
+        const row = refused.get(reason) as { count: number; exemplar: string };
+        lines.push(`| refused \`${reason}\` | ${row.count} | \`${row.exemplar}\` |`);
+      }
+      lines.push("");
+    }
+  }
+
   // --- skips ---------------------------------------------------------------
   lines.push("## Not covered, and why", "");
   if (excluded.length === 0) {

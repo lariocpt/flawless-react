@@ -70,7 +70,14 @@ export function resolveDepReturns(
     if (promiseArg) {
       const value = resolveTypeNodeValue(promiseArg, sf, declFile, resolver, cache);
       if (value === undefined) return dep;
-      return { ...dep, inferredReturn: { provenance: "annotation" as const, value } };
+      return {
+        ...dep,
+        inferredReturn: {
+          provenance: "annotation" as const,
+          value,
+          ...annotationFlags(promiseArg),
+        },
+      };
     }
     // A sync annotation on an AWAITED dep is somebody's refactor in progress —
     // not a thing to build a fixture on, and the original bail stands for it.
@@ -92,7 +99,15 @@ export function resolveDepReturns(
       if (dep.awaited) return dep;
       const value = resolveTypeNodeValue(fn.type, sf, declFile, resolver, cache);
       if (value === undefined) return dep;
-      return { ...dep, inferredReturn: { provenance: "annotation" as const, value, sync: true } };
+      return {
+        ...dep,
+        inferredReturn: {
+          provenance: "annotation" as const,
+          value,
+          sync: true,
+          ...annotationFlags(fn.type),
+        },
+      };
     }
 
     if (!fn.body) return dep;
@@ -246,6 +261,37 @@ function promiseTypeArg(type: ts.TypeNode | undefined): ts.TypeNode | undefined 
  * honest {} stub and the TODO that goes with it, exactly as before.
  */
 /**
+ * What the return TypeNode itself admits — read at the declaration because
+ * the RESOLVED value cannot say: a `(): true` literal annotation and a
+ * `(): boolean` both store `true`, and only the second makes `false` a legal
+ * return a spec may flip to (B-19's provably-reachable rule). The nullable
+ * flag mirrors it for `T | null` unions, whose discounted arm is exactly the
+ * value that un-fires a truthy guard.
+ */
+function annotationFlags(node: ts.TypeNode): {
+  booleanAnnotated?: true;
+  nullableAnnotated?: true;
+} {
+  const flags: { booleanAnnotated?: true; nullableAnnotated?: true } = {};
+  if (node.kind === ts.SyntaxKind.BooleanKeyword) flags.booleanAnnotated = true;
+  if (ts.isUnionTypeNode(node)) {
+    if (
+      node.types.some(
+        (t) =>
+          t.kind === ts.SyntaxKind.UndefinedKeyword ||
+          (ts.isLiteralTypeNode(t) && t.literal.kind === ts.SyntaxKind.NullKeyword),
+      )
+    ) {
+      flags.nullableAnnotated = true;
+    }
+    if (node.types.some((t) => t.kind === ts.SyntaxKind.BooleanKeyword)) {
+      flags.booleanAnnotated = true;
+    }
+  }
+  return flags;
+}
+
+/**
  * Which of this import's names declare ASYNC functions — the evidence the RSC
  * emitter needs to stub an async server CHILD instead of mounting it: React's
  * client renderer refuses an async function component, and the page that
@@ -311,12 +357,14 @@ export function annotatedExportReturns(
         continue;
       }
       const value = resolveTypeNodeValue(promiseArg, sf, declFile, resolver, cache);
-      if (value !== undefined) out[exported] = { value, sync: false };
+      if (value !== undefined) {
+        out[exported] = { value, sync: false, ...annotationFlags(promiseArg) };
+      }
       continue;
     }
     if (fn.type.kind === ts.SyntaxKind.VoidKeyword) continue;
     const value = resolveTypeNodeValue(fn.type, sf, declFile, resolver, cache);
-    if (value !== undefined) out[exported] = { value, sync: true };
+    if (value !== undefined) out[exported] = { value, sync: true, ...annotationFlags(fn.type) };
   }
   return out;
 }

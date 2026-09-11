@@ -423,7 +423,7 @@ function stepVerdict(child: ts.Node, parent: ts.Node, env: RenderEnv): Verdict {
   return "yes";
 }
 
-function unwrap(expr: ts.Expression): ts.Expression {
+export function unwrap(expr: ts.Expression): ts.Expression {
   let current = expr;
   while (ts.isParenthesizedExpression(current)) current = current.expression;
   return current;
