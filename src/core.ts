@@ -635,6 +635,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
                 [EXPO_SCRIPT.e2e]: `playwright test --config ${underOutDir(outRel, "e2e/playwright.config.ts")}`,
               }
             : {}),
+          // crust is a CLI, not an npm dep — same as the Next.js load script,
+          // which is why no @-dep rides alongside this one.
+          ...(taskIds.includes("load")
+            ? {
+                [EXPO_SCRIPT.load]: `crust -c 'test-pipes --target ${underOutDir(outRel, "load/routes.pipes")} --timeout 60000'`,
+              }
+            : {}),
         },
       );
       keptScripts = merge.keptScripts;

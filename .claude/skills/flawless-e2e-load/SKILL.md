@@ -18,8 +18,16 @@ description: Run and maintain flawless-react's route e2e specs and crust load pi
 > because an auth wall rendered in place keeps the URL and a clean-ish console — the
 > witness is the claim that cannot be true of a wall. A cold start that always lands
 > on the login screen is a `landing` override in params.json, not a spec edit.
-> `load` still refuses (wave 7): it will emit **API pipes only** — an Expo app has no
-> server of its own, and load-testing `expo start --web` measures Metro.
+>
+> **`load` RUNS under `--expo` since wave 7 — API pipes only.** An Expo app has no
+> server-rendered page routes, so the pipes are the GET endpoints the screens hit,
+> harvested ONE hop through the app's fetch wrapper (screen → `listBuildings()` →
+> `apiFetch("/api/buildings")`; a bare `fetch()` never exists in a screen, so the
+> direct harvest finds 0). Point `LOAD_BASE` at the API (not Metro — Metro serves
+> the UI, not the endpoints), and `LOAD_AUTH` at a bearer/cookie header. The
+> write-once `routes.setup.ts` here probes a parameterless GET endpoint and fails
+> on a **401** — an API 401 keeps the URL, so the page-route redirect probe would
+> pass vacuously on a dead session. Mutations are excluded by default.
 
 Both suites run against the **real app** — e2e because MSW cannot intercept a
 server component's database access, load because measuring anything else is

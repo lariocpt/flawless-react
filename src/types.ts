@@ -848,6 +848,18 @@ export interface ComponentInfo {
   moduleImports?: ModuleImportInfo[];
   fetchCalls?: FetchCallInfo[];
   /**
+   * GET/mutation endpoints this component reaches through the app's own fetch
+   * wrapper, resolved ONE hop: the screen calls an imported api function
+   * (`listBuildings()`), whose body calls a module-local fetch wrapper with a
+   * literal path (`apiFetch("/api/buildings")`). `fetchCalls` sees only a bare
+   * `fetch()` in the component body; a React Native app never has one — every
+   * call goes through `lib/api.ts` — so without this the load harvest is empty.
+   * Native-only (the harvest runs solely for host-dialect "native" files); the
+   * shape is FetchCallInfo so the load task treats it exactly like a direct
+   * fetch. B-16 wave 7.
+   */
+  apiCalls?: FetchCallInfo[];
+  /**
    * The component reports errors itself — `console.error(...)`, or `.error(...)`
    * on an imported binding such as a logger.
    *

@@ -35,6 +35,7 @@ export const EXPO_IMPLEMENTED: readonly TaskId[] = [
   "a11y",
   "react-rules",
   "e2e",
+  "load",
 ];
 
 export function expoNotImplemented(id: TaskId, wave: string): TaskResult {

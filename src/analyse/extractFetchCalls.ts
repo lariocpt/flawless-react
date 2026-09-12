@@ -34,7 +34,7 @@ export function extractFetchCalls(bodyNode: ts.Node, sourceFile: ts.SourceFile):
   return out;
 }
 
-function parseUrlArg(arg: ts.Expression): { template: string; holes: string[] } | undefined {
+export function parseUrlArg(arg: ts.Expression): { template: string; holes: string[] } | undefined {
   if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
     return { template: arg.text, holes: [] };
   }
@@ -57,7 +57,7 @@ function holeName(expr: ts.Expression, index: number): string {
   return `param${index}`;
 }
 
-function readMethod(init: ts.Expression | undefined): string {
+export function readMethod(init: ts.Expression | undefined): string {
   if (!init || !ts.isObjectLiteralExpression(init)) return "GET";
   for (const p of init.properties) {
     if (!ts.isPropertyAssignment(p)) continue;

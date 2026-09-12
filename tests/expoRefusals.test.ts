@@ -17,7 +17,7 @@ const EXPOAPP = path.join(REPO_ROOT, "tests", "fixtures", "expoapp");
 const BIN = path.join(REPO_ROOT, "src", "bin.ts");
 
 /** Tasks that have a real Expo implementation today. Grows by one per wave. */
-const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser", "a11y", "e2e"]);
+const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser", "a11y", "e2e", "load"]);
 const REFUSING = ALL_TASK_IDS.filter((id) => !IMPLEMENTED.has(id));
 
 let tmpRoot: string;
@@ -158,12 +158,28 @@ describe("--expo: what refuses, and how", () => {
   }, 120_000);
 
   test("a mixed selection still runs what it can", async () => {
-    // Partial credit is the point: selecting one unported task must not cost the
-    // user the ones that work.
-    const { code, blob } = await run(["--tasks", "perf-static,load"], "mixed");
+    // Partial credit is the point: selecting the one refusing task must not cost
+    // the user the ones that work. perf-harness is the only refuser left, so it
+    // is what pairs with a runnable here.
+    const { code, blob } = await run(["--tasks", "perf-static,perf-harness"], "mixed");
     expect(code).toBe(1);
     expect(blob.results.find((r) => r.id === "perf-static")?.ok).toBe(true);
-    expect(blob.results.find((r) => r.id === "load")?.ok).toBe(false);
+    expect(blob.results.find((r) => r.id === "perf-harness")?.ok).toBe(false);
+  }, 120_000);
+
+  test("load runs API-only, and its summary names the endpoint count", async (): Promise<void> => {
+    // Wave 7. The fixture's hostile.tsx reaches no api wrapper, but items/[id]
+    // and login DO — through the fixture's lib/api. A native load run harvests
+    // those GET endpoints; a run that harvested none would say so, not pass
+    // silently. Either way the summary is explicit, which is the anti-vacuous
+    // contract this whole mode is scored on.
+    const { code, blob } = await run(["--tasks", "load"], "load-expo");
+    expect(code).toBe(0);
+    const load = blob.results.find((r) => r.id === "load");
+    expect(load?.ok).toBe(true);
+    // API-only: the summary talks about endpoints, never page routes.
+    expect(load?.summary).toMatch(/API endpoint\(s\)|no GET endpoints harvested/);
+    expect(load?.summary).not.toContain("page route");
   }, 120_000);
 });
 

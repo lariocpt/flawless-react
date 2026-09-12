@@ -128,7 +128,7 @@ flawless reads the project off disk — Expo SDK major, the expo-router `app/` r
 | `react-rules` | **runs** |
 | `a11y` | **runs** — the native accessibility analyser (six rules over the parsed tree; see below) |
 | `e2e` | **runs** — route specs against `expo start --web` (see below) |
-| `load` | **refuses**, naming the wave that will implement it (wave 7, API-only pipes) |
+| `load` | **runs** — API-only crust pipes for the GET endpoints the screens reach through the app's fetch wrapper (see below) |
 | `perf-harness` | **refuses** — measured and declined, not deferred: on an expo-router app the population is route screens, which the browser host cannot mount (they need a navigator), so the measured ceiling on the dogfood app was ~0 of 32 components. The refusal points at the recorded evidence ([`docs/reviews/2026-09-expo-probes.md`](docs/reviews/2026-09-expo-probes.md)); the revisit condition is an adopter with a real `components/` directory of non-route components |
 
 ### The native unit plane
@@ -174,6 +174,14 @@ The machinery is the Next.js flavour's — the same `params.json` id fixture (ex
 - **Auth is a cookie on the API origin.** On web the app calls its API with `credentials: "include"`, so the setup stub's worked example is a request-context login + `storageState`, verbatim. No token injection.
 - **An auth wall has two faces, and the specs catch both.** A client-side redirect fails the landing assertion; a wall rendered *in place* keeps the URL and answers 200 — but the API's 401s land in the console assertion, and the **copy witness** (a third test asserting the screen's longest analysis-proven literal is visible) fails on any screen that is not the one the analysis described.
 - **Two servers.** The emitted config boots Metro; your API is a prerequisite it cannot know how to start. Set `EXPO_PUBLIC_API_URL` before running — Metro inlines it into the bundle, and an unset value silently falls back to whatever the source hardcodes (on one dogfooded LAN, a production container).
+
+### API-only load pipes
+
+`--expo --tasks load` emits crust load pipes for the GET endpoints the screens actually hit. An Expo app has no server-rendered page routes to load-test, so — unlike the Next.js flavour — the pipes are API endpoints only, and the harvest that finds them is what this wave adds.
+
+A React Native screen never writes `fetch()`: it calls a named api function (`listBuildings()`) imported from `lib/api`, whose body calls a module-local wrapper with a literal path (`apiFetch("/api/buildings")`). So the direct-`fetch` harvest sees nothing — 0 endpoints on the whole dogfood app — and the endpoint URL lives two hops from the screen. The load harvest reads exactly that chain and no deeper: the screen must *call* the imported name; the name must resolve (through barrels) to a function whose body calls a **proven** fetch wrapper (its single `fetch()` addresses one of its own parameters — trusted for what it does, never for being named `apiFetch`) with a string-literal or template path. A call mediated by a store, a non-literal URL, or a wrapper two modules deep is dropped rather than guessed: a missing endpoint costs a pipe, a wrong one measures a URL the app never requests.
+
+Everything downstream is the Next.js machinery reused verbatim — the pipe body, the merge-kept `routes.pipes`, `params.json` (the same ids the e2e task fills), `env.sh` — with one Expo-specific difference: the write-once `routes.setup.ts` probes a parameterless GET endpoint and fails on a **401**, because an API endpoint does not redirect to a login page the way a page route does, so the Next flavour's redirect check would pass on a dead session.
 
 A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the ones that work.
 

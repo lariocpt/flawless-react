@@ -16,6 +16,7 @@ import { extractRenderMode } from "./extractRenderMode.ts";
 import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
 import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
+import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
 import { parseFile } from "./parseFile.ts";
@@ -161,6 +162,22 @@ async function analyseOne(
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
+  // Endpoints reached through the app's own fetch wrapper (one hop). Native
+  // only: a React Native screen never has a bare fetch() for extractFetchCalls
+  // to find — it calls api functions that wrap it — so this is the entire load
+  // harvest on Expo, and running it on web (where fetchCalls already sees the
+  // direct calls) would only add resolution cost. B-16 wave 7.
+  const apiCalls =
+    hostDialect === "native"
+      ? harvestApiEndpoints(
+          unit.bodyNode,
+          parsed.sourceFile,
+          parsed.imports,
+          absPath,
+          resolver,
+          cache,
+        )
+      : [];
   // The CLASS for a class component, not just render(): componentDidCatch is
   // where an error boundary logs, and bodyNode is render(). Reading render()
   // alone left logsErrors false for a component whose whole contract is to log
@@ -326,6 +343,7 @@ async function analyseOne(
     propUsage,
     childAttrs,
     fetchCalls,
+    ...(apiCalls.length > 0 ? { apiCalls } : {}),
     staticText,
     dataDeps,
     guards,
