@@ -213,10 +213,36 @@ Three contracts to rely on:
   control is addressable to a spec but still flagged (a testID is not a name), and a
   dynamic-text control is a ladder skip but NOT flagged.
 
+## Route e2e against Expo web (wave 6)
+
+`e2e` runs under `--expo` since wave 6: one Playwright spec per expo-router route,
+against `expo start --web`. The Next.js flavour's machinery carries over
+(params.json ids, write-once global-setup with the hand-work tally, `landing`
+overrides, `GET <route>` describe titles for `--changed` narrowing); the Expo facts
+baked in, each measured first (`docs/reviews/2026-09-expo-probes.md`):
+
+- Metro's statuses are REAL — unknown routes 404, per-route rendered HTML — so the
+  status assertion keeps teeth on a dev server.
+- Auth is a **cookie on the API origin** (the app stores no token on web); the setup
+  stub's request-context login + storageState example is the whole job. Set
+  `EXPO_PUBLIC_API_URL` first — Metro inlines it, and the unset fallback is whatever
+  the source hardcodes.
+- **Two auth-wall faces, three assertions.** A client redirect fails the landing
+  assertion; a wall rendered IN PLACE fails the console assertion (the API's 401s)
+  and the **copy witness** — a third test asserting the screen's longest
+  analysis-proven literal renders, the claim that cannot be true of a wall.
+- An app whose cold start always lands on `/login` (no session hydration) is a
+  `landing` override in params.json — recorded truth, never a spec edit.
+
 ## Tasks that refuse, and why that is the design
 
-`perf-harness`, `e2e` and `load` refuse under `--expo`, naming the wave that
-will implement them. And one runner reads differently rather than refusing:
+`load` refuses under `--expo`, naming wave 7 (API-only pipes). `perf-harness`
+refuses as **measured-and-declined, not deferred**: on an expo-router app the
+population is route screens, which the browser host cannot mount (navigator hooks;
+renderRouter is jest-bound), so the measured ceiling on the dogfood app was ~0 of
+32 components — the refusal points at `docs/reviews/backlog.md` B-16 and the probes
+ledger, and the revisit condition is an adopter with a real `components/` directory
+of non-route components. And one runner reads differently rather than refusing:
 
 - **`perf-static` runs but reads differently under the React Compiler.** On a project
   with `experiments.reactCompiler: true`, 136 of 168 findings were

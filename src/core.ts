@@ -621,10 +621,19 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           // them the adopter's fault. Majored to the jest pin above: @types/jest
           // 30 against jest 29 is a mismatch nobody asked for.
           "@types/jest": "^29.5.14",
+          // The e2e specs' runner. Same pin as the Next.js merge — an Expo app
+          // has no Playwright of its own (the dogfood app's lived in a sibling
+          // workspace the mobile package cannot resolve from).
+          ...(taskIds.includes("e2e") ? { "@playwright/test": "^1.49.0" } : {}),
         },
         {
           ...(taskIds.includes("unit-browser")
             ? { [EXPO_SCRIPT.unit]: `jest --config ${underOutDir(outRel, JEST_CONFIG)}` }
+            : {}),
+          ...(taskIds.includes("e2e")
+            ? {
+                [EXPO_SCRIPT.e2e]: `playwright test --config ${underOutDir(outRel, "e2e/playwright.config.ts")}`,
+              }
             : {}),
         },
       );
@@ -761,12 +770,14 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     );
   }
   if (!anyFailed && opts.changed !== undefined && runnableSelected) {
-    const repoRoot = (await findRepoRoot(nextCtx?.root ?? outDir)) ?? nextCtx?.root ?? outDir;
+    const projectRoot = nextCtx?.root ?? expoCtx?.root;
+    const repoRoot = (await findRepoRoot(projectRoot ?? outDir)) ?? projectRoot ?? outDir;
     const files = await changedFiles(repoRoot, opts.changed === true ? "HEAD" : opts.changed);
     const affected = affectedSpecs(
       trees,
       files,
       nextCtx ? { router: nextCtx.router, root: nextCtx.root } : undefined,
+      expoCtx?.routerRoot !== undefined ? { routerRoot: expoCtx.routerRoot } : undefined,
     );
     log(
       `changed: ${affected.changedFiles.length} source file(s) → ${affected.components.length} component spec(s), ${affected.routes.length} route(s)` +
@@ -778,7 +789,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       outDir,
       selected.map((t) => t.id),
       affected,
-      nextCtx?.root,
+      // The project whose package.json carries the flawless:* scripts — the
+      // Expo root serves the same role the Next root does.
+      nextCtx?.root ?? expoCtx?.root,
       // log:false means stdout belongs to the caller (--json's blob, or a
       // programmatic consumer) — the runner and its children use stderr.
       //
@@ -802,7 +815,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     const outcome = await runGeneratedTests(
       outDir,
       selected.map((t) => t.id),
-      nextCtx?.root,
+      // Same role either way: the project whose package.json holds flawless:*.
+      nextCtx?.root ?? expoCtx?.root,
       opts.log !== true,
     );
     suitesGreen = outcome.green;

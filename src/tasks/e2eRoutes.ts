@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { outDirRel, relativeToEmitted, underOutDir } from "../emitPaths.ts";
-import { expoNotImplemented } from "../expo/refusal.ts";
 import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
 import type { ComponentTree, RunContext, Task, TaskResult, TodoTally } from "../types.ts";
+import { runExpoE2e } from "./e2eExpo.ts";
 
 /**
  * Route-level Playwright e2e against the target's real `next dev` server.
@@ -20,7 +20,10 @@ export const e2eRoutes: Task = {
   description: "One spec per analysed app-router page: error-free load + basic interactions",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
-    if (ctx.expo) return expoNotImplemented("e2e", "wave 6 — expo-router route specs");
+    // The wave-3/wave-5 shape: one TaskId, a sibling engine per platform —
+    // expo-router routes are leaf files, not page.tsx directories, so this is
+    // a different route model, not a flag on this one.
+    if (ctx.expo) return runExpoE2e(ctx);
     if (!ctx.nextjs) {
       return {
         id: "e2e",
@@ -563,7 +566,9 @@ export async function ensureParamDefaults(file: string, names: string[]): Promis
   return true;
 }
 
-function paramsHelper(): string {
+/** Shared with the Expo e2e sibling (e2eExpo.ts): the params machinery is the
+ *  platform-free part — both routers emit the same bracket templates. */
+export function paramsHelper(): string {
   return `import params from "./params.json" with { type: "json" };
 
 /**

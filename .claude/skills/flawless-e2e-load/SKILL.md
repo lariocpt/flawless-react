@@ -5,11 +5,20 @@ description: Run and maintain flawless-react's route e2e specs and crust load pi
 
 # flawless e2e + load
 
-> **Both tasks refuse under `--expo` today**, naming the wave that will implement them.
-> `e2e` will target expo-router routes against `expo start --web` (Metro's port 8081,
-> not 3000) and authenticate against the API origin with a **cookie** rather than a
-> storage token — the mobile app short-circuits `expo-secure-store` on web and sends
-> `credentials: "include"`. `load` will emit **API pipes only**: an Expo app has no
+> **`e2e` RUNS under `--expo` since wave 6** — expo-router routes against
+> `expo start --web` (Metro's webPort, default 8081), authenticated against the API
+> origin with a **cookie** via the setup stub's request-context login + storageState
+> (the app short-circuits `expo-secure-store` on web and sends `credentials:
+> "include"`). Three Expo differences to know: set `EXPO_PUBLIC_API_URL` before
+> running (Metro bakes it into the bundle; unset, the app falls back to whatever its
+> source hardcodes — on one dogfooded LAN, a production container); Metro's statuses
+> are REAL (unknown routes 404, per-route HTML — measured in
+> `docs/reviews/2026-09-expo-probes.md`); and each spec carries a third test, the
+> **copy witness** (`getByText` on the screen's longest analysis-proven literal),
+> because an auth wall rendered in place keeps the URL and a clean-ish console — the
+> witness is the claim that cannot be true of a wall. A cold start that always lands
+> on the login screen is a `landing` override in params.json, not a spec edit.
+> `load` still refuses (wave 7): it will emit **API pipes only** — an Expo app has no
 > server of its own, and load-testing `expo start --web` measures Metro.
 
 Both suites run against the **real app** — e2e because MSW cannot intercept a

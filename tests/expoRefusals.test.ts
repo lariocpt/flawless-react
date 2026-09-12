@@ -17,7 +17,7 @@ const EXPOAPP = path.join(REPO_ROOT, "tests", "fixtures", "expoapp");
 const BIN = path.join(REPO_ROOT, "src", "bin.ts");
 
 /** Tasks that have a real Expo implementation today. Grows by one per wave. */
-const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser", "a11y"]);
+const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser", "a11y", "e2e"]);
 const REFUSING = ALL_TASK_IDS.filter((id) => !IMPLEMENTED.has(id));
 
 let tmpRoot: string;
@@ -103,6 +103,19 @@ describe("--expo: what runs today", () => {
     // them), so a native engine that examined the tree cannot report zero.
     expect(a11y?.summary).toMatch(/a11y: [1-9]\d* finding\(s\)/);
   }, 120_000);
+
+  test("e2e runs against expo-router, and its summary names the routes", async (): Promise<void> => {
+    // Wave 6. The summary lists the URL templates so a zero-spec run is
+    // visible as such — the fixture's router root carries real routes,
+    // including a dynamic one, so a run that discovered nothing cannot pass.
+    const { code, blob } = await run(["--tasks", "e2e"], "e2e-expo");
+    expect(code).toBe(0);
+    const e2e = blob.results.find((r) => r.id === "e2e");
+    expect(e2e?.ok).toBe(true);
+    expect(e2e?.summary).toMatch(/e2e specs for [1-9]\d* route\(s\)/);
+    expect(e2e?.summary).toContain("/items/[id]");
+    expect(e2e?.summary).toContain("/login");
+  }, 120_000);
 });
 
 describe("--expo: what refuses, and how", () => {
@@ -129,24 +142,28 @@ describe("--expo: what refuses, and how", () => {
     expect(r?.error).not.toContain("docs/expo.md");
   }, 120_000);
 
-  test("every refusing task names the wave that will implement it", async () => {
+  test("every refusing task names its wave or its recorded decline", async () => {
     // A refusal that says only "not supported" is a dead end. Naming the wave
-    // makes the gap a schedule rather than a wall — and keeps this list honest,
-    // because a wave that lands must delete its entry here.
+    // makes the gap a schedule rather than a wall — and a wave that was
+    // MEASURED AND DECLINED (perf-harness, wave 4: ~0 host-mountable
+    // components on an all-route-screens app) must say that instead, with a
+    // pointer to the evidence, or the refusal reads as a promise nobody is
+    // keeping. This list stays honest either way: a wave that lands deletes
+    // its entry, a wave that dies names its grave.
     const { blob } = await run(["--tasks", REFUSING.join(",")], "refuse-all");
     for (const r of blob.results) {
-      expect(r.error).toMatch(/wave \d+ — /);
+      expect(r.error).toMatch(/wave \d+ — |measured-and-declined .* docs\/reviews\/backlog\.md/);
     }
     expect(blob.results).toHaveLength(REFUSING.length);
   }, 120_000);
 
   test("a mixed selection still runs what it can", async () => {
     // Partial credit is the point: selecting one unported task must not cost the
-    // user the two that work.
-    const { code, blob } = await run(["--tasks", "perf-static,e2e"], "mixed");
+    // user the ones that work.
+    const { code, blob } = await run(["--tasks", "perf-static,load"], "mixed");
     expect(code).toBe(1);
     expect(blob.results.find((r) => r.id === "perf-static")?.ok).toBe(true);
-    expect(blob.results.find((r) => r.id === "e2e")?.ok).toBe(false);
+    expect(blob.results.find((r) => r.id === "load")?.ok).toBe(false);
   }, 120_000);
 });
 
