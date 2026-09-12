@@ -362,6 +362,19 @@ ${
     ? ""
     : `
   test("renders its own copy", async ({ page }) => {${skipLine}
+    // A route that DELIBERATELY lands elsewhere (a params.json landing
+    // override — the redirect-only index of an app with no session hydration
+    // is the dogfood shape) never renders its own copy THERE, and asserting
+    // this screen's text on the screen it redirects to would be a red spec
+    // about a recorded decision. The other two tests still run: the landing
+    // assertion proves the redirect goes where the override says.
+    {
+      const wanted = normalisePath(new URL(ROUTE, "http://flawless.invalid").pathname);
+      test.skip(
+        normalisePath(expectedLanding(ROUTE_KEY, wanted)) !== wanted,
+        "this route deliberately lands elsewhere (params.json landing) — its own copy cannot be asserted there",
+      );
+    }
     await page.goto(ROUTE);
     await page.waitForLoadState("networkidle");
     await assertOnRoute(page);
