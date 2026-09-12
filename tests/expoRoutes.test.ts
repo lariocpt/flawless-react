@@ -92,17 +92,24 @@ describe("routeModuleId — what renderRouter's context is keyed by", () => {
 });
 
 describe("the refusal helper", () => {
-  test("is a failed TaskResult, not a throw, and names the task, the wave and the escape", () => {
-    const r = expoNotImplemented("e2e", "wave 6 — expo-router route specs");
+  test("is a failed TaskResult, not a throw, and names the task, the reason and the escape", () => {
+    const r = expoNotImplemented(
+      "perf-harness",
+      "measured-and-declined — a browser host cannot mount a route screen",
+    );
     expect(r.ok).toBe(false);
-    expect(r.id).toBe("e2e");
+    expect(r.id).toBe("perf-harness");
     expect(r.outputs).toEqual([]);
     expect(r.findings).toEqual([]);
     // A TaskResult reaches results[], the --ci blob and REPORT.md; a throw would
-    // exit 1 with the reason only on stderr.
-    expect(r.summary).toContain("no Expo implementation yet");
-    expect(r.error).toContain("e2e");
-    expect(r.error).toContain("wave 6");
+    // exit 1 with the reason only on stderr. The wording states it does not run
+    // and carries the reason verbatim — never "not implemented yet", which would
+    // mislabel a measured decline as pending work.
+    expect(r.summary).toContain("does not run under --expo");
+    expect(r.summary).toContain("measured-and-declined");
+    expect(r.summary).not.toContain("not implemented yet");
+    expect(r.error).toContain("perf-harness");
+    expect(r.error).toContain("measured-and-declined");
     // The escape is spelled as the flag a reader would type, not as prose.
     expect(r.error).toContain(`--tasks ${EXPO_IMPLEMENTED.join(",")}`);
   });

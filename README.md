@@ -119,7 +119,7 @@ bunx flawless-react --expo
 
 flawless reads the project off disk — Expo SDK major, the expo-router `app/` root, whether the React Compiler is on (`app.json`'s `experiments.reactCompiler`, or `babel-plugin-react-compiler`), whether NativeWind is wired through babel, and the port `expo start --web` serves on — then defaults the entry glob to the router root and writes to `<expoRoot>/flawless/`.
 
-**This mode is being built one task at a time, and it says so rather than pretending.** Today:
+**Every task runs under `--expo`, or refuses by a measured decision — the mode is complete.** Today:
 
 | task | under `--expo` |
 |---|---|
@@ -190,7 +190,7 @@ Refusing is deliberate. Emitting the DOM suite for a React Native project would 
 Two things measured on a real Expo app before any of this was written, both recorded in [`docs/reviews/2026-08-expo-probes.md`](docs/reviews/2026-08-expo-probes.md):
 
 - **The `a11y` task was vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep found 3/3 on this repo's own offender fixture. All 29 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needed a different engine, not a different config — the native analyser above is that engine.
-- **The React Compiler changes what `perf-static` should say.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
+- **The React Compiler changes what `perf-static` should say.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag and surfaces these findings for you to weigh; the tool deliberately does not suppress them for you.
 
 ## CLI reference
 

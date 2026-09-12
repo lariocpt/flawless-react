@@ -81,7 +81,7 @@ into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 
 `--expo [<path>]`, mutually exclusive with `--nextjs`. Reads the project's SDK major, expo-router root, React Compiler and NativeWind settings off disk, defaults the entry glob to the router root, and writes to `<expoRoot>/flawless/`.
 
-**Not every task is ported, and the tool says which.**
+**Every task runs under `--expo` except one, which refuses by a measured decision — and the tool says which.**
 
 | task | under `--expo` |
 |---|---|
@@ -100,7 +100,7 @@ A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `-
 Two things worth knowing before reading a native run's output, both measured (`docs/reviews/2026-08-expo-probes.md`):
 
 - **`a11y` on native is the tool's own analyser, and its zero carries a denominator.** Biome's 29 rules are HTML/ARIA and returned zero over 31 RN files with 82 unlabelled `<Pressable>`s (3/3 on the DOM offender fixture), so the task refused until wave 5 shipped the native engine. Its summary always says how many press targets / text inputs / icons were examined — a native zero WITHOUT that denominator is a bug, not a clean bill.
-- **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
+- **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag and surfaces the findings for you to weigh; the tool deliberately does not suppress them.
 
 See the `flawless-expo` skill for the native spec shapes, the selector ladder, and what a skip means.
 

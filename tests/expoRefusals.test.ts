@@ -129,7 +129,10 @@ describe("--expo: what refuses, and how", () => {
     // a stderr-only reason is exactly what B-13 found --ci losing.
     expect(r).toBeDefined();
     expect(r?.ok).toBe(false);
-    expect(r?.summary).toContain("no Expo implementation yet");
+    // The summary states it does not run and carries the reason — never "not
+    // implemented yet", which would mislabel a measured decline as pending work.
+    expect(r?.summary).toContain("does not run under --expo");
+    expect(r?.summary).not.toContain("not implemented yet");
     // It must name the task AND the escape, or the reader has to read the source
     // to find out what to select instead.
     expect(r?.error).toContain(id);
