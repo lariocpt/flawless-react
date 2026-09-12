@@ -20,7 +20,10 @@ export const perfHarness: Task = {
     // built anyway would be a red spec on healthy components or a suite that
     // tests nothing. Revisit condition, recorded in the backlog: an adopter
     // with a real components/ directory of non-route, navigator-free
-    // components.
+    // components. The one opening — a Metro-served real-app perf lane, using
+    // wave 6's infrastructure — is mapped and probe-gated in
+    // docs/reviews/wave4-metro-perf-plan.md; it stays declined until a probe
+    // clears, because on a React-Compiler app the only honest signal is nulled.
     if (ctx.expo) {
       return expoNotImplemented(
         "perf-harness",

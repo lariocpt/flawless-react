@@ -1,10 +1,15 @@
 import type { TaskId, TaskResult } from "../types.ts";
 
 /**
- * A task that has no Expo implementation yet, refusing by name.
+ * A task that does not run under `--expo`, refusing by name with its reason.
  *
- * This is the mechanism that lets the mode ship one wave at a time without the
- * docs lying about it. The alternative shapes are both worse:
+ * This carried the mode through B-16 one wave at a time without the docs lying
+ * about it, and now that B-16 is complete it carries the one task that will
+ * never run: `perf-harness`, measured-and-declined (a browser host cannot mount
+ * a route screen, which is nearly every component in a real Expo app). The
+ * `reason` is free text — a wave string while a wave was pending, a decline
+ * record now — so the message never claims "not yet" over a task that is
+ * actually declined for good. The alternative shapes were both worse:
  *
  *   - Rejecting `--expo` at parse time until every task is ported would mean the
  *     flag lands in one enormous PR, which is how a seam stops being reviewable.
@@ -38,19 +43,19 @@ export const EXPO_IMPLEMENTED: readonly TaskId[] = [
   "load",
 ];
 
-export function expoNotImplemented(id: TaskId, wave: string): TaskResult {
+export function expoNotImplemented(id: TaskId, reason: string): TaskResult {
   return {
     id,
     ok: false,
     outputs: [],
     findings: [],
-    summary: `${id}: no Expo implementation yet (${wave}) — run --tasks ${EXPO_IMPLEMENTED.join(",")}`,
+    summary: `${id}: does not run under --expo (${reason}) — run --tasks ${EXPO_IMPLEMENTED.join(",")}`,
     // The escape is spelled as the flag the reader would actually type, not as
-    // prose naming two ids. Told only that something is unsupported, they have
-    // to go and read the source to find out what to select instead.
+    // prose naming ids. Told only that something is unsupported, they have to go
+    // and read the source to find out what to select instead.
     error:
-      `${id} has no Expo implementation yet — it is ${wave}. ` +
-      `Under --expo today, run \`--tasks ${EXPO_IMPLEMENTED.join(",")}\`; every other task ` +
+      `${id} does not run under --expo — ${reason}. ` +
+      `Under --expo, run \`--tasks ${EXPO_IMPLEMENTED.join(",")}\`; every other task ` +
       `refuses rather than emit DOM artefacts for a React Native project. ` +
       `See the Expo section of README.md.`,
   };
