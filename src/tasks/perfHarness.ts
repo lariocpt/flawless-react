@@ -11,7 +11,24 @@ export const perfHarness: Task = {
   description: "Playwright + React.Profiler + react-scan suite",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
-    if (ctx.expo) return expoNotImplemented("perf-harness", "wave 4 — the Expo-web host");
+    // Wave 4 was measured and DECLINED, not deferred (2026-09-12, census in
+    // docs/reviews/backlog.md B-16 + docs/reviews/2026-09-expo-probes.md): on
+    // an expo-router app the component population is route screens, the host
+    // cannot mount anything that needs a navigator (renderRouter is
+    // jest-bound), and the profile click scenarios are onClick-only — so the
+    // measured ceiling on the dogfood app was ~0 of 32 components. A host
+    // built anyway would be a red spec on healthy components or a suite that
+    // tests nothing. Revisit condition, recorded in the backlog: an adopter
+    // with a real components/ directory of non-route, navigator-free
+    // components.
+    if (ctx.expo) {
+      return expoNotImplemented(
+        "perf-harness",
+        "measured-and-declined 2026-09-12 — ~0 host-mountable components on an " +
+          "all-route-screens app; docs/reviews/backlog.md B-16 records the evidence " +
+          "and the revisit condition",
+      );
+    }
     const [first, ...rest] = ctx.trees;
     if (!first) {
       return {

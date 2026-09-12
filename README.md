@@ -127,7 +127,9 @@ flawless reads the project off disk — Expo SDK major, the expo-router `app/` r
 | `perf-static` | **runs** — pure AST analysis, and nothing in it is DOM-specific |
 | `react-rules` | **runs** |
 | `a11y` | **runs** — the native accessibility analyser (six rules over the parsed tree; see below) |
-| `perf-harness`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+| `e2e` | **runs** — route specs against `expo start --web` (see below) |
+| `load` | **refuses**, naming the wave that will implement it (wave 7, API-only pipes) |
+| `perf-harness` | **refuses** — measured and declined, not deferred: on an expo-router app the population is route screens, which the browser host cannot mount (they need a navigator), so the measured ceiling on the dogfood app was ~0 of 32 components. The refusal points at the recorded evidence ([`docs/reviews/2026-09-expo-probes.md`](docs/reviews/2026-09-expo-probes.md)); the revisit condition is an adopter with a real `components/` directory of non-route components |
 
 ### The native unit plane
 
@@ -162,6 +164,16 @@ Six rules, each judged from the same parsed tree the rest of the analysis uses:
 | `a11y/invalid-role` | a role value RN does not recognise — the union widens with `\| string`, so tsc never catches the typo |
 
 Two structural properties matter more than the rule list. **The denominator**: the summary and `reports/a11y.json` always carry how many press targets, text inputs and icons were examined and how many rules ran, so a zero can never again be confused with "the rules do not apply". **Zero false positives over completeness**: every rule stands down where the source is not readable — `accessibilityLabel={t("back")}` is presence the analyser records and refuses to judge, and a pressable rendering `{item.name}` is never called unnamed, because it does announce at runtime.
+
+### Route e2e against Expo web
+
+`--expo --tasks e2e` emits one Playwright spec per expo-router route, run against `expo start --web` — Metro under SDK 54's static output serves **per-route rendered HTML with real status semantics** (an unknown path answers 404), all of it measured before the wave was built ([`docs/reviews/2026-09-expo-probes.md`](docs/reviews/2026-09-expo-probes.md)).
+
+The machinery is the Next.js flavour's — the same `params.json` id fixture (expo-router's `[param]` templates are byte-compatible), the same write-once `global-setup.ts` with the hand-work tally, the same `--grep`-able `GET <route>` titles for `--changed` narrowing — plus three Expo-specific facts baked in:
+
+- **Auth is a cookie on the API origin.** On web the app calls its API with `credentials: "include"`, so the setup stub's worked example is a request-context login + `storageState`, verbatim. No token injection.
+- **An auth wall has two faces, and the specs catch both.** A client-side redirect fails the landing assertion; a wall rendered *in place* keeps the URL and answers 200 — but the API's 401s land in the console assertion, and the **copy witness** (a third test asserting the screen's longest analysis-proven literal is visible) fails on any screen that is not the one the analysis described.
+- **Two servers.** The emitted config boots Metro; your API is a prerequisite it cannot know how to start. Set `EXPO_PUBLIC_API_URL` before running — Metro inlines it into the bundle, and an unset value silently falls back to whatever the source hardcodes (on one dogfooded LAN, a production container).
 
 A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the ones that work.
 

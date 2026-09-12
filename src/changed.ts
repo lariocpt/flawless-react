@@ -1,4 +1,5 @@
 import path from "node:path";
+import { expoFileToRoute } from "./expo/routes.ts";
 import { findRouterRoot, pageFileToRoute } from "./nextjs/routes.ts";
 import { allocateSpecNames, flattenTrees } from "./scaffold-tests/registry.ts";
 import { type ComponentTree, UsageError } from "./types.ts";
@@ -117,6 +118,12 @@ export function affectedSpecs(
    * where there are no e2e routes to narrow to.
    */
   nextjs?: { router: "app" | "pages"; root: string },
+  /**
+   * The expo-router equivalent, mutually exclusive with `nextjs` by
+   * construction (core enforces the mode split). Same contract: routes come
+   * back as the exact URL templates the emitted expo e2e titles embed.
+   */
+  expo?: { routerRoot: string },
 ): AffectedSpecs {
   const changedSet = new Set(changed.map((f) => path.resolve(f)));
   const flat = flattenTrees(trees);
@@ -143,6 +150,12 @@ export function affectedSpecs(
     const routerRoot = findRouterRoot(nextjs.root);
     for (const tree of trees) {
       const route = pageFileToRoute(tree.entry.filePath, nextjs.router, routerRoot);
+      if (!route) continue;
+      if (rendersAnyOf(tree, changedSet)) routes.push(route.urlPath);
+    }
+  } else if (expo) {
+    for (const tree of trees) {
+      const route = expoFileToRoute(tree.entry.filePath, expo.routerRoot);
       if (!route) continue;
       if (rendersAnyOf(tree, changedSet)) routes.push(route.urlPath);
     }

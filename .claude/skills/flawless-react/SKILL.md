@@ -89,7 +89,9 @@ into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 | `perf-static` | **runs** |
 | `react-rules` | **runs** |
 | `a11y` | **runs** — the native analyser: six `a11y/*` rules, no biome involved |
-| `perf-harness`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+| `e2e` | **runs** — route specs against `expo start --web`; cookie auth via storageState, copy-witness anti-vacuity |
+| `load` | **refuses**, naming wave 7 (API-only pipes) |
+| `perf-harness` | **refuses** — measured-and-declined (~0 host-mountable components on an all-route-screens app); the refusal names the recorded evidence |
 
 A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `--ci` blob and `REPORT.md`. A mixed selection still runs what it can.
 
