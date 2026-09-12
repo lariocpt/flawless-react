@@ -194,7 +194,9 @@ all 29 of its a11y rules are HTML/ARIA, and over 31 real RN files with 82 unlabe
 Six rules: `a11y/unnamed-control` (provably-textless press target with no label —
 fires only on icon-only or childless elements, never on dynamic children, which DO
 announce at runtime), `a11y/missing-role`, `a11y/textinput-unlabelled` (a placeholder
-is not a label), `a11y/icon-unhidden` (warn), `a11y/label-text-mismatch` (WCAG 2.5.3),
+is not a label), `a11y/icon-unhidden` (warn; a render-prop icon such as `tabBarIcon`
+stands down — its owner is invisible to the file, and React Navigation's tab button
+announces the title over it), `a11y/label-text-mismatch` (WCAG 2.5.3),
 `a11y/invalid-role` (each role attr validated against ITS OWN union — "header" is an
 accessibilityRole, "heading" is a role).
 

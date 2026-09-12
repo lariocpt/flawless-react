@@ -157,7 +157,7 @@ Six rules, each judged from the same parsed tree the rest of the analysis uses:
 | `a11y/unnamed-control` | a press target that PROVABLY renders no text (icon-only or childless) and has no `accessibilityLabel` — silent to a screen reader and unaddressable to a spec; one label retires both |
 | `a11y/missing-role` | a press target with no `accessibilityRole` — RN has no implicit roles, so its text is announced without "button" |
 | `a11y/textinput-unlabelled` | a `TextInput` whose only name is a placeholder, which vanishes on input and is not a label |
-| `a11y/icon-unhidden` | a free-standing vector icon exposed to the accessibility tree with nothing to announce (warn) |
+| `a11y/icon-unhidden` | a free-standing vector icon exposed to the accessibility tree with nothing to announce (warn) — a render-prop icon (`tabBarIcon: () => <Ionicons/>`) stands down, because its owner is invisible to the file |
 | `a11y/label-text-mismatch` | an `accessibilityLabel` that does not contain the visible text — voice-control users say what they see (WCAG 2.5.3) |
 | `a11y/invalid-role` | a role value RN does not recognise — the union widens with `\| string`, so tsc never catches the typo |
 

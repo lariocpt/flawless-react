@@ -55,6 +55,7 @@ declare module "react-native" {
     data: readonly T[];
     keyExtractor?: (item: T, index: number) => string;
     renderItem: (info: { item: T; index: number }) => ReactNode;
+    ListEmptyComponent?: ReactNode;
     contentContainerClassName?: string;
   }) => ReactNode;
   export const Alert: { alert: (title: string, message?: string, buttons?: unknown[]) => void };

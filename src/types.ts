@@ -304,9 +304,11 @@ export interface NativeA11yElement {
    */
   hiddenFromA11y?: "yes" | "unknown";
   /**
-   * Some JSX ancestor is a press-family element, carries a literal
-   * accessibility label, or is itself hidden from the a11y tree — the icon rule
-   * stands down there, because the ancestor owns the announcement.
+   * The announcement is owned elsewhere: some JSX ancestor is a press-family
+   * element, carries a literal accessibility label, or is itself hidden from
+   * the a11y tree — or the element is the ROOT of its JSX island (a render
+   * prop like `tabBarIcon: () => <Ionicons/>`), handed to an owner this file
+   * cannot see. The icon rule stands down on all of these.
    */
   exemptAncestor?: true;
 }

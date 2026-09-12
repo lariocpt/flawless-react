@@ -385,17 +385,32 @@ export function extractInteractions(
     // platform both resolve the pressable, not its glyph), a literal label
     // (on anything, including an unresolved component — exempting MORE is the
     // conservative direction for a warn rule), or a subtree already hidden.
+    //
+    // An element handed to an owner this file cannot see is exempt too. Two
+    // spellings of the same fact: the walk crosses a JsxAttribute (the island
+    // is an attribute value — `tabBarIcon: ({ size }) => <Ionicons … />` inside
+    // `options={…}`, or `ListEmptyComponent={<Icon/>}` — so the receiving
+    // component decides its context), or the element has no JSX ancestor at
+    // all (the root of a render-prop arrow). React Navigation's tab button
+    // announces the tab's title over exactly the first shape, so flagging it
+    // would be a guess about an invisible container. Same posture as an
+    // unknown component tag: unknowable, so stand down. A `.map()` in CHILDREN
+    // position crosses no attribute and stays flaggable — that JSX renders in
+    // place.
     const exemptAncestor = (start: ts.JsxOpeningElement | ts.JsxSelfClosingElement): boolean => {
+      let sawJsxAncestor = false;
       for (let p: ts.Node | undefined = start.parent; p; p = p.parent) {
+        if (ts.isJsxAttribute(p)) return true;
         if (!ts.isJsxElement(p)) continue;
         const open = p.openingElement;
         if (open === start) continue;
+        sawJsxAncestor = true;
         const resolved = hostTag(readTagName(open.tagName));
         if (resolved?.dialect === "native" && PRESS_FAMILY.has(resolved.name)) return true;
         if (hasLiteralLabel(open.attributes)) return true;
         if (readHiddenFromA11y(open.attributes) !== undefined) return true;
       }
-      return false;
+      return !sawJsxAncestor;
     };
     const childless = (el: ts.JsxElement): boolean =>
       el.children.every((c) => ts.isJsxText(c) && !c.text.trim());

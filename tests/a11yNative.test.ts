@@ -119,10 +119,13 @@ describe("the controls", () => {
     const { findings, stats } = nativeA11yFindings([await tree(CLEAN)]);
     expect(findings).toEqual([]);
     // Zero findings must be distinguishable from "the rules do not apply":
-    // the elements were seen, examined, and passed.
+    // the elements were seen, examined, and passed. Two of the five icons are
+    // handed-to-an-owner shapes (a render-prop arrow, an attribute-position
+    // island) — counted in the denominator, exempt from the icon rule because
+    // their owner is invisible to this file.
     expect(stats.pressTargets).toBe(2);
     expect(stats.textInputs).toBe(1);
-    expect(stats.icons).toBe(3);
+    expect(stats.icons).toBe(5);
   });
 
   test("dynamic fixture: attribute presence without a readable value stands every rule down", async () => {
@@ -262,7 +265,7 @@ describe("the task under --expo", () => {
     expect(result.summary).toContain("a11y: 11 finding(s) across 2 file(s)");
     expect(result.summary).toContain("9 press target(s)");
     expect(result.summary).toContain("2 text input(s)");
-    expect(result.summary).toContain("7 icon(s) examined");
+    expect(result.summary).toContain("9 icon(s) examined");
     expect(result.summary).toContain("6 native rules");
     expect(result.summary).not.toContain("NOT swept");
 
@@ -288,7 +291,7 @@ describe("the task under --expo", () => {
     expect(aggregate.engine).toBe("native");
     expect(aggregate.filesScanned).toBe(2);
     expect(aggregate.findingCount).toBe(11);
-    expect(aggregate.elementsExamined).toEqual({ pressTargets: 9, textInputs: 2, icons: 7 });
+    expect(aggregate.elementsExamined).toEqual({ pressTargets: 9, textInputs: 2, icons: 9 });
     expect(aggregate.rulesApplied).toEqual([...NATIVE_A11Y_RULES]);
     expect(aggregate.domDialectFilesNotSwept).toBeUndefined();
     expect(Object.keys(aggregate.findingsByFile)).toEqual([OFFENDER]);
