@@ -106,9 +106,10 @@ const SAFE_AREA_CONTEXT: Record<string, NativeElementProps> = {
  * @expo/vector-icons exports one component per glyph family. They render an
  * icon and no text, which is what makes an icon-only Pressable unaddressable —
  * so they have to be in the table for that to be PROVABLE rather than guessed
- * from the tag name.
+ * from the tag name. Exported for the native a11y task, whose icon rule needs
+ * "is this a vector icon" answered from the same table the label harvest uses.
  */
-const VECTOR_ICON_FAMILIES = [
+export const VECTOR_ICON_FAMILIES = [
   "Ionicons",
   "MaterialIcons",
   "MaterialCommunityIcons",
@@ -162,6 +163,143 @@ export const TEXTLESS_ELEMENTS: ReadonlySet<string> = new Set([
   "Switch",
   "RefreshControl",
   "StatusBar",
+]);
+
+/**
+ * The values React Native accepts for `accessibilityRole`, copied from the
+ * `AccessibilityRole` union in react-native 0.81.5's own
+ * Libraries/Components/View/ViewAccessibility.js.
+ *
+ * Copied rather than derived at runtime, for the same reason the element table
+ * above is closed: this repo does not depend on react-native, the analysed app
+ * may not have it installed when the sweep runs, and a finding set that varies
+ * with the target's install state is a nondeterministic report. A closed copy
+ * can only go stale, and a membership + size pin in
+ * tests/nativeElementModel.test.ts makes staleness a red test at the next RN
+ * bump rather than a silent drift.
+ *
+ * Why the rule exists at all: RN widens the union with `| string` (both the
+ * Flow source and the shipped .d.ts), so a typo'd role type-checks clean and
+ * then announces NOTHING on either platform. tsc will never catch it; this is
+ * the one place that can.
+ */
+export const VALID_ACCESSIBILITY_ROLES: ReadonlySet<string> = new Set([
+  "none",
+  "button",
+  "dropdownlist",
+  "togglebutton",
+  "link",
+  "search",
+  "image",
+  "keyboardkey",
+  "text",
+  "adjustable",
+  "imagebutton",
+  "header",
+  "summary",
+  "alert",
+  "checkbox",
+  "combobox",
+  "menu",
+  "menubar",
+  "menuitem",
+  "progressbar",
+  "radio",
+  "radiogroup",
+  "scrollbar",
+  "spinbutton",
+  "switch",
+  "tab",
+  "tabbar",
+  "tablist",
+  "timer",
+  "list",
+  "toolbar",
+  "grid",
+  "pager",
+  "scrollview",
+  "horizontalscrollview",
+  "viewgroup",
+  "webview",
+  "drawerlayout",
+  "slidingdrawer",
+  "iconmenu",
+]);
+
+/**
+ * The values React Native accepts for the web-style `role` prop (RN 0.71+) —
+ * the `Role` union from the same ViewAccessibility.js, which is a DIFFERENT
+ * domain than `accessibilityRole` ("heading" is a Role, "header" is an
+ * AccessibilityRole). The two sets are deliberately separate so the invalid-role
+ * rule validates each attribute against its own union rather than the blur of
+ * both.
+ */
+export const VALID_ROLES: ReadonlySet<string> = new Set([
+  "alert",
+  "alertdialog",
+  "application",
+  "article",
+  "banner",
+  "button",
+  "cell",
+  "checkbox",
+  "columnheader",
+  "combobox",
+  "complementary",
+  "contentinfo",
+  "definition",
+  "dialog",
+  "directory",
+  "document",
+  "feed",
+  "figure",
+  "form",
+  "grid",
+  "group",
+  "heading",
+  "img",
+  "link",
+  "list",
+  "listitem",
+  "log",
+  "main",
+  "marquee",
+  "math",
+  "menu",
+  "menubar",
+  "menuitem",
+  "meter",
+  "navigation",
+  "none",
+  "note",
+  "option",
+  "presentation",
+  "progressbar",
+  "radio",
+  "radiogroup",
+  "region",
+  "row",
+  "rowgroup",
+  "rowheader",
+  "scrollbar",
+  "searchbox",
+  "separator",
+  "slider",
+  "spinbutton",
+  "status",
+  "summary",
+  "switch",
+  "tab",
+  "table",
+  "tablist",
+  "tabpanel",
+  "term",
+  "timer",
+  "toolbar",
+  "tooltip",
+  "tree",
+  "treegrid",
+  "treeitem",
 ]);
 
 /**

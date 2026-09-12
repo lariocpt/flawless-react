@@ -33,7 +33,7 @@ bunx flawless-react "src/app/dashboard/page.tsx" \
 | `unit-browser` | Vitest + Testing Library specs (+ Playwright browser specs when `perf-harness` is also selected) | — |
 | `perf-harness` | `host/` bundle + Profiler/react-scan Playwright suite + heap snapshots | — |
 | `perf-static` | `reports/<C>.perf-static.json` findings, no files to run | — |
-| `a11y` | biome jsx-a11y findings | biome in the target project |
+| `a11y` | web: biome jsx-a11y findings; `--expo`: native `a11y/*` findings | biome in the target project (web path only) |
 | `react-rules` | biome correctness rules (exhaustive deps, hook order, keys) | biome |
 | `e2e` | `flawless/e2e/` route specs against a real dev server | running app + seeded data |
 | `load` | `flawless/load/routes.pipes` crust load pipelines | crust to run them |
@@ -88,7 +88,8 @@ into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 | `unit-browser` | **runs** — jest-expo + @testing-library/react-native |
 | `perf-static` | **runs** |
 | `react-rules` | **runs** |
-| `perf-harness`, `a11y`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+| `a11y` | **runs** — the native analyser: six `a11y/*` rules, no biome involved |
+| `perf-harness`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
 
 A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `--ci` blob and `REPORT.md`. A mixed selection still runs what it can.
 
@@ -96,7 +97,7 @@ A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `-
 
 Two things worth knowing before reading a native run's output, both measured (`docs/reviews/2026-08-expo-probes.md`):
 
-- **`a11y` would be vacuously green.** Biome's 29 rules are HTML/ARIA rules; on 31 React Native files with 82 unlabelled `<Pressable>`s they return **zero**, while the same sweep finds 3/3 on this repo's own offender fixture. That is why the task refuses instead of reporting clean.
+- **`a11y` on native is the tool's own analyser, and its zero carries a denominator.** Biome's 29 rules are HTML/ARIA and returned zero over 31 RN files with 82 unlabelled `<Pressable>`s (3/3 on the DOM offender fixture), so the task refused until wave 5 shipped the native engine. Its summary always says how many press targets / text inputs / icons were examined — a native zero WITHOUT that denominator is a bug, not a clean bill.
 - **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
 
 See the `flawless-expo` skill for the native spec shapes, the selector ladder, and what a skip means.

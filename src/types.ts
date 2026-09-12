@@ -256,9 +256,68 @@ export interface FormInfo {
   pos?: SourcePosition;
 }
 
+/**
+ * One native host element as the a11y census saw it — the raw material of the
+ * native a11y task's rules.
+ *
+ * Harvested at analysis time because the parse is gone by task time, by a walk
+ * of the WHOLE source file that is deliberately NOT reachability-pruned: the
+ * clicks harvest decides what a spec can DRIVE, where a phantom element costs a
+ * wrong click, but this census decides what a screen reader ENCOUNTERS, and the
+ * back button inside an error branch still needs its role. Elements belonging
+ * to sibling components in the same file are included — half the dogfood app's
+ * pressables live in same-file row components — and the task dedupes by
+ * position, since every component analysed out of a file carries the file's
+ * whole census.
+ */
+export interface NativeA11yElement {
+  /** Module-side export name of the resolved native host element. */
+  element: string;
+  /** The element's own start position; `file` is absolute. */
+  pos: SourcePosition;
+  hints: ElementHints;
+  label: LabelSource;
+  /** Pressable / TouchableOpacity / TouchableHighlight / TouchableWithoutFeedback. */
+  pressable?: true;
+  /**
+   * Provably renders no text: every element child is textless (the iconOnly
+   * proof) or there are no children at all. A pressable with dynamic children
+   * is NOT textless — `{building.name}` announces at runtime — which is what
+   * keeps the unnamed-control rule at zero false positives.
+   */
+  textless?: true;
+  /** accessibilityLabel / aria-label is present but not a string literal. */
+  dynamicLabel?: true;
+  /** accessibilityRole / role is present but not a string literal. */
+  dynamicRole?: true;
+  /**
+   * Literal role attributes as written on the element. Kept per attribute
+   * because `accessibilityRole` and `role` have DIFFERENT valid-value unions
+   * ("header" vs "heading"), so each literal must be validated against its own.
+   */
+  roleLiterals?: Array<{ attr: "accessibilityRole" | "role"; value: string }>;
+  /**
+   * aria-hidden / accessibilityElementsHidden / importantForAccessibility=
+   * "no-hide-descendants" on the element itself. "unknown" means the attribute
+   * is present but not a literal, and the rules treat that as hidden — a miss
+   * costs coverage, a guess costs a false finding.
+   */
+  hiddenFromA11y?: "yes" | "unknown";
+  /**
+   * The announcement is owned elsewhere: some JSX ancestor is a press-family
+   * element, carries a literal accessibility label, or is itself hidden from
+   * the a11y tree — or the element is the ROOT of its JSX island (a render
+   * prop like `tabBarIcon: () => <Ionicons/>`), handed to an owner this file
+   * cannot see. The icon rule stands down on all of these.
+   */
+  exemptAncestor?: true;
+}
+
 export interface InteractionInfo {
   clicks: ClickHandler[];
   forms: FormInfo[];
+  /** Present only for native-dialect files. See NativeA11yElement. */
+  a11yElements?: NativeA11yElement[];
 }
 
 /** How a prop is used inside the component body. */

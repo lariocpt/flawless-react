@@ -7,7 +7,7 @@ Run it with no args for an interactive checkbox menu of seven tasks:
 1. Generate the **performance testing harness** (Playwright + React `<Profiler>` + react-scan).
 2. Generate **extensive unit + browser tests** (Vitest + @testing-library/react + Playwright functional).
 3. **Static React perf analysis** (rerender storms, missing memoisation, stale/extraneous hook deps, setState-in-render).
-4. **Accessibility / web standards scan** (Biome jsx-a11y rules, file:line findings).
+4. **Accessibility scan** (web: Biome jsx-a11y rules; `--expo`: the native a11y analyser — file:line findings either way).
 5. **Functionally important React rules** (Biome — useExhaustiveDependencies, useHookAtTopLevel, useJsxKeyInIterable, and friends).
 6. **Route-level Playwright e2e** for Next.js pages, against the app's real dev server.
 7. **crust load pipes** for those routes and the GET APIs their components fetch.
@@ -63,8 +63,9 @@ curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- flawless-react
 
 One caveat worth knowing before you pick it: the binary is self-contained Bun, but it cannot
 carry biome inside itself. `perf-harness`, `unit-browser` and `perf-static` work anywhere;
-`a11y` and `react-rules` shell out to biome and will look for it in the project you are
-scanning (`node_modules/.bin/biome`) and then on `PATH`. Any React codebase that already
+`react-rules` — and `a11y` on the web path — shell out to biome and will look for it in the
+project you are scanning (`node_modules/.bin/biome`) and then on `PATH`. (`a11y` under
+`--expo` is the tool's own native analyser and needs no biome.) Any React codebase that already
 lints with biome satisfies that for free — otherwise `bun add -d @biomejs/biome` in that
 project, or use the source package.
 
@@ -125,7 +126,8 @@ flawless reads the project off disk — Expo SDK major, the expo-router `app/` r
 | `unit-browser` | **runs** — jest-expo + `@testing-library/react-native` specs |
 | `perf-static` | **runs** — pure AST analysis, and nothing in it is DOM-specific |
 | `react-rules` | **runs** |
-| `perf-harness`, `a11y`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
+| `a11y` | **runs** — the native accessibility analyser (six rules over the parsed tree; see below) |
+| `perf-harness`, `e2e`, `load` | **refuse**, naming the task and the wave that will implement it |
 
 ### The native unit plane
 
@@ -144,13 +146,30 @@ Where the source names a literal route — `onPress={() => router.push("/items/n
 
 **An unaddressable control becomes a named skip, never a pass.** React Native has no implicit roles — `getByRole("button")` matches nothing on a bare `<Pressable>` — and there is no last-resort locator, so a control with no `testID`, no `accessibilityLabel` and no text under it is skipped with the reason and the fix. On the dogfood app this used to be 28 of 48 press targets, 12 of them icon-only. Because each is *also* an accessibility finding, the app answered them — 48 `accessibilityLabel` and 28 `accessibilityRole` props — and the count is now **3 of 70**. That is the mechanism working: the skip named the fix, the fix was worth making on its own merits, and the test came back for free.
 
-A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the two that work.
+### The native a11y analyser
+
+`--expo --tasks a11y` runs the tool's own analyser instead of biome, because biome structurally cannot say anything about React Native: all 29 of its a11y rules are HTML/ARIA, and over 31 real RN files carrying 82 unlabelled `<Pressable>`s they returned **zero** findings while scoring 3/3 on this repo's DOM offender fixture. A clean report that means "these rules do not apply" is worse than no report.
+
+Six rules, each judged from the same parsed tree the rest of the analysis uses:
+
+| rule | what it catches |
+|---|---|
+| `a11y/unnamed-control` | a press target that PROVABLY renders no text (icon-only or childless) and has no `accessibilityLabel` — silent to a screen reader and unaddressable to a spec; one label retires both |
+| `a11y/missing-role` | a press target with no `accessibilityRole` — RN has no implicit roles, so its text is announced without "button" |
+| `a11y/textinput-unlabelled` | a `TextInput` whose only name is a placeholder, which vanishes on input and is not a label |
+| `a11y/icon-unhidden` | a free-standing vector icon exposed to the accessibility tree with nothing to announce (warn) — a render-prop icon (`tabBarIcon: () => <Ionicons/>`) stands down, because its owner is invisible to the file |
+| `a11y/label-text-mismatch` | an `accessibilityLabel` that does not contain the visible text — voice-control users say what they see (WCAG 2.5.3) |
+| `a11y/invalid-role` | a role value RN does not recognise — the union widens with `\| string`, so tsc never catches the typo |
+
+Two structural properties matter more than the rule list. **The denominator**: the summary and `reports/a11y.json` always carry how many press targets, text inputs and icons were examined and how many rules ran, so a zero can never again be confused with "the rules do not apply". **Zero false positives over completeness**: every rule stands down where the source is not readable — `accessibilityLabel={t("back")}` is presence the analyser records and refuses to judge, and a pressable rendering `{item.name}` is never called unnamed, because it does announce at runtime.
+
+A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`, in the `--ci` blob and in `REPORT.md`, so a machine can read it. A mixed selection still runs what it can — asking for one unported task does not cost you the ones that work.
 
 Refusing is deliberate. Emitting the DOM suite for a React Native project would produce specs that run, pass, and touch nothing: `container.querySelector("Pressable")` matches no element, and `getByRole("button")` finds nothing because React Native has no implicit roles. A green suite that tested nothing is the one outcome this tool must never produce.
 
 Two things measured on a real Expo app before any of this was written, both recorded in [`docs/reviews/2026-08-expo-probes.md`](docs/reviews/2026-08-expo-probes.md):
 
-- **The `a11y` task is vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep finds 3/3 on this repo's own offender fixture. All 29 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needs a different engine, not a different config.
+- **The `a11y` task was vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep found 3/3 on this repo's own offender fixture. All 29 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needed a different engine, not a different config — the native analyser above is that engine.
 - **The React Compiler changes what `perf-static` should say.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag today; acting on it is a later wave.
 
 ## CLI reference

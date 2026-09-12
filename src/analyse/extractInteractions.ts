@@ -8,10 +8,19 @@ import type {
   HandlerEffect,
   InteractionInfo,
   LabelSource,
+  NativeA11yElement,
   PropsShape,
   SubmitControl,
 } from "../types.ts";
 import { findDisclosures } from "./extractDisclosures.ts";
+import {
+  hasDynamicLabel,
+  hasDynamicRole,
+  hasLiteralLabel,
+  literalRoleAttrs,
+  PRESS_FAMILY,
+  readHiddenFromA11y,
+} from "./extractNativeA11y.ts";
 import { domOnlyResolver, type HostTagResolver } from "./hostTag.ts";
 import type { HostDialect } from "./nativeDialect.ts";
 import { NATIVE_TAG_TO_ROLE, TEXTLESS_ELEMENTS } from "./nativeProps.ts";
@@ -359,7 +368,88 @@ export function extractInteractions(
   if (initial) visit(initial.expr);
   else ts.forEachChild(bodyNode, visit);
 
-  return { clicks, forms };
+  // ——— The native a11y census ———
+  //
+  // A SECOND walk, over the whole source file, with no reachability pruning.
+  // Deliberately not a branch inside `visit`: that loop decides what a spec can
+  // DRIVE, where a phantom element costs a wrong click, so it prunes branches
+  // the initial render provably never takes. This census decides what a screen
+  // reader ENCOUNTERS, and the back button inside an error branch still needs
+  // its role. Walking the file rather than the body also reaches the same-file
+  // row components where half the dogfood app's pressables live; the task
+  // dedupes by position, since every component analysed out of one file
+  // carries the file's whole census.
+  let a11yElements: NativeA11yElement[] | undefined;
+  if (native) {
+    // An ancestor that owns the announcement: a press target (RNTL and the
+    // platform both resolve the pressable, not its glyph), a literal label
+    // (on anything, including an unresolved component — exempting MORE is the
+    // conservative direction for a warn rule), or a subtree already hidden.
+    //
+    // An element handed to an owner this file cannot see is exempt too. Two
+    // spellings of the same fact: the walk crosses a JsxAttribute (the island
+    // is an attribute value — `tabBarIcon: ({ size }) => <Ionicons … />` inside
+    // `options={…}`, or `ListEmptyComponent={<Icon/>}` — so the receiving
+    // component decides its context), or the element has no JSX ancestor at
+    // all (the root of a render-prop arrow). React Navigation's tab button
+    // announces the tab's title over exactly the first shape, so flagging it
+    // would be a guess about an invisible container. Same posture as an
+    // unknown component tag: unknowable, so stand down. A `.map()` in CHILDREN
+    // position crosses no attribute and stays flaggable — that JSX renders in
+    // place.
+    const exemptAncestor = (start: ts.JsxOpeningElement | ts.JsxSelfClosingElement): boolean => {
+      let sawJsxAncestor = false;
+      for (let p: ts.Node | undefined = start.parent; p; p = p.parent) {
+        if (ts.isJsxAttribute(p)) return true;
+        if (!ts.isJsxElement(p)) continue;
+        const open = p.openingElement;
+        if (open === start) continue;
+        sawJsxAncestor = true;
+        const resolved = hostTag(readTagName(open.tagName));
+        if (resolved?.dialect === "native" && PRESS_FAMILY.has(resolved.name)) return true;
+        if (hasLiteralLabel(open.attributes)) return true;
+        if (readHiddenFromA11y(open.attributes) !== undefined) return true;
+      }
+      return !sawJsxAncestor;
+    };
+    const childless = (el: ts.JsxElement): boolean =>
+      el.children.every((c) => ts.isJsxText(c) && !c.text.trim());
+    const els: NativeA11yElement[] = [];
+    const censusVisit = (n: ts.Node): void => {
+      if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+        const tag = readTagName(n.tagName);
+        const resolved = tag === "<dynamic>" ? undefined : hostTag(tag);
+        if (resolved?.dialect === "native") {
+          const enclosing = enclosingElement(n);
+          const hints = collectHints(n.attributes, scope, "native", resolved.name);
+          const label = extractLabel(enclosing, hints, propNames, descend);
+          const textless = enclosing
+            ? isIconOnly(enclosing) || childless(enclosing)
+            : ts.isJsxSelfClosingElement(n);
+          const roleLiterals = literalRoleAttrs(n.attributes);
+          const hidden = readHiddenFromA11y(n.attributes);
+          els.push({
+            element: resolved.name,
+            pos: posOf(n, sourceFile),
+            hints,
+            label,
+            ...(PRESS_FAMILY.has(resolved.name) ? { pressable: true as const } : {}),
+            ...(textless ? { textless: true as const } : {}),
+            ...(hasDynamicLabel(n.attributes) ? { dynamicLabel: true as const } : {}),
+            ...(hasDynamicRole(n.attributes) ? { dynamicRole: true as const } : {}),
+            ...(roleLiterals.length > 0 ? { roleLiterals } : {}),
+            ...(hidden ? { hiddenFromA11y: hidden } : {}),
+            ...(exemptAncestor(n) ? { exemptAncestor: true as const } : {}),
+          });
+        }
+      }
+      ts.forEachChild(n, censusVisit);
+    };
+    censusVisit(sourceFile);
+    a11yElements = els;
+  }
+
+  return { clicks, forms, ...(a11yElements ? { a11yElements } : {}) };
 }
 
 /**

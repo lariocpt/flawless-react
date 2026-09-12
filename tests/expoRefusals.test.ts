@@ -17,7 +17,7 @@ const EXPOAPP = path.join(REPO_ROOT, "tests", "fixtures", "expoapp");
 const BIN = path.join(REPO_ROOT, "src", "bin.ts");
 
 /** Tasks that have a real Expo implementation today. Grows by one per wave. */
-const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser"]);
+const IMPLEMENTED = new Set(["perf-static", "react-rules", "unit-browser", "a11y"]);
 const REFUSING = ALL_TASK_IDS.filter((id) => !IMPLEMENTED.has(id));
 
 let tmpRoot: string;
@@ -84,6 +84,24 @@ describe("--expo: what runs today", () => {
     // that analysed nothing would show up here as a zero.
     const perf = blob.results.find((r) => r.id === "perf-static");
     expect(perf?.summary).toMatch(/across [1-9]\d* root\(s\)/);
+  }, 120_000);
+
+  test("a11y runs natively, and its summary carries the denominator", async (): Promise<void> => {
+    // Wave 5. The old refusal was load-bearing — biome's 29 HTML/ARIA rules
+    // returned 0 over React Native files while scoring 3/3 on the DOM offender
+    // fixture — so the replacement must never be confusable with that vacuous
+    // green: the summary states how many elements were examined and how many
+    // rules ran, even (especially) when the finding count is 0.
+    const { code, blob } = await run(["--tasks", "a11y"], "a11y-native");
+    expect(code).toBe(0);
+    const a11y = blob.results.find((r) => r.id === "a11y");
+    expect(a11y?.ok).toBe(true);
+    expect(a11y?.summary).toMatch(/[1-9]\d* press target\(s\)/);
+    expect(a11y?.summary).toMatch(/\d+ text input\(s\)/);
+    expect(a11y?.summary).toMatch(/[1-9]\d* native rules/);
+    // The fixture plants offenders (an icon-only Pressable with no label among
+    // them), so a native engine that examined the tree cannot report zero.
+    expect(a11y?.summary).toMatch(/a11y: [1-9]\d* finding\(s\)/);
   }, 120_000);
 });
 

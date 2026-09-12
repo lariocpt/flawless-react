@@ -21,6 +21,8 @@ import {
   nativeElementFor,
   nativeElementNames,
   TEXTLESS_ELEMENTS,
+  VALID_ACCESSIBILITY_ROLES,
+  VALID_ROLES,
 } from "../src/analyse/nativeProps.ts";
 import { parseFile } from "../src/analyse/parseFile.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
@@ -147,6 +149,26 @@ describe("the native element table", () => {
     expect(NATIVE_TAG_TO_ROLE.Pressable).toBeUndefined();
     expect(NATIVE_TAG_TO_ROLE.TouchableOpacity).toBeUndefined();
     expect(NATIVE_TAG_TO_ROLE.TextInput).toBeUndefined();
+  });
+
+  // The native a11y task's invalid-role rule validates against these. RN widens
+  // both unions with `| string`, so tsc never catches a typo'd role — which is
+  // the rule's whole reason to exist. Size-pinned so an RN bump that grows a
+  // union reddens here instead of drifting silently.
+  test("the role unions are RN 0.81.5's, size-pinned, and genuinely different domains", () => {
+    expect(VALID_ACCESSIBILITY_ROLES.size).toBe(40);
+    expect(VALID_ROLES.size).toBe(65);
+    // One value from each union that the OTHER rejects — the reason invalid-role
+    // validates each attribute against its own set.
+    expect(VALID_ACCESSIBILITY_ROLES.has("header")).toBe(true);
+    expect(VALID_ROLES.has("header")).toBe(false);
+    expect(VALID_ROLES.has("heading")).toBe(true);
+    expect(VALID_ACCESSIBILITY_ROLES.has("heading")).toBe(false);
+    // The overlap that matters most in practice.
+    for (const shared of ["button", "link", "checkbox", "switch", "tab", "none"]) {
+      expect(VALID_ACCESSIBILITY_ROLES.has(shared)).toBe(true);
+      expect(VALID_ROLES.has(shared)).toBe(true);
+    }
   });
 
   test("keyed by specifier, so a same-named component is NOT a host element", () => {

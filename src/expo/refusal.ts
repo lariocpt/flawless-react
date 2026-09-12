@@ -29,7 +29,12 @@ import type { TaskId, TaskResult } from "../types.ts";
  * so the two cannot disagree, and pinned by a test that runs each of these under
  * `--expo` and asserts it does NOT refuse.
  */
-export const EXPO_IMPLEMENTED: readonly TaskId[] = ["unit-browser", "perf-static", "react-rules"];
+export const EXPO_IMPLEMENTED: readonly TaskId[] = [
+  "unit-browser",
+  "perf-static",
+  "a11y",
+  "react-rules",
+];
 
 export function expoNotImplemented(id: TaskId, wave: string): TaskResult {
   return {

@@ -184,15 +184,40 @@ dogfood app's was `bun test --preload ./tests/setup.ts` — sweeps the generated
 into the project suite and runs them under a runner they were not written for. The tool
 warns; scope the script (`bun test tests`).
 
+## The native a11y analyser (wave 5)
+
+`a11y` runs under `--expo` since wave 5, through the tool's OWN analyser
+(`src/tasks/a11yNative.ts`) rather than biome — biome structurally cannot judge RN:
+all 29 of its a11y rules are HTML/ARIA, and over 31 real RN files with 82 unlabelled
+`<Pressable>`s they returned zero while scoring 3/3 on the DOM `A11yOffender.tsx`.
+
+Six rules: `a11y/unnamed-control` (provably-textless press target with no label —
+fires only on icon-only or childless elements, never on dynamic children, which DO
+announce at runtime), `a11y/missing-role`, `a11y/textinput-unlabelled` (a placeholder
+is not a label), `a11y/icon-unhidden` (warn; a render-prop icon such as `tabBarIcon`
+stands down — its owner is invisible to the file, and React Navigation's tab button
+announces the title over it), `a11y/label-text-mismatch` (WCAG 2.5.3),
+`a11y/invalid-role` (each role attr validated against ITS OWN union — "header" is an
+accessibilityRole, "heading" is a role).
+
+Three contracts to rely on:
+
+- **The denominator.** The summary and `reports/a11y.json` always say how many press
+  targets / text inputs / icons were examined and how many rules ran. A zero without a
+  denominator is a bug, not a clean bill.
+- **Presence-not-value stands rules down.** `accessibilityLabel={t("back")}` is recorded
+  as dynamic and never flagged. A missing finding on a dynamic attr is the design.
+- **Skip ⇔ finding agreement.** An icon-only control with no handle is BOTH the unit
+  plane's `test.skip` and an `a11y/unnamed-control` finding — same retained element,
+  one `accessibilityLabel` retires both. Deliberate asymmetries: a `testID`-only
+  control is addressable to a spec but still flagged (a testID is not a name), and a
+  dynamic-text control is a ladder skip but NOT flagged.
+
 ## Tasks that refuse, and why that is the design
 
-`perf-harness`, `a11y`, `e2e` and `load` refuse under `--expo`, naming the wave that
-will implement them. Two of those refusals are load-bearing rather than temporary:
+`perf-harness`, `e2e` and `load` refuse under `--expo`, naming the wave that
+will implement them. And one runner reads differently rather than refusing:
 
-- **`a11y` would be vacuously green.** All 29 Biome rules are HTML/ARIA; over 31 React
-  Native files carrying 82 unlabelled `<Pressable>`s they return **zero**, while the
-  same config finds 3/3 on this repo's `A11yOffender.tsx`. A clean report that means
-  "these rules do not apply" is worse than no report.
 - **`perf-static` runs but reads differently under the React Compiler.** On a project
   with `experiments.reactCompiler: true`, 136 of 168 findings were
   `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
