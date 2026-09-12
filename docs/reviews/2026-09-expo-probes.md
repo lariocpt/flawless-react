@@ -140,7 +140,20 @@ bundling), the copy witness as the third anti-vacuity rung, and the
 API-is-a-prerequisite split (Metro is bootable by the config; the API is not
 knowable by the tool).
 
-## Wave 7 (API-only load pipes) — the numbers for the next round
+## Wave 7 (API-only load pipes) — LANDED 2026-09-12
+
+Shipped as the numbers below predicted. The one-hop harvest
+(`src/analyse/harvestApiEndpoints.ts`, retained on `ComponentInfo.apiCalls`,
+native-only) measured **30 GET endpoints across 28/31 screens** on apps/mobile
+— close to the projected 34; the ~4 gap is store-mediated calls the one-hop
+trace does not follow (a v2 note). The `--expo` load engine
+(`src/tasks/loadExpo.ts`) reuses the Next pipe/params/env/merge machinery
+verbatim and differs only in the two places it must: API targets rather than
+page routes, and a `routes.setup.ts` that fails on a **401** (an API endpoint
+keeps its URL on a dead session, so the redirect probe would pass vacuously). A
+query-string interpolation (`…/invoices${scope?…:""}`) is truncated to its base
+path instead of emitting a bogus `:q` hole. The original design numbers, for the
+record:
 
 - **Today's harvest yields 0 endpoints on the dogfood app.** `fetchCalls` is
   direct-`fetch`-in-component only; every mobile call goes through

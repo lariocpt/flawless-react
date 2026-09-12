@@ -234,9 +234,28 @@ baked in, each measured first (`docs/reviews/2026-09-expo-probes.md`):
 - An app whose cold start always lands on `/login` (no session hydration) is a
   `landing` override in params.json — recorded truth, never a spec edit.
 
+## API-only load pipes (wave 7)
+
+`load` runs under `--expo` since wave 7, API-only — an Expo app has no
+server-rendered page routes, so the pipes are the GET endpoints the screens hit.
+The harvest is the new part: a React Native screen never has a bare `fetch()`
+(`extractFetchCalls` finds 0 on the whole app), so the endpoint is read ONE hop
+through the app's own fetch wrapper — screen calls `listBuildings()` →
+`apiFetch("/api/buildings")`. The wrapper is detected structurally (its single
+`fetch()` addresses one of its own parameters), never by name. A store-mediated
+call, a non-literal URL, or a wrapper two modules deep is dropped — a missing
+endpoint costs a pipe, a wrong one measures a URL the app never sends. Retained
+at analysis time on `ComponentInfo.apiCalls` (native-only), judged at task time.
+
+The pipe/params/env/merge machinery is the Next flavour's, reused verbatim. The
+one difference: `routes.setup.ts` probes a parameterless GET endpoint and fails
+on a **401**, because an API endpoint answers 401 at the same URL rather than
+redirecting to a login page — so the Next flavour's redirect probe would pass on
+a dead session. Mutations are excluded (a POST load-test writes junk into the DB).
+
 ## Tasks that refuse, and why that is the design
 
-`load` refuses under `--expo`, naming wave 7 (API-only pipes). `perf-harness`
+`perf-harness`
 refuses as **measured-and-declined, not deferred**: on an expo-router app the
 population is route screens, which the browser host cannot mount (navigator hooks;
 renderRouter is jest-bound), so the measured ceiling on the dogfood app was ~0 of

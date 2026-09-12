@@ -2,10 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { outDirRel, underOutDir } from "../emitPaths.ts";
-import { expoNotImplemented } from "../expo/refusal.ts";
 import { findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import type { ComponentTree, RunContext, Task, TaskResult } from "../types.ts";
 import { ensureParamDefaults } from "./e2eRoutes.ts";
+import { runExpoLoad } from "./loadExpo.ts";
 
 /**
  * Emit-only crust load pipes: page routes plus the API routes the analysed
@@ -19,7 +19,11 @@ export const loadPipes: Task = {
   description: "Load-test pipes for analysed routes + their API calls (crust)",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
-    if (ctx.expo) return expoNotImplemented("load", "wave 7 — API-only load pipes");
+    // The wave-3/5/6 shape: one TaskId, a sibling engine per platform. An Expo
+    // app has no server-rendered page routes to GET, so the native engine emits
+    // API pipes only — from the endpoints the screens reach through the app's
+    // fetch wrapper (ComponentInfo.apiCalls). B-16 wave 7.
+    if (ctx.expo) return runExpoLoad(ctx);
     if (!ctx.nextjs) {
       return {
         id: "load",
@@ -118,7 +122,7 @@ export const loadPipes: Task = {
   },
 };
 
-interface PipeTally {
+export interface PipeTally {
   live: number;
   gated: number;
   userCommented: number;
@@ -131,7 +135,7 @@ interface PipeTally {
  * mistake REPORT.md exists to prevent — this string is what lands in its Tasks
  * table.
  */
-function countPipes(text: string): PipeTally {
+export function countPipes(text: string): PipeTally {
   const tally: PipeTally = { live: 0, gated: 0, userCommented: 0 };
   for (const item of parsePipes(text).body) {
     if (item.kind !== "pipe") continue;
@@ -142,7 +146,11 @@ function countPipes(text: string): PipeTally {
   return tally;
 }
 
-function describeTally(tally: PipeTally, filled: Set<string>, targets: LoadTarget[]): string {
+export function describeTally(
+  tally: PipeTally,
+  filled: Set<string>,
+  targets: LoadTarget[],
+): string {
   const parts = [`${tally.live} live`];
   if (tally.gated > 0) {
     const ids = [...new Set(targets.flatMap((t) => missingParams(t, filled)))].sort();
@@ -230,7 +238,7 @@ export function collectTargets(
   return out;
 }
 
-function slugify(p: string): string {
+export function slugify(p: string): string {
   return (
     p
       .replace(/\$LOAD_[A-Z0-9_]+/g, "x")
@@ -281,7 +289,7 @@ const GATE_MARKER = "# TODO(flawless): no value for ";
  * shouting form the pipe uses, but the fix a reader has to make is in
  * params.json, which is keyed by the name as written.
  */
-function missingParams(t: LoadTarget, filled: Set<string>): string[] {
+export function missingParams(t: LoadTarget, filled: Set<string>): string[] {
   return t.params.filter((p) => !filled.has(p.toUpperCase()));
 }
 
@@ -654,7 +662,7 @@ was generated. Put your own notes in \`routes.pipes\`, below its header.
  * copies of the same eight UUIDs drift on the first change, and the drift is
  * silent — a load run against a stale id just reports a 404 rate.
  */
-function loadEnvScript(rel: string): string {
+export function loadEnvScript(rel: string): string {
   return `#!/usr/bin/env bash
 # source ${underOutDir(rel, "load/env.sh")}
 #
