@@ -1,19 +1,24 @@
-import { expoNotImplemented } from "../expo/refusal.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
+import { A11Y_REPORT, runNativeA11y } from "./a11yNative.ts";
 import { runBiomeSweep } from "./biomeSweep.ts";
 
 /** The sweep writes ONE aggregate, not one report per component. Exported so
  *  that anything pointing a reader at it cannot name a file that is never
- *  written — which is exactly what the inline sidecar used to do. */
-export const A11Y_REPORT = "a11y.json";
+ *  written — which is exactly what the inline sidecar used to do. Declared in
+ *  a11yNative.ts (both engines write it); re-exported here, its historical
+ *  import path. */
+export { A11Y_REPORT } from "./a11yNative.ts";
 
 export const a11yScan: Task = {
   id: "a11y",
   label: "Accessibility / web-standards scan",
-  description: "Biome a11y rules over the targeted tree (file:line)",
+  description: "Biome a11y rules over the targeted tree (file:line); native analyser under --expo",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
-    if (ctx.expo) return expoNotImplemented("a11y", "wave 5 — the native accessibility analyser");
+    // The wave-3 shape: one TaskId, a sibling engine per platform. Biome cannot
+    // be the native engine — all 29 rules below are HTML/ARIA, and over a React
+    // Native tree they return zero while the offender fixture scores 3/3.
+    if (ctx.expo) return runNativeA11y(ctx);
     return runBiomeSweep({
       id: "a11y",
       ctx,

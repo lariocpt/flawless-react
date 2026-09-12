@@ -209,6 +209,71 @@ describe.skipIf(!GATED)("the emitted native suite runs under real jest-expo", ()
     expect(emitted).toBe("");
   }, 300_000);
 
+  test("the icon-unhidden premise holds in the real accessibility tree", async () => {
+    // a11y/icon-unhidden (wave 5) claims three things about @expo/vector-icons
+    // under the real renderer: a bare icon IS exposed to the accessibility
+    // tree, each hiding spelling the rule accepts actually removes it, and an
+    // icon inside a labelled pressable is announced via the label. All three
+    // are claims about RN + RNTL behaviour rather than this repo's own code —
+    // exactly the premise class wave 3 got wrong four times — so they are
+    // executed here, where a real install exists to execute against.
+    const probe = path.join(app, "flawless", "unit", "A11yIconPremise.flawless.test.tsx");
+    writeFileSync(
+      probe,
+      `import { Ionicons } from "@expo/vector-icons";
+import { isHiddenFromAccessibility, render, screen } from "@testing-library/react-native";
+import { Pressable } from "react-native";
+
+describe("the native a11y task's icon premise", () => {
+  test("a bare vector icon is exposed to the accessibility tree", () => {
+    render(<Ionicons name="star" size={16} testID="bare" />);
+    expect(isHiddenFromAccessibility(screen.getByTestId("bare"))).toBe(false);
+  });
+
+  test("aria-hidden removes it", () => {
+    render(<Ionicons aria-hidden name="star" size={16} testID="aria" />);
+    expect(
+      isHiddenFromAccessibility(screen.getByTestId("aria", { includeHiddenElements: true })),
+    ).toBe(true);
+  });
+
+  test("the pre-0.71 spellings remove it too", () => {
+    render(
+      <Ionicons
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        name="star"
+        size={16}
+        testID="legacy"
+      />,
+    );
+    expect(
+      isHiddenFromAccessibility(screen.getByTestId("legacy", { includeHiddenElements: true })),
+    ).toBe(true);
+  });
+
+  test("inside a labelled pressable, the label is what announces", () => {
+    render(
+      <Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={() => {}}>
+        <Ionicons name="arrow-back" size={24} />
+      </Pressable>,
+    );
+    expect(screen.getByRole("button", { name: "Go back" })).toBeTruthy();
+  });
+});
+`,
+    );
+    try {
+      const r = await jest(["flawless/unit/A11yIconPremise"]);
+      expect(r.out).toMatch(/Tests:\s+4 passed/);
+      expect(r.code).toBe(0);
+    } finally {
+      // Removed even on failure: the full-suite runs and the type gate in this
+      // file must keep seeing exactly what the tool emitted.
+      rmSync(probe, { force: true });
+    }
+  }, 600_000);
+
   test("guard the guard: a type error in an emitted spec IS caught here", async () => {
     // Without this, the test above passes just as well when tsc silently checks
     // an empty file set — which is exactly how the `any` stub next door went

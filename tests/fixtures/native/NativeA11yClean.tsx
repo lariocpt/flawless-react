@@ -1,0 +1,33 @@
+import { Ionicons } from "@expo/vector-icons";
+import { Pressable, Text, TextInput, View } from "react-native";
+
+interface NativeA11yCleanProps {
+  onSave: () => void;
+  onBack: () => void;
+}
+
+/**
+ * The anti-vacuous control: every rule's precondition appears here SATISFIED,
+ * so the analyser must report zero findings while the denominator proves it
+ * examined 2 press targets, 1 text input and 3 icons. Zero-with-a-denominator
+ * is the whole point of the wave — it is what the biome sweep could not say.
+ */
+export function NativeA11yClean({ onSave, onBack }: NativeA11yCleanProps) {
+  return (
+    <View>
+      <Pressable accessibilityLabel="Save profile" accessibilityRole="button" onPress={onSave}>
+        <Text>Save profile</Text>
+      </Pressable>
+      <Pressable accessibilityLabel="Go back" accessibilityRole="button" onPress={onBack}>
+        <Ionicons name="arrow-back" size={24} />
+      </Pressable>
+      <TextInput accessibilityLabel="Email" placeholder="you@example.com" />
+      {/* hidden by its ancestor */}
+      <View aria-hidden>
+        <Ionicons name="sparkles" size={16} />
+      </View>
+      {/* hidden by itself */}
+      <Ionicons aria-hidden name="star" size={16} />
+    </View>
+  );
+}

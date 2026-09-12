@@ -5,21 +5,26 @@ description: Read and burn down flawless-react's reporting tasks — perf-static
 
 # flawless findings
 
-> **`a11y` refuses under `--expo`, and that is the design.** All 29 Biome rules are
-> HTML/ARIA rules; over 31 React Native files carrying 82 unlabelled `<Pressable>`s they
-> return **zero**, while the same config finds 3/3 on this repo's own `A11yOffender.tsx`.
-> A clean report meaning "these rules do not apply" is worse than no report.
-> `perf-static` and `react-rules` DO run on native — but on a project with
+> **`a11y` under `--expo` is the NATIVE analyser (wave 5), not biome.** Biome's 29
+> a11y rules are all HTML/ARIA; over 31 React Native files carrying 82 unlabelled
+> `<Pressable>`s they returned **zero**, while the same config finds 3/3 on this repo's
+> own `A11yOffender.tsx` — so the native path runs six `a11y/*` rules of the tool's own
+> (`unnamed-control`, `missing-role`, `textinput-unlabelled`, `icon-unhidden`,
+> `label-text-mismatch`, `invalid-role`), and its summary always carries a DENOMINATOR
+> ("N press target(s), N text input(s), N icon(s) examined"). A native zero without
+> that denominator is a bug, not a clean bill.
+> `perf-static` and `react-rules` also run on native — but on a project with
 > `experiments.reactCompiler: true`, 136 of 168 perf-static findings were the three
 > memoisation rules, which is work the compiler already performs
 > (`docs/reviews/2026-08-expo-probes.md`).
 
-Three tasks only report: `perf-static` (the tool's own rules), `a11y` and
-`react-rules` (biome sweeps with narrowed rule sets). Findings print as
-`file:line:col rule message` and land in `flawless/reports/*.json` — one
-aggregate per task plus per-component files, but ONLY for components that own
-findings, so stale per-component reports from earlier runs linger. Trust the
-task summary counts, not a glob over the reports dir.
+Three tasks only report: `perf-static` (the tool's own rules), `a11y` (a biome
+sweep on web, the native analyser under `--expo`) and `react-rules` (biome
+sweeps with narrowed rule sets). Findings print as `file:line:col rule message`
+and land in `flawless/reports/*.json` — one aggregate per task plus
+per-component files, but ONLY for components that own findings, so stale
+per-component reports from earlier runs linger. Trust the task summary counts,
+not a glob over the reports dir.
 
 ## Reading REPORT.md
 

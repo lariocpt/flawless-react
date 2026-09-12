@@ -269,6 +269,12 @@ Three invariants, each pinned by a test that names the false result it prevents:
 
 `classNameFlow` is forced **false** on native. NativeWind compiles `className` into a `style` through babel at build time, and the string reaches neither the jest-expo tree nor the react-native-web DOM — so the assertion is both unfalsifiable and unsatisfiable.
 
+### The native a11y census
+
+For a native-dialect file, `extractInteractions` runs a **second walk** — over the whole source file, with no reachability pruning — and retains one `NativeA11yElement` per resolved native host element on `InteractionInfo.a11yElements`. The two walks answer different questions on purpose: the clicks harvest decides what a spec can *drive*, where a phantom element costs a wrong click, so it prunes branches the initial render never takes; the census decides what a screen reader *encounters*, and the back button inside an error branch still needs its role. Same-file sibling components are included (each component carries the file's whole census; the task dedupes by position), which matters because the dogfood idiom keeps row components beside their screens.
+
+The `a11y` task judges that census at task time — the perf-static shape, harvest-at-analysis / judge-at-task, because `RunContext` does not carry the parse. Six `a11y/*` rules ([src/tasks/a11yNative.ts](../src/tasks/a11yNative.ts)), every one built to stand down rather than guess: a dynamic `accessibilityLabel={t("back")}` is recorded as *presence* and never flagged, and `unnamed-control` fires only on provably-textless elements (icon-only or childless), never on dynamic children, which do announce at runtime. The aggregate and summary always carry the denominator — elements examined, rules applied — so a native zero can never again read as coverage, which is the vacuous green (`docs/reviews/2026-08-expo-probes.md`, P6) this wave exists to kill. The role unions (`VALID_ACCESSIBILITY_ROLES`, `VALID_ROLES` in nativeProps.ts) are closed copies of RN 0.81.5's own, size-pinned, because RN widens both with `| string` and tsc therefore never catches a typo'd role.
+
 ## Phase 2 — scaffold
 
 Implemented under [src/scaffold/](../src/scaffold/).
