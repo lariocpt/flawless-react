@@ -99,6 +99,10 @@ describe("the emitted expo e2e suite", () => {
     expect(loginSpec).toContain("renders its own copy");
     // The LONGEST static literal wins — most identifying, hardest to fake.
     expect(loginSpec).toContain('getByText("Create an account")');
+    // A landing override makes the copy claim unassertable THERE — the test
+    // must skip with the reason rather than assert this screen's text on the
+    // screen the override points at.
+    expect(loginSpec).toContain("deliberately lands elsewhere");
 
     // ——— interactions ride the analysis: hostile.tsx's testID pressable is an
     //     onPress target the DOM ladder can address in the RNW DOM ———

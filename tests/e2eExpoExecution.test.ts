@@ -246,6 +246,12 @@ export default async function globalSetup(config: { rootDir: string }): Promise<
         const declared = await play("GET / renders without");
         if (declared.code !== 0) console.error(declared.output);
         expect(declared.code).toBe(0);
+        // …and the copy test SKIPS under the override rather than asserting
+        // this screen's text on the screen it deliberately redirects to.
+        const declaredCopy = await play("GET / renders its own copy");
+        if (declaredCopy.code !== 0) console.error(declaredCopy.output);
+        expect(declaredCopy.code).toBe(0);
+        expect(declaredCopy.output).toMatch(/1 skipped/);
         params.landing = {};
         writeFileSync(paramsPath, JSON.stringify(params, null, 2));
 
