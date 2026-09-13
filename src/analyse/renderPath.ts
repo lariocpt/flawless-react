@@ -69,6 +69,17 @@ export function makeEnv(
   // but decides nothing.
   for (const name of unresolvedProps) env.opaque.add(name);
   for (const s of state) {
+    if (s.kind === "useRef") {
+      // A ref is a { current } object for the whole lifetime of the render —
+      // `useRef(null)` still hands back a truthy object. Binding the variable
+      // to its init arg folded `useRef(null)` into null, and a condition that
+      // reads the ref identifier itself (`ref ? A : B`) resolved the wrong
+      // branch. The object itself is known (truthy, plain); what `.current`
+      // holds is not — it can be reassigned before the JSX runs — so it
+      // evaluates to unknown, never to the init arg.
+      env.state.set(s.varName, {});
+      continue;
+    }
     if (s.initialValue !== undefined) env.state.set(s.varName, s.initialValue);
     else env.opaque.add(s.varName);
   }
