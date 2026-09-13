@@ -78,6 +78,30 @@ describe("planAffectedRuns", () => {
     ).toEqual([]);
   });
 
+  test("a changed-but-unexported component still narrows unit via vitest `related`", () => {
+    // The whole change is confined to an unexported component: it lands in
+    // withoutSpecs, not components, so components+routes are both empty — but
+    // the changed FILE is real and its parent's spec transitively imports it,
+    // so vitest `related` must still be planned. The early return that skipped
+    // this was the vacuous "nothing affected" pass --changed exists to kill.
+    const runs = planAffectedRuns(
+      OUT,
+      ["unit-browser"],
+      affected({ components: [], routes: [], withoutSpecs: ["Inner"] }),
+      true,
+    );
+    expect(ids(runs)).toEqual(["unit"]);
+    expect(runs[0]?.cmd).toEqual([
+      "bunx",
+      "vitest",
+      "related",
+      "/proj/src/Card.tsx",
+      "--run",
+      "--config",
+      path.join(path.resolve(OUT), VITEST_CONFIG),
+    ]);
+  });
+
   test("unit narrows through vitest `related` with the emitted config", () => {
     const runs = planAffectedRuns(OUT, ["unit-browser"], affected(), true);
     expect(ids(runs)).toEqual(["unit"]);

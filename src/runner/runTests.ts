@@ -188,9 +188,12 @@ async function spawn(cmd: string, args: string[], cwd: string, quiet = false): P
  */
 /**
  * The command plan for an affected-only run — pure, same discipline as
- * planGeneratedRuns. An empty components+routes set plans nothing at all
- * (the runner reports "nothing affected"); unit narrowing keys on changed
- * FILES because vitest `related` walks the module graph from them.
+ * planGeneratedRuns. Unit narrowing keys on changed FILES (vitest `related`
+ * walks the module graph from them), so it fires even when components+routes
+ * are empty — the case of a change confined to an unexported component, which
+ * has no spec name of its own but whose parent's spec DOES import it. An
+ * affected set that matches no branch plans nothing; runAffectedTests then
+ * reports why (nothing affected, or affected-but-unnarrowable).
  */
 export function planAffectedRuns(
   outDir: string,
@@ -198,8 +201,14 @@ export function planAffectedRuns(
   affected: AffectedSpecs,
   standalone: boolean,
 ): PlannedRun[] {
-  if (affected.components.length === 0 && affected.routes.length === 0) return [];
-
+  // No blanket empty-set early return: the unit branch below keys on
+  // affected.changedFiles, not components/routes, so vitest `related` must
+  // still fire for a change confined to an UNEXPORTED component (no spec name
+  // of its own, so components is empty) — related walks the module graph from
+  // the file and reaches the parent's spec. An all-empty affected set still
+  // matches no branch and returns [] naturally; runAffectedTests then reports
+  // why. The old early return made --changed report "nothing affected" and
+  // exit 0 green for exactly that change.
   const runs: PlannedRun[] = [];
   const prefix = standalone ? "test" : "flawless";
 
