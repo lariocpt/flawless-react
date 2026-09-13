@@ -541,11 +541,17 @@ function collectHints(
       if (state) hints.disabled = state;
       continue;
     }
-    // React Native's disabled equivalent for a text field, with inverted polarity.
+    // React Native's disabled equivalent for a text field, with INVERTED polarity:
+    // editable={false} disables the field, editable={true}/bare leaves it working.
+    // disabledAtInitialRender reads the attribute's truthiness as if it were
+    // `disabled`, so its result is inverted here — a non-editable field is
+    // disabled "always", an editable one is not disabled at all, and an
+    // undecidable editable stays "conditional" exactly as `disabled` would be.
     if (dialect === "native" && name === "editable") {
-      const state = disabledAtInitialRender(a.initializer, env);
-      if (state === "always") hints.disabled = "conditional";
-      else if (state !== undefined) hints.disabled = state;
+      const editableState = disabledAtInitialRender(a.initializer, env);
+      if (editableState === undefined) hints.disabled = "always";
+      else if (editableState === "conditional") hints.disabled = "conditional";
+      // editableState === "always" → the field is editable → leave hints.disabled unset.
       continue;
     }
     const value = readStringInitializer(a.initializer);
