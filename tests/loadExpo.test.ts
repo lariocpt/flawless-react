@@ -7,7 +7,7 @@
 // login page). Both are pinned here; the shared pipe/param/merge machinery is
 // already covered by tests/loadPipes.test.ts.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
@@ -53,6 +53,42 @@ describe("the one-hop api-endpoint harvest", () => {
     const eps = t.entry.apiCalls ?? [];
     const login = eps.find((e) => e.urlTemplate === "/api/auth/login");
     expect(login?.method).toBe("POST");
+  });
+
+  test("a path parameter before an inline query leaves no query cruft", async () => {
+    // The one shape the truncation missed: `/things/${id}?tab=${tab}` puts a
+    // hole AFTER a `?`, so the non-path-hole truncation cut after the `?` it
+    // had already passed and shipped `?tab=` — a dangling query the app never
+    // requests. The load target is the base path, cut at the first `?`.
+    const app = tmp("load-query-cruft");
+    mkdirSync(path.join(app, "lib"), { recursive: true });
+    writeFileSync(
+      path.join(app, "lib", "api.ts"),
+      "async function apiFetch<T>(path: string): Promise<T> {\n" +
+        "  const res = await fetch(`http://localhost:3000${path}`);\n" +
+        "  if (!res.ok) throw new Error(`api_error ${res.status}`);\n" +
+        "  return (await res.json()) as T;\n" +
+        "}\n" +
+        "export async function getThing(id: string, tab: string): Promise<{ thing: string }> {\n" +
+        "  return apiFetch<{ thing: string }>(`/things/${id}?tab=${tab}`);\n" +
+        "}\n",
+    );
+    const screen = path.join(app, "screen.tsx");
+    writeFileSync(
+      screen,
+      'import { View } from "react-native";\n' +
+        'import { getThing } from "./lib/api";\n' +
+        "export default function ThingScreen({ id }: { id: string }) {\n" +
+        '  getThing(id, "all");\n' +
+        "  return <View />;\n" +
+        "}\n",
+    );
+    const t = await analyse({ entry: screen, depth: 0, includeChildren: false });
+    const eps = t.entry.apiCalls ?? [];
+    const thing = eps.find((e) => e.urlTemplate === "/things/:id");
+    expect(thing).toBeDefined();
+    expect(thing?.holes).toEqual(["id"]);
+    expect(eps.map((e) => e.urlTemplate)).not.toContain("/things/:id?tab=");
   });
 
   test("web files never carry apiCalls — the harvest is native-only", async () => {

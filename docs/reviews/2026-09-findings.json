@@ -1,0 +1,126 @@
+{
+  "review": "2026-09 self-review — a whole-product review pass over the B-16-complete tool; the tool graded by its own discipline",
+  "toolBase": "aa03ae7",
+  "method": "Three high-effort subsystem reviewers (analysis/emitter, runner/CLI/reporting, cross-cutting contracts) over 30k LOC. Every candidate finding was then verified by an adversarial pass that tried to refute it; the same nine (eight findings + one design tension) survived two independent verification passes, and the three highest-impact were spot-checked in code before being written up. The round's ethic is the project's own: every fix ships with a test that REDDENS when the fix is reverted (mutation probe, per docs/reviews/b12-b15-handoff.md). The P0 runtime fix additionally carries an executed proof — the four fetch scenarios of an emitted spec run under real vitest, green with the fix, all four red without, failing with the exact error the finding describes.",
+  "severityAnchors": {
+    "P0": "emitted suite broken, silently passes, or lies; or the tool corrupts user files",
+    "P1": "wrong analysis output, docs claim contradicted by code, or a CI gap that lets P0s ship",
+    "P2": "performance, DX, error-message quality, design friction",
+    "P3": "opportunity aligned with the product's spirit"
+  },
+  "findings": [
+    {
+      "id": "FR-053",
+      "severity": "P0",
+      "dimension": "emitted-artefacts",
+      "status": "fixed",
+      "file": "src/scaffold-tests/templates.ts",
+      "line": 837,
+      "title": "The fetch-spec's trigger throws instead of guarding, for every getAllBy* selector shape",
+      "claim": "firstClickTrigger rewrote only getBy* → queryBy* (a `.replace(\".getBy\", \".queryBy\")` that converts the getByTestId form and nothing else), so the getAllBy* forms — aria-label, role, text: the common ones, and the reason emitVitestSelector emits getAllBy — slipped through untouched. The emitted `const trigger = screen.getAllBy…()[0]` throws synchronously when the element is absent, defeating the `if (trigger)` guard below it and failing all four fetch scenarios on a correct component. Reproduced by execution: a launcher rendered inside `.map()` (harvested by the analysis, absent at mount because the array starts empty) — the spec with the old line fails all four scenarios with 'Unable to find a label'; the same spec with the fixed line passes all four.",
+      "spirit": "The guard exists precisely because a launcher may be absent; a guard that throws before it runs is not a guard, and a fetch spec that fails on the component it was generated for is the tool's cardinal sin in its own output.",
+      "foundBy": "subsystem reviewer (analysis/emitter); adversarial pass; spot-checked in code",
+      "fix": "The rewrite is anchored per shape: getAllBy* → queryAllBy* (an empty result's [0] is undefined), getBy* → queryBy*, querySelector keeps its assertion dropped. tests/templatesUnit.test.ts emits an aria-label launcher and pins the queryAllByLabelText trigger line — red before, green after. Executed proof: the four fetch scenarios of the emitted spec run under real vitest — pass with the new form, fail all four with the old."
+    },
+    {
+      "id": "FR-054",
+      "severity": "P1",
+      "dimension": "analysis",
+      "status": "fixed",
+      "file": "src/analyse/extractInteractions.ts",
+      "line": 545,
+      "title": "React Native's editable → disabled polarity is inverted",
+      "claim": "collectHints read `editable`'s truthiness as if the attribute were `disabled`: editable={true} (a working field) was marked \"conditional\" disabled — a dishonest skip on a live control — while editable={false} (locked) was left looking fillable. The branch inverted `disabledAtInitialRender`'s result; only the undecidable editable={expr} → \"conditional\" case was right, the two decidable cases were backwards. The value is dead in emitted output today (no native consumer reads hints.disabled — the DOM-only decidePostDispatch path, and the native emitter, which never calls it), but it is a real bug at the analyse() surface, where a custom reporter reads exactly this field; postDispatch.ts names this field the one DOM and native 'have drifted before'.",
+      "spirit": "An analyser field that says \"conditionally disabled\" about a working field and \"fillable\" about a locked one is a lie waiting for a consumer — and this field is the documented drift hazard between the two emitters.",
+      "foundBy": "subsystem reviewer (analysis/emitter); adversarial pass; spot-checked in code",
+      "note": "Landed after the useRef env fix (FR-057): a ref-gated editable now evaluates the ref as truthy, which this branch reads as \"editable\" — the correct reading. The ordering matters and is recorded so it is not \"simplified\" back.",
+      "fix": "A non-editable field is disabled \"always\", an editable one is not disabled at all, an undecidable editable stays \"conditional\". tests/nativeTemplates.test.ts — Locked/Open/Default/Dynamic TextInputs assert their hints.disabled at the analyse() surface; Locked and Open both redden without the fix."
+    },
+    {
+      "id": "FR-055",
+      "severity": "P1",
+      "dimension": "reporting",
+      "status": "fixed",
+      "file": "src/reporters/findings.ts",
+      "line": 132,
+      "title": "Same-named components collapse each other's inline summaries",
+      "claim": "writeInlineSummaries deduped components on the bare name, so a/Header.tsx and b/Header.tsx collapsed into one map entry: the second file never got its .flawless.json sidecar and every finding routed to it was silently dropped from the report — the exact sibling drop registry.ts dedupes on the full key to prevent. Reproduced: a fixture with two same-named components writes one sidecar where two are owed, and the dropped component's findings appear in no report.",
+      "spirit": "A report that silently routes findings into nothing is a report that lies about its own completeness — and the dedupe convention already exists one file over, unapplied.",
+      "foundBy": "subsystem reviewer (runner/CLI/reporting); adversarial pass",
+      "fix": "collectComponents/findOwner/the write loop now key on filePath::componentName (the registry.ts convention); the sidecar keeps its bare-name filename beside each source file. tests/inlineSummaries.test.ts (new) — two Headers in a/ and b/ write both sidecars, each carrying only its own finding; a child rendered by two parents still collapses to one. Red before, green after."
+    },
+    {
+      "id": "FR-056",
+      "severity": "P0",
+      "dimension": "cli",
+      "status": "fixed",
+      "file": "src/runner/runTests.ts",
+      "line": 201,
+      "title": "--changed exited 0 green for a change no selected spec can see",
+      "claim": "planAffectedRuns early-returned on empty components+routes before the file-keyed unit branch, so a change confined to an unexported component (no spec name of its own) ran no specs yet exited 0 with \"changed: nothing affected\" — a vacuous pass under the flag built to catch exactly that: the file changed, is covered through a parent's spec, and the run said nothing. The same empty plan mislabelled its reason whenever a name-grep-only task set (e.g. --tasks perf-harness) met an unexported-only change: \"nothing affected\" where the true sentence is \"affected, but these tasks narrow by spec name and cannot reach it\".",
+      "spirit": "A CI gate that says \"nothing affected\" about a change it knows about is the CI gap that lets P0s ship — the class FR-017 fixed for the affected-run gate, reappearing in the one branch the guard skipped.",
+      "foundBy": "subsystem reviewer (runner/CLI/reporting); adversarial pass",
+      "fix": "The blanket early return is deleted (the body returns [] naturally when no branch matches) and vitest `related` now walks the module graph from the changed file, reaching the parent's spec. runAffectedTests reports why the plan is empty, with withoutSpecs.length load-bearing in the \"nothing\" test: the unexported case says \"covered through a parent's spec … add unit-browser to run vitest `related`\", the genuinely-empty case (withoutSpecs: []) keeps its old wording; ran:0, green:true retained as an honest \"nothing ran\". tests/runPlan.test.ts — unexported-only change under unit-browser plans [\"unit\"] with the exact related command (red with the early return restored); tests/runTests.test.ts — the new reason names \"unexported\", the withoutSpecs:[] case keeps \"nothing affected\"."
+    },
+    {
+      "id": "FR-057",
+      "severity": "P1",
+      "dimension": "analysis",
+      "status": "fixed",
+      "file": "src/analyse/renderPath.ts",
+      "line": 71,
+      "title": "useRef was modelled as its init argument, not the ref object",
+      "claim": "makeEnv folded useRef(null) into null in the render env, so a condition that reads the ref identifier itself (ref ? A : B) resolved the wrong branch — the real ref is always a truthy { current } object. The misbranching is the visible face; the deeper error is that ref.current was reachable as the init arg, a value React does not guarantee (it can be reassigned before the JSX runs).",
+      "spirit": "An env that models a hook by its first argument rather than its runtime shape picks a branch the component never takes.",
+      "foundBy": "subsystem reviewer (analysis/emitter); adversarial pass",
+      "fix": "A useRef binding resolves to an opaque truthy {}; ref.current evaluates to unknown, never to the init arg — deliberate under-modelling in the safe direction (unknown rather than wrong). tests/renderPath.test.ts gains a makeEnv describe: !ref is false, ref.current is unknown, useState bindings keep their values. Red before, green after. v2 — tracing `ref.current = X` assignments before the JSX — is recorded as B-28."
+    },
+    {
+      "id": "FR-058",
+      "severity": "P1",
+      "dimension": "analysis",
+      "status": "fixed",
+      "file": "src/analyse/harvestApiEndpoints.ts",
+      "line": 140,
+      "title": "A path parameter before an inline query shipped a dangling ?tab= in the load target",
+      "claim": "pathOnly's truncation cut the template at the last hole, so /things/${id}?tab=${tab} kept the interpolated query and shipped a dangling `?tab=` — a URL the app never requests. The base path is the load target: a query's values come from runtime state the pipe cannot carry, literal query or interpolated one.",
+      "spirit": "A load pipe that measures a URL the app never sends is a measurement of nothing.",
+      "foundBy": "subsystem reviewer (analysis/emitter); adversarial pass",
+      "fix": "The template is cut at the first `?` on every path through pathOnly. tests/loadExpo.test.ts — a screen → getThing(id, tab) → apiFetch(`/things/${id}?tab=${tab}`) harvests /things/:id with holes [\"id\"]; the dangling form reddens without the fix."
+    },
+    {
+      "id": "FR-059",
+      "severity": "P2",
+      "dimension": "cli",
+      "status": "fixed",
+      "file": "src/core.ts",
+      "line": 917,
+      "title": "vitest's value-taking --project was misread as a path filter",
+      "claim": "selectsAllTests treated --project's argument as a test-path filter: `vitest --project unit` counted the project name as a scope, so a script whose own flags collide with the project name escaped the \"you narrowed the run\" warning — the operator believes the whole suite ran.",
+      "spirit": "The warning exists so an operator can tell \"whole suite\" from \"narrowed run\"; a flag the scanner cannot read is a warning the operator never sees.",
+      "foundBy": "subsystem reviewer (runner/CLI/reporting); adversarial pass",
+      "fix": "--project joins VALUE_FLAGS (it chooses WHICH project runs, not which tests — `vitest --project unit` still globs that project's whole suite). tests/core.test.ts — --project NAME is flagged, =NAME stays flagged, a real path stays scoped."
+    },
+    {
+      "id": "FR-060",
+      "severity": "P1",
+      "dimension": "analysis",
+      "status": "fixed",
+      "file": "src/analyse/sourceCache.ts",
+      "line": 17,
+      "title": "A \"use server\" directive behind a long header was missed, and the module misclassified",
+      "claim": "readPrologueDirective sliced the first 4096 bytes, so a \"use server\" behind a longer license banner was missed and the module misclassified as client — which then failed to stub the server action in the browser bundle. The read runs once per IMPORTED module in a sweep, so the bound is a perf choice, not a correctness ceiling.",
+      "spirit": "A classifier that stops reading before the code starts misclassifies whatever the file's author put in the header — and the miss is invisible to everything downstream.",
+      "foundBy": "subsystem reviewer (cross-cutting contracts); adversarial pass",
+      "note": "The principled fix is to scan to the first token, not to a bigger constant; the constant was raised instead because the read is per-imported-module and 64KB covers any realistic banner. Recorded as B-27.",
+      "fix": "The bound is raised to 65536 and the docblock names the remaining miss of the bound instead of hiding it. tests/serverActions.test.ts — \"use server\" behind a ~9KB header is detected; red against the 4096 slice."
+    }
+  ],
+  "designTensions": [
+    "perf-static counts a shared leaf once per root that reaches it, so a component imported by many pages multiplies its findings. This is DOCUMENTED INTENDED (the website's triage-findings states it: a shared leaf is reported once per root that reaches it) — the finding belongs to every page that ships it, and the alternative (dedupe to one) hides the multiplicity the triage reader is paying for. Recorded, not changed; left as-is on the record so a future reviewer does not re-derive it as a bug."
+  ],
+  "deferred": [
+    "B-27 — prologue-directive principled follow-up (FR-060): scan to the first token (past leading comments/whitespace) instead of a fixed byte bound; the bound is per-imported-module and the cost is bounded",
+    "B-28 — useRef v2 (FR-057): trace `ref.current = X` assignments before the JSX so the read evaluates to X; today the deliberate under-modelling returns unknown (safe direction), so this is a coverage gain, not a bug fix"
+  ]
+}

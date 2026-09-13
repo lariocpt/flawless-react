@@ -420,6 +420,21 @@ describe("test-script collision detection", () => {
     expect(detectTestScriptCollisions(dir, false)).toEqual([]);
   });
 
+  test("vitest --project NAME is not a path filter — the run still globs", () => {
+    // --project selects a workspace project, not a subset of tests: its
+    // argument consumed as a path would make a colliding script read as scoped.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-collide-"));
+    tmpDirs.push(dir);
+    pkg(dir, { test: "vitest --project unit" });
+    expect(detectTestScriptCollisions(dir, true)).toHaveLength(1);
+    // The `=` spelling never fooled the detector; it must keep working.
+    pkg(dir, { test: "vitest --project=unit" });
+    expect(detectTestScriptCollisions(dir, true)).toHaveLength(1);
+    // A real path is still a scope, whatever flag precedes it.
+    pkg(dir, { test: "vitest tests/unit" });
+    expect(detectTestScriptCollisions(dir, true)).toEqual([]);
+  });
+
   test("the flawless:* scripts it wrote are never flagged", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-collide-"));
     tmpDirs.push(dir);

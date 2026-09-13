@@ -828,13 +828,23 @@ function escapeComment(s: string): string {
  * fetch specs fire the component's first detected click when it is present,
  * which unlocks the common launcher-gated pattern; a mount-triggered fetch is
  * unaffected (the click is skipped when the element is absent).
+ *
+ * Skipping is only honest if the query is non-throwing, so the selector is
+ * rewritten to its query twin for EVERY shape it can take: getBy* → queryBy*,
+ * getAllBy* → queryAllBy* (an empty result's [0] is undefined), and the
+ * querySelector assertion dropped. The old bare getBy→queryBy rewrite left the
+ * getAllBy* forms throwing on absence, and the throw failed all four fetch
+ * scenarios on a correct component.
  */
 function firstClickTrigger(info: ComponentInfo): string | undefined {
   const click = info.interactions?.clicks.find((c) => c.event === "onClick");
   if (!click) return undefined;
   const selector = emitVitestSelector(click);
   if (!selector) return undefined;
-  const query = selector.replace(".getBy", ".queryBy").replace(/\)!$/, ")");
+  const query = selector
+    .replace(".getAllBy", ".queryAllBy")
+    .replace(".getBy", ".queryBy")
+    .replace(/\)!$/, ")");
   return `const trigger = ${query};
     if (trigger) await userEvent.click(trigger as HTMLElement);`;
 }

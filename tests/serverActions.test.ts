@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
@@ -35,6 +37,28 @@ describe("SourceFileCache.hasPrologueDirective", () => {
   test("an unreadable path is a miss, not a throw", () => {
     const cache = new SourceFileCache();
     expect(cache.hasPrologueDirective(path.join(FIXTURES, "nope.ts"), "use server")).toBe(false);
+  });
+
+  test('"use server" behind a license header of several KB is still detected', () => {
+    // The scan is head-bounded — this runs once per IMPORTED module in a sweep,
+    // not once per file — and the old 4096-byte bound missed a directive
+    // behind a long license banner, misclassifying a server-action module that
+    // then failed to stub in the browser bundle. 64KB covers any realistic
+    // banner; this fixture sits far outside the old bound and inside the new.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-prologue-"));
+    const f = path.join(dir, "big-header.ts");
+    writeFileSync(
+      f,
+      "/*\n" +
+        " * a line of license text that goes on and on\n".repeat(300) +
+        " */\n" +
+        '"use server";\nexport const action = () => {};\n',
+    );
+    try {
+      expect(new SourceFileCache().hasPrologueDirective(f, "use server")).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

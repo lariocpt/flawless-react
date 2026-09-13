@@ -4,10 +4,11 @@ import {
   emptyEnv,
   evaluate,
   initialRenderExpression,
+  makeEnv,
   type RenderEnv,
   reachability,
 } from "../src/analyse/renderPath.ts";
-import type { PropValue } from "../src/types.ts";
+import type { PropValue, StateInfo } from "../src/types.ts";
 
 function envOf(props: Record<string, PropValue> = {}, opaque: string[] = []): RenderEnv {
   const env = emptyEnv();
@@ -224,5 +225,60 @@ describe("reachability", () => {
 
   test("an undecidable condition yields unknown, not no", () => {
     expect(verdictFor(SRC, 'id="boost"', envOf({ rows: [] }, ["weight"]))).toBe("unknown");
+  });
+});
+
+describe("makeEnv", () => {
+  function refState(varName = "box"): StateInfo {
+    return {
+      kind: "useRef",
+      varName,
+      typeKind: "object",
+      pos: { file: "t.tsx", line: 1, column: 1 },
+      setterCalls: [],
+      flowsToJsx: [],
+      setterCalledInEffect: false,
+    };
+  }
+
+  test("a useRef variable is the ref object — always truthy, never its init arg", () => {
+    const env = makeEnv({}, [], [refState()]);
+    // `useRef(null)` still hands back a truthy { current } object, so a
+    // condition reading the ref identifier itself decides against the "empty"
+    // branch. The old binding to the init arg resolved `!box` to true.
+    expect(evalSrc("!box", env)).toBe(false);
+    expect(evalSrc("box && 'on'", env)).toBe("on");
+  });
+
+  test("ref.current is unknown, not the init arg and not an invented {current}", () => {
+    const env = makeEnv({}, [], [refState()]);
+    // .current can be reassigned before the JSX runs — its value at render is
+    // not knowable, and answering with the init arg (or a {current: …} shape)
+    // would make `ref.current === null` a confident answer.
+    expect(evalSrc("box.current", env)).toBeUndefined();
+    expect(evalSrc("box.current === null", env)).toBeUndefined();
+  });
+
+  test("useState bindings keep their initial values", () => {
+    const env = makeEnv(
+      {},
+      [],
+      [
+        refState(),
+        {
+          kind: "useState",
+          varName: "open",
+          setterName: "setOpen",
+          initialValue: false,
+          typeKind: "boolean",
+          pos: { file: "t.tsx", line: 2, column: 1 },
+          setterCalls: [],
+          flowsToJsx: [],
+          setterCalledInEffect: false,
+        },
+      ],
+    );
+    expect(evalSrc("open", env)).toBe(false);
+    expect(evalSrc("!open", env)).toBe(true);
   });
 });

@@ -926,6 +926,10 @@ const VALUE_FLAGS = new Set([
   "--coverage-reporter",
   "--max-workers",
   "-w",
+  // vitest's workspace selector: it chooses WHICH project runs, not which
+  // tests — `vitest --project unit` still globs that project's whole suite,
+  // so its argument must not be mistaken for a path filter.
+  "--project",
 ]);
 
 /**

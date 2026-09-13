@@ -227,6 +227,53 @@ describe("the invariants a native spec has to hold", () => {
 });
 
 describe("defects the production-readiness review found", () => {
+  test("editable polarity: editable={false} is the disabled state, never the reverse", async () => {
+    // The 2026-09 self-review found the branch reading the attribute's
+    // truthiness AS IF it were `disabled`: a working field (editable={true})
+    // was marked "conditional" disabled — a dishonest skip on a live control —
+    // while a locked field (editable={false}) was left looking fillable. The
+    // value is dead in emitted output today (no native consumer reads
+    // hints.disabled), so the probe lives at the analyse() surface, where a
+    // custom reporter reads exactly this field.
+    const { analyseFile } = await import("../src/analyse/index.ts");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-editable-"));
+    const f = path.join(dir, "Fields.tsx");
+    writeFileSync(
+      f,
+      'import { TextInput } from "react-native";\n' +
+        'import type { Flag } from "./does-not-exist";\n' +
+        "export default function Fields({ locked }: { locked: Flag }) {\n" +
+        "  return (\n" +
+        "    <>\n" +
+        '      <TextInput editable={false} onChangeText={() => {}} placeholder="Locked" />\n' +
+        '      <TextInput editable={true} onChangeText={() => {}} placeholder="Open" />\n' +
+        '      <TextInput onChangeText={() => {}} placeholder="Default" />\n' +
+        '      <TextInput editable={locked} onChangeText={() => {}} placeholder="Dynamic" />\n' +
+        "    </>\n" +
+        "  );\n" +
+        "}\n",
+    );
+    try {
+      const trees = await analyseFile({ entry: f, depth: 0, includeChildren: false });
+      const info = trees[0]?.entry;
+      expect(info?.hostDialect).toBe("native");
+      const clicks = info?.interactions?.clicks ?? [];
+      expect(clicks).toHaveLength(4);
+      const disabledByPlaceholder = new Map(
+        clicks.map((c) => [c.hints.placeholder, c.hints.disabled]),
+      );
+      expect(disabledByPlaceholder.get("Locked")).toBe("always");
+      expect(disabledByPlaceholder.get("Open")).toBeUndefined();
+      // No editable prop at all is the RN default: the field works.
+      expect(disabledByPlaceholder.get("Default")).toBeUndefined();
+      // The one case the old code got right — an undecidable editable must
+      // stay "conditional", never collapse to a confident answer.
+      expect(disabledByPlaceholder.get("Dynamic")).toBe("conditional");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a file that does not import `View` still has its interactions harvested", async () => {
     // The dialect was probed as hostTag("View")?.dialect === "native", which is
     // only true when the file imports View UNDER THAT EXACT LOCAL NAME. Every
