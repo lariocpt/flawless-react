@@ -266,10 +266,22 @@ export async function runAffectedTests(
   // work is a route. The plan being empty is the whole condition — what made
   // it empty only decides which sentence to say.
   if (runs.length === 0) {
-    const nothingAffected = affected.components.length === 0 && affected.routes.length === 0;
-    const reason = nothingAffected
-      ? "changed: nothing affected — no specs to run"
-      : `changed: ${affected.components.length} affected component(s) and ${affected.routes.length} affected route(s), but the selected task(s) (${selectedTasks.join(", ")}) plan no run for them`;
+    // withoutSpecs in the "nothing" test is load-bearing: a change confined to
+    // unexported components is NOT "nothing affected" — the file changed and
+    // is covered through a parent's spec. It is simply not reachable by a
+    // task set that narrows by spec name.
+    const nothingAffected =
+      affected.components.length === 0 &&
+      affected.routes.length === 0 &&
+      affected.withoutSpecs.length === 0;
+    let reason: string;
+    if (nothingAffected) {
+      reason = "changed: nothing affected — no specs to run";
+    } else if (affected.components.length === 0 && affected.routes.length === 0) {
+      reason = `changed: ${affected.withoutSpecs.length} unexported component(s) changed (covered through a parent's spec), but the selected task(s) (${selectedTasks.join(", ")}) narrow by spec name and cannot reach them — add unit-browser to run vitest \`related\``;
+    } else {
+      reason = `changed: ${affected.components.length} affected component(s) and ${affected.routes.length} affected route(s), but the selected task(s) (${selectedTasks.join(", ")}) plan no run for them`;
+    }
     say(`\n${reason}\n`);
     return { ran: 0, green: true, reason };
   }

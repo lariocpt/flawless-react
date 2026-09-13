@@ -133,6 +133,23 @@ describe("runAffectedTests", () => {
     expect(outcome.reason).toContain("nothing affected");
   });
 
+  test("only unexported components changed, no unit task to narrow them: ran:0, honest reason", async () => {
+    // perf-harness narrows by spec name; an unexported component has none. The
+    // file DID change (covered through a parent) — the reason must say so, not
+    // claim "nothing affected". The script exits 1, so a green can only mean
+    // no spawn.
+    const dir = suiteDir({ "test:perf": "exit 1 #" });
+    const outcome = await runAffectedTests(dir, ["perf-harness"], {
+      changedFiles: ["/proj/src/Inner.tsx"],
+      components: [],
+      routes: [],
+      withoutSpecs: ["Inner"],
+    });
+    expect(outcome.ran).toBe(0);
+    expect(outcome.reason).toContain("unexported");
+    expect(outcome.reason).not.toContain("nothing affected");
+  });
+
   // FR-042, both reachable shapes. The old guard required an empty plan AND
   // both affected sets empty, so an empty plan with affected WORK fell through
   // to `say("all affected suites passed")` and returned green having spawned
