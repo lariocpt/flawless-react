@@ -126,8 +126,20 @@ interface WrapperEndpoint {
  * from params.json. The base path IS the load target: the query is an optional
  * filter, and load-testing `…/invoices` is exactly right. So the template is
  * truncated at that hole and the hole dropped.
+ *
+ * A query is never part of the load target, literal or interpolated: its
+ * values come from runtime state the pipe cannot carry. The template is cut at
+ * the first `?` on every path through this function — which is also what
+ * clears the edge the truncation alone left behind: a path parameter BEFORE an
+ * inline query (`/things/${id}?tab=${t}` → `/things/:id?tab=:t`) used to ship
+ * a dangling `?tab=` the app never requests, because the truncation cut after
+ * the `?` it had already passed.
  */
 function pathOnly(template: string, holes: string[]): { template: string; holes: string[] } {
+  const stripQuery = (t: string): string => {
+    const at = t.indexOf("?");
+    return at < 0 ? t : t.slice(0, at);
+  };
   const kept: string[] = [];
   let cursor = 0;
   for (const hole of holes) {
@@ -137,13 +149,13 @@ function pathOnly(template: string, holes: string[]): { template: string; holes:
       continue;
     }
     if (template[at - 1] !== "/") {
-      const base = template.slice(0, at).replace(/\/$/, "");
+      const base = stripQuery(template.slice(0, at)).replace(/\/$/, "");
       return { template: base, holes: kept };
     }
     kept.push(hole);
     cursor = at + hole.length + 1;
   }
-  return { template, holes: kept };
+  return { template: stripQuery(template), holes: kept };
 }
 
 /**
