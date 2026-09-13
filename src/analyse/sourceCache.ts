@@ -13,10 +13,18 @@ import ts from "typescript";
  * The leading prologue directive of a module, tolerating a license header or
  * any run of comments before it. Shared so "use client" and "use server" cannot
  * drift apart.
+ *
+ * The scan is head-bounded, deliberately: this runs once per IMPORTED module
+ * in a sweep, not once per file, and full-parsing to find a one-line directive
+ * would multiply the parse count by the import fan-out. 64KB covers any
+ * realistic license banner (the longest common ones run ~2–4KB) with slack; a
+ * directive hidden behind a LARGER header is the acknowledged miss of the
+ * bound — misclassified as not carrying it — and would need the bound raised,
+ * not the regex changed.
  */
 export function readPrologueDirective(file: string): string | undefined {
   try {
-    const head = readFileSync(file, "utf8").slice(0, 4096);
+    const head = readFileSync(file, "utf8").slice(0, 65536);
     const m = /^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']([^"']+)["']\s*;?/.exec(head);
     return m?.[1];
   } catch {
