@@ -304,8 +304,9 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   | `className` provably lands on a host element | a sentinel class is found in the container |
   | a cva table | every option of every key renders a **distinct** class list |
   | literal copy under the initial render | `getByText` per string |
-  | interactions | the element is found, clicked, and the component survives |
-  | none of the above | `test.skip` naming which preconditions failed |
+   | interactions | the element is found, clicked, and the component survives |
+   | an effect-driven `fetch()` | four MSW scenarios per call — successful response, delayed response (loading state), 500 (error state), empty payload. When a click is detected it fires first (effects are often launcher-gated); the trigger is rewritten to its non-throwing `query*` twin for every selector shape, so a launcher absent at mount is *skipped*, never thrown |
+   | none of the above | `test.skip` naming which preconditions failed |
 
   A component behind an undecidable early return gets `expect(() =>
   renderTarget()).not.toThrow()` instead of a claim that something appeared —
