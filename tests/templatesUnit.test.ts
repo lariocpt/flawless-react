@@ -898,6 +898,39 @@ describe("renderUnitBrowser effect fetch specs", () => {
     expect(src).toContain('const trigger = screen.queryByTestId("open");');
     expect(src).toContain("if (trigger) await userEvent.click(trigger as HTMLElement);");
   });
+
+  test("the trigger is a non-throwing query for the getAllBy* selector shapes", () => {
+    const src = contentOf(
+      renderUnitBrowser({
+        trees: [
+          tree(
+            comp("Panel", {
+              fetchCalls: [fetchCall({ urlTemplate: "/api/panel" })],
+              interactions: {
+                clicks: [click({ hints: { ariaLabel: "Open panel" } })],
+                forms: [],
+              },
+            }),
+          ),
+        ],
+        outDir: OUT,
+        variants: 3,
+        mswSetup: true,
+      }),
+      "unit/Panel.test.tsx",
+    );
+    // The aria-label shape emits getAllBy* — the forms a bare getBy→queryBy
+    // rewrite leaves untouched. Left as getAllBy, an absent trigger throws at
+    // render instead of resolving to undefined, and the thrown error fails all
+    // four fetch scenarios on a correct component. (The separate interaction
+    // test keeps the throwing form on purpose: a spec that drives the click
+    // must fail when the element is not there.)
+    expect(src).toContain(
+      'const trigger = screen.queryAllByLabelText("Open panel")[0] as HTMLElement;',
+    );
+    expect(src).not.toContain("const trigger = screen.getAllBy");
+    expect(src).toContain("if (trigger) await userEvent.click(trigger as HTMLElement);");
+  });
 });
 
 describe("renderUnitBrowser always-emitted files", () => {
