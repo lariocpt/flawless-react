@@ -3,7 +3,7 @@ import path from "node:path";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { A11Y_REPORT } from "../tasks/a11yScan.ts";
 import { REACT_RULES_REPORT } from "../tasks/eslintReactRules.ts";
-import type { ComponentTree, Finding, TaskId, TaskResult } from "../types.ts";
+import type { ComponentInfo, ComponentTree, Finding, TaskId, TaskResult } from "../types.ts";
 
 export function printFindings(findings: Finding[]): void {
   if (findings.length === 0) return;
@@ -59,6 +59,10 @@ export async function writeInlineSummaries(
   results: TaskResult[],
   outDir: string,
 ): Promise<string[]> {
+  // Keyed on filePath::componentName — the registry.ts dedupe convention.
+  // Keyed on the bare name, a/Header.tsx and b/Header.tsx collapse into one
+  // entry: the second file never gets its sidecar, and every finding routed to
+  // it is silently dropped from the report.
   const byComponent = new Map<string, Finding[]>();
   const components = new Map<string, ComponentTree>();
   for (const t of trees) collectComponents(t, components);
@@ -74,10 +78,11 @@ export async function writeInlineSummaries(
   }
 
   const written: string[] = [];
-  for (const [name, tree] of components) {
+  for (const [key, tree] of components) {
+    const name = tree.entry.componentName;
     const dir = path.dirname(tree.entry.filePath);
     const out = path.join(dir, `${name}.flawless.json`);
-    const findings = byComponent.get(name) ?? [];
+    const findings = byComponent.get(key) ?? [];
     const counts: Record<TaskId | "total", number> = {
       "perf-harness": 0,
       "unit-browser": 0,
@@ -128,14 +133,20 @@ export async function writeInlineSummaries(
   return written;
 }
 
+/** filePath::componentName — the same key registry.ts flattens and dedupes on. */
+function componentKey(entry: ComponentInfo): string {
+  return `${entry.filePath}::${entry.componentName}`;
+}
+
 function collectComponents(tree: ComponentTree, into: Map<string, ComponentTree>): void {
-  if (!into.has(tree.entry.componentName)) into.set(tree.entry.componentName, tree);
+  const key = componentKey(tree.entry);
+  if (!into.has(key)) into.set(key, tree);
   for (const c of tree.children) collectComponents(c, into);
 }
 
 function findOwner(file: string, components: Map<string, ComponentTree>): string | undefined {
-  for (const [name, tree] of components) {
-    if (path.resolve(tree.entry.filePath) === path.resolve(file)) return name;
+  for (const [key, tree] of components) {
+    if (path.resolve(tree.entry.filePath) === path.resolve(file)) return key;
   }
   return undefined;
 }
