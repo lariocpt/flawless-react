@@ -80,7 +80,8 @@ export const unitAndBrowser: Task = {
       apiRoutes: ctx.nextjs?.apiRoutes,
       todos,
     };
-    const { written, skipped, keptEdited, keptLegacy } = await scaffoldUnitBrowser(scaffoldOptions);
+    const { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept } =
+      await scaffoldUnitBrowser(scaffoldOptions);
     // Tallying happened while rendering, but a kept colocated spec's render
     // was discarded — its markers were never written this run, and may name
     // TODOs the user already resolved in the file the writer kept. All three
@@ -109,6 +110,14 @@ export const unitAndBrowser: Task = {
       keptLegacy.length > 0
         ? ` (${keptLegacy.length} pre-stamp colocated spec(s) kept — delete to regenerate: ${listKept(keptLegacy)})`
         : "";
+    const staleRemovedNote =
+      staleRemoved.length > 0
+        ? ` (${staleRemoved.length} stale browser spec(s) removed — the component is no longer in the host: ${listKept(staleRemoved)})`
+        : "";
+    const staleKeptNote =
+      staleKept.length > 0
+        ? ` (${staleKept.length} stale browser spec(s) kept — the component is no longer in the host and the file is hand-edited or unprovable; delete to remove: ${listKept(staleKept.map((k) => k.abs))})`
+        : "";
     const browserNote = browserSpecs
       ? ""
       : " (browser specs skipped — add perf-harness to the task list for the host they need)";
@@ -121,7 +130,7 @@ export const unitAndBrowser: Task = {
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${browserNote}: ${names.join(", ")}`,
+      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
     };
   },

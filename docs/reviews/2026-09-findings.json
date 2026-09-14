@@ -114,6 +114,20 @@
       "foundBy": "subsystem reviewer (cross-cutting contracts); adversarial pass",
       "note": "The principled fix is to scan to the first token, not to a bigger constant; the constant was raised instead because the read is per-imported-module and 64KB covers any realistic banner. Recorded as B-27.",
       "fix": "The bound is raised to 65536 and the docblock names the remaining miss of the bound instead of hiding it. tests/serverActions.test.ts — \"use server\" behind a ~9KB header is detected; red against the 4096 slice."
+    },
+    {
+      "id": "FR-061",
+      "severity": "P0",
+      "dimension": "emitted-artefacts",
+      "status": "fixed",
+      "file": "src/scaffold-tests/index.ts",
+      "line": 104,
+      "title": "A browser spec whose component leaves the host is never removed — it fails every run with \"unknown component\"",
+      "claim": "Browser specs are emitted only for components that mount standalone (renderMode client). The writer rewrites them every run ONLY while the component STAYS in that set; the in-outDir files' provenance was 'rewritten every run, so no stamp needed'. When a component leaves the mountable set — a new guard the analyser cannot decide, a render-mode change, a deleted file — its spec is simply no longer rendered, and it sits in browser/ forever. The perf-harness registry (regenerated every run) no longer carries the component, so every mount throws 'unknown component' and the spec is red on every run. This is not a user edit gone stale: it is the tool's own regeneration that made the suite red, and no flag or re-run can recover it — the writer has no notion of 'this file should no longer exist'.",
+      "spirit": "A writer that can create a file but never retire it hands the user a suite that rots: each regeneration silently adds one more spec that references a component the host can no longer mount. 'Identified by being rewritten every run' is only true while the component stays mountable — the exact moment it stops is the moment the assumption breaks.",
+      "foundBy": "2026-09 dogfood of the self-review fixes — the apps/web browser plane went red with 6 failures across 4 specs (JobControls, DashboardSidebar, ForgotPasswordForm, ResetPasswordForm), all 'unknown component'. All four had already left the mountable set on main ('Not in this host (72)'), so the red predates the round — the dogfood's full-plane run is what surfaced it.",
+      "note": "Pre-existing on main, not a regression from this round: the same four specs fail identically at the merge base. The dogfood's value is that it runs the browser plane, which the last several two-task regenerations never did.",
+      "fix": "Browser specs now carry the same provenance stamp as the colocated specs (the first line hashes the body below it). After the write loop, a sweep lists browser/*.spec.ts not in the run's rendered set and classifies each: an UNTOUCHED stamp is pure tool output for a component the host no longer carries, so it is removed and reported; a mismatched stamp is hand work (kept, reported); no stamp at all is unprovable (kept, reported — this is what protects pre-stamp suites and any spec a user wrote by hand in that directory). The task summary reports both buckets by name, capped like the other kept-listings. --changed narrows the run, never the generation, so the rendered set is always the full one and the sweep is safe under it. Five writer tests, red before / green after: stamp present, removed-when-unrendered, hand-edited-kept, stampless-kept, still-rendered-untouched. Verified end to end on the dogfood app: the 4 stale specs are stampless (pre-stamp), so the sweep keeps and names them in the summary instead of guessing; the owner deletes the four by hand (git history shows none was ever touched after generation), and the browser plane is re-run to prove the red was the staleness and nothing else."
     }
   ],
   "designTensions": [

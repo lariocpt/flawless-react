@@ -48,6 +48,7 @@ import {
   emitVitestSubmit,
   firstOf,
 } from "./selectors.ts";
+import { stamp } from "./stamp.ts";
 
 export interface RenderedFile {
   relPath: string;
@@ -165,7 +166,12 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       const target = path.join(path.resolve(opts.outDir), "browser", `${specName}.spec.ts`);
       files.push({
         relPath: `browser/${specName}.spec.ts`,
-        content: browserSpec(c, specName, opts.todos?.for(target)),
+        // Stamped like the colocated specs, for the same reason: this file is
+        // only rewritten while the component STAYS mountable. Once it leaves
+        // the host the file is simply no longer rendered, and the stamp is
+        // what lets the writer tell "our own stale output" (safe to remove)
+        // from "a human worked in here" (never touch).
+        content: stamp(browserSpec(c, specName, opts.todos?.for(target))),
       });
     }
   }

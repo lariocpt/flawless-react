@@ -337,6 +337,101 @@ describe("scaffoldUnitBrowser colocate", () => {
   });
 });
 
+// FR-061: a browser spec's component left the mountable set between runs. The
+// spec can never run again (the registry no longer carries the component —
+// mount throws "unknown component"), so a kept file is a suite that is red by
+// the tool's own doing. Provenance decides: untouched tool output is removed,
+// anything a human may have worked on is kept and reported.
+describe("scaffoldUnitBrowser stale browser specs", () => {
+  const run = (outDir: string, trees: ComponentTree[], variants = 2) =>
+    scaffoldUnitBrowser({ trees, outDir, variants });
+
+  test("emits browser specs with a provenance stamp", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const first = readFileSync(path.join(outDir, "browser", "Widget.spec.ts"), "utf8");
+    expect(first).toMatch(STAMP_RE);
+    expect(splitStamp(first).hash).toBe(hashBody(splitStamp(first).body));
+  });
+
+  test("removes a browser spec whose component is no longer rendered", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    expect(existsSync(spec)).toBe(true);
+
+    // The component went async: still unit-tested, no longer host-mountable.
+    const res = await run(outDir, [
+      tree(comp("Widget", path.join(src, "Widget.tsx"), { isAsync: true })),
+    ]);
+    expect(existsSync(spec)).toBe(false);
+    expect(res.staleRemoved).toEqual([spec]);
+    expect(res.staleKept).toEqual([]);
+  });
+
+  test("keeps and reports a hand-edited stale browser spec", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    const edited = `${readFileSync(spec, "utf8")}// hand-hardened: a real assertion lives here\n`;
+    writeFileSync(spec, edited);
+
+    const res = await run(outDir, [
+      tree(comp("Widget", path.join(src, "Widget.tsx"), { isAsync: true })),
+    ]);
+    expect(readFileSync(spec, "utf8")).toBe(edited);
+    expect(res.staleKept).toEqual([{ abs: spec, verdict: "edited" }]);
+    expect(res.staleRemoved).toEqual([]);
+  });
+
+  test("keeps and reports a stampless stale browser spec", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    // Pre-stamp suites (and hand-written specs) carry no stamp: the writer
+    // cannot prove the file is its own, so it keeps it and says so.
+    writeFileSync(spec, readFileSync(spec, "utf8").replace(STAMP_RE, ""));
+
+    const res = await run(outDir, [
+      tree(comp("Widget", path.join(src, "Widget.tsx"), { isAsync: true })),
+    ]);
+    expect(existsSync(spec)).toBe(true);
+    expect(res.staleKept).toEqual([{ abs: spec, verdict: "stampless" }]);
+  });
+
+  test("leaves still-rendered browser specs untouched by the stale scan", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    const before = readFileSync(spec, "utf8");
+
+    const res = await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    expect(readFileSync(spec, "utf8")).toBe(before);
+    expect(res.staleRemoved).toEqual([]);
+    expect(res.staleKept).toEqual([]);
+  });
+});
+
 // Lives here rather than in tests/scaffold.test.ts (which owns the rest of the
 // perf-suite scaffold coverage) because that file belongs to another cluster of
 // the same fix wave.
