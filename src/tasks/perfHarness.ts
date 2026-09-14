@@ -100,6 +100,24 @@ export const perfHarness: Task = {
           ' and import "./registry".',
       );
     }
+    // A component that left the host set stops being rendered, but its profile
+    // spec would otherwise sit in profile/ forever, failing at mount with
+    // "unknown component" — the suite red by the tool's own doing. The sweep
+    // retires the ones whose stamp proves them untouched tool output, and
+    // names the ones it refused to touch (hand work or unprovable).
+    const staleRemovedNote =
+      res.staleRemoved.length > 0
+        ? `; retired ${res.staleRemoved.length} stale profile spec(s) whose component left the host — ` +
+          res.staleRemoved.map((f) => path.relative(path.resolve(ctx.outDir), f)).join(", ")
+        : "";
+    const staleKeptNote =
+      res.staleKept.length > 0
+        ? `; kept ${res.staleKept.length} stale profile spec(s) — ` +
+          res.staleKept
+            .map((f) => `${path.relative(path.resolve(ctx.outDir), f.abs)} (${f.verdict})`)
+            .join(", ") +
+          " (delete to retire)"
+        : "";
     return {
       id: "perf-harness",
       ok: true,
@@ -108,8 +126,8 @@ export const perfHarness: Task = {
       status: res.status,
       summary:
         res.status === "refreshed"
-          ? `refreshed perf suite for ${covered}${keptNote}${migrationNote}`
-          : `scaffolded perf suite for ${covered}${migrationNote}`,
+          ? `refreshed perf suite for ${covered}${keptNote}${migrationNote}${staleRemovedNote}${staleKeptNote}`
+          : `scaffolded perf suite for ${covered}${migrationNote}${staleRemovedNote}${staleKeptNote}`,
     };
   },
 };

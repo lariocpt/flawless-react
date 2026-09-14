@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { mergePackageJson } from "../packageJson.ts";
+import { classifyStamped } from "../scaffold-tests/stamp.ts";
 import type { ComponentTree, ScaffoldOptions } from "../types.ts";
 import { extractRoutes, loadApiSpec } from "./openapi.ts";
 import { renderSuite, toHostRelImport } from "./templates.ts";
@@ -26,6 +27,20 @@ export interface ScaffoldResult {
    * of ./registry. host/registry.ts is still written, inert beside it.
    */
   preSplitMain?: boolean;
+  /**
+   * Stale profile specs removed because their component is no longer in the
+   * host and the stamp proved the file was untouched tool output.
+   */
+  staleRemoved: string[];
+  /** Stale profile specs kept (hand work or unprovable) — the owner's call. */
+  staleKept: StaleProfileSpec[];
+}
+
+/** A stale profile spec the writer refused to remove, and why. */
+export interface StaleProfileSpec {
+  abs: string;
+  /** "edited" = stamp present, body differs (hand work); "stampless" = no provenance at all. */
+  verdict: "edited" | "stampless";
 }
 
 /** The generated-by banner the marker file carries; parseExistingVersion reads it back. */
@@ -57,6 +72,8 @@ export async function scaffold(
       kept: [],
       status: "kept",
       existingVersion: parseExistingVersion(await Bun.file(marker).text()),
+      staleRemoved: [],
+      staleKept: [],
     };
   }
 
@@ -110,7 +127,47 @@ export async function scaffold(
     if (f.executable) await chmod(abs, 0o755);
     written.push(abs);
   }
-  return { written, kept, status: suiteExists ? "refreshed" : "generated", preSplitMain };
+
+  // Profile specs are rewritten every run ONLY while their component stays
+  // host-mountable. When it leaves the host set (a new guard the analyser
+  // cannot decide, a render-mode change, a deleted file) the spec is simply
+  // no longer rendered — and without this sweep it sits in profile/ forever,
+  // failing at mount with "unknown component": a suite red by the tool's own
+  // doing. Provenance decides, exactly as for the colocated and browser
+  // specs: an untouched stamp is pure tool output (removed and reported); a
+  // mismatched stamp is hand work (kept, reported); no stamp at all is
+  // unprovable (kept, reported — protects pre-stamp suites).
+  const staleRemoved: string[] = [];
+  const staleKept: StaleProfileSpec[] = [];
+  const renderedProfile = new Set(
+    files
+      .filter((f) => f.relPath.startsWith("profile/") && f.relPath.endsWith(".profile.spec.ts"))
+      .map((f) => f.relPath),
+  );
+  const profileDir = path.join(outDir, "profile");
+  if (existsSync(profileDir)) {
+    for (const entry of (await readdir(profileDir)).sort()) {
+      if (!entry.endsWith(".profile.spec.ts")) continue;
+      if (renderedProfile.has(`profile/${entry}`)) continue;
+      const abs = path.join(profileDir, entry);
+      const verdict = classifyStamped(await readFile(abs, "utf8"));
+      if (verdict === "untouched") {
+        await rm(abs);
+        staleRemoved.push(abs);
+      } else {
+        staleKept.push({ abs, verdict });
+      }
+    }
+  }
+
+  return {
+    written,
+    kept,
+    status: suiteExists ? "refreshed" : "generated",
+    preSplitMain,
+    staleRemoved,
+    staleKept,
+  };
 }
 
 export { renderSuite } from "./templates.ts";
