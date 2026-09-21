@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { mergePackageJson } from "../packageJson.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
@@ -31,6 +31,10 @@ export interface ScaffoldUnitBrowserResult {
   keptEdited: string[];
   /** Colocated specs --force kept because they carry no stamp at all (pre-stamp). */
   keptLegacy: string[];
+  /** Browser specs removed: their component left the mountable set and the file was untouched tool output. */
+  staleRemoved: string[];
+  /** Browser specs whose component left the mountable set, kept because a human may have worked in them. */
+  staleKept: StaleBrowserSpec[];
 }
 
 export async function scaffoldUnitBrowser(
@@ -89,11 +93,51 @@ export async function scaffoldUnitBrowser(
     written.push(stale);
   }
 
+  // Browser specs are rewritten every run ONLY while their component stays
+  // host-mountable. When it leaves the mountable set (a new guard, a render
+  // mode change, a deleted file) the spec is simply no longer rendered — and
+  // without this sweep it sits in browser/ forever, failing at mount with
+  // "unknown component": a suite red by the tool's own doing. Provenance
+  // decides, exactly as for the colocated specs: an untouched stamp is pure
+  // tool output (removed and reported); a mismatched stamp is hand work
+  // (kept, reported); no stamp at all is unprovable (kept, reported).
+  const staleRemoved: string[] = [];
+  const staleKept: StaleBrowserSpec[] = [];
+  if (opts.browserSpecs !== false) {
+    const rendered = new Set(
+      files
+        .filter((f) => f.relPath.startsWith("browser/") && f.relPath.endsWith(".spec.ts"))
+        .map((f) => f.relPath),
+    );
+    const browserDir = path.join(outDir, "browser");
+    if (existsSync(browserDir)) {
+      for (const entry of (await readdir(browserDir)).sort()) {
+        if (!entry.endsWith(".spec.ts")) continue;
+        if (rendered.has(`browser/${entry}`)) continue;
+        const abs = path.join(browserDir, entry);
+        const verdict = classifyStamped(await readFile(abs, "utf8"));
+        if (verdict === "untouched") {
+          await rm(abs);
+          staleRemoved.push(abs);
+        } else {
+          staleKept.push({ abs, verdict });
+        }
+      }
+    }
+  }
+
   if (!opts.skipInnerPackageJson) {
     await writeSuitePackageJson(outDir, opts.browserSpecs !== false);
     written.push(path.join(outDir, "package.json"));
   }
-  return { written, skipped, keptEdited, keptLegacy };
+  return { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept };
+}
+
+/** A stale browser spec the writer refused to remove, and why. */
+export interface StaleBrowserSpec {
+  abs: string;
+  /** "edited" = stamp present, body differs (hand work); "stampless" = no provenance at all. */
+  verdict: "edited" | "stampless";
 }
 
 /**

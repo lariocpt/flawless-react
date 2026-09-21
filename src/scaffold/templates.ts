@@ -10,6 +10,7 @@ import {
   synthesiseDefaults,
 } from "../scaffold-tests/registry.ts";
 import { emitPlaywrightClickTarget } from "../scaffold-tests/selectors.ts";
+import { stamp } from "../scaffold-tests/stamp.ts";
 import { NEXT_SCRIPT, SUITE_COMMAND, SUITE_SCRIPT } from "../suiteScripts.ts";
 import type {
   ComponentInfo,
@@ -121,7 +122,12 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
   for (const c of flat) {
     files.push({
       relPath: `profile/${c.specName}.profile.spec.ts`,
-      content: spec(c, opts.variants),
+      // Stamped like the colocated and browser specs: this file is only
+      // rewritten while the component STAYS host-mountable, so the stamp is
+      // what lets a later sweep tell "our own stale output" (safe to remove)
+      // from "someone worked on this" (kept). Restamped after the host
+      // formatter runs, same as the colocated specs (core.ts restampGenerated).
+      content: stamp(spec(c, opts.variants)),
     });
   }
   if (hasMock) {

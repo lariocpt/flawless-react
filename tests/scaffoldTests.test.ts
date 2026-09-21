@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { scaffoldUnitBrowser } from "../src/scaffold-tests/index.ts";
 import { hashBody, STAMP_RE, splitStamp } from "../src/scaffold-tests/stamp.ts";
+import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
 import type { ComponentInfo, ComponentTree } from "../src/types.ts";
 
 const dirs: string[] = [];
@@ -334,6 +335,172 @@ describe("scaffoldUnitBrowser colocate", () => {
     expect(written).toContain(headerSpec);
     expect(readFileSync(cardSpec, "utf8")).toContain('import { Card } from "./card";');
     expect(readFileSync(headerSpec, "utf8")).toContain('import { CardHeader } from "./card";');
+  });
+});
+
+// FR-061: a browser spec's component left the mountable set between runs. The
+// spec can never run again (the registry no longer carries the component —
+// mount throws "unknown component"), so a kept file is a suite that is red by
+// the tool's own doing. Provenance decides: untouched tool output is removed,
+// anything a human may have worked on is kept and reported.
+describe("scaffoldUnitBrowser stale browser specs", () => {
+  const run = (outDir: string, trees: ComponentTree[], variants = 2) =>
+    scaffoldUnitBrowser({ trees, outDir, variants });
+
+  test("emits browser specs with a provenance stamp", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const first = readFileSync(path.join(outDir, "browser", "Widget.spec.ts"), "utf8");
+    expect(first).toMatch(STAMP_RE);
+    expect(splitStamp(first).hash).toBe(hashBody(splitStamp(first).body));
+  });
+
+  test("removes a browser spec whose component is no longer rendered", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    expect(existsSync(spec)).toBe(true);
+
+    // The component went async: still unit-tested, no longer host-mountable.
+    const res = await run(outDir, [
+      tree(comp("Widget", path.join(src, "Widget.tsx"), { isAsync: true })),
+    ]);
+    expect(existsSync(spec)).toBe(false);
+    expect(res.staleRemoved).toEqual([spec]);
+    expect(res.staleKept).toEqual([]);
+  });
+
+  test("keeps and reports a hand-edited stale browser spec", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    const edited = `${readFileSync(spec, "utf8")}// hand-hardened: a real assertion lives here\n`;
+    writeFileSync(spec, edited);
+
+    const res = await run(outDir, [
+      tree(comp("Widget", path.join(src, "Widget.tsx"), { isAsync: true })),
+    ]);
+    expect(readFileSync(spec, "utf8")).toBe(edited);
+    expect(res.staleKept).toEqual([{ abs: spec, verdict: "edited" }]);
+    expect(res.staleRemoved).toEqual([]);
+  });
+
+  test("keeps and reports a stampless stale browser spec", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    // Pre-stamp suites (and hand-written specs) carry no stamp: the writer
+    // cannot prove the file is its own, so it keeps it and says so.
+    writeFileSync(spec, readFileSync(spec, "utf8").replace(STAMP_RE, ""));
+
+    const res = await run(outDir, [
+      tree(comp("Widget", path.join(src, "Widget.tsx"), { isAsync: true })),
+    ]);
+    expect(existsSync(spec)).toBe(true);
+    expect(res.staleKept).toEqual([{ abs: spec, verdict: "stampless" }]);
+  });
+
+  test("leaves still-rendered browser specs untouched by the stale scan", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    const spec = path.join(outDir, "browser", "Widget.spec.ts");
+    const before = readFileSync(spec, "utf8");
+
+    const res = await run(outDir, [tree(comp("Widget", path.join(src, "Widget.tsx")))]);
+    expect(readFileSync(spec, "utf8")).toBe(before);
+    expect(res.staleRemoved).toEqual([]);
+    expect(res.staleKept).toEqual([]);
+  });
+});
+
+// FR-061, the emission half: the browser spec mounts through the perf host's
+// REGISTRY by name, so a spec is only runnable for a component the host
+// actually carries. The emitter used to re-derive that with its own broader
+// `renderMode === "client"` check — a client component whose render() is
+// undecidable drew a spec the host refused ("unknown component" every run),
+// and a wrappable compound part the host DOES carry drew no spec at all. The
+// predicate is now hostEligibility, the single source the host registry, the
+// report and the unit emitter already consult.
+describe("browser spec emission predicate", () => {
+  const renderedBrowser = (trees: ComponentTree[], outDir: string): Set<string> => {
+    const files = renderUnitBrowser({ trees, outDir, variants: 2, browserSpecs: true });
+    return new Set(files.filter((f) => f.relPath.startsWith("browser/")).map((f) => f.relPath));
+  };
+
+  test("does not emit a browser spec for a client component with an undecidable render", () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    // renderMode is still "client" — the undecidable guard does not change the
+    // mode, it only makes the initial render unprovable. The old predicate
+    // (mode === client) emitted a spec here; the host refuses to mount it.
+    const c = comp("Guarded", path.join(src, "Guarded.tsx"), {
+      renderMode: "client",
+      renderUndecidable: true,
+    });
+    const set = renderedBrowser([tree(c)], outDir);
+    expect(set.has("browser/Guarded.spec.ts")).toBe(false);
+  });
+
+  test("emits a browser spec for a wrappable compound part the host carries", () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    const c = comp("DialogTrigger", path.join(src, "DialogTrigger.tsx"), {
+      renderMode: "compound-part",
+      compoundFamily: {
+        root: "DialogRoot",
+        content: "DialogContent",
+        part: "trigger",
+        specifier: "@base-ui/react/dialog",
+      },
+    });
+    const set = renderedBrowser([tree(c)], outDir);
+    expect(set.has("browser/DialogTrigger.spec.ts")).toBe(true);
+  });
+
+  test("still emits no browser spec for an un-wrappable compound part", () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+
+    // A part from a family with no open-state Root: the host cannot wrap it,
+    // so it is ineligible and draws no spec.
+    const c = comp("TooltipX", path.join(src, "TooltipX.tsx"), {
+      renderMode: "compound-part",
+      compoundFamily: {
+        root: "TooltipRoot",
+        part: "other",
+        specifier: "@base-ui/react/tooltip",
+      },
+    });
+    const set = renderedBrowser([tree(c)], outDir);
+    expect(set.has("browser/TooltipX.spec.ts")).toBe(false);
   });
 });
 

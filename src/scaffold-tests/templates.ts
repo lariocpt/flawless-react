@@ -29,6 +29,7 @@ import {
   compoundWrappable,
   type FlatComponent,
   flattenTrees,
+  hostEligibility,
   synthesiseDefaults,
   withRouteParams,
 } from "./registry.ts";
@@ -48,6 +49,7 @@ import {
   emitVitestSubmit,
   firstOf,
 } from "./selectors.ts";
+import { stamp } from "./stamp.ts";
 
 export interface RenderedFile {
   relPath: string;
@@ -158,14 +160,27 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
 
   if (withBrowser) {
     for (const c of specTargets) {
-      const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
-      // Only components that mount standalone can be driven in the browser host.
-      if (mode !== "client") continue;
+      // The browser spec mounts through the perf host's REGISTRY by name, so
+      // the emit predicate must be the host's OWN — hostEligibility — not a
+      // re-derivation of it. This loop used to check `renderMode === "client"`,
+      // which is broader than the host: a client component whose render()
+      // branches on an undecidable condition is refused by the host ("no
+      // render to profile") yet still drew a browser spec that threw
+      // "unknown component" on every run (FR-061). And it is narrower: a
+      // wrappable compound part the host DOES carry drew no browser spec at
+      // all. One predicate, four call sites — the unit spec emitter, the host
+      // registry, the report, and here.
+      if (!hostEligibility(c.info).eligible) continue;
       const specName = specNames.get(c) as string;
       const target = path.join(path.resolve(opts.outDir), "browser", `${specName}.spec.ts`);
       files.push({
         relPath: `browser/${specName}.spec.ts`,
-        content: browserSpec(c, specName, opts.todos?.for(target)),
+        // Stamped like the colocated specs, for the same reason: this file is
+        // only rewritten while the component STAYS mountable. Once it leaves
+        // the host the file is simply no longer rendered, and the stamp is
+        // what lets the writer tell "our own stale output" (safe to remove)
+        // from "a human worked in here" (never touch).
+        content: stamp(browserSpec(c, specName, opts.todos?.for(target))),
       });
     }
   }

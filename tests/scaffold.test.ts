@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
 import { scaffold } from "../src/scaffold/index.ts";
 import { renderSuite } from "../src/scaffold/templates.ts";
+import { stamp } from "../src/scaffold-tests/stamp.ts";
 
 const DASHBOARD = path.resolve(__dirname, "fixtures/Dashboard.tsx");
 const API_SPEC = path.resolve(__dirname, "fixtures/_api.json");
@@ -571,5 +572,118 @@ describe("renderUnitBrowser interaction-aware", () => {
     expect(sc).toContain('page.getByRole("button", { name: "Save", exact: true })');
     // Legacy fallback should be gone for components that have interactions.
     expect(sc).not.toContain('page.locator("button").first()');
+  });
+});
+
+// FR-062: a profile spec is only rewritten while its component stays in the
+// host. When the component leaves the host set (a new undecidable guard, a
+// render-mode change, a deleted file) the spec is no longer rendered — and
+// without a sweep it sits in profile/ forever, failing at mount with
+// "unknown component": the suite red by the tool's own doing. The sweep
+// retires the ones whose stamp proves them untouched tool output, and names
+// the ones it refuses to touch (hand work or unprovable) — the same
+// provenance model as the colocated and browser specs.
+describe("stale profile spec sweep (FR-062)", () => {
+  async function setup(): Promise<{
+    out: string;
+    tree: Awaited<ReturnType<typeof analyse>>;
+    plant: (name: string, content: string) => Promise<string>;
+  }> {
+    const tree = await analyse({ entry: DASHBOARD, depth: 3, includeChildren: true });
+    const out = await tmpDir();
+    await scaffold(tree, {
+      outDir: out,
+      variants: 3,
+      force: false,
+      report: false,
+      provider: undefined,
+      apiSpec: API_SPEC,
+    });
+    const profileDir = path.join(out, "profile");
+    await mkdir(profileDir, { recursive: true });
+    const plant = async (name: string, content: string): Promise<string> => {
+      const abs = path.join(profileDir, `${name}.profile.spec.ts`);
+      await writeFile(abs, content);
+      return abs;
+    };
+    return { out, tree, plant };
+  }
+
+  test("profile specs carry the provenance stamp", async () => {
+    const tree = await analyse({ entry: DASHBOARD, depth: 3, includeChildren: true });
+    const out = await tmpDir();
+    const files = renderSuite({ tree, outDir: out, variants: 3, report: false });
+    const spec = files.find((f) => f.relPath === "profile/Dashboard.profile.spec.ts");
+    expect(spec).toBeDefined();
+    expect(spec?.content).toMatch(
+      /^\/\/ @flawless-generated sha256:[0-9a-f]{16} flawless-react@\S+\n/,
+    );
+  });
+
+  test("removes a stale profile spec whose stamp is untouched", async () => {
+    const { out, tree, plant } = await setup();
+    const ghost = await plant("Ghost", stamp("export {};\n"));
+    const second = await scaffold(tree, {
+      outDir: out,
+      variants: 3,
+      force: false,
+      report: false,
+      provider: undefined,
+      apiSpec: API_SPEC,
+    });
+    expect(second.staleRemoved).toContain(ghost);
+    expect(second.staleKept).toEqual([]);
+    expect(existsSync(ghost)).toBe(false);
+  });
+
+  test("keeps a stale profile spec whose body no longer matches its stamp (hand work)", async () => {
+    const { out, tree, plant } = await setup();
+    const ghost = await plant("GhostEdited", `${stamp("export {};\n")}// hand note\n`);
+    const second = await scaffold(tree, {
+      outDir: out,
+      variants: 3,
+      force: false,
+      report: false,
+      provider: undefined,
+      apiSpec: API_SPEC,
+    });
+    expect(second.staleRemoved).toEqual([]);
+    expect(second.staleKept).toEqual([{ abs: ghost, verdict: "edited" }]);
+    expect(existsSync(ghost)).toBe(true);
+  });
+
+  test("keeps a stale profile spec with no stamp (unprovable)", async () => {
+    const { out, tree, plant } = await setup();
+    const ghost = await plant("GhostStampless", "export {};\n");
+    const second = await scaffold(tree, {
+      outDir: out,
+      variants: 3,
+      force: false,
+      report: false,
+      provider: undefined,
+      apiSpec: API_SPEC,
+    });
+    expect(second.staleRemoved).toEqual([]);
+    expect(second.staleKept).toEqual([{ abs: ghost, verdict: "stampless" }]);
+    expect(existsSync(ghost)).toBe(true);
+  });
+
+  test("does not touch profile specs that are still rendered", async () => {
+    const { out, tree } = await setup();
+    const live = path.join(out, "profile", "Dashboard.profile.spec.ts");
+    expect(existsSync(live)).toBe(true);
+    const second = await scaffold(tree, {
+      outDir: out,
+      variants: 3,
+      force: false,
+      report: false,
+      provider: undefined,
+      apiSpec: API_SPEC,
+    });
+    // Still rendered: re-written (not swept), and absent from both sweep lists.
+    expect(second.staleRemoved).toEqual([]);
+    expect(second.staleKept).toEqual([]);
+    expect(existsSync(live)).toBe(true);
+    expect((await Bun.file(live).text()).length).toBeGreaterThan(0);
   });
 });
