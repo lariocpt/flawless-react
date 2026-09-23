@@ -43,6 +43,31 @@ export const e2eRoutes: Task = {
       const route = pageFileToRoute(tree.entry.filePath, ctx.nextjs.router, routerRoot);
       if (route) pages.push({ tree, route });
     }
+    // Fallback: if the analysed entry set contains no app-router pages (the
+    // default Next.js mode defaults to components/**/ *.tsx), discover page files
+    // directly so e2e still emits specs. Minimal trees are sufficient — the
+    // e2e spec only needs the file path for route mapping and an empty interaction
+    // harvest.
+    if (pages.length === 0) {
+      const pageGlob = new Bun.Glob("**/page.{tsx,jsx,ts,js}");
+      for await (const file of pageGlob.scan({ cwd: routerRoot, absolute: true })) {
+        const route = pageFileToRoute(file, ctx.nextjs.router, routerRoot);
+        if (!route) continue;
+        const tree: ComponentTree = {
+          entry: {
+            componentName: "Page",
+            filePath: file,
+            importSpecifier: "",
+            propsShape: {},
+            variants: [],
+            hooks: [],
+            unresolvedProps: [],
+          },
+          children: [],
+        };
+        pages.push({ tree, route });
+      }
+    }
 
     const e2eDir = path.join(ctx.outDir, "e2e");
     await mkdir(e2eDir, { recursive: true });
