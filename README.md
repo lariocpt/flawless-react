@@ -107,6 +107,7 @@ Three behaviours worth knowing before the first run:
 - **The layout is usually unusable as a test provider.** An app-router `layout.tsx` is typically an async server component importing `next/font` or `next/headers`, none of which run under jsdom. flawless detects that and derives `flawless/provider.tsx` from the JSX chain enclosing `{children}`, keeping only `"use client"` components and literal attributes (everything dropped becomes a `TODO(flawless)` comment). `--force` regenerates it, so a change to the layout's provider chain reaches an existing suite — the values you supply live in `flawless/provider.fixtures.ts` beside it, which is never regenerated under any flag.
 - **Point `--api` at a real spec.** Walking `app/api/**/route.ts` finds nothing useful when the API is a catch-all (Hono, tRPC). `--api openapi.json` (or `--swagger-url <url>`) puts real example bodies into both the MSW handlers and each generated fetch spec.
 - **Generated files adopt your formatter.** Everything written is reformatted with the target project's own biome or prettier, and JSON merges preserve the file's existing indentation — generation produces an additive diff, not a reformat of your `package.json`.
+- **Default entry for `--nextjs` is `components/**/*.tsx`.** With that glob the analysed set contains no pages, so e2e/load would emit zero specs. The tool now falls back to discovering `**/page.{tsx,jsx,ts,js}` under the router root, creating minimal trees so route e2e specs and load pipes are still emitted for app-router projects.
 
 ## Expo / React Native mode
 
