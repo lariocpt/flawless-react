@@ -40,7 +40,32 @@ export const loadPipes: Task = {
     const written: string[] = [];
 
     const routerRoot = findRouterRoot(ctx.nextjs.root);
-    const targets = collectTargets(ctx.trees, ctx.nextjs.router, routerRoot);
+    // Fallback for default Next.js mode where the entry glob is components/**,
+    // so ctx.trees contains no page files. Discover pages directly so load
+    // pipes still emit route targets.
+    let trees = ctx.trees;
+    const hasPage = trees.some(t => pageFileToRoute(t.entry.filePath, ctx.nextjs.router, routerRoot));
+    if (!hasPage) {
+      const pageGlob = new Bun.Glob("**/page.{tsx,jsx,ts,js}");
+      for await (const file of pageGlob.scan({ cwd: routerRoot, absolute: true })) {
+        const route = pageFileToRoute(file, ctx.nextjs.router, routerRoot);
+        if (!route) continue;
+        const tree: ComponentTree = {
+          entry: {
+            componentName: "Page",
+            filePath: file,
+            importSpecifier: "",
+            propsShape: {},
+            variants: [],
+            hooks: [],
+            unresolvedProps: [],
+          },
+          children: [],
+        };
+        trees = [...trees, tree];
+      }
+    }
+    const targets = collectTargets(trees, ctx.nextjs.router, routerRoot);
 
     // Every id these pipes reference gets a slot in params.json, including the
     // API-route ones the e2e task never sees (/api/buildings/[buildingId] beside
