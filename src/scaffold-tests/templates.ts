@@ -318,6 +318,7 @@ ${resolveBlock}  test: {
     // safe on its own terms.
     exclude: ["**/node_modules/**", "**/dist/**", "**/.{idea,git,cache,output,temp}/**"],
     globals: true,
+    css: false,
   },
 });
 `;
@@ -343,9 +344,11 @@ ${resolveBlock}  test: {
     setupFiles: ["./setup.ts"],
     include: ["unit/**/*.test.{ts,tsx}"],
     globals: true,
+    css: false,
   },
 });
-`;
+`
+;
 }
 
 function escapeRegex(s: string): string {
@@ -383,6 +386,7 @@ if (typeof window !== "undefined") {
   } as unknown as typeof IntersectionObserver;
   Element.prototype.scrollIntoView ??= () => {};
   Element.prototype.scrollTo ??= (() => {}) as typeof Element.prototype.scrollTo;
+  Element.prototype.getAnimations ??= (() => [] as Animation[]) as typeof Element.prototype.getAnimations;
 
   // Node >= 22 defines a \`localStorage\` global that is inert unless the process
   // was started with --localstorage-file. Under vitest's jsdom environment
@@ -421,6 +425,26 @@ if (typeof window !== "undefined") {
     });
   }
 }
+ // Global next/navigation mock: covers provider wrappers and third-party
+ // libs (Clerk, TanStack Router, etc.) that import next/navigation
+ // internally. Per-test mocks still override for specific components.
+vi.mock("next/navigation", () => ({
+  notFound: vi.fn(() => { throw new Error("notFound() called"); }),
+  redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  usePathname: vi.fn(() => "/"),
+  useRouter: vi.fn(() => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+  useParams: vi.fn(() => ({})),
+  useRoute: vi.fn(() => "/"),
+}));
 `;
   if (!mswSetup) {
     return `import "@testing-library/jest-dom/vitest";
