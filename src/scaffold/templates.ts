@@ -508,6 +508,17 @@ ${specifierSourceLines}
 const stubServerModules: BunPlugin = {
   name: "flawless-server-stubs",
   setup(build) {
+    // Node/bun built-ins are not available in the browser target. Stub them
+    // so component deps that conditionally import fs/stream/zlib don't crash
+    // the build.
+    build.onResolve({ filter: /^(node:|bun:)/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-node-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-node-stub" }, () => ({
+      contents: "const mod = new Proxy({}, { get: () => () => {} }); export default mod; export const readFileSync = () => ''; export const statSync = () => ({ isDirectory: () => false, isFile: () => false }); export const readdirSync = () => []; export const existsSync = () => false; export const createReadStream = () => ({ pipe: () => {} }); export const createGzip = () => ({ pipe: () => {} }); export const createDeflate = () => ({ pipe: () => {} });",
+      loader: "ts",
+    }));
     if (Object.keys(SERVER_STUB_SPECIFIERS).length > 0) {
       build.onResolve({ filter: ${specifierFilterLiteral} }, (args) => ({
         path: args.path,
@@ -553,7 +564,8 @@ const resolveFromSuite: BunPlugin = {
   setup(build) {
     build.onResolve({ filter: /^[a-zA-Z@][^:]*$/ }, (args) => {
       try {
-        return { path: Bun.resolveSync(args.path, SUITE_DIR) };
+        const resolved = Bun.resolveSync(args.path, SUITE_DIR);
+        return { path: path.resolve(resolved) };
       } catch {
         return; // fall through to Bun's default resolver
       }
@@ -564,7 +576,7 @@ const resolveFromSuite: BunPlugin = {
 ${stubPlugin}
 const built = await Bun.build({
   entrypoints: [path.join(HOST_DIR, "main.tsx")],
-  target: "browser",
+  target: "bun",
   format: "esm",
   splitting: false,
   sourcemap: "inline",
@@ -574,6 +586,7 @@ const built = await Bun.build({
   // (host/_polyfill.ts, imported first from main.tsx) handles \`process\`.
   define: {
     global: "globalThis",
+    "process.env.NODE_ENV": '"development"',
   },
 });
 
