@@ -912,6 +912,25 @@ export interface ScaffoldOptions {
   suiteName?: string;
   nextjsHost?: boolean;
   mswSetup?: boolean;
+  /**
+   * Context providers the host mounts around each component (analyse/providerWraps
+   * derives them; key is `${filePath}::${componentName}`). The route layout that
+   * supplies them is not a component entry, so the provider is often no analysed
+   * tree's member — SidebarProvider in the kiranism dogfood was used only by
+   * app/dashboard/layout.tsx and mounting SidebarTrigger bare then died on
+   * "useSidebar must be used within a SidebarProvider".
+   */
+  providerWraps?: Map<string, ProviderRef[]>;
+}
+
+/**
+ * A component that supplies context, referenced from OUTSIDE the analysed tree:
+ * located by parsing the file the consuming hook lives in.
+ */
+export interface ProviderRef {
+  componentName: string;
+  filePath: string;
+  exportKind: "default" | "named";
 }
 
 export type TaskId =
@@ -1066,6 +1085,8 @@ export interface RunContext {
    * never churns generation.
    */
   changed?: string | true;
+  /** Context-provider wraps derived after analysis; see ScaffoldOptions.providerWraps. */
+  providerWraps?: Map<string, ProviderRef[]>;
 }
 
 export interface Task {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
+import { deriveContextProviderWraps } from "./analyse/providerWraps.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import { outDirRel, underOutDir } from "./emitPaths.ts";
 import { detectExpo } from "./expo/detect.ts";
@@ -394,6 +395,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     throw new UsageError("no analysable components found");
   }
 
+  // Derived before any task runs: the context providers a mount needs are
+  // frequently imported by NO analysed component (the route layout imports
+  // SidebarProvider, and route files are not component entries), so the host
+  // cannot find them in the trees — it needs this map instead.
+  const providerWraps = await deriveContextProviderWraps(trees, analyseShared.cache);
+
   const firstTree = trees[0];
   if (firstTree && opts.propsOverride) {
     firstTree.entry.propsShape = { ...firstTree.entry.propsShape, ...opts.propsOverride };
@@ -428,6 +435,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     // suite instead of churning it — the affected-run gate below stays on
     // !anyFailed, and a kept harness is not a failure.
     ...(opts.changed === undefined ? {} : { changed: opts.changed }),
+    ...(providerWraps.size > 0 ? { providerWraps } : {}),
   };
 
   const results: TaskResult[] = [];

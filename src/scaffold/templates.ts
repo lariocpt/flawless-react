@@ -1,4 +1,5 @@
 import path from "node:path";
+import { authShimEsm, collectAuthStubs, type AuthStub } from "../analyse/authShims.ts";
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import {
@@ -19,6 +20,7 @@ import type {
   MockRoute,
   PropsShape,
   PropValue,
+  ProviderRef,
 } from "../types.ts";
 import { VERSION } from "../version.ts";
 
@@ -73,11 +75,16 @@ export interface RenderOptions {
   suiteName?: string;
   nextjsHost?: boolean;
   mswSetup?: boolean;
+  /** Context providers to mount around each component; see ScaffoldOptions. */
+  providerWraps?: Map<string, ProviderRef[]>;
 }
 
 export function renderSuite(opts: RenderOptions): RenderedFile[] {
   const trees: ComponentTree[] = [opts.tree, ...(opts.extraTrees ?? [])];
-  const { hosted: flat, excluded, serverActionStubs } = selectHostComponents(trees, opts.outDir);
+  const { hosted: flat, excluded, serverActionStubs, authStubs } = selectHostComponents(
+    trees,
+    opts.outDir,
+  );
   const hasMock = Array.isArray(opts.mockRoutes);
   const useMsw = Boolean(opts.mswSetup);
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
@@ -85,13 +92,16 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     { relPath: "playwright.config.ts", content: playwrightConfig(hasMock) },
     {
       relPath: "host/server.ts",
-      content: hostServer(hasMock, serverActionStubs, path.join(opts.outDir, "host")),
+      content: hostServer(hasMock, serverActionStubs, path.join(opts.outDir, "host"), authStubs),
     },
     { relPath: "host/index.html", content: hostHtml() },
     { relPath: "host/_polyfill.ts", content: hostPolyfill() },
     // Regenerated (FR-016): a re-run must be able to register newly analysed
     // components over a kept wrapper.
-    { relPath: "host/registry.ts", content: hostRegistry(flat) },
+    {
+      relPath: "host/registry.ts",
+      content: hostRegistry(flat, opts.providerWraps, path.resolve(opts.outDir, "host")),
+    },
     // writeOnce: docs/extending.md tells you to edit this to add providers,
     // MSW and hand registrations in the ALL spread, and nothing can rebuild
     // that wiring from the analysis. The tables it reads live in ./registry.
@@ -196,10 +206,16 @@ function selectHostComponents(
   excluded: ExcludedComponent[];
   /** Absolute path → the stub for the module at that path. */
   serverActionStubs: Map<string, ServerActionStub>;
+  /** Bare specifier → the signed-out auth-library stub (analyse/authShims.ts). */
+  authStubs: Map<string, AuthStub>;
 } {
   const hostDir = path.resolve(outDir, "host");
   const flat = flattenTrees(trees);
   const specNames = allocateSpecNames(flat);
+  // EVERY analysed component contributes imports here, hosted or not: an
+  // excluded component still sits in a hosted neighbour's import chain, and
+  // one library that throws at module init takes the whole bundle down.
+  const authStubs = collectAuthStubs(flat.map((c) => c.info));
 
   const hosted: FlatComponent[] = [];
   const excluded: ExcludedComponent[] = [];
@@ -242,7 +258,7 @@ function selectHostComponents(
       specName: specNames.get(c) as string,
     });
   }
-  return { hosted, excluded, serverActionStubs };
+  return { hosted, excluded, serverActionStubs, authStubs };
 }
 
 function stripTsExt(spec: string): string {
@@ -423,6 +439,7 @@ function hostServer(
   hasMock: boolean,
   serverActionStubs = new Map<string, ServerActionStub>(),
   hostDir = "",
+  authStubs = new Map<string, AuthStub>(),
 ): string {
   const mockProxyBlock = hasMock
     ? `
@@ -475,6 +492,11 @@ function hostServer(
       return `  ${JSON.stringify(key)}: ${JSON.stringify(body || "export {};")},`;
     })
     .join("\n");
+  // Provider-bound auth libraries ride the same bare-specifier interception:
+  // they resolve fine in the suite's node_modules — that's the problem. The
+  // real module lands in the bundle and throws at import or first hook call
+  // without ClerkProvider/SessionProvider keys nobody hands a perf host.
+  for (const [spec, stub] of authStubs) specifierSources.set(spec, authShimEsm(spec, stub));
   const specifierEntries = [...specifierSources.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
   const specifierSourceLines = specifierEntries
     .map(([spec, body]) => `  ${JSON.stringify(spec)}: ${JSON.stringify(body)},`)
@@ -488,6 +510,25 @@ function hostServer(
     specifierEntries.length > 0
       ? `new RegExp(${JSON.stringify(`^(?:${specifierFilter})$`)})`
       : "/$^/";
+  // next/navigation's client hooks throw "invariant expected app router to be
+  // mounted" outside a Next runtime, and the host IS a bare browser. Same
+  // stand-ins the unit plane's setup.ts installs (redirect/notFound throw on
+  // purpose: a component that wants to leave should fail the mount, not
+  // profile a page that never rendered). Fixed export list — the Next API
+  // surface is stable, so this needs no analysis pass, unlike authShims.
+  const navStubSource = [
+    'const __noopRouter = { push: () => {}, replace: () => {}, refresh: () => {}, back: () => {}, forward: () => {}, prefetch: () => {} };',
+    'export const notFound = () => { throw new Error("notFound() called"); };',
+    'export const redirect = () => { throw new Error("NEXT_REDIRECT"); };',
+    'export const permanentRedirect = () => { throw new Error("NEXT_REDIRECT"); };',
+    'export const usePathname = () => "/";',
+    'export const useRouter = () => __noopRouter;',
+    'export const useSearchParams = () => new URLSearchParams();',
+    'export const useParams = () => ({});',
+    'export const useSelectedLayoutSegment = () => null;',
+    'export const useSelectedLayoutSegments = () => [];',
+    'export const useLinkStatus = () => "idle";',
+  ].join("\n");
   const stubPlugin = `
 // Path relative to this file -> replacement source, resolved to the absolute
 // paths Bun's onLoad reports. See the comment where this was generated.
@@ -518,6 +559,14 @@ const stubServerModules: BunPlugin = {
     build.onLoad({ filter: /.*/, namespace: "flawless-node-stub" }, () => ({
       contents: "const mod = new Proxy({}, { get: () => () => {} }); export default mod; export const readFileSync = () => ''; export const statSync = () => ({ isDirectory: () => false, isFile: () => false }); export const readdirSync = () => []; export const existsSync = () => false; export const createReadStream = () => ({ pipe: () => {} }); export const createGzip = () => ({ pipe: () => {} }); export const createDeflate = () => ({ pipe: () => {} });",
       loader: "ts",
+    }));
+    build.onResolve({ filter: /^next\\/navigation$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-next-nav-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-next-nav-stub" }, () => ({
+      contents: ${JSON.stringify(navStubSource)},
+      loader: "js",
     }));
     if (Object.keys(SERVER_STUB_SPECIFIERS).length > 0) {
       build.onResolve({ filter: ${specifierFilterLiteral} }, (args) => ({
@@ -565,7 +614,17 @@ const resolveFromSuite: BunPlugin = {
     build.onResolve({ filter: /^[a-zA-Z@][^:]*$/ }, (args) => {
       try {
         const resolved = Bun.resolveSync(args.path, SUITE_DIR);
-        return { path: path.resolve(resolved) };
+        // A built-in comes back as its specifier ("node:fs"), not a file
+        // path. In the browser target there is no such file, and
+        // path.resolve("node:fs") would mangle it into "<suite>/node:fs"
+        // and crash the build with a bogus "File not found". Route it to the
+        // shared stub namespace (loaded below by stubServerModules) instead.
+        // This fires for bare imports like \`fs\`/\`stream\` — no \`node:\`
+        // prefix, so the /^(node:|bun:)/ filter above never sees them.
+        if (resolved.startsWith("node:") || resolved.startsWith("bun:")) {
+          return { path: args.path, namespace: "flawless-node-stub" };
+        }
+        return { path: resolved };
       } catch {
         return; // fall through to Bun's default resolver
       }
@@ -576,7 +635,7 @@ const resolveFromSuite: BunPlugin = {
 ${stubPlugin}
 const built = await Bun.build({
   entrypoints: [path.join(HOST_DIR, "main.tsx")],
-  target: "bun",
+  target: "browser",
   format: "esm",
   splitting: false,
   sourcemap: "inline",
@@ -687,7 +746,11 @@ export {};
  * Regenerated on every run; hand registrations belong in main.tsx's ALL
  * spread, which survives.
  */
-function hostRegistry(flat: FlatComponent[]): string {
+function hostRegistry(
+  flat: FlatComponent[],
+  providerWraps: Map<string, ProviderRef[]> | undefined,
+  hostDir: string,
+): string {
   // Sorted by registry key: emission is byte-identical for a given set of
   // specNames. (Byte-identity across PERMUTED entry order holds only until a
   // componentName collision — allocateSpecNames is delivery-order-dependent
@@ -717,26 +780,118 @@ function hostRegistry(flat: FlatComponent[]): string {
     .filter((l) => l !== "")
     .join(NL);
   const anyWrapped = wrapImports !== "";
+  // Context providers to mount around each component, derived upstream in
+  // analyse/providerWraps.ts from useX CALL evidence — the provider is often
+  // exported by a file NO analysed component imports (route layouts import
+  // SidebarProvider, and route files are not entries), so it is imported here
+  // directly under a __Prov alias allocateSpecNames never produces. A
+  // provider that cannot mount bare breaks the wraps it guards, and the
+  // dogfood failure then names it.
+  const hostedKey = new Map<string, string>();
+  for (const c of sorted) {
+    hostedKey.set(`${c.info.filePath}::${c.info.componentName}`, c.specName);
+  }
+  const provAlias = new Map<string, string>();
+  const bindingLabel = new Map<string, string>();
+  const provImportLines: string[] = [];
+  const providersFor = (c: FlatComponent): string[] => {
+    const out: string[] = [];
+    const self = `${c.info.filePath}::${c.info.componentName}`;
+    for (const ref of providerWraps?.get(self) ?? []) {
+      const key = `${ref.filePath}::${ref.componentName}`;
+      if (key === self) continue; // never wraps itself
+      const hosted = hostedKey.get(key);
+      if (hosted) {
+        bindingLabel.set(hosted, ref.componentName);
+        out.push(hosted);
+        continue;
+      }
+      let binding = provAlias.get(key);
+      if (!binding) {
+        binding = `__Prov${ref.componentName}`;
+        for (let n = 2; bindingLabel.has(binding); n++) binding = `__Prov${ref.componentName}${n}`;
+        provAlias.set(key, binding);
+        bindingLabel.set(binding, ref.componentName);
+        const rel = stripTsExt(toRel(hostDir, ref.filePath));
+        provImportLines.push(
+          ref.exportKind === "default"
+            ? `import ${binding} from "${rel}";`
+            : `import { ${ref.componentName} as ${binding} } from "${rel}";`,
+        );
+      }
+      out.push(binding);
+    }
+    return out;
+  };
+  const providersByEntry = new Map<string, { bindings: string[]; labels: string[] }>();
+  for (const c of sorted) {
+    const bindings = providersFor(c);
+    if (bindings.length > 0) {
+      providersByEntry.set(
+        c.specName,
+        bindings.reduce(
+          (acc, b) => {
+            acc.bindings.push(b);
+            acc.labels.push(bindingLabel.get(b) ?? b);
+            return acc;
+          },
+          { bindings: [], labels: [] } as { bindings: string[]; labels: string[] },
+        ),
+      );
+    }
+  }
+  const anyProvider = providersByEntry.size > 0;
   const imports = [
-    ...(anyWrapped ? ['import { createElement } from "react";'] : []),
+    ...(anyWrapped || anyProvider ? ['import { createElement } from "react";'] : []),
     sorted.map(hostComponentImport).join(NL),
     ...(anyWrapped ? [wrapImports] : []),
+    ...(anyProvider ? [provImportLines.join(NL)] : []),
   ].join(NL);
 
   // Cast per entry: a component declaring required props is not assignable to
   // the host's loose (props: Record<string, unknown>) => unknown signature, and
   // supplying those props is exactly what the profile spec does at runtime.
+  const withProvidersCall = (value: string, c: FlatComponent): string => {
+    const entry = providersByEntry.get(c.specName);
+    return entry === undefined
+      ? value
+      : `withProviders(${value}, [${entry.bindings.join(", ")}])`;
+  };
   const registry = sorted
     .map((c) => {
       const fam = wrappedOf(c);
-      if (!fam) return `  ${JSON.stringify(c.specName)}: ${c.specName} as unknown as Component,`;
-      const inner = `createElement(${c.specName} as never, props as never)`;
-      const chained =
-        fam.part === "other" && fam.content
-          ? `createElement(${c.specName}__Content as never, null, ${inner})`
-          : inner;
-      const rootProps = fam.part === "trigger" ? "null" : "{ open: true } as never";
-      return `  ${JSON.stringify(c.specName)}: ((props: Record<string, unknown>) => createElement(${c.specName}__Root as never, ${rootProps}, ${chained})) as Component,`;
+      const entry = fam
+        ? (() => {
+            const inner = `createElement(${c.specName} as never, props as never)`;
+            const chained =
+              fam.part === "other" && fam.content
+                ? `createElement(${c.specName}__Content as never, null, ${inner})`
+                : inner;
+            const rootProps = fam.part === "trigger" ? "null" : "{ open: true } as never";
+            return `((props: Record<string, unknown>) => createElement(${c.specName}__Root as never, ${rootProps}, ${chained})) as Component`;
+          })()
+        : `${c.specName} as unknown as Component`;
+      return `  ${JSON.stringify(c.specName)}: ${withProvidersCall(entry, c)},`;
+    })
+    .join(NL);
+  const providerHelper = anyProvider
+    ? `
+/** Nest the derived context providers around a component (outermost first). */
+const withProviders = (Component: Component, providers: Component[]): Component =>
+  providers.length === 0
+    ? Component
+    : (props) =>
+        providers.reduceRight(
+          (children, Provider) => createElement(Provider as never, null, children),
+          createElement(Component as never, props as never),
+        );
+`
+    : "";
+  const autoTable = sorted
+    .filter((c) => providersByEntry.has(c.specName))
+    .map((c) => {
+      const entry = providersByEntry.get(c.specName)!;
+      return `  ${JSON.stringify(c.specName)}: ${JSON.stringify(entry.labels)},`;
     })
     .join(NL);
 
@@ -767,9 +922,14 @@ ${imports}
 
 /** The loose signature the host mounts through; props arrive at runtime. */
 export type Component = (props: Record<string, unknown>) => unknown;
-
+${providerHelper}
 export const REGISTRY: Record<string, Component> = {
 ${registry}
+};
+
+/** Component → context providers the host mounts around it (useX call evidence). */
+export const AUTO_PROVIDERS: Record<string, string[]> = {
+${autoTable}
 };
 
 /** Props the component calls, which a serialised props object cannot carry. */

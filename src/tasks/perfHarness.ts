@@ -59,6 +59,7 @@ export const perfHarness: Task = {
       apiSpec: ctx.apiSpec,
       nextjsHost: ctx.nextjs !== undefined,
       mswSetup: ctx.nextjs !== undefined,
+      providerWraps: ctx.providerWraps,
     });
     if (res.status === "kept") {
       return {

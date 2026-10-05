@@ -1,4 +1,9 @@
 import path from "node:path";
+import {
+  authShimVitestBlock,
+  type AuthStub,
+  collectAuthStubs,
+} from "../analyse/authShims.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
@@ -100,7 +105,10 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const flat = flattenTrees(opts.trees);
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
-  const files: RenderedFile[] = [{ relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup)) }];
+  const authStubs = collectAuthStubs(flat.map((c) => c.info));
+  const files: RenderedFile[] = [
+    { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup), authStubs) },
+  ];
   if (withBrowser) {
     files.push({ relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() });
   }
@@ -355,7 +363,13 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
-function setupTs(mswSetup: boolean): string {
+function setupTs(mswSetup: boolean, authStubs = new Map<string, AuthStub>()): string {
+  // Global signed-out stubs for provider-bound auth libs (analyse/authShims.ts
+  // says why): a bare unit mount has no SessionProvider/ClerkProvider, and the
+  // real modules throw before the component under test renders.
+  const authMocks = [...authStubs.entries()]
+    .map(([spec, stub]) => authShimVitestBlock(spec, stub))
+    .join("");
   const polyfills = `
 // jsdom gaps that real-world component stacks hit constantly (next-themes →
 // matchMedia, virtualisers → ResizeObserver, lazy mounts → IntersectionObserver).
@@ -445,13 +459,17 @@ vi.mock("next/navigation", () => ({
   useParams: vi.fn(() => ({})),
   useRoute: vi.fn(() => "/"),
 }));
-`;
+${authMocks}`;
+  // The explicit vi import: setup files run with vitest's globals at runtime,
+  // but the emitted suite must also TYPE-check standalone, and the nav/auth
+  // mocks below are bare vi.mock calls.
   if (!mswSetup) {
     return `import "@testing-library/jest-dom/vitest";
+import { vi } from "vitest";
 ${polyfills}`;
   }
   return `import "@testing-library/jest-dom/vitest";
-import { afterAll, afterEach, beforeAll } from "vitest";
+import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import { server } from "./mocks/node";
 ${polyfills}
 // MSW node server intercepts fetch() inside jsdom — same handlers your browser

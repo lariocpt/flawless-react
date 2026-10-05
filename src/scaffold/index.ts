@@ -104,6 +104,7 @@ export async function scaffold(
     mockRoutes,
     nextjsHost: opts.nextjsHost,
     mswSetup: opts.mswSetup,
+    ...(opts.providerWraps ? { providerWraps: opts.providerWraps } : {}),
   });
 
   const written: string[] = [];
