@@ -102,6 +102,19 @@ describe("renderUnitBrowser component import", () => {
       'import { Widget } from "../../src/Widget";',
     );
   });
+
+  test("a renamed export imports the boundary name aliased back", () => {
+    // `export { Internal as Public }` — Public is the module binding; the
+    // spec body keeps naming the component Internal.
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Internal", { exportKind: "named", exportedAs: "Public" }))],
+      outDir: OUT,
+      variants: 3,
+    });
+    const spec = contentOf(files, "unit/Internal.test.tsx");
+    expect(spec).toContain('import { Public as Internal } from "../../src/Internal";');
+    expect(spec).not.toContain("import { Internal } from");
+  });
 });
 
 describe("emitted import paths", () => {
@@ -815,12 +828,17 @@ describe("renderUnitBrowser resolveAliases", () => {
     expect(cfg).not.toContain('"/proj/');
   });
 
-  test("no aliases → no alias list, but dedupe is always emitted", () => {
+  test("no aliases → the alias list holds only the server-only marker, dedupe always", () => {
     const cfg = contentOf(
       renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 }),
       "vitest.config.mts",
     );
-    expect(cfg).not.toContain("alias: [");
+    // User aliases are gone, but the marker alias is unconditional: the
+    // package is missing-or-throwing and a transitive importer cannot be
+    // saved by a per-spec vi.mock.
+    expect(cfg).toContain("alias: [");
+    expect(cfg).toContain("find: /^server-only$/");
+    expect(cfg.match(/find: \/\^/g)?.length).toBe(1);
     // Without dedupe, a workspace where react resolves to the repo root and
     // react-dom to the package gives every hook call "Cannot read properties of
     // null (reading 'useEffect')" — react-dom-server sets its dispatcher on a

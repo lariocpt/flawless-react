@@ -787,6 +787,8 @@ export interface ComponentInfo {
   pos?: SourcePosition;
   /** How the component leaves its module. "none" = same-file secondary component. */
   exportKind?: "default" | "named" | "none";
+  /** Boundary name when `export { Local as Public }` renames the component. */
+  exportedAs?: string;
   /** Async function component (server component in app-router projects). */
   isAsync?: boolean;
   /** File carries a "use client" prologue directive. */
@@ -940,6 +942,8 @@ export interface ProviderRef {
   componentName: string;
   filePath: string;
   exportKind: "default" | "named";
+  /** Boundary name when the provider is re-exported under an alias. */
+  exportedAs?: string;
 }
 
 export type TaskId =

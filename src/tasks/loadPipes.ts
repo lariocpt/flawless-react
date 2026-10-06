@@ -44,7 +44,9 @@ export const loadPipes: Task = {
     // so ctx.trees contains no page files. Discover pages directly so load
     // pipes still emit route targets.
     let trees = ctx.trees;
-    const hasPage = trees.some(t => pageFileToRoute(t.entry.filePath, ctx.nextjs.router, routerRoot));
+    const hasPage = trees.some((t) =>
+      pageFileToRoute(t.entry.filePath, ctx.nextjs.router, routerRoot),
+    );
     if (!hasPage) {
       const pageGlob = new Bun.Glob("**/page.{tsx,jsx,ts,js}");
       for await (const file of pageGlob.scan({ cwd: routerRoot, absolute: true })) {

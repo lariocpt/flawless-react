@@ -1,5 +1,5 @@
 import path from "node:path";
-import { authShimEsm, collectAuthStubs, type AuthStub } from "../analyse/authShims.ts";
+import { type AuthStub, authShimEsm, collectAuthStubs } from "../analyse/authShims.ts";
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import {
@@ -81,10 +81,12 @@ export interface RenderOptions {
 
 export function renderSuite(opts: RenderOptions): RenderedFile[] {
   const trees: ComponentTree[] = [opts.tree, ...(opts.extraTrees ?? [])];
-  const { hosted: flat, excluded, serverActionStubs, authStubs } = selectHostComponents(
-    trees,
-    opts.outDir,
-  );
+  const {
+    hosted: flat,
+    excluded,
+    serverActionStubs,
+    authStubs,
+  } = selectHostComponents(trees, opts.outDir);
   const hasMock = Array.isArray(opts.mockRoutes);
   const useMsw = Boolean(opts.mswSetup);
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
@@ -282,10 +284,12 @@ export function titleSafe(reason: string): string {
 function hostComponentImport(c: FlatComponent): string {
   const { componentName, exportKind } = c.info;
   if (exportKind === "default") return `import ${c.specName} from "${c.importPath}";`;
-  if (c.specName === componentName) {
-    return `import { ${componentName} } from "${c.importPath}";`;
+  // `export { Internal as Public }` — only the alias is a module binding.
+  const boundary = c.info.exportedAs ?? componentName;
+  if (c.specName === boundary) {
+    return `import { ${boundary} } from "${c.importPath}";`;
   }
-  return `import { ${componentName} as ${c.specName} } from "${c.importPath}";`;
+  return `import { ${boundary} as ${c.specName} } from "${c.importPath}";`;
 }
 
 function toRel(fromDir: string, absFile: string): string {
@@ -517,16 +521,16 @@ function hostServer(
   // profile a page that never rendered). Fixed export list — the Next API
   // surface is stable, so this needs no analysis pass, unlike authShims.
   const navStubSource = [
-    'const __noopRouter = { push: () => {}, replace: () => {}, refresh: () => {}, back: () => {}, forward: () => {}, prefetch: () => {} };',
+    "const __noopRouter = { push: () => {}, replace: () => {}, refresh: () => {}, back: () => {}, forward: () => {}, prefetch: () => {} };",
     'export const notFound = () => { throw new Error("notFound() called"); };',
     'export const redirect = () => { throw new Error("NEXT_REDIRECT"); };',
     'export const permanentRedirect = () => { throw new Error("NEXT_REDIRECT"); };',
     'export const usePathname = () => "/";',
-    'export const useRouter = () => __noopRouter;',
-    'export const useSearchParams = () => new URLSearchParams();',
-    'export const useParams = () => ({});',
-    'export const useSelectedLayoutSegment = () => null;',
-    'export const useSelectedLayoutSegments = () => [];',
+    "export const useRouter = () => __noopRouter;",
+    "export const useSearchParams = () => new URLSearchParams();",
+    "export const useParams = () => ({});",
+    "export const useSelectedLayoutSegment = () => null;",
+    "export const useSelectedLayoutSegments = () => [];",
     'export const useLinkStatus = () => "idle";',
   ].join("\n");
   const stubPlugin = `
@@ -567,6 +571,18 @@ const stubServerModules: BunPlugin = {
     build.onLoad({ filter: /.*/, namespace: "flawless-next-nav-stub" }, () => ({
       contents: ${JSON.stringify(navStubSource)},
       loader: "js",
+    }));
+    // The server-component marker: absent in many repos (Bun's resolver
+    // fails outright) and throw-on-import where installed. Transitively
+    // importing modules still have to BUILD, so the specifier resolves to
+    // an empty module — same call the vitest config's alias makes.
+    build.onResolve({ filter: /^server-only$/ }, () => ({
+      path: "server-only",
+      namespace: "flawless-empty-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-empty-stub" }, () => ({
+      contents: "export {};",
+      loader: "ts",
     }));
     if (Object.keys(SERVER_STUB_SPECIFIERS).length > 0) {
       build.onResolve({ filter: ${specifierFilterLiteral} }, (args) => ({
@@ -816,7 +832,7 @@ function hostRegistry(
         provImportLines.push(
           ref.exportKind === "default"
             ? `import ${binding} from "${rel}";`
-            : `import { ${ref.componentName} as ${binding} } from "${rel}";`,
+            : `import { ${ref.exportedAs ?? ref.componentName} as ${binding} } from "${rel}";`,
         );
       }
       out.push(binding);
@@ -853,9 +869,7 @@ function hostRegistry(
   // supplying those props is exactly what the profile spec does at runtime.
   const withProvidersCall = (value: string, c: FlatComponent): string => {
     const entry = providersByEntry.get(c.specName);
-    return entry === undefined
-      ? value
-      : `withProviders(${value}, [${entry.bindings.join(", ")}])`;
+    return entry === undefined ? value : `withProviders(${value}, [${entry.bindings.join(", ")}])`;
   };
   const registry = sorted
     .map((c) => {

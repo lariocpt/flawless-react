@@ -39,6 +39,12 @@ export interface ParsedComponentUnit {
   /** local → original prop name for `{a: b}` destructuring aliases. */
   destructuredAliases: Map<string, string>;
   exportKind: "default" | "named" | "none";
+  /**
+   * The name this unit leaves the module under, when `export { Local as Public }`
+   * renames it. Importers must use this, not `componentName` — the internal name
+   * is not a module binding, so importing it yields `undefined` at runtime.
+   */
+  exportedAs?: string;
   isAsync: boolean;
   wrappers: Array<"memo" | "forwardRef">;
   /**
@@ -382,7 +388,12 @@ function findComponents(
         const unit = byName.get(localName);
         if (!unit) continue;
         if (el.name.text === "default") unit.exportKind = "default";
-        else if (unit.exportKind === "none") unit.exportKind = "named";
+        else {
+          if (unit.exportKind === "none") unit.exportKind = "named";
+          // `export { Internal as Public }` — Public is what an importer must
+          // write; Internal is module-private past this point.
+          if (el.propertyName && el.name.text !== localName) unit.exportedAs = el.name.text;
+        }
       }
     }
   }

@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AnalyseOptions, ComponentInfo, ComponentTree, RenderMode } from "../types.ts";
 import { deriveCompoundFamily } from "./compoundFamily.ts";
+import { dataConstantExports } from "./dataExports.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
 import { extractDataDeps } from "./extractDataDeps.ts";
 import { extractFetchCalls } from "./extractFetchCalls.ts";
@@ -16,7 +17,6 @@ import { extractRenderMode } from "./extractRenderMode.ts";
 import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
 import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
-import { dataConstantExports } from "./dataExports.ts";
 import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
@@ -335,6 +335,7 @@ async function analyseOne(
     interactions,
     pos: unit.pos,
     exportKind: unit.exportKind,
+    exportedAs: unit.exportedAs,
     isAsync: unit.isAsync,
     isClientComponent: parsed.isClientComponent,
     wrappers: unit.wrappers,

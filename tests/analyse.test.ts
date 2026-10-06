@@ -10,6 +10,7 @@ import { parseFile } from "../src/analyse/parseFile.ts";
 const HELLO = path.resolve(__dirname, "fixtures/Hello.tsx");
 const DASHBOARD = path.resolve(__dirname, "fixtures/Dashboard.tsx");
 const CARD = path.resolve(__dirname, "fixtures/Card.tsx");
+const RENAMED = path.resolve(__dirname, "fixtures/Renamed.tsx");
 
 describe("parseFile", () => {
   test("locates React.FC component + props type ref", async () => {
@@ -22,6 +23,16 @@ describe("parseFile", () => {
     expect(r.isClientComponent).toBe(false);
     expect(r.imports.has("useState")).toBe(true);
     expect(r.imports.get("useState")?.specifier).toBe("react");
+  });
+
+  test("a re-export alias is what the module actually exposes", async () => {
+    const r = await parseFile(RENAMED);
+    const primary = r.components[0];
+    // The internal name identifies the unit; the alias is the importable
+    // binding — specs that import `Internal` would get undefined at runtime.
+    expect(primary?.componentName).toBe("Internal");
+    expect(primary?.exportKind).toBe("named");
+    expect(primary?.exportedAs).toBe("Public");
   });
 
   test("locates a component whose own returns are all null", async () => {

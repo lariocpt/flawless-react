@@ -57,15 +57,15 @@ export const fromBinding = SOURCE_CODE_GITHUB_REPO;
 `;
 
   test("literal, property-access, logical and collection constants are data", () => {
-    expect(
-      dataOf(CONFIG, ["SOURCE_CODE_GITHUB_REPO", "SITE_INFO", "MAIN_NAV"]),
-    ).toEqual(["SOURCE_CODE_GITHUB_REPO", "SITE_INFO", "MAIN_NAV"]);
+    expect(dataOf(CONFIG, ["SOURCE_CODE_GITHUB_REPO", "SITE_INFO", "MAIN_NAV"])).toEqual([
+      "SOURCE_CODE_GITHUB_REPO",
+      "SITE_INFO",
+      "MAIN_NAV",
+    ]);
   });
 
   test("call initializers, functions, classes, enums and bare identifiers are not", () => {
-    expect(
-      dataOf(CONFIG, ["env", "getSite", "Widget", "Direction", "fromBinding"]),
-    ).toEqual([]);
+    expect(dataOf(CONFIG, ["env", "getSite", "Widget", "Direction", "fromBinding"])).toEqual([]);
   });
 
   test("a renamed `export { CFG as CONFIG }` clause binds the private declaration", () => {
@@ -80,7 +80,7 @@ export const fromBinding = SOURCE_CODE_GITHUB_REPO;
     ).toEqual(["CONFIG"]);
   });
 
-  test("`export default { … }` is data under the \"default\" convention", () => {
+  test('`export default { … }` is data under the "default" convention', () => {
     expect(dataOf("export default { a: 1, b: [2, 3] };", ["site"], true)).toEqual(["default"]);
     // A default export that computes stays undeclared-as-data.
     expect(dataOf("export default buildSite();", ["site"], true)).toEqual([]);
@@ -101,7 +101,7 @@ export const fromBinding = SOURCE_CODE_GITHUB_REPO;
     expect(dataOf("export const K = 1;\nexport const A = { K };", ["A"])).toEqual([]);
     expect(dataOf("export const A = { url: load() };", ["A"])).toEqual([]);
     // The positive control: the same shape spelled out is data.
-    expect(dataOf("export const A = { url: \"https://x.dev\" };", ["A"])).toEqual(["A"]);
+    expect(dataOf('export const A = { url: "https://x.dev" };', ["A"])).toEqual(["A"]);
   });
 });
 
@@ -176,7 +176,7 @@ describe("emitModuleMocks data-constant exemption (rsc)", () => {
       OUT,
     );
     expect(mocked).toEqual(["@/config/site"]);
-    expect(statements.join("\n")).toContain("vi.mock(\"@/config/site\"");
+    expect(statements.join("\n")).toContain('vi.mock("@/config/site"');
   });
 
   test("a statement mixing a pure utility and a data constant is exempt too", () => {
@@ -214,6 +214,17 @@ describe("renderUnitBrowser setup.ts next/font mocks", () => {
     variants: 3,
   });
   const setup = files.find((f) => f.relPath === "setup.ts")?.content ?? "";
+  const config = files.find((f) => f.relPath === "vitest.config.mts")?.content ?? "";
+
+  test("the vitest config aliases the server-component marker to the inert stub", () => {
+    // vi.mock("server-only") only reaches DIRECT importers; chanhdai's MDX
+    // crash was transitive (MDX -> a server table -> the marker) and vite's
+    // resolver failed at collection, before any mock could run. The alias
+    // resolves the specifier itself; the stub is emitted next to the config.
+    expect(config).toContain("find: /^server-only$/");
+    expect(config).toContain("server-only-stub.ts");
+    expect(files.some((f) => f.relPath === "server-only-stub.ts")).toBe(true);
+  });
 
   test("all three loader entry points are mocked globally, name-agnostic", () => {
     // A factory listing only `default` starves named loaders: the chanhdai
@@ -247,5 +258,18 @@ describe("renderUnitBrowser setup.ts next/font mocks", () => {
     // No companion files: everything the hook needs is inline.
     expect(files.some((f) => f.relPath === "native-import-hooks.mjs")).toBe(false);
     expect(files.some((f) => f.relPath === "font-stub.mjs")).toBe(false);
+  });
+
+  test("jsdom's Web Audio silence is planted over with an inert graph", () => {
+    // jsdom has no AudioContext: chanhdai's click-sound hook rejected
+    // UNHANDLED at mount and exited the run rc=1 on an otherwise-green
+    // plane. decodeAudioData must resolve (awaiting loaders complete),
+    // and the param chain must answer (setValueAtTime(...)).
+    expect(setup).toContain("window.AudioContext ??=");
+    expect(setup).toContain("webkitAudioContext");
+    expect(setup).toContain("OfflineAudioContext");
+    expect(setup).toContain("decodeAudioData");
+    expect(setup).toContain("setValueAtTime");
+    expect(setup).toContain("createBufferSource");
   });
 });

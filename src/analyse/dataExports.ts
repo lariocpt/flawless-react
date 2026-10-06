@@ -45,8 +45,7 @@ export function dataConstantExports(
   if (mi.isTypeOnly) return [];
   const out: string[] = [];
   for (const [i, local] of mi.names.entries()) {
-    const exported =
-      mi.hasDefault && i === 0 ? "default" : (mi.importedNames?.[i] ?? local);
+    const exported = mi.hasDefault && i === 0 ? "default" : (mi.importedNames?.[i] ?? local);
     if (!exported) continue;
     const located = findExportedDecl(
       resolvedPath,

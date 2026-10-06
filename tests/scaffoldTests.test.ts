@@ -60,6 +60,7 @@ describe("scaffoldUnitBrowser (file writes)", () => {
     const expected = [
       path.join(outDir, "vitest.config.mts"),
       path.join(outDir, "setup.ts"),
+      path.join(outDir, "server-only-stub.ts"),
       path.join(outDir, "browser", "playwright.config.ts"),
       path.join(outDir, "unit", "Widget.test.tsx"),
       path.join(outDir, "browser", "Widget.spec.ts"),

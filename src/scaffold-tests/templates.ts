@@ -1,5 +1,5 @@
 import path from "node:path";
-import { authShimVitestBlock, type AuthStub, collectAuthStubs } from "../analyse/authShims.ts";
+import { type AuthStub, authShimVitestBlock, collectAuthStubs } from "../analyse/authShims.ts";
 import { providerKey } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { titleSafe } from "../scaffold/templates.ts";
@@ -113,6 +113,14 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const authStubs = collectAuthStubs(flat.map((c) => c.info));
   const files: RenderedFile[] = [
     { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup), authStubs) },
+    // The inert target of the /^server-only$/ alias in the vitest config: the
+    // marker package is missing or throw-on-import, and a transitive importer
+    // (MDX -> a server table -> "server-only") cannot be saved by a per-spec
+    // vi.mock. This file is the whole alias target.
+    {
+      relPath: "server-only-stub.ts",
+      content: "// Inert replacement for the server-component marker package.\nexport {};\n",
+    },
   ];
   if (withBrowser) {
     files.push({ relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() });
@@ -286,7 +294,7 @@ function autoProviderBits(
     imports.push(
       ref.exportKind === "default"
         ? `import ${binding} from "${rel}";`
-        : `import { ${ref.componentName} as ${binding} } from "${rel}";`,
+        : `import { ${ref.exportedAs ?? ref.componentName} as ${binding} } from "${rel}";`,
     );
     open = `${open}<${binding}>`;
     close = `</${binding}>${close}`;
@@ -299,6 +307,11 @@ function emitComponentImport(info: ComponentInfo, importPath: string): string {
   const stripped = stripTsExt(importPath);
   if (info.exportKind === "default") {
     return `import ${info.componentName} from "${stripped}";`;
+  }
+  // A re-export alias is the module's real binding; the internal name is not
+  // importable. Alias it back so every spec body can keep naming the component.
+  if (info.exportedAs && info.exportedAs !== info.componentName) {
+    return `import { ${info.exportedAs} as ${info.componentName} } from "${stripped}";`;
   }
   return `import { ${info.componentName} } from "${stripped}";`;
 }
@@ -318,6 +331,23 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
       const find = a.prefix ? `/^${escapeRegex(a.find)}/` : `/^${escapeRegex(a.find)}$/`;
       return `      { find: ${find}, replacement: ${target} },`;
     })
+    .concat(
+      // The server-component MARKER package: not installed in many repos (vite
+      // fails to resolve the import outright — chanhdai's MDX crashed at
+      // collection on a transitive one), and where installed its module THROWS
+      // on import. Both lands want the same thing: resolve the specifier to
+      // nothing so the surrounding module loads and jsdom mounts what is
+      // really ordinary code. Per-spec vi.mock cannot reach transitive
+      // importers, the alias can.
+      [
+        (() => {
+          const rel = JSON.stringify(
+            relativeToEmitted(opts.outDir, path.resolve(opts.outDir, "server-only-stub.ts")),
+          );
+          return `      { find: /^server-only$/, replacement: path.resolve(configDir, ${rel}) },`;
+        })(),
+      ],
+    )
     .join("\n");
   // dedupe is not optional in a workspace. When react resolves to the repo root
   // and react-dom to the package, react-dom-server sets its hook dispatcher on a
@@ -505,6 +535,161 @@ if (typeof window !== "undefined") {
   Element.prototype.scrollIntoView ??= () => {};
   Element.prototype.scrollTo ??= (() => {}) as typeof Element.prototype.scrollTo;
   Element.prototype.getAnimations ??= (() => [] as Animation[]) as typeof Element.prototype.getAnimations;
+
+  // jsdom ships no Web Audio: the "play a sound on click" hook crashes at
+  // mount on \`new AudioContext()\` — an unhandled rejection that exits the
+  // run rc=1 even when every test passed. The graph below is inert but
+  // complete: every node answers, params chain, and \`decodeAudioData\`
+  // resolves so awaiting loaders complete instead of rejecting.
+  class FlawlessAudioParam {
+    value = 0;
+    defaultValue = 0;
+    minValue = -3.4028234663852886e38;
+    maxValue = 3.4028234663852886e38;
+    setValueAtTime(): FlawlessAudioParam { return this; }
+    linearRampToValueAtTime(): FlawlessAudioParam { return this; }
+    exponentialRampToValueAtTime(): FlawlessAudioParam { return this; }
+    setTargetAtTime(): FlawlessAudioParam { return this; }
+    setValueCurveAtTime(): FlawlessAudioParam { return this; }
+    cancelScheduledValues(): FlawlessAudioParam { return this; }
+    cancelAndHoldAtTime(): FlawlessAudioParam { return this; }
+  }
+  class FlawlessAudioNode {
+    channelCount = 2;
+    numberOfInputs = 1;
+    numberOfOutputs = 1;
+    connect<T>(node: T): T { return node; }
+    disconnect(): void {}
+    addEventListener(): void {}
+    removeEventListener(): void {}
+    dispatchEvent(): boolean { return true; }
+  }
+  class FlawlessAudioBuffer {
+    numberOfChannels: number;
+    length: number;
+    sampleRate: number;
+    constructor(channels: number, length: number, sampleRate: number) {
+      this.numberOfChannels = Math.max(1, channels | 0);
+      this.length = Math.max(1, length | 0);
+      this.sampleRate = sampleRate > 0 ? sampleRate : 44100;
+    }
+    get duration(): number { return this.length / this.sampleRate; }
+    getChannelData(): Float32Array { return new Float32Array(this.length); }
+    copyToChannel(): void {}
+    copyFromChannel(): void {}
+  }
+  class FlawlessSourceNode extends FlawlessAudioNode {
+    buffer: unknown = null;
+    loop = false;
+    loopStart = 0;
+    loopEnd = 0;
+    playbackRate = new FlawlessAudioParam();
+    detune = new FlawlessAudioParam();
+    onended: ((event?: unknown) => void) | null = null;
+    start(): void {}
+    stop(): void {}
+  }
+  class FlawlessAudioContext extends FlawlessAudioNode {
+    readonly sampleRate = 44100;
+    readonly state = "suspended";
+    readonly baseLatency = 0;
+    readonly destination = new FlawlessAudioNode();
+    readonly listener: Record<string, unknown> = {};
+    readonly audioWorklet = { addModule: async () => {} };
+    onstatechange: ((event?: unknown) => void) | null = null;
+    get currentTime(): number { return 0; }
+    createBuffer(channels: number, length: number, sampleRate: number) {
+      return new FlawlessAudioBuffer(channels, length, sampleRate);
+    }
+    createBufferSource() { return new FlawlessSourceNode(); }
+    createGain() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, { gain: new FlawlessAudioParam() });
+    }
+    createBiquadFilter() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, {
+        frequency: new FlawlessAudioParam(),
+        Q: new FlawlessAudioParam(),
+        gain: new FlawlessAudioParam(),
+        detune: new FlawlessAudioParam(),
+        getFrequencyResponse: () => {},
+      });
+    }
+    createDynamicsCompressor() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, {
+        threshold: new FlawlessAudioParam(),
+        knee: new FlawlessAudioParam(),
+        ratio: new FlawlessAudioParam(),
+        attack: new FlawlessAudioParam(),
+        release: new FlawlessAudioParam(),
+        reduction: 0,
+      });
+    }
+    createStereoPanner() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, { pan: new FlawlessAudioParam() });
+    }
+    createPanner() {
+      return new FlawlessAudioNode();
+    }
+    createOscillator() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, {
+        frequency: new FlawlessAudioParam(),
+        detune: new FlawlessAudioParam(),
+        onended: null,
+        start: () => {},
+        stop: () => {},
+      });
+    }
+    createDelay() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, { delayTime: new FlawlessAudioParam() });
+    }
+    createWaveShaper() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, { curve: null, oversample: "none" });
+    }
+    createConvolver() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, { buffer: null, normalize: true });
+    }
+    createAnalyser() {
+      const n = new FlawlessAudioNode();
+      return Object.assign(n, {
+        fftSize: 2048,
+        frequencyBinCount: 1024,
+        minDecibels: -100,
+        maxDecibels: -30,
+        smoothingTimeConstant: 0.8,
+        getByteFrequencyData: () => {},
+        getByteTimeDomainData: () => {},
+        getFloatFrequencyData: () => {},
+        getFloatTimeDomainData: () => {},
+      });
+    }
+    createChannelMerger() { return new FlawlessAudioNode(); }
+    createChannelSplitter() { return new FlawlessAudioNode(); }
+    decodeAudioData(
+      _data: ArrayBuffer,
+      onSuccess?: (buffer: unknown) => void,
+      onError?: (e: unknown) => void,
+    ): Promise<unknown> {
+      const buffer = this.createBuffer(2, 1, this.sampleRate);
+      onSuccess?.(buffer);
+      void onError;
+      return Promise.resolve(buffer);
+    }
+    resume(): Promise<void> { return Promise.resolve(); }
+    suspend(): Promise<void> { return Promise.resolve(); }
+    close(): Promise<void> { return Promise.resolve(); }
+  }
+  const webAudio = FlawlessAudioContext as unknown as typeof AudioContext;
+  window.AudioContext ??= webAudio;
+  (window as unknown as Record<string, unknown>).webkitAudioContext ??= webAudio;
+  (window as unknown as Record<string, unknown>).OfflineAudioContext ??= FlawlessAudioContext;
 
   // Node >= 22 defines a \`localStorage\` global that is inert unless the process
   // was started with --localstorage-file. Under vitest's jsdom environment

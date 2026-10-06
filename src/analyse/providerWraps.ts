@@ -31,11 +31,12 @@
  * whole gate; a provider that cannot mount bare takes down the wraps it guards,
  * and the dogfood failure then names it.
  */
-import type { ComponentTree, ProviderRef } from "../types.ts";
-import { parseFile, type ParsedFile } from "./parseFile.ts";
-import type { SourceFileCache } from "./sourceCache.ts";
-import { flattenTrees } from "../scaffold-tests/registry.ts";
+
 import ts from "typescript";
+import { flattenTrees } from "../scaffold-tests/registry.ts";
+import type { ComponentTree, ProviderRef } from "../types.ts";
+import { type ParsedComponentUnit, type ParsedFile, parseFile } from "./parseFile.ts";
+import type { SourceFileCache } from "./sourceCache.ts";
 
 /** React's own hooks — none of them names a provider. */
 const CORE_HOOKS = new Set([
@@ -102,9 +103,49 @@ function tagNameParts(tag: ts.JsxTagName): { base: string; member?: string } {
       parts.unshift(node.name.text);
       node = node.expression;
     }
-    return ts.isIdentifier(node) ? { base: node.text, member: parts[parts.length - 1] } : { base: "" };
+    return ts.isIdentifier(node)
+      ? { base: node.text, member: parts[parts.length - 1] }
+      : { base: "" };
   }
   return { base: "" };
+}
+
+/**
+ * Whether the provider can be mounted with NO props and still supply what
+ * consumers read from the context. A typed-literal prop beyond `children`
+ * that is neither optional nor rescued by a destructuring default cannot
+ * mount bare: <ChartProvider value={...}> mounts with value undefined and
+ * every consumer's context check throws right back out — the wrap only
+ * relocates the error, so the wrap must not be added. Anything the shape
+ * analysis cannot judge (a `props` identifier, a type reference instead of
+ * a literal) is assumed mountable: the rule stays opportunistic.
+ */
+function providerMountsBare(unit: ParsedComponentUnit): boolean {
+  const lit = unit.propsTypeLiteral;
+  if (!lit) return true;
+  // bodyNode is the function for `export function P(...)` and the body for
+  // other shapes — the parameter lives on either node, and parent links are
+  // not guaranteed, so check the node itself and its parent directly.
+  const fnNode = [unit.bodyNode, unit.bodyNode.parent].find(
+    (n): n is ts.FunctionLikeDeclaration =>
+      n !== undefined && ts.isFunctionLike(n) && n.parameters.length > 0,
+  );
+  const pattern =
+    fnNode && ts.isObjectBindingPattern(fnNode.parameters[0].name)
+      ? fnNode.parameters[0].name
+      : undefined;
+  const defaulted = new Set<string>();
+  if (pattern) {
+    for (const el of pattern.elements) {
+      if (el.initializer && ts.isIdentifier(el.name)) defaulted.add(el.name.text);
+    }
+  }
+  return lit.members.every((m) => {
+    if (!ts.isPropertySignature(m) || !m.name || !ts.isIdentifier(m.name)) return true;
+    const name = m.name.text;
+    if (name === "children" || m.questionToken) return true;
+    return defaulted.has(name);
+  });
 }
 
 export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
@@ -125,6 +166,7 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
     bare: Set<string>;
     bareAll: Set<string>;
     provider: Set<string>;
+    root: Set<string>;
     member: Set<string>;
   }[] = [];
   for (const u of parsed.components) {
@@ -132,6 +174,7 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
       bare: new Set<string>(),
       bareAll: new Set<string>(),
       provider: new Set<string>(),
+      root: new Set<string>(),
       member: new Set<string>(),
     };
     const visit = (n: ts.Node): void => {
@@ -142,8 +185,16 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
         }
         if (external.has(base)) {
           if (!member) rec.bare.add(base);
+          // `.Root` cuts both ways: base-ui's N.Root REQUIRES the context its
+          // N.Provider supplies (Toast.Root), while radix's namespace shape
+          // makes N.Root the provider itself (Dialog.Root). It is recorded as
+          // both a candidate and a member; providerFor demotes it wherever an
+          // explicit N.Provider renderer exists in the same file.
           else if (member === "Provider") rec.provider.add(base);
-          else rec.member.add(base);
+          else if (member === "Root") {
+            rec.root.add(base);
+            rec.member.add(base);
+          } else rec.member.add(base);
         }
       }
       ts.forEachChild(n, visit);
@@ -152,12 +203,20 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
     usage.push(rec);
   }
   const memberBases = new Set(usage.flatMap((r) => [...r.member]));
+  // A base-ui file names its provider out loud (`<N.Provider>`); a radix
+  // namespace file never does — there the `<N.Root>` renderer IS the
+  // provider. Where an explicit provider exists, `.Root` demotes back to
+  // a plain member (base-ui's Toast.Root needs the ToastProvider wrap).
+  const explicitProvider = (base: string): boolean => usage.some((r) => r.provider.has(base));
+  const rootIsProvider = (r: { root: Set<string> }, base: string): boolean =>
+    r.root.has(base) && !explicitProvider(base);
   const providerFor = (base: string): number =>
     usage.findIndex(
       (r, i) =>
-        (r.provider.has(base) || r.bare.has(base)) &&
+        (r.provider.has(base) || r.bare.has(base) || rootIsProvider(r, base)) &&
         parsed.components[i].exportKind !== "none" &&
-        !parsed.components[i].isAsync,
+        !parsed.components[i].isAsync &&
+        providerMountsBare(parsed.components[i]),
     );
   let provider: ProviderRef | undefined;
   for (const base of memberBases) {
@@ -170,7 +229,13 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
     // second provider can actively break it.
     const providerTag = u.componentName;
     usage.forEach((r, ui) => {
-      if (r.member.has(base) && !r.provider.has(base) && ui !== pi && !r.bareAll.has(providerTag)) {
+      if (
+        r.member.has(base) &&
+        !r.provider.has(base) &&
+        !rootIsProvider(r, base) &&
+        ui !== pi &&
+        !r.bareAll.has(providerTag)
+      ) {
         consumers.add(parsed.components[ui].componentName);
       }
     });
@@ -178,6 +243,7 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
       componentName: u.componentName,
       filePath: parsed.filePath,
       exportKind: u.exportKind,
+      exportedAs: u.exportedAs,
     };
   }
   return { consumers, provider };
@@ -250,11 +316,12 @@ export async function deriveContextProviderWraps(
       const candidate = `${moduleSide.slice(3)}Provider`;
       const parsed = await parseOnce(sourceFile);
       const unit = parsed?.components.find((u) => u.componentName === candidate);
-      if (unit && unit.exportKind !== "none" && !unit.isAsync) {
+      if (unit && unit.exportKind !== "none" && !unit.isAsync && providerMountsBare(unit)) {
         addReq(compKey, {
           componentName: candidate,
           filePath: sourceFile,
           exportKind: unit.exportKind,
+          exportedAs: unit.exportedAs,
         });
       }
     }

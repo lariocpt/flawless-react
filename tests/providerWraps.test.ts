@@ -92,6 +92,52 @@ export function Closer() {
   return <IconX />;
 }
 `,
+  // radix namespace shape: no <N.Provider> renderer exists anywhere — the
+  // <N.Root> renderer IS the compound's provider (chanhdai's dialog.tsx).
+  "dialog.tsx": `
+import { Dialog as DialogPrimitive } from 'radix-ui';
+export function Dialog(props: Record<string, unknown>) {
+  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+}
+export function DialogTrigger(props: Record<string, unknown>) {
+  return <DialogPrimitive.Trigger {...props} />;
+}
+export function DialogPortal(props: Record<string, unknown>) {
+  return <DialogPrimitive.Portal {...props} />;
+}
+`,
+  // A provider that requires props beyond children cannot MOUNT BARE: the
+  // wrap supplies undefined and the consumer's context check throws right
+  // back out. A destructuring default rescues the same shape.
+  "chart.tsx": `
+import * as React from 'react';
+interface ChartContextValue { series: number[] }
+const ChartContext = React.createContext<ChartContextValue | null>(null);
+export function ChartProvider({ children, value }: { children: React.ReactNode; value: ChartContextValue }) {
+  return <ChartContext.Provider value={value}>{children}</ChartContext.Provider>;
+}
+export function useChart(): ChartContextValue {
+  const c = React.useContext(ChartContext);
+  if (!c) throw new Error('useChart must be used within a ChartProvider');
+  return c;
+}
+export function XAxis() {
+  const ctx = useChart();
+  return <g data-len={ctx.series.length} />;
+}
+const TileContext = React.createContext<string[]>([]);
+export function TiledProvider({ children, tiles = [] }: { children?: React.ReactNode; tiles: string[] }) {
+  return <TileContext.Provider value={tiles}>{children}</TileContext.Provider>;
+}
+export { TiledProvider as TiledPublic };
+export function useTiled(): string[] {
+  return React.useContext(TileContext);
+}
+export function TileGrid() {
+  const tiles = useTiled();
+  return <div>{tiles.length}</div>;
+}
+`,
 };
 
 async function derive(): Promise<Map<string, ProviderRef[]>> {
@@ -118,7 +164,8 @@ async function derive(): Promise<Map<string, ProviderRef[]>> {
   }
 }
 
-const names = (refs: ProviderRef[] | undefined): string[] => (refs ?? []).map((r) => r.componentName);
+const names = (refs: ProviderRef[] | undefined): string[] =>
+  (refs ?? []).map((r) => r.componentName);
 
 describe("deriveContextProviderWraps", () => {
   test("same-file hook call finds the co-located provider", async () => {
@@ -169,6 +216,39 @@ describe("deriveContextProviderWraps", () => {
   test("bare icon imports are leaves, not providers", async () => {
     const wraps = await derive();
     expect([...wraps.keys()].some((k) => k.endsWith("::Closer"))).toBe(false);
+  });
+
+  test("radix namespace: the N.Root renderer IS the provider", async () => {
+    // chanhdai's dialog parts threw "DialogPortal must be used within Dialog"
+    // — the file renders <DialogPrimitive.Root> nowhere near the .Provider
+    // shape, so only the Root-as-provider reading derives the wrap.
+    const wraps = await derive();
+    const portal = [...wraps.keys()].find((k) => k.endsWith("::DialogPortal"));
+    expect(names(wraps.get(portal!))).toEqual(["Dialog"]);
+    const trigger = [...wraps.keys()].find((k) => k.endsWith("::DialogTrigger"));
+    expect(names(wraps.get(trigger!))).toEqual(["Dialog"]);
+    // The Root renderer provides its own context; it never gets wrapped.
+    expect([...wraps.keys()].some((k) => k.endsWith("::Dialog"))).toBe(false);
+  });
+
+  test("a provider that cannot mount bare is no provider", async () => {
+    const wraps = await derive();
+    // <ChartProvider> mounted with no value provides undefined — the wrap
+    // would only relocate the consumer's context throw, so no wrap at all.
+    expect([...wraps.keys()].some((k) => k.endsWith("::XAxis"))).toBe(false);
+    // The destructuring default genuinely rescues the identical shape.
+    const grid = [...wraps.keys()].find((k) => k.endsWith("::TileGrid"));
+    expect(names(wraps.get(grid!))).toEqual(["TiledProvider"]);
+  });
+
+  test("provider refs carry the re-export alias", async () => {
+    // chanhdai's collapsible: CollapsibleWithContext leaves its module as
+    // `Collapsible`. A wrap importing the internal name renders undefined.
+    const wraps = await derive();
+    const grid = [...wraps.keys()].find((k) => k.endsWith("::TileGrid"));
+    const ref = wraps.get(grid!)?.[0];
+    expect(ref?.componentName).toBe("TiledProvider");
+    expect(ref?.exportedAs).toBe("TiledPublic");
   });
 
   test("providerKey matches the map keys the hostRegistry consumes", async () => {
