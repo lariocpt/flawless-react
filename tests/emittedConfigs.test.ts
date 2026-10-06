@@ -262,6 +262,35 @@ describe("the emitted playwright configs select the specs the same run wrote", (
     expect((web as { url: string }).url).toContain("3123");
   });
 
+  test("a scriptless app inherits the workspace launcher with the repo's package manager", async () => {
+    // turbo-style monorepo: apps/app has no dev script, the workspace root
+    // runs dev:web — and the runner must be pnpm, not the bun default.
+    const root = projectWithStubs();
+    writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages: []\n");
+    writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "ws", scripts: { "dev:web": "turbo dev -p 3210" } }),
+    );
+    const app = path.join(root, "apps", "app");
+    mkdirSync(path.join(app, "app"), { recursive: true });
+    writeFileSync(path.join(app, "package.json"), JSON.stringify({ name: "app" }));
+    const outDir = path.join(app, "flawless");
+    const nextjs: NextjsContext = {
+      root: app,
+      router: "app",
+      appResolver: undefined,
+      apiRoutes: [],
+    };
+    await run("e2e" as TaskId, ctxOf({ outDir, trees: [], nextjs }));
+
+    const cfg = await load(path.join(outDir, "e2e", "playwright.config.ts"));
+    const web = cfg.webServer as { command: string; cwd: string; url: string };
+    expect(web.command).toBe("pnpm run dev:web");
+    expect(path.resolve(web.cwd)).toBe(root);
+    expect(web.url).toContain("3210");
+  });
+
   test("the browser config's testDir holds the emitted browser specs", async () => {
     const root = projectWithStubs();
     const outDir = path.join(root, "flawless");

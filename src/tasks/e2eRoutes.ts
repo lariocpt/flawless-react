@@ -74,11 +74,11 @@ export const e2eRoutes: Task = {
     const written: string[] = [];
     const skipped: string[] = [];
 
-    const devScript = await readDevScript(ctx.nextjs.root);
-    const port = devScriptPort(devScript);
+    const dev = await resolveDevLaunch(ctx.nextjs.root);
+    const port = devScriptPort(dev.script);
 
     const configPath = path.join(e2eDir, "playwright.config.ts");
-    await Bun.write(configPath, e2eConfig(relativeToEmitted(e2eDir, ctx.nextjs.root), port));
+    await Bun.write(configPath, e2eConfig(relativeToEmitted(e2eDir, dev.cwd), dev.command, port));
     written.push(configPath);
 
     const setupPath = path.join(e2eDir, "global-setup.ts");
@@ -148,25 +148,119 @@ export const e2eRoutes: Task = {
   },
 };
 
-async function readDevScript(nextRoot: string): Promise<string | undefined> {
+/** The dev launcher, per where the app actually lives. */
+const DEV_SCRIPT_NAMES = ["dev", "dev:web", "dev:www"] as const;
+
+interface DevLaunch {
+  /** Command Playwright's webServer runs. */
+  command: string;
+  /** The package directory that owns the script (cwd for webServer). */
+  cwd: string;
+  /** The script body — source of the port. */
+  script: string | undefined;
+}
+
+async function scriptsOf(dir: string): Promise<Record<string, string> | undefined> {
   try {
-    const pkg = JSON.parse(await readFile(path.join(nextRoot, "package.json"), "utf8")) as {
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
-    return pkg.scripts?.dev;
+    return pkg.scripts;
   } catch {
     return undefined;
   }
 }
 
+async function isWorkspaceRoot(dir: string): Promise<boolean> {
+  if (existsSync(path.join(dir, "pnpm-workspace.yaml"))) return true;
+  try {
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8")) as {
+      workspaces?: unknown;
+    };
+    return Array.isArray(pkg.workspaces);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * @param toNextRoot Path from this config's own directory to the app root.
- *   Relative, deliberately: the config is committed, and an absolute path in it
- *   names the machine that generated it. The same repo lives under a different
- *   root on other machines, so the checked-in file would both fail to resolve
- *   there and rewrite itself on every regeneration.
+ * The package manager the repo declares — `bun run dev` against a pnpm repo
+ * with `verifyDepsBeforeRun` gated scripts fails on the wrong runner, and the
+ * runner must match the lockfile the dependencies were installed from.
  */
-function e2eConfig(toNextRoot: string, port: number): string {
+function packageManagerFor(dir: string): string {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
+      packageManager?: unknown;
+    };
+    const m =
+      typeof pkg.packageManager === "string"
+        ? pkg.packageManager.match(/^(npm|pnpm|yarn|bun)/)
+        : null;
+    if (m) return m[1];
+  } catch {
+    // no package.json: fall through to lockfiles
+  }
+  if (existsSync(path.join(dir, "bun.lockb")) || existsSync(path.join(dir, "bun.lock"))) {
+    return "bun";
+  }
+  if (existsSync(path.join(dir, "pnpm-lock.yaml"))) return "pnpm";
+  if (existsSync(path.join(dir, "yarn.lock"))) return "yarn";
+  if (existsSync(path.join(dir, "package-lock.json"))) return "npm";
+  return "bun";
+}
+
+/**
+ * Apps usually launch themselves; a monorepo app package is often scriptless
+ * with the launcher at the workspace root (`dev:web` through turbo). Walk up —
+ * passing through plain directories (`apps/`) — but consult only a workspace
+ * root, and stop there: an unrelated package.json further out (a developer's
+ * dotfiles package) must never hijack the launch.
+ */
+async function resolveDevLaunch(nextRoot: string): Promise<DevLaunch> {
+  const mine = await scriptsOf(nextRoot);
+  const local = pickDevScript(mine, nextRoot);
+  if (local) return local;
+  let dir = nextRoot;
+  for (let hop = 0; hop < 4; hop++) {
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+    if (!(await isWorkspaceRoot(dir))) continue;
+    return (
+      (await pickDevScript(await scriptsOf(dir), dir)) ?? {
+        command: "bun run dev",
+        cwd: nextRoot,
+        script: undefined,
+      }
+    );
+  }
+  return { command: "bun run dev", cwd: nextRoot, script: undefined };
+}
+
+function pickDevScript(
+  scripts: Record<string, string> | undefined,
+  dir: string,
+): DevLaunch | undefined {
+  if (!scripts) return undefined;
+  for (const name of DEV_SCRIPT_NAMES) {
+    const body = scripts[name];
+    if (body) {
+      return { command: `${packageManagerFor(dir)} run ${name}`, cwd: dir, script: body };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * @param toDevCwd Path from this config's own directory to the package that
+ *   owns the dev launcher (the app root, unless only a workspace root has a
+ *   dev script). Relative, deliberately: the config is committed, and an
+ *   absolute path in it names the machine that generated it. The same repo
+ *   lives under a different root on other machines, so the checked-in file
+ *   would both fail to resolve there and rewrite itself on every regeneration.
+ */
+function e2eConfig(toDevCwd: string, command: string, port: number): string {
   return `import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
@@ -199,8 +293,8 @@ export default defineConfig({
   webServer: process.env.FLAWLESS_E2E_BASEURL
     ? undefined
     : {
-        command: "bun run dev",
-        cwd: path.resolve(__dirname, ${JSON.stringify(toNextRoot)}),
+        command: ${JSON.stringify(command)},
+        cwd: path.resolve(__dirname, ${JSON.stringify(toDevCwd)}),
         url: "http://localhost:${port}",
         reuseExistingServer: true,
         timeout: 120_000,
