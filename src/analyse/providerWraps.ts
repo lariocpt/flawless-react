@@ -148,6 +148,128 @@ function providerMountsBare(unit: ParsedComponentUnit): boolean {
   });
 }
 
+/**
+ * Providers whose NAME breaks the `useX` → `XProvider` convention: the hook
+ * reads a context object, and the provider component renders that object's
+ * `.Provider` — chanhdai's `useCollapsible` is fed by `CollapsibleWithContext`
+ * (exported, no less, as `Collapsible`). The context object is the ground
+ * truth both the hook and the provider must mention, so read it: a hook
+ * supplies a context when it calls `useContext(Ctx)` itself or reaches one
+ * through hooks defined in the same file.
+ */
+interface CtxFacts {
+  /** Module-side hook name → provider component name in the same file. */
+  providerByHook: Map<string, string>;
+}
+
+function ctxFactsOf(parsed: ParsedFile): CtxFacts {
+  // Local hook definitions: name → body node.
+  const bodies = new Map<string, ts.Node>();
+  const collect = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name && n.body) {
+      if (/^use[A-Z]/.test(n.name.text) && !CORE_HOOKS.has(n.name.text)) {
+        bodies.set(n.name.text, n.body);
+      }
+    } else if (ts.isVariableStatement(n)) {
+      for (const d of n.declarationList.declarations) {
+        if (
+          ts.isIdentifier(d.name) &&
+          /^use[A-Z]/.test(d.name.text) &&
+          !CORE_HOOKS.has(d.name.text) &&
+          d.initializer &&
+          ts.isFunctionLike(d.initializer) &&
+          d.initializer.body
+        ) {
+          bodies.set(d.name.text, d.initializer.body);
+        }
+      }
+    }
+    ts.forEachChild(n, collect);
+  };
+  for (const stmt of parsed.sourceFile.statements) collect(stmt);
+
+  const direct = new Map<string, { ctx: Set<string>; calls: Set<string> }>();
+  for (const [hook, body] of bodies) {
+    const ctx = new Set<string>();
+    const calls = new Set<string>();
+    const scan = (n: ts.Node): void => {
+      if (ts.isCallExpression(n)) {
+        // `useContext(Ctx)` and `React.useContext(Ctx)` — the namespace form
+        // is how `import * as React` files write it.
+        const fn = ts.isIdentifier(n.expression)
+          ? n.expression.text
+          : ts.isPropertyAccessExpression(n.expression)
+            ? n.expression.name.text
+            : undefined;
+        if (fn === undefined) {
+          // nothing to key on
+        } else if (
+          fn === "useContext" &&
+          n.arguments.length > 0 &&
+          ts.isIdentifier(n.arguments[0])
+        ) {
+          ctx.add((n.arguments[0] as ts.Identifier).text);
+        } else {
+          calls.add(fn);
+        }
+      }
+      ts.forEachChild(n, scan);
+    };
+    scan(body);
+    direct.set(hook, { ctx, calls });
+  }
+
+  // Transitively close over local hook calls: useCollapsibleAnimation reads
+  // the context through the useCollapsible it calls.
+  const read = new Map<string, Set<string>>();
+  for (const [hook, { ctx }] of direct) read.set(hook, new Set(ctx));
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [hook, { calls }] of direct) {
+      const mine = read.get(hook)!;
+      for (const called of calls) {
+        if (called === hook || !read.has(called)) continue;
+        for (const ident of read.get(called)!) {
+          if (!mine.has(ident)) {
+            mine.add(ident);
+            grew = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Components rendering <Ctx.Provider> — the supplier per context object.
+  const supplier = new Map<string, string>();
+  for (const u of parsed.components) {
+    const visit = (n: ts.Node): void => {
+      if (
+        (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+        ts.isPropertyAccessExpression(n.tagName) &&
+        n.tagName.name.text === "Provider" &&
+        ts.isIdentifier(n.tagName.expression)
+      ) {
+        supplier.set(n.tagName.expression.text, u.componentName);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(u.bodyNode);
+  }
+
+  const providerByHook = new Map<string, string>();
+  for (const [hook, ctxs] of read) {
+    for (const ident of ctxs) {
+      const p = supplier.get(ident);
+      if (p && p !== hook) {
+        providerByHook.set(hook, p);
+        break;
+      }
+    }
+  }
+  return { providerByHook };
+}
+
 export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
   const external = new Set<string>();
   for (const [local, b] of parsed.imports) {
@@ -283,6 +405,12 @@ export async function deriveContextProviderWraps(
     }
     return f;
   };
+  const ctxCache = new Map<string, Map<string, string>>();
+  const ctxOnce = (parsed: ParsedFile): Map<string, string> => {
+    let f = ctxCache.get(parsed.filePath);
+    if (!f) ctxCache.set(parsed.filePath, (f = ctxFactsOf(parsed).providerByHook));
+    return f;
+  };
 
   // compKey → provKey → ref. A Map, not a Set: the closure below merges along
   // component edges and the dedupe is by provider identity.
@@ -315,10 +443,16 @@ export async function deriveContextProviderWraps(
       if (!moduleSide.startsWith("use")) continue; // aliased to a non-hook name
       const candidate = `${moduleSide.slice(3)}Provider`;
       const parsed = await parseOnce(sourceFile);
-      const unit = parsed?.components.find((u) => u.componentName === candidate);
+      let unit = parsed?.components.find((u) => u.componentName === candidate);
+      if (parsed && (!unit || unit.exportKind === "none")) {
+        // The convention missed — find the component that supplies the
+        // context this hook actually reads, however it is named.
+        const supplied = ctxOnce(parsed).get(moduleSide);
+        if (supplied) unit = parsed.components.find((u) => u.componentName === supplied);
+      }
       if (unit && unit.exportKind !== "none" && !unit.isAsync && providerMountsBare(unit)) {
         addReq(compKey, {
-          componentName: candidate,
+          componentName: unit.componentName,
           filePath: sourceFile,
           exportKind: unit.exportKind,
           exportedAs: unit.exportedAs,

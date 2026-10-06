@@ -138,6 +138,36 @@ export function TileGrid() {
   return <div>{tiles.length}</div>;
 }
 `,
+  // The provider breaks the useX → XProvider name convention (chanhdai's
+  // useCollapsible ← CollapsibleWithContext): only the context object both
+  // sides mention can pair them. AccPanel reaches it through a second local
+  // hook, so the pairing must close over local hook calls.
+  "accordion.tsx": `
+import * as React from 'react';
+type AccCtx = { idx: number };
+const AccContext = React.createContext<AccCtx | null>(null);
+export function AccordionRoot({ children }: { children?: React.ReactNode }) {
+  const [idx] = React.useState(0);
+  return <AccContext.Provider value={{ idx }}>{children}</AccContext.Provider>;
+}
+const useAccIndex = (): AccCtx => {
+  const ctx = React.useContext(AccContext);
+  if (!ctx) throw new Error('useAccIndex must be used within AccordionRoot');
+  return ctx;
+};
+const useAccAnimation = () => {
+  const { idx } = useAccIndex();
+  return idx;
+};
+export function AccPanel() {
+  const idx = useAccAnimation();
+  return <div>{idx}</div>;
+}
+export function AccBadge() {
+  const ctx = useAccIndex();
+  return <span>{ctx.idx}</span>;
+}
+`,
 };
 
 async function derive(): Promise<Map<string, ProviderRef[]>> {
@@ -249,6 +279,16 @@ describe("deriveContextProviderWraps", () => {
     const ref = wraps.get(grid!)?.[0];
     expect(ref?.componentName).toBe("TiledProvider");
     expect(ref?.exportedAs).toBe("TiledPublic");
+  });
+
+  test("the context object pairs hook and provider when the name misses", async () => {
+    const wraps = await derive();
+    const panel = [...wraps.keys()].find((k) => k.endsWith("::AccPanel"));
+    expect(names(wraps.get(panel!))).toEqual(["AccordionRoot"]);
+    const badge = [...wraps.keys()].find((k) => k.endsWith("::AccBadge"));
+    expect(names(wraps.get(badge!))).toEqual(["AccordionRoot"]);
+    // The supplier itself is never wrapped by its own context.
+    expect([...wraps.keys()].some((k) => k.endsWith("::AccordionRoot"))).toBe(false);
   });
 
   test("providerKey matches the map keys the hostRegistry consumes", async () => {
