@@ -168,6 +168,36 @@ export function AccBadge() {
   return <span>{ctx.idx}</span>;
 }
 `,
+  // The nakama shape, split across three files: the context object lives on
+  // its own, the provider renders the IMPORTED object, and the hook reads it
+  // from a third file — no naming convention reaches across, only the
+  // context object's (module, name) pairs hook with provider.
+  "auth-context-shared.ts": `
+import { createContext } from 'react';
+export const AuthContext = createContext<string | null>(null);
+`,
+  "auth-context.tsx": `
+import * as React from 'react';
+import { AuthContext } from './auth-context-shared';
+export function AuthProvider({ children }: { children?: React.ReactNode }) {
+  return <AuthContext.Provider value='lario'>{children}</AuthContext.Provider>;
+}
+`,
+  "use-auth.ts": `
+import { useContext } from 'react';
+import { AuthContext } from './auth-context-shared';
+export function useAuth(): string {
+  const value = useContext(AuthContext);
+  if (!value) throw new Error('useAuth must be used within AuthProvider');
+  return value;
+}
+`,
+  "auth-consumer.tsx": `
+import { useAuth } from './use-auth';
+export function WhoAmI() {
+  return <span>{useAuth()}</span>;
+}
+`,
 };
 
 async function derive(): Promise<Map<string, ProviderRef[]>> {
@@ -181,12 +211,13 @@ async function derive(): Promise<Map<string, ProviderRef[]>> {
     }
     const trees: ComponentTree[] = [];
     for (const entry of entries) {
-      trees.push(
-        ...(await analyseFile(
-          { entry, depth: 3, includeChildren: true, roots: "exported" },
-          { cache: new SourceFileCache() },
-        )),
-      );
+      // Context/hook modules carry no component — a real run's glob skips them
+      // with a note; here they only need to exist on disk for imports.
+      const own = await analyseFile(
+        { entry, depth: 3, includeChildren: true, roots: "exported" },
+        { cache: new SourceFileCache() },
+      ).catch(() => []);
+      trees.push(...own);
     }
     return await deriveContextProviderWraps(trees, new SourceFileCache());
   } finally {
@@ -289,6 +320,19 @@ describe("deriveContextProviderWraps", () => {
     expect(names(wraps.get(badge!))).toEqual(["AccordionRoot"]);
     // The supplier itself is never wrapped by its own context.
     expect([...wraps.keys()].some((k) => k.endsWith("::AccordionRoot"))).toBe(false);
+  });
+
+  test("the context object pairs hook and provider across separate files", async () => {
+    // nakama's useAuth: hook in use-auth.ts, AuthProvider renders
+    // <AuthContext.Provider> in auth-context.tsx, both mention the AuthContext
+    // object from auth-context-shared. The naming convention misses inside the
+    // hook's module; only the resolved (module, name) of the context joins them.
+    const wraps = await derive();
+    const who = [...wraps.keys()].find((k) => k.endsWith("::WhoAmI"));
+    expect(names(wraps.get(who!))).toEqual(["AuthProvider"]);
+    expect(wraps.get(who!)?.[0]?.filePath.endsWith("auth-context.tsx")).toBe(true);
+    // The provider itself is not wrapped by its own context.
+    expect([...wraps.keys()].some((k) => k.endsWith("::AuthProvider"))).toBe(false);
   });
 
   test("providerKey matches the map keys the hostRegistry consumes", async () => {

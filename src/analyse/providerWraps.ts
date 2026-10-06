@@ -35,7 +35,13 @@
 import ts from "typescript";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { ComponentTree, ProviderRef } from "../types.ts";
-import { type ParsedComponentUnit, type ParsedFile, parseFile } from "./parseFile.ts";
+import {
+  type ImportBinding,
+  type ParsedComponentUnit,
+  type ParsedFile,
+  parseFile,
+} from "./parseFile.ts";
+import { ModuleResolver } from "./resolveModule.ts";
 import type { SourceFileCache } from "./sourceCache.ts";
 
 /** React's own hooks — none of them names a provider. */
@@ -157,9 +163,27 @@ function providerMountsBare(unit: ParsedComponentUnit): boolean {
  * supplies a context when it calls `useContext(Ctx)` itself or reaches one
  * through hooks defined in the same file.
  */
+/** A context object as one file mentions it: imported (module, exported name)
+ *  or locally defined (no module). Resolved to (file::name) keys by the caller,
+ *  which owns the async ModuleResolver. */
+interface RawCtxRef {
+  module?: string;
+  name: string;
+}
+
+const rawCtxRefFor = (ident: string, imports: Map<string, ImportBinding>): RawCtxRef => {
+  const b = imports.get(ident);
+  if (!b || b.isTypeOnly) return { name: ident };
+  return { module: b.specifier, name: b.importedName ?? ident };
+};
+
 interface CtxFacts {
   /** Module-side hook name → provider component name in the same file. */
   providerByHook: Map<string, string>;
+  /** Module-side hook name → every context object it reads (transitively). */
+  readsRaw: Map<string, Set<RawCtxRef>>;
+  /** Component name → the first context object it renders as `<Ctx.Provider>`. */
+  suppliesRaw: Map<string, RawCtxRef>;
 }
 
 function ctxFactsOf(parsed: ParsedFile): CtxFacts {
@@ -240,8 +264,11 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
     }
   }
 
-  // Components rendering <Ctx.Provider> — the supplier per context object.
+  // Components rendering <Ctx.Provider> — the supplier per context object,
+  // both by identifier text (same-file pairing) and by raw (module, name)
+  // reference for the cross-file join.
   const supplier = new Map<string, string>();
+  const suppliesRaw = new Map<string, RawCtxRef>();
   for (const u of parsed.components) {
     const visit = (n: ts.Node): void => {
       if (
@@ -250,7 +277,11 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
         n.tagName.name.text === "Provider" &&
         ts.isIdentifier(n.tagName.expression)
       ) {
-        supplier.set(n.tagName.expression.text, u.componentName);
+        const ident = n.tagName.expression.text;
+        supplier.set(ident, u.componentName);
+        if (!suppliesRaw.has(u.componentName)) {
+          suppliesRaw.set(u.componentName, rawCtxRefFor(ident, parsed.imports));
+        }
       }
       ts.forEachChild(n, visit);
     };
@@ -267,7 +298,16 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
       }
     }
   }
-  return { providerByHook };
+  const readsRaw = new Map<string, Set<RawCtxRef>>();
+  for (const [hook, ctxs] of read) {
+    const refs = new Set<RawCtxRef>();
+    for (const ident of ctxs) {
+      const r = rawCtxRefFor(ident, parsed.imports);
+      if (![...refs].some((e) => e.module === r.module && e.name === r.name)) refs.add(r);
+    }
+    readsRaw.set(hook, refs);
+  }
+  return { providerByHook, readsRaw, suppliesRaw };
 }
 
 export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
@@ -378,10 +418,12 @@ export async function deriveContextProviderWraps(
 ): Promise<Map<string, ProviderRef[]>> {
   const flat = flattenTrees(trees);
   // parseFile is per-file work the sweep's cache already pays for; failures to
-  // read a resolved file skip silently — derivation is opportunistic.
+  // read a resolved file skip silently — derivation is opportunistic. Hook
+  // modules often carry no component at all (nakama's use-auth.ts is exactly
+  // one), so the no-component throw must not erase their import tables.
   const parse = async (file: string) => {
     try {
-      return await parseFile(file, cache);
+      return await parseFile(file, cache, { tolerateNoComponents: true });
     } catch {
       return undefined;
     }
@@ -405,12 +447,36 @@ export async function deriveContextProviderWraps(
     }
     return f;
   };
-  const ctxCache = new Map<string, Map<string, string>>();
-  const ctxOnce = (parsed: ParsedFile): Map<string, string> => {
+  const ctxCache = new Map<string, CtxFacts>();
+  const ctxOnce = (parsed: ParsedFile): CtxFacts => {
     let f = ctxCache.get(parsed.filePath);
-    if (!f) ctxCache.set(parsed.filePath, (f = ctxFactsOf(parsed).providerByHook));
+    if (!f) ctxCache.set(parsed.filePath, (f = ctxFactsOf(parsed)));
     return f;
   };
+
+  // The cross-file context join. Hook and provider need not share a file:
+  // nakama's `useAuth` reads `AuthContext` imported from `auth-context-shared`,
+  // and `AuthProvider` renders `<AuthContext.Provider>` from `auth-context.tsx`
+  // — the context object is the join key, so resolve each mention to a
+  // (module, exported-name) pair and index every component that renders one.
+  const resolver = new ModuleResolver();
+  const ctxKeyOf = (file: string, ref: RawCtxRef): string | undefined => {
+    if (!ref.module) return `${file}::${ref.name}`;
+    const resolved = resolver.resolve(ref.module, file);
+    return resolved ? `${resolved}::${ref.name}` : undefined;
+  };
+  const supplierByKey = new Map<string, { file: string; componentName: string }[]>();
+  for (const file of new Set(flat.map((c) => c.info.filePath))) {
+    const parsed = await parseOnce(file);
+    if (!parsed) continue;
+    for (const [componentName, ref] of ctxOnce(parsed).suppliesRaw) {
+      const key = ctxKeyOf(file, ref);
+      if (!key) continue;
+      const arr = supplierByKey.get(key);
+      if (arr) arr.push({ file, componentName });
+      else supplierByKey.set(key, [{ file, componentName }]);
+    }
+  }
 
   // compKey → provKey → ref. A Map, not a Set: the closure below merges along
   // component edges and the dedupe is by provider identity.
@@ -444,16 +510,36 @@ export async function deriveContextProviderWraps(
       const candidate = `${moduleSide.slice(3)}Provider`;
       const parsed = await parseOnce(sourceFile);
       let unit = parsed?.components.find((u) => u.componentName === candidate);
+      let providerFile = sourceFile;
       if (parsed && (!unit || unit.exportKind === "none")) {
         // The convention missed — find the component that supplies the
         // context this hook actually reads, however it is named.
-        const supplied = ctxOnce(parsed).get(moduleSide);
+        const facts = ctxOnce(parsed);
+        const supplied = facts.providerByHook.get(moduleSide);
         if (supplied) unit = parsed.components.find((u) => u.componentName === supplied);
+        // Still nothing, and the pairing lives across files: join the context
+        // objects this hook reads against the components that render them.
+        if (!unit) {
+          for (const ref of facts.readsRaw.get(moduleSide) ?? []) {
+            const key = ctxKeyOf(sourceFile, ref);
+            if (!key) continue;
+            for (const cand of supplierByKey.get(key) ?? []) {
+              const candParsed = await parseOnce(cand.file);
+              const u = candParsed?.components.find((x) => x.componentName === cand.componentName);
+              if (u && u.exportKind !== "none" && !u.isAsync && providerMountsBare(u)) {
+                unit = u;
+                providerFile = cand.file;
+                break;
+              }
+            }
+            if (unit) break;
+          }
+        }
       }
       if (unit && unit.exportKind !== "none" && !unit.isAsync && providerMountsBare(unit)) {
         addReq(compKey, {
           componentName: unit.componentName,
-          filePath: sourceFile,
+          filePath: providerFile,
           exportKind: unit.exportKind,
           exportedAs: unit.exportedAs,
         });

@@ -89,8 +89,16 @@ export interface ParsedFile {
  * a leaf shared by many entries in a sweep is then parsed once, not once per
  * entry. Component detection still runs per call: its results are mutated by
  * export fixups and would go stale if shared.
+ *
+ * `tolerateNoComponents` returns a file that parses but holds no component
+ * instead of throwing — the provider derivation joins hook modules, which are
+ * exactly such files. Reporting callers keep the default throw.
  */
-export async function parseFile(entry: string, cache?: SourceFileCache): Promise<ParsedFile> {
+export async function parseFile(
+  entry: string,
+  cache?: SourceFileCache,
+  opts?: { tolerateNoComponents?: boolean },
+): Promise<ParsedFile> {
   const sourceFile = cache
     ? cache.get(entry)
     : ts.createSourceFile(
@@ -139,7 +147,7 @@ export async function parseFile(entry: string, cache?: SourceFileCache): Promise
 
   const imports = collectImports(sourceFile);
   const components = findComponents(sourceFile, imports);
-  if (components.length === 0) {
+  if (components.length === 0 && !opts?.tolerateNoComponents) {
     throw new Error(
       `parseFile: could not locate a React component in ${entry}. ` +
         `Expected an exported function/arrow component, a \`const Name: React.FC<...> = ...\` declaration, or a class extending React's Component/PureComponent whose render() returns JSX.`,
