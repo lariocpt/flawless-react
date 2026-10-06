@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { mergePackageJson } from "../packageJson.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
-import type { ComponentTree, NextjsApiRoute } from "../types.ts";
+import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
 import { classifyStamped, stamp } from "./stamp.ts";
 import { type AliasEntry, renderUnitBrowser } from "./templates.ts";
 
@@ -21,6 +21,8 @@ export interface ScaffoldUnitBrowserOptions {
   apiRoutes?: NextjsApiRoute[];
   /** Emit Playwright browser specs (they need the perf-harness host). */
   browserSpecs?: boolean;
+  /** Derived context providers to mount around each unit render; see UnitBrowserRenderOptions. */
+  providerWraps?: Map<string, ProviderRef[]>;
 }
 
 export interface ScaffoldUnitBrowserResult {

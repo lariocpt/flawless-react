@@ -7,6 +7,7 @@ import type {
   ComponentTree,
   FetchCallInfo,
   ModuleImportInfo,
+  ProviderRef,
   SourcePosition,
 } from "../src/types.ts";
 
@@ -158,6 +159,80 @@ describe("renderUnitBrowser provider option", () => {
     const src = contentOf(files, "unit/Widget.test.tsx");
     expect(src).not.toContain("AppProvider");
     expect(src).toContain("render(<Widget />)");
+  });
+});
+
+describe("renderUnitBrowser providerWraps option", () => {
+  // The kiranism shape: SidebarTrigger needs the SidebarProvider that only a
+  // route layout used to supply. Derivation found it; the spec must mount it.
+  const wraps = new Map<string, ProviderRef[]>([
+    [
+      `${SRC}/Widget.tsx::Widget`,
+      [{ componentName: "SidebarProvider", filePath: `${SRC}/sidebar.tsx`, exportKind: "named" }],
+    ],
+  ]);
+
+  test("unit spec imports the derived provider aliased and wraps the render", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Widget", { exportKind: "default" }))],
+      outDir: OUT,
+      variants: 3,
+      providerWraps: wraps,
+    });
+    const src = contentOf(files, "unit/Widget.test.tsx");
+    expect(src).toContain(
+      'import { SidebarProvider as __ProvSidebarProvider } from "../../src/sidebar";',
+    );
+    expect(src).toContain("render(<__ProvSidebarProvider><Widget /></__ProvSidebarProvider>)");
+  });
+
+  test("the explicit AppProvider stays outermost over the derived wraps", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Widget"))],
+      outDir: OUT,
+      variants: 3,
+      provider: "/proj/test/AppProvider.tsx",
+      providerWraps: wraps,
+    });
+    const src = contentOf(files, "unit/Widget.test.tsx");
+    expect(src).toContain(
+      "render(<AppProvider><__ProvSidebarProvider><Widget /></__ProvSidebarProvider></AppProvider>)",
+    );
+  });
+
+  test("the map is keyed by providerKey — unmapped components stay bare", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Other"))],
+      outDir: OUT,
+      variants: 3,
+      providerWraps: wraps,
+    });
+    const src = contentOf(files, "unit/Other.test.tsx");
+    expect(src).not.toContain("__Prov");
+    expect(src).toContain("render(<Other />)");
+  });
+
+  test("rsc spec wraps the resolved tree in the derived provider", () => {
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Page", { exportKind: "default", isAsync: true }))],
+      outDir: OUT,
+      variants: 3,
+      providerWraps: new Map([
+        [
+          `${SRC}/Page.tsx::Page`,
+          [
+            {
+              componentName: "ThemeProvider",
+              filePath: `${SRC}/theme-provider.tsx`,
+              exportKind: "default",
+            },
+          ],
+        ],
+      ]),
+    });
+    const src = contentOf(files, "unit/Page.test.tsx");
+    expect(src).toContain('import __ProvThemeProvider from "../../src/theme-provider";');
+    expect(src).toContain("render(<__ProvThemeProvider>{ui}</__ProvThemeProvider>)");
   });
 });
 

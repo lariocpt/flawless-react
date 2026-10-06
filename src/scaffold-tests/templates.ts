@@ -1,9 +1,6 @@
 import path from "node:path";
-import {
-  authShimVitestBlock,
-  type AuthStub,
-  collectAuthStubs,
-} from "../analyse/authShims.ts";
+import { authShimVitestBlock, type AuthStub, collectAuthStubs } from "../analyse/authShims.ts";
+import { providerKey } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
@@ -17,6 +14,7 @@ import type {
   NextjsApiRoute,
   PredicateSiteInfo,
   PropsShape,
+  ProviderRef,
   StateInfo,
   TodoCounter,
   TodoRecorder,
@@ -99,6 +97,13 @@ export interface UnitBrowserRenderOptions {
    * unit-browser task can hand the tallies to the run report.
    */
   todos?: TodoCounter;
+  /**
+   * Derived context providers to mount around each unit render, keyed by
+   * providerKey (analyse/providerWraps.ts). The same map the perf host
+   * consumes: a component that throws "must be used within X" on the host
+   * throws the same in its unit spec, and one derivation fixes both planes.
+   */
+  providerWraps?: Map<string, ProviderRef[]>;
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
@@ -211,11 +216,15 @@ function renderUnitFile(
     ? toImportPath(specDir, path.join(path.resolve(opts.outDir), "mocks", "node.ts"))
     : undefined;
   const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
+  // Derived wraps ride along only where the spec actually mounts the
+  // component. constrainedSpec voids providerImport for the same reason:
+  // these specs never render interactively, so nothing to wrap.
+  const autoProv = autoProviderBits(c.info, opts.providerWraps, specDir);
   if (mode === "compound-part" || mode === "document-root") {
     return constrainedSpec(c, importPath, providerImport, mode, specDir, todo, opts.apiRoutes);
   }
   return mode === "rsc"
-    ? rscSpec(c, importPath, providerImport, specDir, todo, opts.apiRoutes)
+    ? rscSpec(c, importPath, providerImport, specDir, todo, opts.apiRoutes, autoProv)
     : unitSpec(
         c,
         opts.variants,
@@ -225,6 +234,7 @@ function renderUnitFile(
         opts.apiRoutes,
         specDir,
         todo,
+        autoProv,
       );
 }
 
@@ -246,6 +256,42 @@ function toImportPath(fromDir: string, absFile: string): string {
 
 function stripTsExt(spec: string): string {
   return spec.replace(/\.(tsx|ts|jsx|js)$/, "");
+}
+
+/** Spec-side rendering of one component's derived provider wraps. */
+interface AutoProvBits {
+  imports: string;
+  open: string;
+  close: string;
+}
+
+/**
+ * Turn the derived provider map into spec imports and a JSX nest. Bindings
+ * carry a `__Prov` prefix so they can never collide with anything the spec
+ * imports itself (the same convention the host registry uses).
+ */
+function autoProviderBits(
+  info: ComponentInfo,
+  wraps: Map<string, ProviderRef[]> | undefined,
+  specDir: string,
+): AutoProvBits {
+  const refs = wraps?.get(providerKey(info)) ?? [];
+  if (refs.length === 0) return { imports: "", open: "", close: "" };
+  const imports: string[] = [];
+  let open = "";
+  let close = "";
+  for (const ref of refs) {
+    const binding = `__Prov${ref.componentName}`;
+    const rel = toImportPath(specDir, ref.filePath);
+    imports.push(
+      ref.exportKind === "default"
+        ? `import ${binding} from "${rel}";`
+        : `import { ${ref.componentName} as ${binding} } from "${rel}";`,
+    );
+    open = `${open}<${binding}>`;
+    close = `</${binding}>${close}`;
+  }
+  return { imports: `${imports.join("\n")}\n`, open, close };
 }
 
 /** Named vs default import, from the analyser's exportKind. */
@@ -355,8 +401,7 @@ ${resolveBlock}  test: {
     css: false,
   },
 });
-`
-;
+`;
 }
 
 function escapeRegex(s: string): string {
@@ -493,6 +538,7 @@ function unitSpec(
   apiRoutes: NextjsApiRoute[] | undefined,
   specDir?: string,
   todo?: TodoRecorder,
+  autoProv?: AutoProvBits,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -595,7 +641,9 @@ function unitSpec(
       ? emitFetchTests(name, info, effectFetches, apiRoutes, firstClickTrigger(info), todo)
       : "";
 
-  const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
+  const providerLine =
+    (providerImport ? `import AppProvider from "${providerImport}";\n` : "") +
+    (autoProv?.imports ?? "");
   const mswImports =
     mocksImport && effectFetches.length > 0
       ? `import { http, HttpResponse, delay } from "msw";\nimport { server } from "${mocksImport}";\n`
@@ -612,9 +660,10 @@ function unitSpec(
   const element = info.acceptsChildren
     ? `<${name}${spread}>{CHILD_TEXT}</${name}>`
     : `<${name}${spread} />`;
+  const wrappedElement = autoProv?.open ? `${autoProv.open}${element}${autoProv.close}` : element;
   const renderExpr = providerImport
-    ? `render(<AppProvider>${element}</AppProvider>)`
-    : `render(${element})`;
+    ? `render(<AppProvider>${wrappedElement}</AppProvider>)`
+    : `render(${wrappedElement})`;
   // The variant matrix asserts the component's OWN root where one is known.
   // `container.firstElementChild` used to stand here and cannot fail — see the
   // mount branch for why.
@@ -758,16 +807,18 @@ test("${name} forwards className to the markup it renders", () => {
 }
 
 /**
- * Each cva option renders an observably different class list.
+ * Each cva option renders an observably different DOM.
  *
  * Deliberately NOT an assertion about specific Tailwind tokens. `cn()` is
  * usually tailwind-merge, which drops base classes a later variant conflicts
  * with — verified against the real DOM, where `rounded-lg` is absent at
  * size="sm" — and the tool cannot know whether a project's `cn` merges or just
  * concatenates. What the cva table DOES support is that two options whose class
- * strings differ must produce different markup. That proves the variant prop
- * reaches the DOM and that every option is distinguishable, with no Tailwind
- * knowledge at all.
+ * strings differ must produce different output. Comparing the whole outerHTML,
+ * not the class attribute, is what makes that hold for the shadcn pattern of
+ * expressing the variant as `data-variant`/`data-size` (the group root carries
+ * the data attributes; the per-variant classes live in the CSS through them)
+ * while still catching a variant that reaches no DOM at all.
  *
  * Bails when any two options share a class string (they legitimately render the
  * same), when one is empty, or when there is only one option to compare.
@@ -784,14 +835,14 @@ function emitVariantDistinctness(name: string, info: ComponentInfo): string {
     if (new Set(strings).size !== strings.length) continue;
 
     parts.push(`
-test("${name}: every \`${key}\` option renders a distinct class list", () => {
+test("${name}: every \`${key}\` option renders distinct markup", () => {
   const seen = ${JSON.stringify(options)}.map((option) => {
     const { container, unmount } = renderTarget({ ${JSON.stringify(key)}: option });
     const el = container.querySelector("[class]");
     expect(el, \`${key}=\${option} rendered no element carrying a class\`).not.toBeNull();
-    const cls = el?.getAttribute("class") ?? "";
+    const dom = el?.outerHTML ?? "";
     unmount();
-    return cls;
+    return dom;
   });
   expect(new Set(seen).size, "two options rendered identical markup").toBe(seen.length);
 });`);
@@ -1198,6 +1249,7 @@ function rscSpec(
   specDir?: string,
   todo?: TodoRecorder,
   apiRoutes?: NextjsApiRoute[],
+  autoProv?: AutoProvBits,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -1206,13 +1258,19 @@ function rscSpec(
 
   const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;
 
-  const providerLine = providerImport ? `import AppProvider from "${providerImport}";\n` : "";
+  const providerLine =
+    (providerImport ? `import AppProvider from "${providerImport}";\n` : "") +
+    (autoProv?.imports ?? "");
   // Captured: @testing-library appends its container to document.body on
   // every render, so asserting on document.body could not fail even when the
   // component rendered nothing. The container is what this component produced.
   const renderExpr = providerImport
-    ? `rendered = render(<AppProvider>{ui}</AppProvider>)`
-    : `rendered = render(<>{ui}</>)`;
+    ? autoProv?.open
+      ? `rendered = render(<AppProvider>${autoProv.open}{ui}${autoProv.close}</AppProvider>)`
+      : `rendered = render(<AppProvider>{ui}</AppProvider>)`
+    : autoProv?.open
+      ? `rendered = render(${autoProv.open}{ui}${autoProv.close})`
+      : `rendered = render(<>{ui}</>)`;
 
   const callArgs = rscCallArgs(info);
   // A zero-parameter component never calls buildProps, and an unused helper
@@ -1238,7 +1296,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
   const staticTextTests = emitStaticTextTests(name, info, "rsc");
   const guardTests = emitGuardTests(name, info);
-  const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir);
+  const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir, autoProv);
 
   return `import { describe, test, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -1420,14 +1478,22 @@ function emitPredicateInversionTests(
   info: ComponentInfo,
   providerImport: string | undefined,
   specDir?: string,
+  autoProv?: AutoProvBits,
 ): string {
   const controls = info.predicateInversions ?? [];
   const refusals = info.predicateRefusals ?? [];
   if (controls.length === 0 && refusals.length === 0) return "";
 
   const callArgs = rscCallArgs(info);
-  const renderOf = (uiVar: string): string =>
-    providerImport ? `render(<AppProvider>{${uiVar}}</AppProvider>)` : `render(<>{${uiVar}}</>)`;
+  const renderOf = (uiVar: string): string => {
+    if (autoProv?.open) {
+      const uiExpr = `${autoProv.open}{${uiVar}}${autoProv.close}`;
+      return providerImport ? `render(<AppProvider>${uiExpr}</AppProvider>)` : `render(${uiExpr})`;
+    }
+    return providerImport
+      ? `render(<AppProvider>{${uiVar}}</AppProvider>)`
+      : `render(<>{${uiVar}}</>)`;
+  };
   const staticText = info.staticText ?? [];
   const mountProof = staticText[0];
   const parts: string[] = [];

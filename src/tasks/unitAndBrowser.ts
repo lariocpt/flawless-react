@@ -78,6 +78,7 @@ export const unitAndBrowser: Task = {
       colocate: ctx.colocate,
       force: ctx.force,
       apiRoutes: ctx.nextjs?.apiRoutes,
+      providerWraps: ctx.providerWraps,
       todos,
     };
     const { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept } =
