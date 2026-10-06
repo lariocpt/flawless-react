@@ -416,6 +416,65 @@ function setupTs(mswSetup: boolean, authStubs = new Map<string, AuthStub>()): st
     .map(([spec, stub]) => authShimVitestBlock(spec, stub))
     .join("");
   const polyfills = `
+// Native-import interception: the runner loads node_modules packages through
+// plain import(), where vi.mock cannot reach them. The resolve hook below
+// answers two classes that die at collection: font-loader wrappers executing
+// at module scope (geist), and router-wrapper libraries mounting the REAL
+// next/navigation — "invariant expected app router to be mounted".
+// registerHooks (synchronous, runs IN this thread) is preferred over
+// register() (spawns a separate hooks thread Node deprecates); the stubs ride
+// as data: URLs so no file-path juggling is needed — import.meta.url is an
+// http: URL under vite-node, which the native loader rejects. The capability
+// guard keeps older Node (no registerHooks) compiling and running unchanged.
+import * as __flNodeModule from "node:module";
+{
+  const fontStub =
+    "const font={className:'',variable:'',style:{fontFamily:''}};" +
+    "export default function fontLoader(){return font}";
+  const navigationStub =
+    "const noop=()=>{};" +
+    "export function notFound(){throw new Error('notFound() called')}" +
+    "export function redirect(){throw new Error('NEXT_REDIRECT')}" +
+    "export function permanentRedirect(){throw new Error('NEXT_REDIRECT')}" +
+    "export function usePathname(){return '/'}" +
+    "export function useRouter(){return{push:noop,replace:noop,refresh:noop,back:noop,forward:noop,prefetch:noop}}" +
+    "export function useSearchParams(){return new URLSearchParams()}" +
+    "export function useParams(){return {}}" +
+    "export function useRoute(){return '/'}";
+  const registerHooks = (__flNodeModule as unknown as {
+    registerHooks?: (hooks: {
+      resolve?: (
+        specifier: string,
+        context: unknown,
+        nextResolve: (specifier: string) => { url: string; format: string; shortCircuit: boolean },
+      ) => { url: string; format: string; shortCircuit: boolean };
+    }) => void;
+  }).registerHooks;
+  if (registerHooks) {
+    registerHooks({
+      resolve: (specifier, _context, nextResolve) => {
+        // Bundled library output imports "next/navigation.js" with the
+        // extension, so the bare name and the .js spelling both match.
+        if (/^next\\/font(\\/.*)?$/.test(specifier)) {
+          return {
+            url: \`data:text/javascript,\${encodeURIComponent(fontStub)}\`,
+            format: "module",
+            shortCircuit: true,
+          };
+        }
+        if (/^next\\/navigation(\\.js)?$/.test(specifier)) {
+          return {
+            url: \`data:text/javascript,\${encodeURIComponent(navigationStub)}\`,
+            format: "module",
+            shortCircuit: true,
+          };
+        }
+        return nextResolve(specifier);
+      },
+    });
+  }
+}
+
 // jsdom gaps that real-world component stacks hit constantly (next-themes →
 // matchMedia, virtualisers → ResizeObserver, lazy mounts → IntersectionObserver).
 if (typeof window !== "undefined") {
@@ -504,6 +563,34 @@ vi.mock("next/navigation", () => ({
   useParams: vi.fn(() => ({})),
   useRoute: vi.fn(() => "/"),
 }));
+// Global next/font mocks: the loaders are compile-time shims in the Next
+// pipeline; their runtime modules have NO exports to enumerate. A factory
+// listing only \`default\` starves named loaders (\`import { Caveat } from
+// "next/font/google"\`), so hand every requested name the same callable stub
+// through a Proxy. Native imports (node_modules wrappers like geist that run
+// the loader at module scope) bypass vi.mock entirely — the resolve hook
+// registered above answers those.
+vi.mock("next/font", () => {
+  const loader = () => ({ className: "", variable: "", style: { fontFamily: "" } });
+  return new Proxy({}, {
+    get: (_t, p) => (p === "__esModule" ? true : typeof p === "string" && p !== "then" ? loader : undefined),
+    has: () => true,
+  });
+});
+vi.mock("next/font/local", () => {
+  const loader = () => ({ className: "", variable: "", style: { fontFamily: "" } });
+  return new Proxy({}, {
+    get: (_t, p) => (p === "__esModule" ? true : typeof p === "string" && p !== "then" ? loader : undefined),
+    has: () => true,
+  });
+});
+vi.mock("next/font/google", () => {
+  const loader = () => ({ className: "", variable: "", style: { fontFamily: "" } });
+  return new Proxy({}, {
+    get: (_t, p) => (p === "__esModule" ? true : typeof p === "string" && p !== "then" ? loader : undefined),
+    has: () => true,
+  });
+});
 ${authMocks}`;
   // The explicit vi import: setup files run with vitest's globals at runtime,
   // but the emitted suite must also TYPE-check standalone, and the nav/auth
@@ -522,6 +609,112 @@ ${polyfills}
 beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
+`;
+}
+
+// ---------------------------------------------------------------------------
+// Native-import stub modules (Node ESM resolve hook + stubs, see setupTs)
+// ---------------------------------------------------------------------------
+
+function fontStubMjs(): string {
+  return `// Runtime stub for the Next.js font loaders. Next replaces these imports at
+// BUILD time; under a bare test runner the loaders either cannot resolve
+// (next/font/local is a directory import Node ESM rejects) or are empty
+// shims whose default export is not callable. Any module that runs the
+// loader at module scope — geist and friends — needs this to stand in. The
+// default export must be a FUNCTION: wrapper packages CALL it at module
+// scope and use the result's className/variable/style.
+const font = {
+  className: "",
+  variable: "",
+  style: { fontFamily: "" },
+};
+
+export function createDefault() {
+  return font;
+}
+
+export default function fontLoader() {
+  return font;
+}
+`;
+}
+
+function navigationStubMjs(): string {
+  return `// Runtime stub for next/navigation under NATIVE imports. The test runner
+// loads node_modules packages through plain import(), where vi.mock cannot
+// reach; libraries that wrap the router (@bprogress and friends) then hit
+// the real module and die on "invariant expected app router to be mounted".
+// Same semantics as the setup-file vi.mock: redirects throw (Next aborts
+// rendering at those calls), router methods are no-ops.
+const noop = () => {};
+
+export function notFound() {
+  throw new Error("notFound() called");
+}
+
+export function redirect() {
+  throw new Error("NEXT_REDIRECT");
+}
+
+export function permanentRedirect() {
+  throw new Error("NEXT_REDIRECT");
+}
+
+export function usePathname() {
+  return "/";
+}
+
+export function useRouter() {
+  return {
+    push: noop,
+    replace: noop,
+    refresh: noop,
+    back: noop,
+    forward: noop,
+    prefetch: noop,
+  };
+}
+
+export function useSearchParams() {
+  return new URLSearchParams();
+}
+
+export function useParams() {
+  return {};
+}
+
+export function useRoute() {
+  return "/";
+}
+`;
+}
+
+function nativeImportHooksMjs(): string {
+  return `// Node ESM resolve hook: the test runner loads node_modules packages through
+// native import(), where vi.mock cannot reach. Two classes of Next module
+// break that way. The font loaders: geist and friends run them at module
+// scope, and next/font/local's directory import has no ESM answer (next
+// ships no exports map). next/navigation: router-wrapper libraries hit the
+// real module and throw "invariant expected app router to be mounted".
+// Point each class at its stub; everything else resolves normally. Bundled
+// library output imports "next/navigation.js" with the extension, so the
+// bare name and the .js spelling both match.
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const dir = pathToFileURL(fileURLToPath(new URL(".", import.meta.url))).href;
+const FONT_STUB = \`\${dir}font-stub.mjs\`;
+const NAVIGATION_STUB = \`\${dir}navigation-stub.mjs\`;
+
+export async function resolve(specifier, context, nextResolve) {
+  if (/^next\\/font(\\/.*)?$/.test(specifier)) {
+    return { url: FONT_STUB, format: "module", shortCircuit: true };
+  }
+  if (/^next\\/navigation(\\.js)?$/.test(specifier)) {
+    return { url: NAVIGATION_STUB, format: "module", shortCircuit: true };
+  }
+  return nextResolve(specifier, context);
+}
 `;
 }
 

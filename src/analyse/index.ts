@@ -16,6 +16,7 @@ import { extractRenderMode } from "./extractRenderMode.ts";
 import { extractRootTag } from "./extractRootTag.ts";
 import { extractState } from "./extractState.ts";
 import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
+import { dataConstantExports } from "./dataExports.ts";
 import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
@@ -278,11 +279,18 @@ async function analyseOne(
       // rather than mounting what React's client renderer refuses.
       const asyncComponents =
         mi.kind === "component" ? asyncComponentExports(mi, resolvedPath, resolver, cache) : [];
+      // Data-constant exports (config modules): when every name the component
+      // imports is one, the mock emitter leaves the module REAL — a factory
+      // replacement would starve transitive importers of the exports this
+      // component never named.
+      const dataExports =
+        mi.kind === "value" ? dataConstantExports(mi, resolvedPath, resolver, cache) : [];
       return {
         ...mi,
         resolvedPath,
         ...(Object.keys(importedReturns).length > 0 ? { importedReturns } : {}),
         ...(asyncComponents.length > 0 ? { asyncComponents } : {}),
+        ...(dataExports.length > 0 ? { dataExports } : {}),
       };
     }
     const target = cache.get(resolvedPath);

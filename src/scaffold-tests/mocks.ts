@@ -81,6 +81,9 @@ interface MergedBinding {
   local: string;
   isDefault: boolean;
   pure: boolean;
+  /** The declaration is a module-side data constant (ModuleImportInfo
+   * .dataExports): a value read, never a dep to stub. */
+  data: boolean;
 }
 
 interface MergedModule {
@@ -112,6 +115,7 @@ function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key:
       moduleName: membershipName(mi, i),
       isDefault: mi.hasDefault && i === 0,
       pure: PURE_UTILITY_BINDINGS.has(membershipName(mi, i)),
+      data: mi.dataExports?.includes(membershipName(mi, i)) ?? false,
     });
   });
 }
@@ -203,6 +207,19 @@ export function emitModuleMocks(
   if (mode === "rsc") {
     for (const mi of info.moduleImports ?? []) {
       if (!reachesDataPath(mi)) continue;
+      // EVERY name a data-path statement imports is a module-side data
+      // constant → the module stays out of the groups, and the mock loop
+      // below passes it by entirely. The statement never stubs anything,
+      // and a factory replacement for it would starve transitive importers
+      // (json-ld reading SITE_INFO off a mock that only knew
+      // SOURCE_CODE_GITHUB_REPO — the chanhdai collection wall).
+      if (
+        mi.dataExports !== undefined &&
+        mi.names.length > 0 &&
+        mi.names.every((_, i) => mi.dataExports?.includes(membershipName(mi, i)))
+      ) {
+        continue;
+      }
       mergeInto(dataGroups, mi, mockSpecifier(mi, specDir));
     }
   }
@@ -255,7 +272,7 @@ export function emitModuleMocks(
     if (!reachesDataPath(mi)) continue;
     const group = dataGroups.get(mockSpecifier(mi, specDir));
     if (!group) continue;
-    if (group.bindings.length > 0 && group.bindings.every((b) => b.pure)) continue;
+    if (group.bindings.length > 0 && group.bindings.every((b) => b.pure || b.data)) continue;
     push(mi, (spec) => dataModuleMock(group, info, spec, todo, apiRoutes));
   }
 

@@ -721,6 +721,15 @@ export interface ModuleImportInfo {
     }
   >;
   /**
+   * Module-side export names whose declarations are DATA constants — literals,
+   * object/array literals of data, property-access chains; never a call, a
+   * construction, or a function value (analyse/dataExports.ts). When every
+   * value binding of the import is one, the RSC mock emitter leaves the module
+   * real: the factory replacement would starve transitive importers of the
+   * exports this component never named.
+   */
+  dataExports?: string[];
+  /**
    * Module-side export names whose declarations are ASYNC functions, for
    * imports used as JSX tags. React's client renderer refuses an async
    * function component outright, so a server page rendering `<InsightsCard>`

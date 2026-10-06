@@ -158,6 +158,30 @@ describe("isUsableUnitProvider", () => {
       false,
     );
   });
+
+  test("rejects a sync layout that renders the <html> document shell", () => {
+    // A sync root layout passes the async/server-import checks, so it used to
+    // be mounted raw as the unit provider. RTL nests its <html> inside the
+    // container div ("In HTML, <html> cannot be a child of <div>"); jsdom's
+    // node-list invariants break under that nesting, and React's
+    // continuous-event dispatch walks them — a pointer click wedges the
+    // worker at 100% CPU forever (chanhdai's ThemeToggle click spec).
+    const dir = tmpDir();
+    const layout = path.join(dir, "layout.tsx");
+    writeFileSync(
+      layout,
+      `import type { ReactNode } from "react";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+    );
+    expect(isUsableUnitProvider(layout)).toBe(false);
+  });
 });
 
 describe("ensureClientProviderWrapper", () => {
