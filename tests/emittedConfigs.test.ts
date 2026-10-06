@@ -281,6 +281,46 @@ describe("the emitted vitest config resolves to files that exist", () => {
     expect(react, "react is pinned").toBeDefined();
     expect((react as { replacement: string }).replacement).toBe(path.join(suiteNm, "react"));
   });
+
+  test("two roots claiming one tsconfig prefix resolve per importer, not one alias", async () => {
+    // nakama: apps/web and docs/website each map `@/*` to their OWN src. One
+    // global alias can honour only one target — the other package's imports
+    // died at transform — so a colliding prefix leaves resolve.alias entirely
+    // and resolves through the emitted importer-aware plugin instead.
+    const root = projectWithStubs();
+    const app = path.join(root, "app");
+    const docs = path.join(root, "docs");
+    const trees = [];
+    for (const dir of [app, docs]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        path.join(dir, "tsconfig.json"),
+        JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+      );
+      trees.push(await toolbarInside(dir));
+      writeFileSync(path.join(dir, "src", "greeting.ts"), "export const hi = 1;");
+    }
+    const outDir = path.join(root, ".flawless");
+    await run("unit-browser" as TaskId, ctxOf({ outDir, trees }));
+
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
+    const resolve = cfg.resolve as { alias?: Array<{ find: RegExp | string }> };
+    expect(
+      (resolve.alias ?? []).find((a) => a.find instanceof RegExp && a.find.test("@/greeting")),
+      "the colliding prefix is not collapsed into one alias",
+    ).toBeUndefined();
+    type Plug = { name: string; resolveId?: (s: string, i?: string) => string | null };
+    const plugins = (cfg.plugins as unknown[]).flat(Infinity) as Plug[];
+    const plugin = plugins.find((p) => p && p.name === "flawless-multiroot-tsconfig-paths");
+    expect(plugin, "the multi-root plugin is emitted").toBeDefined();
+    expect(plugin!.resolveId!("@/greeting", path.join(app, "src", "Toolbar.tsx"))).toBe(
+      path.join(app, "src", "greeting.ts"),
+    );
+    expect(plugin!.resolveId!("@/greeting", path.join(docs, "src", "Toolbar.tsx"))).toBe(
+      path.join(docs, "src", "greeting.ts"),
+    );
+    expect(plugin!.resolveId!("@/nope", path.join(app, "src", "Toolbar.tsx"))).toBeNull();
+  });
 });
 
 describe("the emitted playwright configs select the specs the same run wrote", () => {

@@ -71,6 +71,19 @@ export interface AliasEntry {
   prefix: boolean;
 }
 
+/**
+ * A tsconfig prefix (usually `@/`) claimed by TWO packages whose tsconfigs
+ * point it at different directories — a workspace with an app and a docs site.
+ * One global vite alias cannot honour both, so these resolve per importer
+ * through the emitted plugin instead of resolve.alias.
+ */
+export interface MultiRootAlias {
+  /** Import prefix as tsconfig writes it, wildcard stripped ("@/"). */
+  prefix: string;
+  /** Candidate target directories in root-discovery order. */
+  dirs: string[];
+}
+
 export interface UnitBrowserRenderOptions {
   trees: ComponentTree[];
   outDir: string;
@@ -80,6 +93,9 @@ export interface UnitBrowserRenderOptions {
   provider?: string;
   /** vitest resolve.alias entries (tsconfig paths + react dedupe). */
   resolveAliases?: AliasEntry[];
+  /** tsconfig prefixes claimed by several roots with different targets: the
+   *  emitted config resolves those per importer instead of aliasing them. */
+  multiRootAliases?: MultiRootAlias[];
   /** Emit unit specs beside the analysed sources as <base>.flawless.test.tsx. */
   colocate?: boolean;
   /** API routes with response bodies, for fetch-spec fixtures. */
@@ -357,6 +373,59 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
   const dedupeLine = `    dedupe: ["react", "react-dom"],\n`;
   const aliasBlock = aliasLines.length > 0 ? `    alias: [\n${aliasLines}\n    ],\n` : "";
   const resolveBlock = `  resolve: {\n${dedupeLine}${aliasBlock}  },\n`;
+  // Several roots claiming one tsconfig prefix. The alias map is a pure string
+  // rewrite, so with two packages both writing `@/` to different targets half
+  // the repo's imports land in the wrong tree (nakama: docs/website's
+  // `@/lib/source` resolved into apps/web). Resolve per importer instead:
+  // prefer the candidate the importer itself lives under, then whichever
+  // candidate actually has the file. Dirs are emitted configDir-relative so
+  // the config survives a moved checkout.
+  const multi = opts.multiRootAliases ?? [];
+  const multiBlock =
+    multi.length === 0
+      ? ""
+      : `const multiRootPaths = [
+${multi
+  .map(
+    (m) =>
+      `  { prefix: ${JSON.stringify(m.prefix)}, dirs: [${m.dirs
+        .map((d) => `path.resolve(configDir, ${JSON.stringify(relativeToEmitted(opts.outDir, d))})`)
+        .join(", ")}] },`,
+  )
+  .join("\n")}
+];
+const probeFile = (base: string): string | null => {
+  for (const cand of [
+    ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"].map((e) => base + e),
+    ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"].map((e) =>
+      path.join(base, "index" + e),
+    ),
+  ]) {
+    if (existsSync(cand) && statSync(cand).isFile()) return cand;
+  }
+  return null;
+};
+const multiRootPlugin = {
+  name: "flawless-multiroot-tsconfig-paths",
+  enforce: "pre",
+  resolveId(spec: string, importer?: string) {
+    for (const m of multiRootPaths) {
+      if (!spec.startsWith(m.prefix)) continue;
+      const rest = spec.slice(m.prefix.length);
+      const dirs = [...m.dirs].sort(
+        (a, b) => (importer?.startsWith(b) ? 1 : 0) - (importer?.startsWith(a) ? 1 : 0),
+      );
+      for (const dir of dirs) {
+        const hit = probeFile(path.join(dir, rest));
+        if (hit) return hit;
+      }
+    }
+    return null;
+  },
+};
+`;
+  const pluginsBlock = multi.length === 0 ? "" : `  plugins: [multiRootPlugin],\n`;
+  const fsImport = multi.length === 0 ? "" : `import { existsSync, statSync } from "node:fs";\n`;
   if (opts.colocate) {
     // Colocate mode runs as `vitest run --config <out>/vitest.config.mts`.
     // Vite roots itself at the CONFIG file's directory, so without an explicit
@@ -376,16 +445,16 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
     // config root is the out dir's parent and cannot reach colocated specs in
     // the source tree — same as before this change, and out of scope here.
     const include = [`**/*.flawless.test.{ts,tsx}`, `${outName}/unit/**/*.test.{ts,tsx}`];
-    return `import path from "node:path";
+    return `${fsImport}import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, "..");
-
+${multiBlock}
 export default defineConfig({
   root: projectRoot,
-  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
+${pluginsBlock}  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
   // jsx "preserve", which gives vitest's esbuild nothing usable, and every
   // spec died at render with "React is not defined". The suite pins react
   // >=18, where the automatic runtime always exists (FR-018 — found the
@@ -408,18 +477,19 @@ ${resolveBlock}  test: {
 `;
   }
   const anchor =
-    aliasLines.length > 0
-      ? `import path from "node:path";
+    aliasLines.length > 0 || multi.length > 0
+      ? `${fsImport}import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
+${multiBlock}
 `
       : `import { defineConfig } from "vitest/config";
+
 `;
-  return `${anchor}
-export default defineConfig({
-  // See the colocate branch: a host tsconfig with jsx "preserve" (the
+  return `${anchor}export default defineConfig({
+${pluginsBlock}  // See the colocate branch: a host tsconfig with jsx "preserve" (the
   // Next.js default) left esbuild on the classic runtime and every render
   // threw "React is not defined" (FR-018).
   esbuild: { jsx: "automatic" },

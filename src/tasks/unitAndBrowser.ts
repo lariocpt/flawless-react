@@ -4,7 +4,7 @@ import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
 import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
-import type { AliasEntry } from "../scaffold-tests/templates.ts";
+import type { AliasEntry, MultiRootAlias } from "../scaffold-tests/templates.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
 import { TodoCounter } from "../types.ts";
 
@@ -75,6 +75,10 @@ export const unitAndBrowser: Task = {
     // the passthrough end to end, because a rebuild of the object anywhere on
     // the path would silently drop the counter and report zero debt.
     const todos = new TodoCounter();
+    const aliasRes =
+      aliasRoots.length > 0
+        ? computeResolveAliases(aliasRoots, ctx.nextjs ? ctx.nextjs.root : ctx.outDir)
+        : { aliases: [] as AliasEntry[], multiRoot: [] as MultiRootAlias[] };
     const scaffoldOptions = {
       browserSpecs,
       trees: ctx.trees,
@@ -83,10 +87,8 @@ export const unitAndBrowser: Task = {
       skipInnerPackageJson: ctx.nextjs !== undefined,
       mswSetup: ctx.nextjs !== undefined,
       provider: ctx.provider,
-      resolveAliases:
-        aliasRoots.length > 0
-          ? computeResolveAliases(aliasRoots, ctx.nextjs ? ctx.nextjs.root : ctx.outDir)
-          : undefined,
+      resolveAliases: aliasRes.aliases.length > 0 ? aliasRes.aliases : undefined,
+      multiRootAliases: aliasRes.multiRoot.length > 0 ? aliasRes.multiRoot : undefined,
       colocate: ctx.colocate,
       force: ctx.force,
       apiRoutes: ctx.nextjs?.apiRoutes,
@@ -154,23 +156,33 @@ export const unitAndBrowser: Task = {
  * aliases, plus exact react/react-dom pins so a monorepo with several React
  * copies never pairs mismatched react + react-dom under jsdom.
  */
-function computeResolveAliases(roots: string[], pinFrom?: string): AliasEntry[] {
+function computeResolveAliases(
+  roots: string[],
+  pinFrom?: string,
+): { aliases: AliasEntry[]; multiRoot: MultiRootAlias[] } {
   const entries: AliasEntry[] = [];
-  const seen = new Set<string>();
+  const multiRoot: MultiRootAlias[] = [];
+  const targets = new Map<string, string[]>();
   const resolver = new ModuleResolver();
-  // A multi-package run may put sources under several tsconfigs; merge their
-  // patterns, first definition of a prefix wins (one alias map serves every
-  // spec — two packages claiming `@/` differently cannot both be honoured).
+  // A multi-package run may put sources under several tsconfigs; collect every
+  // prefix's candidate targets first. One root → plain alias. Several roots
+  // claiming the same prefix with DIFFERENT targets cannot collapse into the
+  // one alias map vite offers — those become importer-aware plugin entries.
   for (const projectRoot of roots) {
     for (const p of resolver.aliasPatternsFor(projectRoot)) {
       if (p.exact || p.suffix !== "") continue;
       const target = p.targets[0];
       if (!target) continue;
-      if (seen.has(p.prefix)) continue;
-      seen.add(p.prefix);
       const dir = path.resolve(p.baseDir, target.replace(/\*.*$/, "")).replace(/\/+$/, "");
-      entries.push({ find: p.prefix, replacement: dir, prefix: true });
+      const arr = targets.get(p.prefix);
+      if (arr) {
+        if (!arr.includes(dir)) arr.push(dir);
+      } else targets.set(p.prefix, [dir]);
     }
+  }
+  for (const [prefix, dirs] of targets) {
+    if (dirs.length === 1) entries.push({ find: prefix, replacement: dirs[0]!, prefix: true });
+    else multiRoot.push({ prefix, dirs });
   }
 
   // The shared-react pin. A Next suite runs on the repo's own vitest/RTL
@@ -200,7 +212,7 @@ function computeResolveAliases(roots: string[], pinFrom?: string): AliasEntry[] 
     pin("react-dom", "react-dom");
     pin("react", "react");
   }
-  return entries;
+  return { aliases: entries, multiRoot };
 }
 
 /**
