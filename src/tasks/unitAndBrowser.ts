@@ -53,6 +53,15 @@ export const unitAndBrowser: Task = {
     }
 
     const projectRoot = ctx.nextjs?.root;
+    // Alias / react-pin anchor. A Next app is anchored at the app root; a
+    // plain vite project has no such marker, but its tsconfig sits right next
+    // to the analysed sources — anchor at each source directory and let
+    // nearestConfig() walk up from there. Without this, non-Next specs lost
+    // every tsconfig `paths` alias AND the shared-react pin, so `@/...`
+    // imports failed to resolve and the suite crashed on dual React.
+    const aliasRoots = ctx.nextjs
+      ? [ctx.nextjs.root]
+      : [...new Set(flattenTrees(ctx.trees).map((c) => path.dirname(c.info.filePath)))];
     // Browser specs drive the perf-harness host; emitting them without it
     // would hand the user a suite that cannot start.
     const browserSpecs =
@@ -74,7 +83,10 @@ export const unitAndBrowser: Task = {
       skipInnerPackageJson: ctx.nextjs !== undefined,
       mswSetup: ctx.nextjs !== undefined,
       provider: ctx.provider,
-      resolveAliases: projectRoot ? computeResolveAliases(projectRoot) : undefined,
+      resolveAliases:
+        aliasRoots.length > 0
+          ? computeResolveAliases(aliasRoots, ctx.nextjs ? ctx.nextjs.root : ctx.outDir)
+          : undefined,
       colocate: ctx.colocate,
       force: ctx.force,
       apiRoutes: ctx.nextjs?.apiRoutes,
@@ -142,18 +154,33 @@ export const unitAndBrowser: Task = {
  * aliases, plus exact react/react-dom pins so a monorepo with several React
  * copies never pairs mismatched react + react-dom under jsdom.
  */
-function computeResolveAliases(projectRoot: string): AliasEntry[] {
+function computeResolveAliases(roots: string[], pinFrom?: string): AliasEntry[] {
   const entries: AliasEntry[] = [];
+  const seen = new Set<string>();
   const resolver = new ModuleResolver();
-  for (const p of resolver.aliasPatternsFor(projectRoot)) {
-    if (p.exact || p.suffix !== "") continue;
-    const target = p.targets[0];
-    if (!target) continue;
-    const dir = path.resolve(p.baseDir, target.replace(/\*.*$/, "")).replace(/\/+$/, "");
-    entries.push({ find: p.prefix, replacement: dir, prefix: true });
+  // A multi-package run may put sources under several tsconfigs; merge their
+  // patterns, first definition of a prefix wins (one alias map serves every
+  // spec — two packages claiming `@/` differently cannot both be honoured).
+  for (const projectRoot of roots) {
+    for (const p of resolver.aliasPatternsFor(projectRoot)) {
+      if (p.exact || p.suffix !== "") continue;
+      const target = p.targets[0];
+      if (!target) continue;
+      if (seen.has(p.prefix)) continue;
+      seen.add(p.prefix);
+      const dir = path.resolve(p.baseDir, target.replace(/\*.*$/, "")).replace(/\/+$/, "");
+      entries.push({ find: p.prefix, replacement: dir, prefix: true });
+    }
   }
 
-  const nmDir = nearestReactNodeModules(projectRoot);
+  // The shared-react pin. A Next suite runs on the repo's own vitest/RTL
+  // stack, so it anchors at the app root — unchanged. A non-Next standalone
+  // suite installs its test stack into <outDir>/node_modules: the specs' RTL
+  // lives there, and its react must be the copy everything else is aliased
+  // to. nearestReactNodeModules's own preference (the dir that carries
+  // @testing-library/react wins) keeps this honest when outDir lacks it — the
+  // walk continues to the repo copy.
+  const nmDir = nearestReactNodeModules(pinFrom);
   if (nmDir) {
     const pin = (spec: string, rel: string): void => {
       const abs = path.join(nmDir, rel);

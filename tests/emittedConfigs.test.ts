@@ -220,6 +220,67 @@ describe("the emitted vitest config resolves to files that exist", () => {
       expect(existsSync(a.replacement.replace(/\/$/, "")), `${a.replacement} exists`).toBe(true);
     }
   });
+
+  test("a non-Next run carries the sources' tsconfig aliases into the vitest config", async () => {
+    // computeResolveAliases used to run only when a NextjsContext anchored it.
+    // A vite repo has no such anchor, so every `@/` import in its specs failed
+    // to resolve — the whole unit plane was blocked for non-Next projects.
+    // The anchor is now the analysed source's own directory.
+    const root = projectWithStubs();
+    writeFileSync(
+      path.join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+    );
+    const outDir = path.join(root, "flawless");
+    await run("unit-browser" as TaskId, ctxOf({ outDir, trees: [await toolbarInside(root)] }));
+
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
+    const resolve = cfg.resolve as {
+      alias?: Array<{ find: RegExp | string; replacement: string }>;
+    };
+    const at = (resolve.alias ?? []).find(
+      (a) => typeof a.find !== "string" && a.find instanceof RegExp && a.find.test("@/greeting"),
+    );
+    expect(at, "an alias matching `@/...` was emitted").toBeDefined();
+    expect((at as { replacement: string }).replacement).toBe(`${path.join(root, "src")}/`);
+  });
+
+  test("a standalone suite pins react to its own test stack, not a repo copy", async () => {
+    // Non-Next suites install vitest + RTL into <outDir>/node_modules. The
+    // specs import RTL from there, and that RTL's react must be the alias
+    // target — aliasing sources to a different copy is the dual-React
+    // invalid-hook-call crash, verbatim.
+    const root = projectWithStubs();
+    const outDir = path.join(root, ".flawless");
+    const suiteNm = path.join(outDir, "node_modules");
+    for (const f of [
+      "react/jsx-runtime.js",
+      "react/jsx-dev-runtime.js",
+      "react-dom/client.js",
+      "react-dom/test-utils.js",
+      "react-dom/server.js",
+      "react-dom/server.browser.js",
+      "react/index.js",
+      "react-dom/index.js",
+    ]) {
+      const file = path.join(suiteNm, f);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, "export {}");
+    }
+    mkdirSync(path.join(suiteNm, "@testing-library/react"), { recursive: true });
+
+    await run("unit-browser" as TaskId, ctxOf({ outDir, trees: [await toolbarInside(root)] }));
+
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
+    const resolve = cfg.resolve as {
+      alias?: Array<{ find: RegExp | string; replacement: string }>;
+    };
+    const react = (resolve.alias ?? []).find(
+      (a) => a.find instanceof RegExp && a.find.source === "^react$",
+    );
+    expect(react, "react is pinned").toBeDefined();
+    expect((react as { replacement: string }).replacement).toBe(path.join(suiteNm, "react"));
+  });
 });
 
 describe("the emitted playwright configs select the specs the same run wrote", () => {
