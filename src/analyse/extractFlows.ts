@@ -78,7 +78,7 @@ function childrenFlow(
     if (ts.isJsxSpreadAttribute(n) && reached(n)) {
       const owner = n.parent?.parent;
       const owned = owner ? resolvedOf(owner, hostTag) : undefined;
-      if (owned && acceptsChildren(owned)) {
+      if (owned && acceptsChildren(owned) && !explicitChildrenOverrideSpread(owner)) {
         found = true;
         return;
       }
@@ -87,6 +87,25 @@ function childrenFlow(
   };
   visit(root);
   return found;
+}
+
+/**
+ * JSX explicit children REPLACE spread children — `<svg {...props}><path/></svg>`
+ * never renders `props.children`, and every icon in the corpus is exactly that
+ * shape (SVGProps-typed, children accepted via the spread, fixed paths rendered).
+ * The sentinel-child test against one is not a failing component, it is a test
+ * asserting a JSX precedence rule backwards, so the flow must not report true.
+ */
+function explicitChildrenOverrideSpread(owner: ts.Node | undefined): boolean {
+  if (!owner || !ts.isJsxElement(owner.parent)) return false;
+  return owner.parent.children.some(
+    (c) =>
+      (ts.isJsxText(c) && c.getText().trim().length > 0) ||
+      ts.isJsxElement(c) ||
+      ts.isJsxSelfClosingElement(c) ||
+      ts.isJsxFragment(c) ||
+      (ts.isJsxExpression(c) && c.expression !== undefined),
+  );
 }
 
 /**
