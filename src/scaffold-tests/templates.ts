@@ -2060,7 +2060,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   const guards = info.guards ?? [];
   const guardSummary =
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
-  const staticTextTests = emitStaticTextTests(name, info, "rsc");
+  const staticTextTests = emitStaticTextTests(name, info, "rsc", providerImport, autoProv);
   const guardTests = emitGuardTests(name, info);
   const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir, autoProv);
 
@@ -2146,13 +2146,27 @@ function rscCallArgs(info: ComponentInfo): string {
  * element's whole normalised text, which is why the analyser only keeps
  * sole-child text — anything else would assert a string that never appears.
  */
-function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "rsc"): string {
+function emitStaticTextTests(
+  name: string,
+  info: ComponentInfo,
+  mode: "unit" | "rsc",
+  providerImport?: string,
+  autoProv?: AutoProvBits,
+): string {
   const texts = info.staticText ?? [];
   if (texts.length === 0) return "";
   const callArgs = rscCallArgs(info);
   // An RSC may legitimately abort via notFound()/redirect() against empty
   // mocks. The main test asserts that outcome, so bail out here instead of
   // reporting a second failure for the same known behaviour.
+  //
+  // The render must carry the SAME provider wrapping as the main test: a
+  // child reading a context (useBoundaryMode → BoundaryProvider) throws
+  // "must be used within X" against a bare render, and the throw lands in
+  // render() — outside the guard-catch — so the bare version failed for a
+  // reason the main test had already solved.
+  const open = `${providerImport ? "<AppProvider>" : ""}${autoProv?.open ?? ""}`;
+  const close = `${autoProv?.close ?? ""}${providerImport ? "</AppProvider>" : ""}`;
   const render =
     mode === "rsc"
       ? `let ui: React.ReactNode;
@@ -2161,7 +2175,7 @@ function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "
       } catch {
         return;
       }
-      render(<>{ui}</>);`
+      render(${open || "<>"}{ui}${close || "</>"});`
       : "renderTarget();";
   return `
 describe("${name} static content", () => {
