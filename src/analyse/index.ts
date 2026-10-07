@@ -33,6 +33,7 @@ import { ModuleResolver } from "./resolveModule.ts";
 import { resolveTagRootTags } from "./resolveTagRootTags.ts";
 import { extractServerActionReturns } from "./serverActionReturns.ts";
 import { exportedNames, SourceFileCache } from "./sourceCache.ts";
+import { inheritSpreadSiblingProps } from "./spreadSiblings.ts";
 import { walkChildren } from "./walkChildren.ts";
 
 /**
@@ -186,6 +187,17 @@ async function analyseOne(
     if (!unresolvedProps.includes(u.propName)) unresolvedProps.push(u.propName);
     if (!promiseProps.includes(u.propName)) promiseProps.push(u.propName);
   }
+  // `<Sibling {...props} />` in this same file: the forwarding is the
+  // consuming. NavLink resolves no props at all (Omit<T> & {…}) yet its
+  // default-mount spec dies inside NavLinkInner's `props.href.toString()`.
+  inheritSpreadSiblingProps(
+    unit,
+    parsed.components,
+    new Set<string>([...Object.keys(propsShape), ...unresolvedProps]),
+    unresolvedProps,
+    propUsage,
+    parsed.sourceFile,
+  );
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
   // Endpoints reached through the app's own fetch wrapper (one hop). Native
