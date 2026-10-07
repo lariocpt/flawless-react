@@ -146,6 +146,17 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
   // included): the host stubs those modules by absolute path with their FULL
   // export surface (serverActionExports), so nothing drags in the database
   // driver and every ESM binding — named or namespace member — resolves.
+  // next/og is the exception that proves the rule: ImageResponse is an
+  // edge-runtime renderer (satori + resvg.wasm + sharp), not a DOM component
+  // — app/icon.tsx and opengraph-image.tsx are route handlers in clothing.
+  for (const mi of info.moduleImports ?? []) {
+    if (mi.specifier === "next/og" || mi.specifier.startsWith("next/og/")) {
+      return {
+        eligible: false,
+        reason: "renders through next/og (edge ImageResponse) — not a browser component",
+      };
+    }
+  }
   return { eligible: true };
 }
 

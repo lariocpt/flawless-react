@@ -661,7 +661,10 @@ export async function deriveContextProviderWraps(
   const ctxCache = new Map<string, CtxFacts>();
   const ctxOnce = (parsed: ParsedFile): CtxFacts => {
     let f = ctxCache.get(parsed.filePath);
-    if (!f) ctxCache.set(parsed.filePath, (f = ctxFactsOf(parsed)));
+    if (!f) {
+      f = ctxFactsOf(parsed);
+      ctxCache.set(parsed.filePath, f);
+    }
     return f;
   };
 
@@ -695,7 +698,10 @@ export async function deriveContextProviderWraps(
   const addReq = (compKey: string, ref: ProviderRef) => {
     if (provKey(ref) === compKey) return; // never wraps itself
     let m = reqs.get(compKey);
-    if (!m) reqs.set(compKey, (m = new Map()));
+    if (!m) {
+      m = new Map();
+      reqs.set(compKey, m);
+    }
     m.set(provKey(ref), ref);
   };
 
@@ -816,7 +822,10 @@ export async function deriveContextProviderWraps(
       const ck = providerKey(c.entry);
       if (ck !== pk) {
         let s = edges.get(pk);
-        if (!s) edges.set(pk, (s = new Set()));
+        if (!s) {
+          s = new Set();
+          edges.set(pk, s);
+        }
         s.add(ck);
       }
       walk(c);

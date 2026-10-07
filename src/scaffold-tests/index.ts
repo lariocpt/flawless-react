@@ -177,6 +177,11 @@ export function suitePackageJson(outDir: string, withBrowser: boolean): string {
       },
       devDependencies: {
         "@playwright/test": "^1.49.0",
+        // next's trace tracer require()s this OPTIONAL peer at module load.
+        // webpack tolerates the miss; the perf host's bun transpiler hard-
+        // errors on it. Ship the real package — without a registered
+        // provider it is a faithful no-op, identical to production behavior.
+        "@opentelemetry/api": "^1.9.0",
         "@types/node": "^22.0.0",
         "@types/react": "^18.3.0",
         "@types/react-dom": "^18.3.0",

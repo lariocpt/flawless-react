@@ -141,21 +141,19 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       relPath: "server-only-stub.ts",
       content: "// Inert replacement for the server-component marker package.\nexport {};\n",
     },
-  ];
-  // Generated library-provider shims the wrap map mounts: the file lives at
-  // the IMPORTING PACKAGE's root, not the outDir, because that is the only
-  // place the bare library import inside it resolves (package hoisting is
-  // not a thing in bun workspaces). Tool-owned content — rewritten per run.
-  for (const shim of referencedLibraryShims(
-    opts.providerWraps,
-    flat.map((c) => c.info.filePath),
-  )) {
-    files.push({
+    // Generated library-provider shims the wrap map mounts: the file lives at
+    // the IMPORTING PACKAGE's root, not the outDir, because that is the only
+    // place the bare library import inside it resolves (package hoisting is
+    // not a thing in bun workspaces). Tool-owned content — rewritten per run.
+    ...referencedLibraryShims(
+      opts.providerWraps,
+      flat.map((c) => c.info.filePath),
+    ).map((shim) => ({
       relPath: path.relative(opts.outDir, shim.filePath),
       absPath: shim.filePath,
       content: libraryShimSource(shim.module, shim.componentName),
-    });
-  }
+    })),
+  ];
   if (withBrowser) {
     files.push({ relPath: "browser/playwright.config.ts", content: browserPlaywrightConfig() });
   }

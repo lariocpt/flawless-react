@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { type AuthStub, authShimEsm, collectAuthStubs } from "../analyse/authShims.ts";
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
@@ -456,12 +457,42 @@ export default defineConfig({
 `;
 }
 
+// The app's module scope runs BEFORE any spec: a top-level
+// `new URL(process.env.DATABASE_URL)` throws and takes the whole host bundle
+// down (one registry imports every component). The runtime polyfill gives
+// `process` an empty env, so the values must be inlined as build defines.
+// Repo-root .env files, Next's precedence order (later wins). The host binds
+// 127.0.0.1 and the bundle never leaves the suite's disk.
+function collectEnvDefines(): string {
+  const files = [".env", ".env.local", ".env.development", ".env.development.local"];
+  const merged = new Map<string, string>();
+  for (const f of files) {
+    let txt: string;
+    try {
+      txt = readFileSync(path.resolve(process.cwd(), f), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of txt.split("\n")) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+      if (!m) continue;
+      let v = m[2].trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      if (v) merged.set(m[1], v);
+    }
+  }
+  return [...merged].map(([k, v]) => `"process.env.${k}": ${JSON.stringify(v)},`).join("\n    ");
+}
+
 function hostServer(
   hasMock: boolean,
   serverActionStubs = new Map<string, ServerActionStub>(),
   hostDir = "",
   authStubs = new Map<string, AuthStub>(),
 ): string {
+  const envDefineLines = collectEnvDefines();
   const mockProxyBlock = hasMock
     ? `
     // Proxy any other request to the mock server so the component's relative
@@ -578,12 +609,99 @@ const stubServerModules: BunPlugin = {
       namespace: "flawless-node-stub",
     }));
     build.onLoad({ filter: /.*/, namespace: "flawless-node-stub" }, () => ({
-      contents: "const mod = new Proxy({}, { get: () => () => {} }); export default mod; export const readFileSync = () => ''; export const statSync = () => ({ isDirectory: () => false, isFile: () => false }); export const readdirSync = () => []; export const existsSync = () => false; export const createReadStream = () => ({ pipe: () => {} }); export const createGzip = () => ({ pipe: () => {} }); export const createDeflate = () => ({ pipe: () => {} });",
-      loader: "ts",
+      contents:
+        "const make = () => { const f = function () {}; return new Proxy(f, { get: (t, p) => (p === '__esModule' ? false : p === 'then' ? undefined : (t[p] ??= make())), apply: () => make(), construct: () => new Proxy({}, { get: () => () => undefined }) }); }; const KNOWN = ['default', 'Buffer', 'URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder', 'performance', 'platform', 'arch', 'env', 'version', 'cwd', 'dirname', 'join', 'resolve', 'sep', 'delimiter', 'normalize', 'extname', 'basename', 'relative', 'isAbsolute', 'tmpdir', 'homedir', 'readFileSync', 'writeFileSync', 'existsSync', 'statSync', 'readdirSync', 'mkdirSync', 'rmSync', 'promisify', 'createReadStream', 'createWriteStream', 'createGzip', 'createDeflate', 'pipeline', 'fileURLToPath', 'pathToFileURL', 'randomUUID', 'execSync', 'spawnSync', 'execFileSync', 'fetch', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'AbortController', 'AbortSignal', 'EventEmitter', 'once', 'Stream', 'inspect', 'format', 'types', 'isDeepStrictEqual', 'createInterface', 'question', 'getLogger', 'Drizzle', 'drizzle', 'Kysely', 'Pool', 'Client', 'sql', 'PrismaPg', 'PrismaBetterSqlite3', 'PrismaBunSql', 'PrismaLibSql', 'PrismaD1', 'PrismaSqlite', 'SupabaseClient', 'createClient', 'globalThis']; const root = new Proxy({}, { get: (t, p) => (p === '__esModule' ? false : p === 'then' ? undefined : (t[p] ??= make())), ownKeys: () => KNOWN, getOwnPropertyDescriptor: (t, p) => ({ value: t[p] ??= make(), enumerable: true, configurable: true, writable: true }) }); module.exports = root;",
+      loader: "js",
+    }));
+    // Native .node addons cannot build for a browser target at all, and
+    // ?module wasm (next's vendored resvg) is not loadable here either. A
+    // component that actually CALLS into one throws at render and fails its
+    // own spec — acceptable; a hard BUILD error takes the whole host down.
+    build.onResolve({ filter: /\\.(node|wasm|so|dylib|dll)(\\?.*)?$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-node-stub",
+    }));
+    // Database clients: even their "pure JS" entries load native query
+    // engines at module init. A relative import of a generated client (e.g.
+    // generated/prisma/client.ts) still drags in these BARE runtime
+    // specifiers, which is where the bundle is cut. Perf then measures the
+    // component's render with inert data — the suite's mocking philosophy.
+    build.onResolve(
+      {
+        filter:
+          /^(@supabase\\/[a-z0-9._-]+|@prisma\\/adapter[a-z0-9._-]*|mongodb|mongoose|pg|kysely|drizzle-orm)([\\/:].*)?$/,
+      },
+      (args) => ({ path: args.path, namespace: "flawless-node-stub" }),
+    );
+    // Prisma's generated client destructures the runtime namespace AT MODULE
+    // SCOPE — a Proxy'd CJS namespace loses its keys through bun's __toESM
+    // key-copy and kills the whole host bundle. A real ESM module with the
+    // runtime's export names declared survives the copy; each value is a
+    // recursive inert proxy (any call shape resolves, nothing connects).
+    build.onResolve({ filter: /^(prisma|@prisma\\/[a-z0-9._-]+)([\\/:].*)?$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-prisma-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-prisma-stub" }, () => ({
+      contents:
+        "const make = () => { const f = function () {}; return new Proxy(f, { get: (t, p) => (p === '__esModule' ? true : p === 'then' ? undefined : (t[p] ??= make())), apply: () => make(), construct: () => new Proxy({}, { get: () => () => undefined }) }); };\\n" +
+        [
+          "AnyNull",
+          "Bytes",
+          "DbNull",
+          "Decimal",
+          "DecimalJsLike",
+          "DMMF",
+          "empty",
+          "Extensions",
+          "FieldRef",
+          "getPrismaClient",
+          "GetPrismaClientConfig",
+          "InputJsonArray",
+          "InputJsonObject",
+          "InputJsonValue",
+          "ITXClientDenyList",
+          "join",
+          "JsonArray",
+          "JsonNull",
+          "JsonObject",
+          "JsonValue",
+          "makeStrictEnum",
+          "NullTypes",
+          "Operation",
+          "PrismaClientInitializationError",
+          "PrismaClientKnownRequestError",
+          "PrismaClientRustPanicError",
+          "PrismaClientUnknownRequestError",
+          "PrismaClientValidationError",
+          "raw",
+          "Sql",
+          "SqlCommenterPlugin",
+          "SqlDriverAdapterFactory",
+          "sqltag",
+          "Types",
+        ]
+          .map((n) => "export const " + n + " = make();")
+          .join("\\n") +
+        "\\nexport default make();",
+      loader: "js",
     }));
     build.onResolve({ filter: /^next\\/navigation$/ }, (args) => ({
       path: args.path,
       namespace: "flawless-next-nav-stub",
+    }));
+    // next/font (google/local) factories RUN at module scope in every repo
+    // that imports a font package (geist et al.) — and the real loader is a
+    // compiler hook with no runtime. Answer with a callable that returns the
+    // same shape: className + CSS variable are all any consumer reads.
+    build.onResolve({ filter: /^next[\\/]font([\\/:].*)?$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-font-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-font-stub" }, () => ({
+      contents:
+        "function makeFont(o) { return { className: 'flawless-stub-font', variable: '--flawless-stub-font', style: { fontFamily: (o && o.fallback && o.fallback.join(', ')) || '' } }; } const ns = new Proxy(makeFont, { get: (t, p) => (p === '__esModule' ? false : p === 'then' ? undefined : (t[p] ??= makeFont)), }); module.exports = ns;",
+      loader: "js",
     }));
     build.onLoad({ filter: /.*/, namespace: "flawless-next-nav-stub" }, () => ({
       contents: ${JSON.stringify(navStubSource)},
@@ -606,10 +724,17 @@ const stubServerModules: BunPlugin = {
         path: args.path,
         namespace: "flawless-server-stub",
       }));
-      build.onLoad({ filter: /.*/, namespace: "flawless-server-stub" }, (args) => ({
-        contents: SERVER_STUB_SPECIFIERS[args.path] ?? "export {};",
-        loader: "ts",
-      }));
+      build.onLoad({ filter: /.*/, namespace: "flawless-server-stub" }, (args) =>
+        SERVER_STUB_SPECIFIERS[args.path]
+          ? { contents: SERVER_STUB_SPECIFIERS[args.path], loader: "ts" }
+          : // No generated surface for this specifier: a CJS Proxy answers ANY
+            // named import at runtime instead of failing the ESM build.
+            {
+              contents:
+                "const make = () => { const f = function () {}; return new Proxy(f, { get: (t, p) => (p === '__esModule' ? false : p === 'then' ? undefined : (t[p] ??= make())), apply: () => make(), construct: () => new Proxy({}, { get: () => () => undefined }) }); }; const KNOWN = ['default', 'Buffer', 'URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder', 'performance', 'platform', 'arch', 'env', 'version', 'cwd', 'dirname', 'join', 'resolve', 'sep', 'delimiter', 'normalize', 'extname', 'basename', 'relative', 'isAbsolute', 'tmpdir', 'homedir', 'readFileSync', 'writeFileSync', 'existsSync', 'statSync', 'readdirSync', 'mkdirSync', 'rmSync', 'promisify', 'createReadStream', 'createWriteStream', 'createGzip', 'createDeflate', 'pipeline', 'fileURLToPath', 'pathToFileURL', 'randomUUID', 'execSync', 'spawnSync', 'execFileSync', 'fetch', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'AbortController', 'AbortSignal', 'EventEmitter', 'once', 'Stream', 'inspect', 'format', 'types', 'isDeepStrictEqual', 'createInterface', 'question', 'getLogger', 'Drizzle', 'drizzle', 'Kysely', 'Pool', 'Client', 'sql', 'PrismaPg', 'PrismaBetterSqlite3', 'PrismaBunSql', 'PrismaLibSql', 'PrismaD1', 'PrismaSqlite', 'SupabaseClient', 'createClient', 'globalThis']; const root = new Proxy({}, { get: (t, p) => (p === '__esModule' ? false : p === 'then' ? undefined : (t[p] ??= make())), ownKeys: () => KNOWN, getOwnPropertyDescriptor: (t, p) => ({ value: t[p] ??= make(), enumerable: true, configurable: true, writable: true }) }); module.exports = root;",
+              loader: "js",
+            },
+      );
     }
     build.onLoad({ filter: /\\.(ts|tsx)$/ }, (args) => {
       const src = SERVER_STUBS[args.path];
@@ -646,7 +771,20 @@ const resolveFromSuite: BunPlugin = {
   setup(build) {
     build.onResolve({ filter: /^[a-zA-Z@][^:]*$/ }, (args) => {
       try {
-        const resolved = Bun.resolveSync(args.path, SUITE_DIR);
+        let resolved: string;
+        try {
+          resolved = Bun.resolveSync(args.path, SUITE_DIR);
+        } catch {
+          // A pnpm-style strict layout keeps transitive deps out of the
+          // suite's reach, but they ARE visible from the importer's own
+          // directory — resolve from there, the way node would. Letting the
+          // specifier fall through instead can silently drop the import:
+          // a transitive bare import that no plugin resolves never reaches
+          // the default resolver here, and the bundler emits the use site
+          // with the binding undefined ("toHtml is not defined" at boot).
+          if (!args.importer) return;
+          resolved = Bun.resolveSync(args.path, path.dirname(args.importer));
+        }
         // A built-in comes back as its specifier ("node:fs"), not a file
         // path. In the browser target there is no such file, and
         // path.resolve("node:fs") would mangle it into "<suite>/node:fs"
@@ -666,6 +804,28 @@ const resolveFromSuite: BunPlugin = {
 };
 
 ${stubPlugin}
+// Stylesheets are deliberately invisible to the perf host. Bun's CSS loader
+// cannot run the app's real pipeline — tailwind v4's \`@import "tailwindcss"\`
+// resolves to the package's JS entry ("Cannot import a .js file into a CSS
+// file") and @theme/@apply are custom at-rules it never compiles anyway.
+// Perf measures the JS render cost; style fidelity is e2e/load's business.
+const stubCss: BunPlugin = {
+  name: "flawless-css-stub",
+  setup(build) {
+    build.onResolve({ filter: /\\.(css|scss|sass|less)(\\?.*)?$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-css-stub",
+    }));
+    build.onResolve({ filter: /^(@?tailwindcss)([\\/:].*)?$/ }, () => ({
+      path: "tailwind-import",
+      namespace: "flawless-css-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-css-stub" }, () => ({
+      contents: "/* flawless perf: css intentionally stubbed */",
+      loader: "css",
+    }));
+  },
+};
 const built = await Bun.build({
   entrypoints: [path.join(HOST_DIR, "main.tsx")],
   target: "browser",
@@ -673,11 +833,12 @@ const built = await Bun.build({
   splitting: false,
   sourcemap: "inline",
   minify: false,
-  plugins: [stubServerModules, resolveFromSuite],
+  plugins: [stubCss, stubServerModules, resolveFromSuite],
   // Replace bare \`global\` references at build time. The runtime polyfill
   // (host/_polyfill.ts, imported first from main.tsx) handles \`process\`.
   define: {
     global: "globalThis",
+${envDefineLines}
     "process.env.NODE_ENV": '"development"',
   },
 });
