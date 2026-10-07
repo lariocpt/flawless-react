@@ -45,12 +45,55 @@ export function extractStaticText(bodyNode: ts.Node, env: RenderEnv = emptyEnv()
 
 /** JSX text, or an expression container holding nothing but a string literal. */
 function literalText(n: ts.Node): string | undefined {
-  if (ts.isJsxText(n)) return n.text;
+  if (ts.isJsxText(n)) return decodeJsxEntities(n.text);
   if (ts.isJsxExpression(n) && n.expression) {
     const expr = n.expression;
+    // A string literal inside an expression container is plain JS: the JSX
+    // compiler does not decode entities in it, so nothing to decode here.
     if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
   }
   return undefined;
+}
+
+const JSX_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: "\u00a0",
+  ensp: "\u2002",
+  emsp: "\u2003",
+  thinsp: "\u2009",
+  shy: "\u00ad",
+  mdash: "\u2014",
+  ndash: "\u2013",
+  hellip: "\u2026",
+  bull: "\u2022",
+  middot: "\u00b7",
+  times: "\u00d7",
+  laquo: "\u00ab",
+  raquo: "\u00bb",
+  ldquo: "\u201c",
+  rdquo: "\u201d",
+  lsquo: "\u2018",
+  rsquo: "\u2019",
+};
+
+/**
+ * JSX text carries HTML entities; the compiler decodes them before React ever
+ * sees the string. An extractor that keeps the raw `couldn&apos;t` generates a
+ * getByText("couldn&apos;t") that can never match the DOM's "couldn't".
+ * (&amp; must be replaced last, or `&amp;amp;` decodes twice.)
+ */
+function decodeJsxEntities(text: string): string {
+  if (!text.includes("&")) return text;
+  return text
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/&([a-zA-Z]+);/g, (whole, name: string) => JSX_ENTITIES[name] ?? whole);
 }
 
 /**
@@ -130,7 +173,7 @@ export function errorFallbackText(renderBody: ts.Node): string[] {
   const out: string[] = [];
   const collect = (n: ts.Node): void => {
     if (ts.isJsxText(n)) {
-      const t = n.text.trim();
+      const t = decodeJsxEntities(n.text).trim();
       if (t) out.push(t);
     }
     ts.forEachChild(n, collect);

@@ -429,6 +429,13 @@ vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/"),
   useRouter: vi.fn(() => routerMock),
   useSearchParams: vi.fn(() => new URLSearchParams()),
+  useParams: vi.fn(() => ({})),
+  // Layout-segment hooks: a component that imports next/navigation gets this
+  // per-spec mock INSTEAD of the global one, so every hook the global factory
+  // exports has to be here too — a missing name is a "[vitest] No export"
+  // error at import time.
+  useSelectedLayoutSegment: vi.fn(() => null),
+  useSelectedLayoutSegments: vi.fn(() => []),
 }));`;
 }
 

@@ -1031,7 +1031,13 @@ function walkMembers(
         p.promiseProps.push(name);
         continue;
       }
+      // Promise<object-shaped> — `params: Promise<{ id: string }>` or a named
+      // type (`Promise<Page>`). mapType cannot synthesise the inner shape, but
+      // the OUTER fact is certain: this prop is a Promise. Marking it keeps
+      // `params.then` / `use(page)` off a bare object; synthesiseDefaults
+      // floors the missing value at {}.
       p.unresolvedProps.push(name);
+      p.promiseProps.push(name);
       continue;
     }
 

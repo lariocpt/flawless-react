@@ -235,6 +235,12 @@ export function synthesiseDefaults(info: ComponentInfo): PropsShape {
     if (ARRAY_MEMBERS.has(u.member)) objectish[u.propName] = [];
     else objectish[u.propName] ??= {};
   }
+  // A Promise prop is wrapped by the spec (`Promise.resolve(v)`), but the wrap
+  // skips missing keys — so an unresolved `page: Promise<Page>` reached
+  // `use(page)` as undefined ("An unsupported type was passed to use()").
+  // Floor every promise prop at {}: the await resolves to an object, and
+  // destructured fields read as undefined, which renders as nothing.
+  for (const p of info.promiseProps ?? []) objectish[p] ??= {};
   return { ...objectish, ...info.propsShape };
 }
 

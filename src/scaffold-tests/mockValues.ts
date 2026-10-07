@@ -38,6 +38,17 @@ export function mockLiteral(
       // The only evidence was `if (x)` / `!x`: any non-null object satisfies
       // that, and nothing in the component reads a field off it.
       return "{}";
+    case "set":
+      // The field's only use was `.has(x)` / `.add(x)` — a live empty Set
+      // answers every one of them; an object with a fake `has` property dies
+      // on the first call.
+      return "new Set()";
+    case "map":
+      return "new Map()";
+    case "date":
+      // Only use was Date methods (`.getTime()`, `.toISOString()`). A string
+      // has none of them; this has all of them.
+      return `new Date("2024-01-01T00:00:00.000Z")`;
     case "unknown":
       // NEVER `undefined`. `undefined` throws on *any* member access, so a
       // single `dep.anything` anywhere in the component fails the generated
@@ -147,6 +158,13 @@ export function mockValue(shape: MockShape, seed: string, props?: PropsShape): P
     case "string":
       return `flawless-${seed}`;
     case "truthy-object":
+      return {};
+    case "set":
+    case "map":
+    case "date":
+      // The SOURCE literal (mockLiteral) is a live Set/Map/Date. The value
+      // mirror only feeds condition evaluation, which asks truthiness — and
+      // all three are truthy objects. JSON cannot carry the real thing.
       return {};
     case "unknown":
       return {};

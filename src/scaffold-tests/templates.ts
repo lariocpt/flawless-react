@@ -273,6 +273,31 @@ function renderUnitFile(
     ? toImportPath(specDir, path.join(path.resolve(opts.outDir), "mocks", "node.ts"))
     : undefined;
   const mode = c.info.renderMode ?? (c.info.isAsync ? "rsc" : "client");
+  // next/og route handlers (app/icon.tsx, opengraph-image.tsx) RETURN an
+  // ImageResponse — a Response built by satori/resvg at the edge, not a React
+  // element. Any spec that mounts one gets "Objects are not valid as a React
+  // child (found: [object Response])" and can never pass; the browser host
+  // already excludes them (hostEligible). The unit plane gets the same verdict
+  // as an export-exists smoke spec.
+  if (
+    (c.info.moduleImports ?? []).some(
+      (mi) => mi.specifier === "next/og" || mi.specifier.startsWith("next/og/"),
+    )
+  ) {
+    const name = c.info.componentName;
+    const mocks = emitModuleMocks(c.info, "rsc", specDir, todo, opts.apiRoutes).statements;
+    const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
+    return `import { test, expect${mocks.length > 0 ? ", vi" : ""} } from "vitest";
+${mockBlock}${emitComponentImport(c.info, importPath)}
+
+// ${name} renders through next/og: it returns an ImageResponse (satori +
+// resvg, edge runtime), not a React element — there is no DOM to assert on
+// under jsdom. The module contract is all a unit spec can honestly check.
+test("${name} is a next/og route handler", () => {
+  expect(typeof ${name}).toBe("function");
+});
+`;
+  }
   // Derived wraps ride along only where the spec actually mounts the
   // component. constrainedSpec voids providerImport for the same reason:
   // these specs never render interactively, so nothing to wrap.
@@ -931,6 +956,26 @@ vi.mock("next/cache", () => ({
   refresh: vi.fn(),
   cacheLife: vi.fn(),
   cacheTag: vi.fn(),
+}));
+// Global next/headers mock: cookies()/headers() throw "called outside a
+// request scope" in a plain vitest process. A per-spec mock only covers a
+// component that imports the module ITSELF — the throw usually comes from a
+// transitive server import (a data-layer getCurrentUser reading cookies),
+// which no per-spec mock can reach. The cookie jar resolves empty, so auth
+// guards fall to their default/anonymous path instead of erroring.
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers()),
+  cookies: vi.fn(async () => ({
+    get: vi.fn(() => undefined),
+    getAll: vi.fn(() => []),
+    set: vi.fn(),
+    delete: vi.fn(),
+  })),
+  draftMode: vi.fn(async () => ({
+    isEnabled: () => false,
+    enable: vi.fn(),
+    disable: vi.fn(),
+  })),
 }));
 // Global next/font mocks: the loaders are compile-time shims in the Next
 // pipeline; their runtime modules have NO exports to enumerate. A factory
@@ -1644,7 +1689,7 @@ function constrainedSpec(
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
-    const propsLiteral = JSON.stringify(withRouteParams(info.propsShape));
+    const propsLiteral = JSON.stringify(withRouteParams(synthesiseDefaults(info)));
     const promiseProps = info.promiseProps ?? [];
     // An async server component has to be invoked to get its element. A sync one
     // must NOT be: calling it directly runs its hooks with no React dispatcher
@@ -1815,7 +1860,11 @@ function rscSpec(
 ): string {
   const info = c.info;
   const name = info.componentName;
-  const propsLiteral = JSON.stringify(withRouteParams(info.propsShape));
+  // synthesiseDefaults, not the bare shape: an unresolved prop (`drop: Drop`)
+  // is absent from propsShape, so the RSC received undefined and its first
+  // `drop.parentId` read threw. The usage-based {} stand-ins the unit plane
+  // has always used apply to server components verbatim.
+  const propsLiteral = JSON.stringify(withRouteParams(synthesiseDefaults(info)));
   const promiseProps = info.promiseProps ?? [];
 
   const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;

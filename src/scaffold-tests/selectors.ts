@@ -200,10 +200,13 @@ export function emitVitestDispatch(
     case "onKeyDown":
     case "onKeyPress":
       return `await userEvent.keyboard("{Enter}")`;
+    // Parenthesised: the locator expression ENDS in `as HTMLElement`, and an
+    // unparenthesised member access parses the dot against the TYPE —
+    // `el[0] as HTMLElement.focus()` is a syntax error, not a cast-then-call.
     case "onFocus":
-      return `${elementExpr}.focus()`;
+      return `(${elementExpr}).focus()`;
     case "onBlur":
-      return `${elementExpr}.focus();${elementExpr}.blur()`;
+      return `(${elementExpr}).focus();(${elementExpr}).blur()`;
     case "onSubmit":
       return `await userEvent.click(${elementExpr})`;
     default:

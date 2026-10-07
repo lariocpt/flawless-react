@@ -71,7 +71,16 @@ const STRING_METHODS = new Set([
   "toISOString",
 ]);
 
-type FieldKind = "string" | "number" | "date-string" | "array" | "object" | "unknown";
+type FieldKind =
+  | "string"
+  | "number"
+  | "date-string"
+  | "array"
+  | "object"
+  | "set"
+  | "map"
+  | "date"
+  | "unknown";
 
 interface FieldNote {
   kinds: Set<FieldKind>;
@@ -643,6 +652,33 @@ function inGuardExitCondition(comparison: ts.BinaryExpression, ctx: CompareCtx):
   return isGuardExit(parent, ctx.imports);
 }
 
+/** `<receiver>.method(...)` — the access is the callee of a call expression. */
+function isCalledAsMethod(access: ts.PropertyAccessExpression): boolean {
+  const parent = access.parent;
+  return ts.isCallExpression(parent) && parent.expression === access;
+}
+
+/** Method names that prove the RECEIVER is a Set, a Map, or a Date. */
+const COLLECTION_METHODS: Record<string, "set" | "map" | "date"> = {
+  has: "set",
+  add: "set",
+  get: "map",
+  set: "map",
+  getTime: "date",
+  getFullYear: "date",
+  getMonth: "date",
+  getDate: "date",
+  getHours: "date",
+  toISOString: "date",
+  toLocaleDateString: "date",
+  toLocaleTimeString: "date",
+  toDateString: "date",
+};
+
+function collectionKindOf(method: string): "set" | "map" | "date" | undefined {
+  return COLLECTION_METHODS[method];
+}
+
 function noteField(
   notes: FieldNotes,
   name: string,
@@ -668,6 +704,18 @@ function noteField(
   // followed by `.email` gives user: { email: … } rather than a bare {}, which
   // would still be undefined at the read the component performs.
   if (kind === "object" && nestedAccess && ts.isIdentifier(nestedAccess.name)) {
+    const method = nestedAccess.name.text;
+    const coll = isCalledAsMethod(nestedAccess) ? collectionKindOf(method) : undefined;
+    if (coll) {
+      // `<field>.has(id)` — the call says the field IS a Set (or a Map), not
+      // an object with a property named has. The nested stand-in that used to
+      // be built here, { has: "flawless-has" }, fails on exactly the call that
+      // exposed the field. The collection kind replaces the weaker "object".
+      note.kinds.clear();
+      note.kinds.add(coll);
+      notes.set(name, note);
+      return;
+    }
     note.nested ??= new Map();
     noteField(
       note.nested,
@@ -706,9 +754,15 @@ function toFields(notes: FieldNotes): MockField[] {
  */
 function settleKind(kinds: Set<FieldKind>): FieldKind {
   const specific = [...kinds].filter((k) => k !== "string");
-  const first = specific[0];
-  if (first === undefined) return "string";
-  return specific.length === 1 ? first : "unknown";
+  if (specific.length === 0) return "string";
+  if (specific.length === 1) return specific[0] as FieldKind;
+  // Collection kinds (Set/Map/Date) come from CALLS — direct evidence about
+  // the value. The plain property reads that also leave "object" on the same
+  // field are weaker, so set/map/date win against object+string. Any other
+  // specific kind alongside one still contradicts, exactly as before.
+  const coll = specific.find((k) => k === "set" || k === "map" || k === "date");
+  if (coll && specific.every((k) => k === coll || k === "object")) return coll;
+  return "unknown";
 }
 
 /** The `x.y.z` access hanging off `x.y`, when there is one. */
@@ -727,6 +781,12 @@ function shapeOfFieldKind(kind: FieldKind): MockShape {
       return { kind: "date-string" };
     case "array":
       return { kind: "array" };
+    case "set":
+      return { kind: "set" };
+    case "map":
+      return { kind: "map" };
+    case "date":
+      return { kind: "date" };
     case "unknown":
       return { kind: "unknown" };
     case "object":

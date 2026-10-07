@@ -454,6 +454,9 @@ export type MockShape =
   | { kind: "number" }
   | { kind: "date-string" }
   | { kind: "truthy-object" }
+  | { kind: "set" }
+  | { kind: "map" }
+  | { kind: "date" }
   | { kind: "unknown" };
 
 export interface MockField {
