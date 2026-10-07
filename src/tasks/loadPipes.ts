@@ -541,7 +541,7 @@ export function parsePipes(text: string): ParsedPipes {
   const lines = text.split("\n");
   const header: string[] = [];
   let i = 0;
-  if (lines[0] !== undefined && lines[0].startsWith("#")) {
+  if (lines[0]?.startsWith("#")) {
     while (i < lines.length && lines[i]?.startsWith("#")) header.push(lines[i++] as string);
   }
 

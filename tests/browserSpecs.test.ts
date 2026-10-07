@@ -393,9 +393,11 @@ describe("hostile characters in interaction labels", () => {
     // The titles have to carry defused text, not evaluate it.
     const titles = browser.split("\n").filter((l) => l.trimStart().startsWith("test"));
     expect(titles.length).toBeGreaterThan(1);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting the DEFUSED text, so the raw sequence is the point
     expect(titles.join("\n")).not.toContain("${amount}");
     expect(titles.join("\n")).toContain("$ {amount}");
     // The Playwright locator still targets the REAL label, verbatim.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: verbatim-label assertion
     expect(browser).toContain('page.getByLabel("Pay ${amount} now")');
     const unit = specs.get("unit/TrickyLabels.test.tsx") ?? "";
     expect(parseErrorsIn("unit/TrickyLabels.test.tsx", unit)).toEqual([]);

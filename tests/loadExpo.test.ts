@@ -65,7 +65,9 @@ describe("the one-hop api-endpoint harvest", () => {
     writeFileSync(
       path.join(app, "lib", "api.ts"),
       "async function apiFetch<T>(path: string): Promise<T> {\n" +
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: source-under-test text — the ${...} must reach the analysed file verbatim
         "  const res = await fetch(`http://localhost:3000${path}`);\n" +
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: source-under-test text, as above
         "  if (!res.ok) throw new Error(`api_error ${res.status}`);\n" +
         "  return (await res.json()) as T;\n" +
         "}\n" +

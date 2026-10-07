@@ -310,7 +310,7 @@ function renderWrapper(
   let close = "";
   const todos: string[] = [];
   for (const [idx, el] of included.entries()) {
-    const indent = "      " + "  ".repeat(idx);
+    const indent = `      ${"  ".repeat(idx)}`;
     // A non-literal prop becomes a typed hole in provider.fixtures.ts rather
     // than a comment: an editor red-squiggle naming the exact shape to supply is
     // worth more than a TODO nobody sees.
@@ -326,7 +326,7 @@ function renderWrapper(
     open += `${indent}<${el.name}${el.attrs}${fixtureAttrs}>\n`;
     close = `${indent}</${el.name}>\n${close}`;
   }
-  const inner = "      " + "  ".repeat(included.length) + "{children}";
+  const inner = `      ${"  ".repeat(included.length)}{children}`;
 
   const tree =
     included.length > 0

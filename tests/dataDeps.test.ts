@@ -134,7 +134,7 @@ describe("a fixture the component's own predicate accepts", () => {
     const element = shape.kind === "array" ? shape.element : undefined;
     expect(element?.kind).toBe("object");
     const status = element?.kind === "object" && element.fields.find((f) => f.name === "status");
-    expect(status && status.equals).toBe("active");
+    expect(status?.equals).toBe("active");
   });
 
   test("a field compared to a route param records the PATH, not a value", async () => {
@@ -145,8 +145,8 @@ describe("a fixture the component's own predicate accepts", () => {
     const shape = byVar(deps, "memberships").shape;
     const element = shape.kind === "array" ? shape.element : undefined;
     const bid = element?.kind === "object" && element.fields.find((f) => f.name === "building_id");
-    expect(bid && bid.equalsProp).toEqual(["params", "id"]);
-    expect(bid && bid.equals).toBeUndefined();
+    expect(bid?.equalsProp).toEqual(["params", "id"]);
+    expect(bid?.equals).toBeUndefined();
   });
 
   test("!== is not recorded — it says what the value must NOT be", async () => {
@@ -157,8 +157,8 @@ describe("a fixture the component's own predicate accepts", () => {
     // its synthesised value — the control that proves `equals` is not set for
     // every field just because one field on the row has it.
     const label = element?.kind === "object" && element.fields.find((f) => f.name === "label");
-    expect(label && label.equals).toBeUndefined();
-    expect(label && label.equalsProp).toBeUndefined();
+    expect(label?.equals).toBeUndefined();
+    expect(label?.equalsProp).toBeUndefined();
   });
 
   test("mockLiteral resolves equalsProp against the props fixture", async () => {

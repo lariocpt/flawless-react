@@ -21,7 +21,7 @@ import type { ComponentInfo } from "../types.ts";
 const AUTH_LIB_PREFIXES = ["@clerk/nextjs", "@clerk/clerk-react", "next-auth"];
 
 export function isAuthLibSpecifier(specifier: string): boolean {
-  return AUTH_LIB_PREFIXES.some((p) => specifier === p || specifier.startsWith(p + "/"));
+  return AUTH_LIB_PREFIXES.some((p) => specifier === p || specifier.startsWith(`${p}/`));
 }
 
 export interface AuthStub {
@@ -49,10 +49,11 @@ export function collectAuthStubs(infos: Iterable<ComponentInfo>): Map<string, Au
         entry = { names: new Set(), hasDefault: false };
         acc.set(mi.specifier, entry);
       }
+      const e = entry;
       mi.names.forEach((local, i) => {
         const moduleSide = mi.importedNames?.[i] ?? local;
-        if (moduleSide === "default") entry!.hasDefault = true;
-        else entry!.names.add(moduleSide);
+        if (moduleSide === "default") e.hasDefault = true;
+        else e.names.add(moduleSide);
       });
     }
   }
@@ -132,7 +133,7 @@ export function authShimVitestBlock(specifier: string, stub: AuthStub): string {
 vi.mock(${JSON.stringify(specifier)}, () => {
 ${preamble(specifier)
   .split("\n")
-  .map((l) => "  " + l)
+  .map((l) => `  ${l}`)
   .join("\n")}
   return { ${exports.join(", ")} };
 });`;

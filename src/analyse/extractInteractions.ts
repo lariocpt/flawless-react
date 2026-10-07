@@ -232,7 +232,7 @@ export function extractInteractions(
 
   const transparent = (el: ts.JsxElement): boolean => {
     const resolved = hostTag(readTagName(el.openingElement.tagName));
-    if (!resolved || resolved.dialect !== "native") return false;
+    if (resolved?.dialect !== "native") return false;
     return !TEXTLESS_ELEMENTS.has(resolved.name);
   };
   const descend = native

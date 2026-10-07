@@ -437,9 +437,10 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
   while (grew) {
     grew = false;
     for (const [hook, { calls }] of direct) {
-      const mine = read.get(hook)!;
-      const mineLibs = readLibs.get(hook)!;
-      const mineCalls = readCalls.get(hook)!;
+      const mine = read.get(hook);
+      const mineLibs = readLibs.get(hook);
+      const mineCalls = readCalls.get(hook);
+      if (!mine || !mineLibs || !mineCalls) continue;
       for (const called of calls) {
         if (called === hook) continue;
         const sub = read.get(called);

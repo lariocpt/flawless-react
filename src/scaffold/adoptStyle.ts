@@ -86,7 +86,7 @@ export async function adoptProjectStyle(
 /** Detect a JSON file's indentation so merges preserve it (tabs beat spaces). */
 export function detectJsonIndent(source: string): string {
   const m = source.match(/^(\t+|[ ]+)"/m);
-  if (!m || !m[1]) return "  ";
+  if (!m?.[1]) return "  ";
   return m[1].startsWith("\t") ? "\t" : " ".repeat(m[1].length);
 }
 
