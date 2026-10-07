@@ -190,10 +190,14 @@ async function analyseOne(
   // `<Sibling {...props} />` in this same file: the forwarding is the
   // consuming. NavLink resolves no props at all (Omit<T> & {…}) yet its
   // default-mount spec dies inside NavLinkInner's `props.href.toString()`.
+  // `known` is RESOLVED shapes only — an already-unresolved prop must NOT be
+  // skipped: the sibling's member read is the evidence that arms its {}
+  // floor, and without it NavLink's href stays unresolved-but-unevidenced
+  // and the mount dies exactly the same way.
   inheritSpreadSiblingProps(
     unit,
     parsed.components,
-    new Set<string>([...Object.keys(propsShape), ...unresolvedProps]),
+    new Set<string>(Object.keys(propsShape)),
     unresolvedProps,
     propUsage,
     parsed.sourceFile,
