@@ -32,11 +32,11 @@ function pkgJson(dir: string, extra: Record<string, unknown> = {}): void {
 }
 
 /** A REAL directory copy of react (not a symlink) — the second instance. */
-function installCopy(nm: string, name: string): void {
+function installCopy(nm: string, name: string, version = "1.2.3"): void {
   const dir = path.join(nm, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "index.js"), `module.exports = { copy: "${nm}" };`);
-  writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version: "1.2.3" }));
+  writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version }));
 }
 
 beforeEach(() => {
@@ -97,5 +97,16 @@ describe("healReactIdentity", () => {
     healReactIdentity(suite);
     const link = readlinkSync(path.join(suite, "node_modules", "react"));
     expect(link.startsWith("..")).toBe(true);
+  });
+
+  test("never collapses copies that disagree on version", () => {
+    // react-dom@N renders only react@N: an older suite pinned beside a
+    // newer app must keep its own pair rather than crash on the link.
+    installCopy(path.join(suite, "node_modules"), "react", "9.9.9");
+    installCopy(path.join(suite, "node_modules"), "react-dom", "9.9.9");
+    expect(healReactIdentity(suite)).toEqual([]);
+    expect(realpathSync(path.join(suite, "node_modules", "react"))).not.toBe(
+      realpathSync(path.join(app, "node_modules", "react")),
+    );
   });
 });

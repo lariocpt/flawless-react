@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import type { AffectedSpecs } from "../changed.ts";
 import { grepFor, grepForRoutes } from "../changed.ts";
@@ -173,6 +173,15 @@ export function healReactIdentity(suiteDir: string): string[] {
   if (!appNm) return [];
   const app = appNm;
   const healed: string[] = [];
+  const versionOf = (dir: string): string | undefined => {
+    try {
+      return (
+        JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as { version?: string }
+      ).version;
+    } catch {
+      return undefined;
+    }
+  };
   const repair = (entry: string, name: string): void => {
     const appCopy = path.join(app, name);
     try {
@@ -180,6 +189,13 @@ export function healReactIdentity(suiteDir: string): string[] {
       // already resolves outward toward the app, and inventing links in a
       // package-manager-managed tree invites that manager's corrections.
       if (!existsSync(entry) || realpathSync(entry) === realpathSync(appCopy)) return;
+      // Never collapse copies that disagree on version: react-dom@N is only
+      // a renderer for react@N, and the suite's pair is internally
+      // consistent. Linking across versions turns a broken-but-rendering
+      // dual-React suite into a crashed renderer.
+      const from = versionOf(entry);
+      const to = versionOf(appCopy);
+      if (from && to && from !== to) return;
       rmSync(entry, { recursive: true, force: true });
       symlinkSync(path.relative(path.dirname(entry), appCopy), entry);
       healed.push(path.relative(suiteDir, entry));
