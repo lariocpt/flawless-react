@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { renderSuite } from "../src/scaffold/templates.ts";
 import {
   allocateSpecNames,
+  defaultsJson,
   flattenTrees,
   hostEligibility,
 } from "../src/scaffold-tests/registry.ts";
-import type { ComponentInfo, ComponentTree } from "../src/types.ts";
+import { DATE_PROP_SENTINEL, type ComponentInfo, type ComponentTree } from "../src/types.ts";
 
 function comp(name: string, extra: Partial<ComponentInfo> = {}): ComponentInfo {
   return {
@@ -210,5 +211,19 @@ describe("renderSuite host", () => {
     expect(readme).toContain("Not in this host (3)");
     expect(readme).toContain("async server component");
     expect(readme).toContain("not exported");
+  });
+});
+
+describe("defaultsJson", () => {
+  test("rewrites the Date sentinel into a live Date in generated source", () => {
+    // A JSON-embedded Date would arrive as a string — and `date: Date` props
+    // are written to be called with getTime/toLocaleTimeString, which strings
+    // do not have.
+    expect(defaultsJson({ date: DATE_PROP_SENTINEL, n: 1 })).toBe(
+      '{"date":new Date("2024-01-01T00:00:00.000Z"),"n":1}',
+    );
+    expect(defaultsJson({ row: { at: DATE_PROP_SENTINEL } })).toContain(
+      '"at":new Date("2024-01-01T00:00:00.000Z")',
+    );
   });
 });

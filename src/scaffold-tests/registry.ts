@@ -1,4 +1,11 @@
-import type { ComponentInfo, ComponentTree, PropsShape, PropValue } from "../types.ts";
+import {
+  DATE_PROP_ISO,
+  DATE_PROP_SENTINEL,
+  type ComponentInfo,
+  type ComponentTree,
+  type PropsShape,
+  type PropValue,
+} from "../types.ts";
 
 /**
  * The one place that decides what a component is CALLED and whether it can be
@@ -242,6 +249,20 @@ export function synthesiseDefaults(info: ComponentInfo): PropsShape {
   // destructured fields read as undefined, which renders as nothing.
   for (const p of info.promiseProps ?? []) objectish[p] ??= {};
   return { ...objectish, ...info.propsShape };
+}
+
+/**
+ * JSON.stringify for a PropsShape that may carry `DATE_PROP_SENTINEL`. Every
+ * caller embeds the result in GENERATED SOURCE, so rewrite the sentinel into
+ * a live `new Date(...)`: an ISO string would crash exactly the methods
+ * (getTime, toLocaleTimeString) a Date-typed prop is written to be called
+ * with, and JSON has no Date.
+ */
+export function defaultsJson(shape: PropsShape): string {
+  return JSON.stringify(shape).replaceAll(
+    JSON.stringify(DATE_PROP_SENTINEL),
+    `new Date(${JSON.stringify(DATE_PROP_ISO)})`,
+  );
 }
 
 /**

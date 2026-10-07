@@ -7,6 +7,15 @@ export type PropPrimitive = string | number | boolean | null;
 export type PropValue = PropPrimitive | PropValue[] | { [k: string]: PropValue };
 export type PropsShape = Record<string, PropValue>;
 
+/**
+ * Stands in for a real Date inside a PropValue (JSON-safe). A Date-typed prop
+ * gets this because a string answers none of getTime/toISOString/
+ * toLocaleTimeString; `defaultsJson` rewrites every occurrence back into a
+ * live `new Date(...)` at the places a PropsShape becomes spec source.
+ */
+export const DATE_PROP_SENTINEL = "__flawless_date__";
+export const DATE_PROP_ISO = "2024-01-01T00:00:00.000Z";
+
 /** 1-based position of a node in a source file (file is absolute). */
 export interface SourcePosition {
   file: string;

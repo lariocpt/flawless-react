@@ -1,5 +1,5 @@
 import ts from "typescript";
-import type { PropsShape, PropValue, SourcePosition } from "../types.ts";
+import { DATE_PROP_SENTINEL, type PropsShape, type PropValue, type SourcePosition } from "../types.ts";
 import { extractVariantDefs, type VariantDefinition } from "./extractVariants.ts";
 import { hostPropsFor, isHostTagRecognised } from "./hostProps.ts";
 import type { ImportBinding } from "./parseFile.ts";
@@ -1126,6 +1126,12 @@ function mapType(t: ts.TypeNode): MapResult {
       return { kind: "scalar", value: null };
   }
   if (ts.isArrayTypeNode(t)) return { kind: "scalar", value: [] };
+  // `date: Date` — a live Date answers getTime/toISOString/
+  // toLocaleTimeString; a string or {} answers none of them. PropValue is
+  // JSON-safe, so carry the sentinel and let `defaultsJson` put the real
+  // `new Date(...)` back wherever a PropsShape becomes spec source.
+  if (ts.isTypeReferenceNode(t) && ts.isIdentifier(t.typeName) && t.typeName.text === "Date")
+    return { kind: "scalar", value: DATE_PROP_SENTINEL };
   if (ts.isTypeLiteralNode(t)) {
     const inner: PropsShape = {};
     for (const m of t.members) {
@@ -1152,7 +1158,10 @@ function mapType(t: ts.TypeNode): MapResult {
       else return { kind: "unresolved" };
     }
     if (literals.length === 0) return { kind: "unresolved" };
-    const first = literals[0] as PropValue;
+    // `string | Date` — a Date instance also passes for the string half
+    // (toString/toISOString), a string never survives the Date half.
+    const date = literals.find((v) => v === DATE_PROP_SENTINEL);
+    const first = date ?? (literals[0] as PropValue);
     return { kind: "variants", value: first, values: literals };
   }
   return { kind: "unresolved" };

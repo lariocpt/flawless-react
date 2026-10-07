@@ -8,6 +8,7 @@ import { detectAppReact } from "../packageJson.ts";
 import {
   allocateSpecNames,
   compoundWrappable,
+  defaultsJson,
   flattenTrees,
   functionProps,
   hostEligibility,
@@ -1654,7 +1655,7 @@ function spec(c: FlatComponent, variants: number): string {
   // The registry key, so the mount call finds the right component when two share
   // a name.
   const name = c.specName;
-  const propsLiteral = JSON.stringify(synthesiseDefaults(c.info));
+  const propsLiteral = defaultsJson(synthesiseDefaults(c.info));
   const variantsLiteral = JSON.stringify(c.info.variants.slice(0, variants));
   const hooksLiteral = JSON.stringify(c.info.hooks);
   const forcedIterations = Math.max(10, variants * 10);

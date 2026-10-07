@@ -16,7 +16,13 @@ import { titleSafe } from "../scaffold/templates.ts";
 import { JEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, ExpoContext, TodoRecorder } from "../types.ts";
 import { describeNoClaim } from "./postDispatch.ts";
-import { allocateSpecNames, flattenTrees, functionProps, synthesiseDefaults } from "./registry.ts";
+import {
+  allocateSpecNames,
+  defaultsJson,
+  flattenTrees,
+  functionProps,
+  synthesiseDefaults,
+} from "./registry.ts";
 import {
   awaitNativeSelector,
   describeUnlocatableNative,
@@ -443,7 +449,7 @@ function renderNativeSpec(
   // String(DEFAULTS["x"] ?? ""), which under Expo's strict tsconfig is TS7053
   // against a const-asserted literal — so an app running `tsc --noEmit` in CI
   // goes red on the generated file. The DOM emitter has always typed it this way.
-  lines.push(`const DEFAULTS: Record<string, unknown> = ${JSON.stringify(defaults, null, 2)};`);
+  lines.push(`const DEFAULTS: Record<string, unknown> = ${defaultsJson(defaults)};`);
   // Function props, spread SEPARATELY because DEFAULTS is JSON and a function
   // cannot ride in it. Without these a prop-bound handler is undefined at mount:
   // pressing it asserted nothing, and deleting `onPress={onPress}` from the source

@@ -35,6 +35,7 @@ import {
   allocateSpecNames,
   compoundWrappable,
   type FlatComponent,
+  defaultsJson,
   flattenTrees,
   hostEligibility,
   synthesiseDefaults,
@@ -1268,7 +1269,7 @@ function unitSpec(
   // component receives undefined — and any `prop.field` read then throws. When
   // the analyser saw it used via member access, stand it up as {} so the read
   // yields undefined (renders as nothing) instead of crashing the spec.
-  const propsLiteral = JSON.stringify(synthesiseDefaults(info));
+  const propsLiteral = defaultsJson(synthesiseDefaults(info));
   const variantsLiteral = JSON.stringify(info.variants.slice(0, variants));
   const promiseProps = info.promiseProps ?? [];
   const interactions = info.interactions;
@@ -1781,7 +1782,7 @@ function constrainedSpec(
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
   if (mode === "document-root") {
-    const propsLiteral = JSON.stringify(withRouteParams(synthesiseDefaults(info)));
+    const propsLiteral = defaultsJson(withRouteParams(synthesiseDefaults(info)));
     const promiseProps = info.promiseProps ?? [];
     // An async server component has to be invoked to get its element. A sync one
     // must NOT be: calling it directly runs its hooks with no React dispatcher
@@ -1937,7 +1938,7 @@ ${
 // there is no slot text to look for: it asserts the mount put elements in the
 // document at all.`
 }
-const DEFAULTS: Record<string, unknown> = ${JSON.stringify(synthesiseDefaults(info))};
+const DEFAULTS: Record<string, unknown> = ${defaultsJson(synthesiseDefaults(info))};
 
 test("${name} mounts inside its family wrapper", () => {
 ${body}
@@ -1999,7 +2000,7 @@ function rscSpec(
   // is absent from propsShape, so the RSC received undefined and its first
   // `drop.parentId` read threw. The usage-based {} stand-ins the unit plane
   // has always used apply to server components verbatim.
-  const propsLiteral = JSON.stringify(withRouteParams(synthesiseDefaults(info)));
+  const propsLiteral = defaultsJson(withRouteParams(synthesiseDefaults(info)));
   const promiseProps = info.promiseProps ?? [];
 
   const mocks = emitModuleMocks(info, "rsc", specDir, todo, apiRoutes).statements;
@@ -2759,7 +2760,7 @@ function browserSpec(c: FlatComponent, specName: string, todo?: TodoRecorder): s
   // called it; the browser one passed `{}` for a component whose props are only
   // known through their member reads, and ProfileForm — green in its profile
   // spec — died in its browser spec with "did not render within 5000ms".
-  const propsLiteral = JSON.stringify(synthesiseDefaults(c.info));
+  const propsLiteral = defaultsJson(synthesiseDefaults(c.info));
   const interactions = c.info.interactions;
 
   // An undecidable guard — `if (!user) return null` where `user` comes from a
