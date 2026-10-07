@@ -232,6 +232,39 @@ export function SettingsForm() {
   return <button onClick={() => save.mutate('x')}>Save</button>;
 }
 `,
+  // Two levels deep (the McpServerDialog shape): component → local hook →
+  // imported hook in a third file → the library.
+  "detail-queries.ts": `
+import { useQuery } from '@tanstack/react-query';
+export function useDetailQuery(id: string) {
+  return useQuery({ queryKey: ['d', id], queryFn: () => fetch('/api/d').then((r) => r.json()) });
+}
+`,
+  "use-dialog-state.ts": `
+import { useState } from 'react';
+import { useDetailQuery } from './detail-queries';
+export function useDialogState() {
+  const [open, setOpen] = useState(false);
+  const detail = useDetailQuery('x');
+  return { open, setOpen, detail };
+}
+`,
+  "dialog-shell.tsx": `
+import { useDialogState } from './use-dialog-state';
+export function DialogShell() {
+  const s = useDialogState();
+  return <div onClick={() => s.setOpen(true)}>{s.open ? 'open' : 'closed'}</div>;
+}
+`,
+  // The nakama SPA shape: the router context belongs to router-dom itself,
+  // and CommandPalette-style components die at mount without it.
+  "palette.tsx": `
+import { useNavigate } from 'react-router-dom';
+export function Palette() {
+  const nav = useNavigate();
+  return <button onClick={() => nav('/x')}>go</button>;
+}
+`,
 };
 
 async function derive(
@@ -400,12 +433,23 @@ describe("deriveContextProviderWraps", () => {
     // project hook calls useMutation internally.
     const form = [...shimmed.keys()].find((k) => k.endsWith("::SettingsForm"));
     expect(names(shimmed.get(form!))).toEqual(["FlawlessQueryClientProvider"]);
+    // Two levels across files: DialogShell → useDialogState → useDetailQuery
+    // → useQuery (the McpServerDialog chain).
+    const shell = [...shimmed.keys()].find((k) => k.endsWith("::DialogShell"));
+    expect(names(shimmed.get(shell!))).toEqual(["FlawlessQueryClientProvider"]);
+    // The router family: the MemoryRouter shim, second table entry.
+    const palette = [...shimmed.keys()].find((k) => k.endsWith("::Palette"));
+    expect(names(shimmed.get(palette!))).toEqual(["FlawlessRouterProvider"]);
+    expect(shimmed.get(palette!)?.[0]?.filePath.endsWith("flawless-router.tsx")).toBe(true);
     // Without shims the derivation is unchanged: the hook pairs with nothing.
     const bare = await derive();
     expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::SettingsForm"))).toBe(false);
-    // And the shim module is claimed for writing only when a map references it.
-    expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(1);
+    expect([...bare.keys()].some((k) => k.endsWith("::DialogShell"))).toBe(false);
+    expect([...bare.keys()].some((k) => k.endsWith("::Palette"))).toBe(false);
+    // And the shim modules are claimed for writing only when a map references
+    // them — one per (library, package): query and router, same tmp root.
+    expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(2);
     expect(referencedLibraryShims(bare, [path.join(tmp, "post-list.tsx")])).toHaveLength(0);
   });
 
