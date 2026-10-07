@@ -791,9 +791,7 @@ describe("renderUnitBrowser document-root components", () => {
     const spec = contentOf(docRoot({ isAsync: true }), "unit/RootLayout.test.tsx");
     // An async component cannot be created as an element — it must be called to
     // get its returned tree.
-    expect(spec).toContain(
-      "const ui = await resolveAsyncUi(await RootLayout(props as never));",
-    );
+    expect(spec).toContain("const ui = await resolveAsyncUi(await RootLayout(props as never));");
   });
 
   test("the children slot is asserted only when the component renders children", () => {

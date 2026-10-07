@@ -35,8 +35,8 @@ import { decidePostDispatch, describeNoClaim, type PostDispatchContext } from ".
 import {
   allocateSpecNames,
   compoundWrappable,
-  type FlatComponent,
   defaultsJson,
+  type FlatComponent,
   flattenTrees,
   hostEligibility,
   synthesiseDefaults,

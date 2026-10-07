@@ -1,5 +1,10 @@
 import ts from "typescript";
-import { DATE_PROP_SENTINEL, type PropsShape, type PropValue, type SourcePosition } from "../types.ts";
+import {
+  DATE_PROP_SENTINEL,
+  type PropsShape,
+  type PropValue,
+  type SourcePosition,
+} from "../types.ts";
 import { extractVariantDefs, type VariantDefinition } from "./extractVariants.ts";
 import { hostPropsFor, isHostTagRecognised } from "./hostProps.ts";
 import type { ImportBinding } from "./parseFile.ts";

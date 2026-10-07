@@ -6,7 +6,7 @@ import {
   flattenTrees,
   hostEligibility,
 } from "../src/scaffold-tests/registry.ts";
-import { DATE_PROP_SENTINEL, type ComponentInfo, type ComponentTree } from "../src/types.ts";
+import { type ComponentInfo, type ComponentTree, DATE_PROP_SENTINEL } from "../src/types.ts";
 
 function comp(name: string, extra: Partial<ComponentInfo> = {}): ComponentInfo {
   return {

@@ -69,7 +69,14 @@ describe("inheritSpreadSiblingProps", () => {
     // premise; the pass must work from zero known props.
     const unresolved: string[] = [];
     const usage: import("../src/types.ts").PropUsage[] = [];
-    inheritSpreadSiblingProps(unit, parsed.components, new Set<string>(), unresolved, usage, parsed.sourceFile);
+    inheritSpreadSiblingProps(
+      unit,
+      parsed.components,
+      new Set<string>(),
+      unresolved,
+      usage,
+      parsed.sourceFile,
+    );
     // href is read via props.href.toString() in NavLinkInner — the member
     // read is what tells the {} floor its value survives .toString().
     expect(unresolved).toContain("href");
@@ -85,7 +92,14 @@ describe("inheritSpreadSiblingProps", () => {
   test("props the wrapper already resolves are left alone", async () => {
     const { unit, parsed } = await navLinkUnit();
     const usage: import("../src/types.ts").PropUsage[] = [];
-    inheritSpreadSiblingProps(unit, parsed.components, new Set<string>(["href"]), [], usage, parsed.sourceFile);
+    inheritSpreadSiblingProps(
+      unit,
+      parsed.components,
+      new Set<string>(["href"]),
+      [],
+      usage,
+      parsed.sourceFile,
+    );
     expect(usage.some((u) => u.propName === "href")).toBe(false);
   });
 });
