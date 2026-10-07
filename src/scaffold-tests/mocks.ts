@@ -654,6 +654,15 @@ function dataModuleMock(
     const dep = deps[0];
     if (!dep) {
       if (b.isDefault) return "default: vi.fn()";
+      // An UPPER-CASE import never called as a function is a component by
+      // the JSX naming convention (lucide icons, and every icon set that
+      // reaches a const map: `const Icon = ICONS[kind]; <Icon/>`). The
+      // {} fallback made it `vi.fn(async () => ({}))` — mounted as JSX it
+      // returns a PROMISE, React 19 awaits components that then, and the
+      // whole tree suspends: the spec asserted against an empty container.
+      // Pass children through synchronously; the tree stays queryable.
+      if (/^[A-Z]/.test(b.local))
+        return `${key}: vi.fn((props: { children?: React.ReactNode }) => props.children ?? null)`;
       // No usage evidence — but the DECLARATION may still say. A formatter
       // called inside JSX never becomes a dataDep, and `formatZAR(cents:
       // number): string` was stubbed `async () => ({})`: asynchronous for a
