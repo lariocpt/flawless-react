@@ -308,6 +308,12 @@ function fixtureReference(name: string, ctx: PropsResolveCtx): PropValue | undef
   const local = findTypeDecl(ctx.sf, name);
   if (local) return fixtureDecl(local, next);
 
+  // `createdAt: Date` — a live Date answers getTime/toISOString/
+  // toLocaleTimeString; nothing else does. The sentinel rides through to
+  // defaultsJson, which restores the real `new Date(...)`. Checked AFTER the
+  // local lookup on purpose: a file declaring its own Date shadows the lib.
+  if (name === "Date") return DATE_PROP_SENTINEL;
+
   const binding = ctx.imports.get(name);
   if (!binding || ctx.hops <= 0) return undefined;
   const target = ctx.resolver?.resolve(binding.specifier, ctx.file);
@@ -1062,6 +1068,20 @@ function walkMembers(
 
     const r = mapType(t);
     if (r.kind === "unresolved") {
+      // mapType is syntactic: it cannot follow `kind: NotificationKind`
+      // into a declared literal union, nor `drop: DropItem` into another
+      // file — and a dropped member is exactly the hole the mount dies
+      // on (NotificationList indexes ICONS by n.kind). The strict fixture
+      // resolver can: it walks declarations within the hop budget, keeps
+      // literal-union arms verbatim, maps Date to the sentinel — and it
+      // returns a COMPLETE fixture or bails, so no hole is invented
+      // either way.
+      const strict = fixtureValue(t, name, ctx);
+      if (strict !== undefined) {
+        p.shape[name] = strict;
+        p.origin[name] = origin;
+        continue;
+      }
       p.unresolvedProps.push(name);
       continue;
     }

@@ -10,7 +10,13 @@ import { ModuleResolver } from "../src/analyse/resolveModule.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
 import { emitModuleMocks } from "../src/scaffold-tests/mocks.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
-import type { ComponentInfo, DataDepInfo, ModuleImportInfo, NextjsApiRoute } from "../src/types.ts";
+import {
+  type ComponentInfo,
+  DATE_PROP_SENTINEL,
+  type DataDepInfo,
+  type ModuleImportInfo,
+  type NextjsApiRoute,
+} from "../src/types.ts";
 
 /**
  * B-1: deps whose usage-based shape inference came up empty (uncertain /
@@ -105,9 +111,19 @@ export async function getWithSideEffect() {
 export interface Holey {
   id: string;
   createdAt: Date;
+  cb: () => void;
 }
 
 export async function getHoley(): Promise<Holey> {
+  return db();
+}
+
+export interface Dated {
+  id: string;
+  createdAt: Date;
+}
+
+export async function getDated(): Promise<Dated> {
   return db();
 }
 
@@ -138,6 +154,7 @@ const PAGE = `import {
   getEnvelope,
   getWithSideEffect,
   getHoley,
+  getDated,
   getProfile,
   getComputed,
 } from "./lib";
@@ -158,6 +175,7 @@ export default async function Page() {
   const envelope = await getEnvelope();
   const sideEffect = await getWithSideEffect();
   const holey = await getHoley();
+  const dated = await getDated();
   const profile = await getProfile();
   const computed = await getComputed();
   return (
@@ -173,6 +191,7 @@ export default async function Page() {
       {opaque(envelope)}
       {opaque(sideEffect)}
       {opaque(holey)}
+      {opaque(dated)}
       <span>{profile.bio}</span>
       {opaque(computed)}
     </main>
@@ -281,9 +300,21 @@ describe("the enrichment gates (usage outranks declaration; wrong channels skipp
     expect(profile?.inferredReturn).toBeUndefined();
   });
 
-  test("an unresolvable member (Date) bails the whole fixture, not just the field", async () => {
+  test("an unresolvable member (function type) bails the whole fixture, not just the field", async () => {
     const deps = await analysedDeps();
     expect(depOf(deps, "getHoley")?.inferredReturn).toBeUndefined();
+  });
+
+  test("a Date member resolves to the live-Date sentinel, not a bail", async () => {
+    // Children mount for real and call getTime/toLocaleTimeString — a
+    // fixture that bailed on Date starved the mock; a string starves the
+    // method. defaultsJson turns the sentinel back into new Date(...) in
+    // the emitted spec.
+    const deps = await analysedDeps();
+    expect(depOf(deps, "getDated")?.inferredReturn?.value).toEqual({
+      id: "flawless-id",
+      createdAt: DATE_PROP_SENTINEL,
+    });
   });
 
   test('a "use server" module is serverActionMock\'s channel — its deps are not enriched', async () => {
@@ -406,7 +437,13 @@ describe("resolveTypeNodeValue is provenance-aware and bails on every hole", () 
   });
 
   test("an unresolvable nested member bails the WHOLE value", () => {
-    expect(fixtureOf("interface T { meta: { createdAt: Date; id: string } }", "T")).toBeUndefined();
+    expect(fixtureOf("interface T { meta: { run: () => void; id: string } }", "T")).toBeUndefined();
+  });
+
+  test("a nested Date member resolves to the sentinel", () => {
+    expect(fixtureOf("interface T { meta: { createdAt: Date; id: string } }", "T")).toEqual({
+      meta: { createdAt: DATE_PROP_SENTINEL, id: "flawless-id" },
+    });
   });
 
   test("a mutual type-alias cycle bails instead of hanging", () => {
