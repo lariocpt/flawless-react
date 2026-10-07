@@ -309,6 +309,10 @@ interface CtxFacts {
   readsRaw: Map<string, Set<RawCtxRef>>;
   /** Component name → the first context object it renders as `<Ctx.Provider>`. */
   suppliesRaw: Map<string, RawCtxRef>;
+  /** Module-side hook name → shim-library modules whose provider-gated hooks
+   *  it calls, possibly through local wrappers (the useSaveTelegramSettings
+   *  shape: a project hook wrapping useMutation). */
+  libsByHook: Map<string, Set<string>>;
 }
 
 function ctxFactsOf(parsed: ParsedFile): CtxFacts {
@@ -337,10 +341,11 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
   };
   for (const stmt of parsed.sourceFile.statements) collect(stmt);
 
-  const direct = new Map<string, { ctx: Set<string>; calls: Set<string> }>();
+  const direct = new Map<string, { ctx: Set<string>; calls: Set<string>; libs: Set<string> }>();
   for (const [hook, body] of bodies) {
     const ctx = new Set<string>();
     const calls = new Set<string>();
+    const libs = new Set<string>();
     const scan = (n: ts.Node): void => {
       if (ts.isCallExpression(n)) {
         // `useContext(Ctx)` and `React.useContext(Ctx)` — the namespace form
@@ -360,31 +365,55 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
           ctx.add((n.arguments[0] as ts.Identifier).text);
         } else {
           calls.add(fn);
+          // A callee that is an IMPORT of a provider-gated library hook means
+          // this local hook needs the library's provider too — the
+          // useSaveTelegramSettings shape: a project hook wrapping useMutation.
+          const b = parsed.imports.get(fn);
+          if (b && !b.isTypeOnly) {
+            for (const s of LIBRARY_SHIMS) {
+              if (s.module === b.specifier && s.hooks.includes(b.importedName ?? fn)) {
+                libs.add(s.module);
+              }
+            }
+          }
         }
       }
       ts.forEachChild(n, scan);
     };
     scan(body);
-    direct.set(hook, { ctx, calls });
+    direct.set(hook, { ctx, calls, libs });
   }
 
   // Transitively close over local hook calls: useCollapsibleAnimation reads
   // the context through the useCollapsible it calls.
   const read = new Map<string, Set<string>>();
   for (const [hook, { ctx }] of direct) read.set(hook, new Set(ctx));
+  const readLibs = new Map<string, Set<string>>();
+  for (const [hook, { libs }] of direct) readLibs.set(hook, new Set(libs));
   let grew = true;
   while (grew) {
     grew = false;
     for (const [hook, { calls }] of direct) {
       const mine = read.get(hook)!;
+      const mineLibs = readLibs.get(hook)!;
       for (const called of calls) {
-        if (called === hook || !read.has(called)) continue;
-        for (const ident of read.get(called)!) {
-          if (!mine.has(ident)) {
-            mine.add(ident);
-            grew = true;
+        if (called === hook) continue;
+        const sub = read.get(called);
+        if (sub)
+          for (const ident of sub) {
+            if (!mine.has(ident)) {
+              mine.add(ident);
+              grew = true;
+            }
           }
-        }
+        const subLibs = readLibs.get(called);
+        if (subLibs)
+          for (const m of subLibs) {
+            if (!mineLibs.has(m)) {
+              mineLibs.add(m);
+              grew = true;
+            }
+          }
       }
     }
   }
@@ -432,7 +461,9 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
     }
     readsRaw.set(hook, refs);
   }
-  return { providerByHook, readsRaw, suppliesRaw };
+  const libsByHook = new Map<string, Set<string>>();
+  for (const [hook, libs] of readLibs) if (libs.size > 0) libsByHook.set(hook, libs);
+  return { providerByHook, readsRaw, suppliesRaw, libsByHook };
 }
 
 export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
@@ -676,9 +707,20 @@ export async function deriveContextProviderWraps(
           exportKind: unit.exportKind,
           exportedAs: unit.exportedAs,
         });
-      } else if (!unit && hookSpec) {
-        // Nothing in the project pairs with this hook — a library context does.
-        const shim = shims?.(c).find((s) => s.module === hookSpec && s.hooks.includes(moduleSide));
+      } else if (!unit) {
+        // Nothing in the project pairs with this hook — a library context
+        // does. Either the hook is imported from the library itself, or the
+        // module-side hook is a project WRAPPER whose body calls one
+        // (TelegramAllowedUsersDialog reaches react-query through
+        // useSaveTelegramSettings, and the component never names useQuery).
+        const libs = new Set<string>(hookSpec ? [hookSpec] : []);
+        if (parsed) {
+          for (const m of ctxOnce(parsed).libsByHook.get(moduleSide) ?? []) libs.add(m);
+        }
+        const shim = shims?.(c).find(
+          (s) =>
+            libs.has(s.module) && (hookSpec === s.module ? s.hooks.includes(moduleSide) : true),
+        );
         if (shim) {
           addReq(compKey, {
             componentName: shim.componentName,

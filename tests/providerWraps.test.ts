@@ -217,6 +217,21 @@ export function PostPage() {
   return <PostList />;
 }
 `,
+  // The TelegramAllowedUsersDialog shape: the component never names the
+  // library hook at all — a project wrapper hook calls it internally.
+  "use-save-settings.ts": `
+import { useMutation } from '@tanstack/react-query';
+export function useSaveSettings() {
+  return useMutation({ mutationFn: (v: string) => fetch('/api/s').then((r) => r.json()) });
+}
+`,
+  "settings-form.tsx": `
+import { useSaveSettings } from './use-save-settings';
+export function SettingsForm() {
+  const save = useSaveSettings();
+  return <button onClick={() => save.mutate('x')}>Save</button>;
+}
+`,
 };
 
 async function derive(
@@ -381,9 +396,14 @@ describe("deriveContextProviderWraps", () => {
     );
     const page = [...shimmed.keys()].find((k) => k.endsWith("::PostPage"));
     expect(names(shimmed.get(page!))).toEqual(["FlawlessQueryClientProvider"]);
+    // The wrapper shape: SettingsForm never mentions the library — its
+    // project hook calls useMutation internally.
+    const form = [...shimmed.keys()].find((k) => k.endsWith("::SettingsForm"));
+    expect(names(shimmed.get(form!))).toEqual(["FlawlessQueryClientProvider"]);
     // Without shims the derivation is unchanged: the hook pairs with nothing.
     const bare = await derive();
     expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
+    expect([...bare.keys()].some((k) => k.endsWith("::SettingsForm"))).toBe(false);
     // And the shim module is claimed for writing only when a map references it.
     expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(1);
     expect(referencedLibraryShims(bare, [path.join(tmp, "post-list.tsx")])).toHaveLength(0);
