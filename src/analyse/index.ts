@@ -148,6 +148,19 @@ async function analyseOne(
   // the interaction harvest, the spec's DEFAULTS — all see a real value.
   const indexKeys = resolveIndexKeyProps(unit.bodyNode, parsed.sourceFile, unresolvedFromTypes);
   const propsShape = { ...typedProps, ...indexKeys.defaults };
+  // Names bound by the destructured first param ARE props, whatever the type
+  // layer made of them. `({ searchParams }: PageProps<'/'>)` types the Next 15+
+  // contract through a generated-route generic no syntactic resolver can see
+  // through — without this, the binding is invisible to usage extraction, the
+  // {} floor, and the promise-wrap below, and the render dies on
+  // `searchParams.then` of undefined. Alias-aware, and `children` stays out:
+  // finalise removes it from the value world on purpose.
+  for (const local of unit.destructuredProps) {
+    const name = unit.destructuredAliases.get(local) ?? local;
+    if (name === "children") continue;
+    if (name in typedProps || props.unresolvedProps.includes(name)) continue;
+    props.unresolvedProps.push(name);
+  }
   const unresolvedProps = unresolvedFromTypes.filter((p) => !(p in indexKeys.defaults));
 
   // Decided once, from this file's own imports, before any extractor runs. A
@@ -161,6 +174,18 @@ async function analyseOne(
   const scope = buildComponentScope(unit, props, state, unit.bodyNode);
   const hookDetails = extractHookDetails(unit.bodyNode, parsed.sourceFile, scope);
   const propUsage = extractPropUsage(unit.bodyNode, parsed.sourceFile, scope);
+  // `.then(...)` on a destructured prop IS promise evidence — and often the
+  // only evidence available: Next 15+ page props arrive typed through the
+  // framework's `PageProps<'/'>` generic, which the (checkerless) type layer
+  // cannot see through, so walkMembers never marks them. Stand the prop up as
+  // unresolved (→ the {} floor in synthesiseDefaults) and mark it for the
+  // spec's Promise.resolve wrap; otherwise the render dies on
+  // `undefined.then`, or on `use(undefined)` for a page that awaits.
+  for (const u of propUsage) {
+    if (u.member !== "then" || u.propName in propsShape) continue;
+    if (!unresolvedProps.includes(u.propName)) unresolvedProps.push(u.propName);
+    if (!promiseProps.includes(u.propName)) promiseProps.push(u.propName);
+  }
   const childAttrs = extractChildAttrs(unit.bodyNode, parsed.sourceFile);
   const fetchCalls = extractFetchCalls(unit.bodyNode, parsed.sourceFile);
   // Endpoints reached through the app's own fetch wrapper (one hop). Native
