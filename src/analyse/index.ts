@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { AnalyseOptions, ComponentInfo, ComponentTree, RenderMode } from "../types.ts";
+import type { AnalyseOptions, ComponentInfo, ComponentTree, DataDepInfo, RenderMode } from "../types.ts";
 import { deriveCompoundFamily } from "./compoundFamily.ts";
 import { dataConstantExports } from "./dataExports.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
@@ -287,9 +287,28 @@ async function analyseOne(
   // awaits its data; running them elsewhere would be noise. Deps whose usage
   // told us nothing get a second chance from their own declaration
   // (Promise<T> annotation, or a single-fetch body) — see resolveDepReturns.
+  // A same-file sibling's deps count too when this unit doesn't already dep
+  // on that callee: the spec's module mock replaces the module for the WHOLE
+  // render, and the sibling is real code inside it. CurrentUserAvatar awaits
+  // only getCurrentUserHandle, but the <UserAvatar> it renders awaits
+  // getUserByHandle and reads user.displayName.charAt(0) off the result —
+  // without the sibling's evidence the shared mock hands back {} and the
+  // mount dies in the child. Own evidence wins: it sits on this unit's
+  // primary render path.
   const dataDeps = unit.isAsync
     ? resolveDepReturns(
-        extractDataDeps(unit.bodyNode, parsed.sourceFile, parsed.imports),
+        (() => {
+          const own = extractDataDeps(unit.bodyNode, parsed.sourceFile, parsed.imports);
+          const extras: DataDepInfo[] = [];
+          for (const c of parsed.components) {
+            if (c === unit || !c.isAsync) continue;
+            for (const d of extractDataDeps(c.bodyNode, parsed.sourceFile, parsed.imports)) {
+              if (!own.some((o) => o.callee === d.callee) && !extras.some((e) => e.callee === d.callee))
+                extras.push(d);
+            }
+          }
+          return [...own, ...extras];
+        })(),
         parsed.imports,
         absPath,
         resolver,
