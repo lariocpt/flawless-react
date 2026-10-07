@@ -1,11 +1,12 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { appPackageRoot } from "../packageJson.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
 import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
-import type { AliasEntry, MultiRootAlias } from "../scaffold-tests/templates.ts";
+import type { AliasEntry, MultiRootAlias, ReactExportShim } from "../scaffold-tests/templates.ts";
 import type { RunContext, Task, TaskResult } from "../types.ts";
 import { TodoCounter } from "../types.ts";
 
@@ -87,14 +88,21 @@ export const unitAndBrowser: Task = {
     // vitest config instead, so its bare specifiers ride the alias too. An
     // app with no installed react falls through to the suite's copy, which
     // now carries the app's version pin.
+    const pinFrom = ctx.nextjs ? ctx.nextjs.root : (aliasRoots[0] ?? ctx.outDir);
+    const pinFallback = ctx.nextjs ? undefined : ctx.outDir;
     const aliasRes =
       aliasRoots.length > 0
-        ? computeResolveAliases(
-            aliasRoots,
-            ctx.nextjs ? ctx.nextjs.root : (aliasRoots[0] ?? ctx.outDir),
-            ctx.nextjs ? undefined : ctx.outDir,
-          )
+        ? computeResolveAliases(aliasRoots, pinFrom, pinFallback)
         : { aliases: [] as AliasEntry[], multiRoot: [] as MultiRootAlias[] };
+    // The react named-export shim (ReactExportShim): the app's own imports
+    // scanned against its installed react's exports, filled only with what
+    // Next's bundled copy proves to exist. Undefined for every app whose
+    // imports the core already answers.
+    const reactShim = detectCanaryReactExports(
+      flattenTrees(ctx.trees).map((c) => c.info.filePath),
+      nearestReactNodeModules(pinFrom) ??
+        (pinFallback ? nearestReactNodeModules(pinFallback) : undefined),
+    );
     const scaffoldOptions = {
       browserSpecs,
       trees: ctx.trees,
@@ -105,6 +113,7 @@ export const unitAndBrowser: Task = {
       provider: ctx.provider,
       resolveAliases: aliasRes.aliases.length > 0 ? aliasRes.aliases : undefined,
       multiRootAliases: aliasRes.multiRoot.length > 0 ? aliasRes.multiRoot : undefined,
+      reactShim,
       // The app package's .env files for the emitted vitest config (server
       // modules read DATABASE_URL & co. at import time; unset env crashes
       // every importing spec at collection).
@@ -160,6 +169,9 @@ export const unitAndBrowser: Task = {
     const browserNote = browserSpecs
       ? ""
       : " (browser specs skipped — add perf-harness to the task list for the host they need)";
+    const shimNote = reactShim
+      ? ` (react shim: ${[...reactShim.components, ...reactShim.functions].join(", ")} from Next's bundled react@${reactShim.canaryVersion})`
+      : "";
     // Notes before the name list: REPORT.md truncates each task summary at
     // 120 chars and the component list runs to thousands — a note appended
     // after it would exist only in summary.json and stdout, and the kept
@@ -169,7 +181,7 @@ export const unitAndBrowser: Task = {
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${browserNote}: ${names.join(", ")}`,
+      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${shimNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
     };
   },
@@ -286,5 +298,86 @@ function nearestReactNodeModules(fromDir: string): string | undefined {
     const parent = path.dirname(dir);
     if (parent === dir) return fallback;
     dir = parent;
+  }
+}
+
+/**
+ * Detect React named exports the analysed sources import that the app's
+ * installed react does not carry but the copy Next bundles does, and
+ * describe the additive shim for them (ReactExportShim in
+ * scaffold-tests/templates.ts explains why this is not a core swap).
+ * Returns undefined when the core answers every import — the common case,
+ * and the cheap exit. The scan is a regex over the import statements, not a
+ * type-aware pass: only the set of names taken from the bare "react"
+ * specifier matters. A name NEITHER react exports stays unfilled — that is
+ * a genuine app bug and should fail the suite as loudly as it fails the
+ * app.
+ */
+function detectCanaryReactExports(
+  sourceFiles: string[],
+  nmDir: string | undefined,
+): ReactExportShim | undefined {
+  if (!nmDir) return undefined;
+  const imported = new Set<string>();
+  // Default clause optional, `type` markers optional; braces capture every
+  // name including multiline ones ([^}]* spans newlines).
+  const importRe = /import\s+(?:type\s+)?[\w$]*\s*,?\s*\{([^}]*)\}\s*from\s*["']react["']/g;
+  for (const file of sourceFiles) {
+    let src: string;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const m of src.matchAll(importRe)) {
+      for (const raw of m[1].split(",")) {
+        const name = raw
+          .trim()
+          .replace(/^type\s+/, "")
+          .split(/\s+as\s+/)[0]
+          .trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(name)) imported.add(name);
+      }
+    }
+  }
+  if (imported.size === 0) return undefined;
+  const coreDir = path.join(nmDir, "react");
+  const core = reactRuntimeExports(coreDir);
+  if (!core || core.size === 0) return undefined;
+  const missing = [...imported].filter((n) => !core.has(n));
+  if (missing.length === 0) return undefined;
+  // Evidence gate: fill only what the bundled copy actually exports, which
+  // is what the app was compiled and ships against.
+  const bundled = reactRuntimeExports(path.join(nmDir, "next", "dist", "compiled", "react"));
+  if (!bundled) return undefined;
+  const fills = missing.filter((n) => bundled.has(n));
+  if (fills.length === 0) return undefined;
+  const versionOf = (dir: string): string => {
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {
+        version?: string;
+      };
+      return pkg.version ?? "unknown";
+    } catch {
+      return "unknown";
+    }
+  };
+  return {
+    coreIndex: path.join(coreDir, "index.js"),
+    coreVersion: versionOf(coreDir),
+    canaryVersion: versionOf(path.join(nmDir, "next")),
+    components: fills.filter((n) => /^[A-Z]/.test(n)),
+    functions: fills.filter((n) => !/^[A-Z]/.test(n)),
+  };
+}
+
+/** Runtime export names of a CommonJS react build, loaded from its directory. */
+function reactRuntimeExports(reactDir: string): Set<string> | undefined {
+  try {
+    const req = createRequire(path.join(reactDir, "resolver.cjs"));
+    const mod = req(path.join(reactDir, "index.js")) as Record<string, unknown>;
+    return new Set(Object.keys(mod));
+  } catch {
+    return undefined;
   }
 }

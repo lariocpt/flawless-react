@@ -6,7 +6,7 @@ import { PNPM_SUITE_SETTINGS } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
 import { classifyStamped, stamp } from "./stamp.ts";
-import { type AliasEntry, renderUnitBrowser } from "./templates.ts";
+import { type AliasEntry, type ReactExportShim, renderUnitBrowser } from "./templates.ts";
 
 export interface ScaffoldUnitBrowserOptions {
   trees: ComponentTree[];
@@ -16,6 +16,8 @@ export interface ScaffoldUnitBrowserOptions {
   mswSetup?: boolean;
   provider?: string;
   resolveAliases?: AliasEntry[];
+  /** Emitted alongside the config when set; see ReactExportShim in templates.ts. */
+  reactShim?: ReactExportShim;
   colocate?: boolean;
   /** Overwrite existing colocated specs (in-outDir files are always rewritten). */
   force?: boolean;
