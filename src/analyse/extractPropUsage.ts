@@ -35,8 +35,11 @@ export function extractPropUsage(
       ...classify(refExpr, bodyNode),
       pos: posOf(ref.node, sourceFile),
     };
-    const member = memberName(refExpr);
-    if (member !== undefined) usage.member = member;
+    const chain = memberChain(refExpr);
+    if (chain !== undefined) {
+      usage.member = chain[0];
+      if (chain.length > 1) usage.chain = chain;
+    }
     out.push(usage);
   }
   return out;
@@ -113,11 +116,19 @@ function classify(refExpr: ts.Node, bodyNode: ts.Node): Classified {
   return { kind: "other" };
 }
 
-/** `prop.member` → "member"; applies to the `props.x` access node for viaParam refs. */
-function memberName(refExpr: ts.Node): string | undefined {
-  const p = refExpr.parent;
-  if (p && ts.isPropertyAccessExpression(p) && p.expression === refExpr) return p.name.text;
-  return undefined;
+/**
+ * `prop.a.b` → ["a","b"]; applies to the `props.x` access node for viaParam
+ * refs. A {} floor survives one hop and dies on the second, so the FULL
+ * path is the evidence — `drop.body.length` needs the head to carry a value.
+ */
+function memberChain(refExpr: ts.Node): string[] | undefined {
+  const out: string[] = [];
+  let n: ts.Node = refExpr;
+  while (n.parent && ts.isPropertyAccessExpression(n.parent) && n.parent.expression === n) {
+    out.push(n.parent.name.text);
+    n = n.parent;
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function isFunctionBoundary(n: ts.Node): boolean {

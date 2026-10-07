@@ -1,5 +1,14 @@
 import path from "node:path";
-import type { AnalyseOptions, ComponentInfo, ComponentTree, DataDepInfo, RenderMode } from "../types.ts";
+import { synthesiseDefaults } from "../scaffold-tests/registry.ts";
+import type {
+  AnalyseOptions,
+  ComponentInfo,
+  ComponentTree,
+  DataDepInfo,
+  ModuleImportInfo,
+  RenderMode,
+} from "../types.ts";
+import { bridgeDataShapes } from "./childBridge.ts";
 import { deriveCompoundFamily } from "./compoundFamily.ts";
 import { dataConstantExports } from "./dataExports.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
@@ -21,6 +30,7 @@ import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
 import { parseFile } from "./parseFile.ts";
+import { isPureLocalModule } from "./pureModule.ts";
 import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
 import {
@@ -303,7 +313,10 @@ async function analyseOne(
           for (const c of parsed.components) {
             if (c === unit || !c.isAsync) continue;
             for (const d of extractDataDeps(c.bodyNode, parsed.sourceFile, parsed.imports)) {
-              if (!own.some((o) => o.callee === d.callee) && !extras.some((e) => e.callee === d.callee))
+              if (
+                !own.some((o) => o.callee === d.callee) &&
+                !extras.some((e) => e.callee === d.callee)
+              )
                 extras.push(d);
             }
           }
@@ -345,12 +358,18 @@ async function analyseOne(
       // component never named.
       const dataExports =
         mi.kind === "value" ? dataConstantExports(mi, resolvedPath, resolver, cache) : [];
+      // A local module that only CALCULATES (no await, no live imports, no
+      // top-level call) is not a data source no matter where it was imported
+      // from — the mock loop must leave it real, or `splitCode` comes back as
+      // {} and the render dies on segments.map.
+      const pure = !resolvedPath.includes("node_modules") && isPureLocalModule(resolvedPath);
       return {
         ...mi,
         resolvedPath,
         ...(Object.keys(importedReturns).length > 0 ? { importedReturns } : {}),
         ...(asyncComponents.length > 0 ? { asyncComponents } : {}),
         ...(dataExports.length > 0 ? { dataExports } : {}),
+        ...(pure ? { isPureModule: true } : {}),
       };
     }
     const target = cache.get(resolvedPath);
@@ -479,6 +498,96 @@ async function analyseOne(
         }
       }
     }
+  }
+
+  // The spec renders its descendants for real, and they fetch their own
+  // data: Drop awaits getUserDropInteractions though the page imports only
+  // getDropsByAuthor. Collect the tree's data imports and the call-site
+  // shapes the descendants read, so the shared module mock is built with
+  // the whole render's evidence. The unit's own evidence wins for a callee
+  // (it sits on the primary path); tree entries fill what the unit never
+  // touched.
+  if (children.length > 0) {
+    const ownSpecifiers = new Set(moduleImports.map((mi) => mi.specifier));
+    const ownCallees = new Set((info.dataDeps ?? []).map((d) => d.callee));
+    const extras = new Map<string, ModuleImportInfo>();
+    const depExtras: DataDepInfo[] = [];
+    // The child bridge (analyse/childBridge.ts): a rendered component knows
+    // more about the value it is handed than this unit's reads show — the
+    // RelativeTime that calls date.getTime() on `drop.createdAt`. Collect
+    // each tag's expected prop values (that component's OWN defaults, which
+    // already carry ITS descendants' bridges: the recursion is post-order).
+    // The whole subtree counts, not just direct children: `visited` gives a
+    // shared component to whichever branch claims it first, so ProfileFeed's
+    // <Drop> can hide under DropList while still being rendered by its body.
+    // Direct children register first — their evidence wins for a tag.
+    const childExpected: Record<string, Record<string, unknown>> = {};
+    for (const ct of children) {
+      const tag = ct.entry.localTag ?? ct.entry.componentName;
+      if (!childExpected[tag]) childExpected[tag] = synthesiseDefaults(ct.entry);
+    }
+    // A descendant parked AT the depth limit shows childless whatever it
+    // renders: the app page's tree sees Drop but not the RelativeTime
+    // buried one level under him, and the expectation from that truncated
+    // entry omits the Date RelativeTime demands. Resolve such a tag from a
+    // FRESH walk of its own file — full depth budget from there, parse
+    // cache already warm, so a component's expectations never depend on how
+    // far down the host's tree it happened to be discovered.
+    const truncated = new Map<string, ComponentTree>();
+    const walkTree = (trees: ComponentTree[]): void => {
+      for (const t of trees) {
+        for (const mi of t.entry.moduleImports ?? []) {
+          if (!ownSpecifiers.has(mi.specifier) && !extras.has(mi.specifier)) {
+            extras.set(mi.specifier, mi);
+          }
+        }
+        for (const d of t.entry.dataDeps ?? []) {
+          if (!ownCallees.has(d.callee) && !depExtras.some((e) => e.callee === d.callee)) {
+            depExtras.push(d);
+          }
+        }
+        const tag = t.entry.localTag ?? t.entry.componentName;
+        if (!childExpected[tag]) {
+          childExpected[tag] = synthesiseDefaults(t.entry);
+          if (t.children.length === 0 && t.entry.childExpected === undefined) {
+            truncated.set(tag, t);
+          }
+        }
+        walkTree(t.children);
+      }
+    };
+    walkTree(children);
+    if (truncated.size > 0) {
+      const resolved = new Map<string, Record<string, unknown>>();
+      for (const [tag, t] of truncated) {
+        const key = `${t.entry.filePath}::${t.entry.componentName}`;
+        let exp = resolved.get(key);
+        if (exp === undefined) {
+          try {
+            const fresh = await analyseOne(
+              t.entry.filePath,
+              0,
+              opts,
+              new Set<string>(),
+              t.entry.filePath,
+              resolver,
+              t.entry.componentName,
+              cache,
+            );
+            exp = synthesiseDefaults(fresh.entry);
+          } catch {
+            continue; // keep the partial expectation registered by the walk
+          }
+          resolved.set(key, exp);
+        }
+        childExpected[tag] = exp;
+      }
+    }
+    if (extras.size > 0) info.treeImports = [...extras.values()];
+    if (depExtras.length > 0) info.treeDataDeps = depExtras;
+
+    info.childExpected = childExpected;
+    if (info.dataDeps) bridgeDataShapes(unit.bodyNode, info.dataDeps, childExpected);
   }
 
   return { entry: info, children };

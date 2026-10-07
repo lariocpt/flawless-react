@@ -1,8 +1,9 @@
+import { bridgePropValues } from "../analyse/childBridge.ts";
 import {
-  DATE_PROP_ISO,
-  DATE_PROP_SENTINEL,
   type ComponentInfo,
   type ComponentTree,
+  DATE_PROP_ISO,
+  DATE_PROP_SENTINEL,
   type PropsShape,
   type PropValue,
 } from "../types.ts";
@@ -220,6 +221,78 @@ const ARRAY_MEMBERS = new Set([
   "reduce",
 ]);
 
+/** Method names only Date values answer — a chain ending in one floors a live Date. */
+const DATE_MEMBERS = new Set([
+  "getTime",
+  "toISOString",
+  "toLocaleDateString",
+  "toLocaleTimeString",
+  "toLocaleString",
+  "getFullYear",
+  "getMonth",
+  "getDate",
+  "getDay",
+  "getHours",
+  "getMinutes",
+  "getSeconds",
+  "setTime",
+]);
+
+/**
+ * What the LAST segment of a chain demands of the value it was read off:
+ * [] for collection methods, a live Date for the date methods, "" for
+ * length and every other read (charAt, split, an unknown field — "" answers
+ * length, string methods and JSX children alike).
+ */
+function chainTerminal(member: string): unknown {
+  if (member === "length") return "";
+  if (ARRAY_MEMBERS.has(member)) return [];
+  if (DATE_MEMBERS.has(member)) return DATE_PROP_SENTINEL;
+  return "";
+}
+
+/**
+ * Stand-in richness: "" answers length but not map or getTime; [] answers
+ * collections; a Date answers the date methods; a nested object is deeper
+ * evidence than any primitive. A richer terminal seen anywhere wins — and
+ * the DATE sentinel is a string, so ranking it by typeof would be wrong.
+ */
+function terminalRank(v: unknown): number {
+  if (v === DATE_PROP_SENTINEL) return 3;
+  if (v === null || typeof v !== "object") return typeof v === "string" ? 1 : 0;
+  if (Array.isArray(v)) return 2;
+  return 4;
+}
+
+/**
+ * Fold `prop.a.b`-style chains into one nested stand-in. The terminal
+ * segment is NOT a key to store — it is a read off the value one hop up:
+ * `drop.body.length` wants a body that HAS a length, so body becomes "",
+ * not `{ length: [] }`. Hops before that are walked through and must be
+ * objects; a lone field read (`embeddedCode.lang`) only guarantees the
+ * holder exists.
+ */
+function foldChains(chains: string[][]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const segs of chains) {
+    const holderPath = segs.slice(0, -1);
+    let cur: Record<string, unknown> = out;
+    for (let i = 0; i < holderPath.length - 1; i++) {
+      const k = holderPath[i];
+      const ex = cur[k];
+      // The read went THROUGH this hop, so it has to be an object — an
+      // earlier "" or [] terminal here died on the hop after it.
+      if (typeof ex !== "object" || ex === null) cur[k] = {};
+      cur = cur[k] as Record<string, unknown>;
+    }
+    const key = holderPath[holderPath.length - 1];
+    const v = chainTerminal(segs[segs.length - 1]);
+    const ex = cur[key];
+    if (ex === undefined || terminalRank(v) > terminalRank(ex)) cur[key] = v;
+  }
+  return out;
+}
+
 /**
  * The props a generated test should pass, including stand-ins for the ones no
  * type resolved.
@@ -229,6 +302,11 @@ const ARRAY_MEMBERS = new Set([
  * analyser SAW a member access, the read itself says which empty value survives
  * it: {} still throws on .length/.map, so anything used as a collection gets [].
  *
+ * A CHAIN read survives even fewer: `drop.body.length` walks two hops, and {}
+ * satisfies the first only — Drop died exactly there, and ProfileFeed reproduced
+ * it through the same component. Chains therefore floor to a nested stand-in
+ * whose terminal value answers the last hop ("", [] or a live Date).
+ *
  * The unit scaffolder did this and the perf host did not, so a component like
  * `ProfileForm({ user }: { user: User })` mounted fine under jsdom and failed in
  * the browser host with "did not render within 5000ms" — the same defect wearing
@@ -236,11 +314,46 @@ const ARRAY_MEMBERS = new Set([
  */
 export function synthesiseDefaults(info: ComponentInfo): PropsShape {
   const objectish: PropsShape = {};
+  const chains = new Map<string, string[][]>();
   for (const u of info.propUsage ?? []) {
     if (!u.member) continue;
     if (!info.unresolvedProps.includes(u.propName)) continue;
+    if (u.chain && u.chain.length > 1) {
+      const list = chains.get(u.propName) ?? [];
+      if (!list.some((c) => c.join(".") === u.chain?.join("."))) list.push(u.chain);
+      chains.set(u.propName, list);
+      objectish[u.propName] ??= {};
+      continue;
+    }
     if (ARRAY_MEMBERS.has(u.member)) objectish[u.propName] = [];
     else objectish[u.propName] ??= {};
+  }
+  // Chains fold last: their nested stand-ins must not be overwritten by the
+  // plain {} floor a sibling single-hop access would give the same prop —
+  // and a prop whose only evidence is []-via-ARRAY_MEMBERS keeps that.
+  for (const [propName, list] of chains) {
+    if (Array.isArray(objectish[propName])) continue;
+    const folded = foldChains(list);
+    objectish[propName] =
+      Object.keys(objectish[propName] as object).length > 0
+        ? { ...(objectish[propName] as object), ...folded }
+        : folded;
+  }
+  // The child bridge: `<RelativeTime date={drop.createdAt}/>` is evidence
+  // about drop.createdAt from the CHILD's side — RelativeTime's own defaults
+  // say its date is a live Date, so drop grows a createdAt Date even though
+  // no read in THIS body ever asked. Rank-guarded: a child's expectation
+  // only ever upgrades the stand-in, never downgrades real evidence.
+  const exp = info.childExpected;
+  if (exp) {
+    for (const u of info.propUsage ?? []) {
+      if (!u.tag || !u.attr) continue;
+      if (!info.unresolvedProps.includes(u.propName)) continue;
+      const expected = exp[u.tag]?.[u.attr];
+      if (expected === undefined) continue;
+      const bridged = bridgePropValues(objectish[u.propName], u.member, expected);
+      if (bridged !== undefined) objectish[u.propName] = bridged as PropsShape[string];
+    }
   }
   // A Promise prop is wrapped by the spec (`Promise.resolve(v)`), but the wrap
   // skips missing keys — so an unresolved `page: Promise<Page>` reached

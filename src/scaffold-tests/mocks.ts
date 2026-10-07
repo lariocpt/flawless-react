@@ -114,7 +114,7 @@ function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key:
       local,
       moduleName: membershipName(mi, i),
       isDefault: mi.hasDefault && i === 0,
-      pure: PURE_UTILITY_BINDINGS.has(membershipName(mi, i)),
+      pure: PURE_UTILITY_BINDINGS.has(membershipName(mi, i)) || mi.isPureModule === true,
       data: mi.dataExports?.includes(membershipName(mi, i)) ?? false,
     });
   });
@@ -200,12 +200,21 @@ export function emitModuleMocks(
     mocked.push(spec);
   };
 
+  // RSC specs render their descendants, which import their own data modules;
+  // the tree's imports join the unit's (deduped by specifier at analyse time,
+  // and again through `seen`/`mergeInto` here). Client mode renders no async
+  // server tree, so it stays on the unit's imports alone.
+  const mockInputs =
+    mode === "rsc"
+      ? [...(info.moduleImports ?? []), ...(info.treeImports ?? [])]
+      : (info.moduleImports ?? []);
+
   // Merge the data-path statements per module BEFORE deciding anything: the
   // pure-utility exemption and the mock factory must both see every binding the
   // component imports from a module, however many statements deliver them.
   const dataGroups = new Map<string, MergedModule>();
   if (mode === "rsc") {
-    for (const mi of info.moduleImports ?? []) {
+    for (const mi of mockInputs) {
       if (!reachesDataPath(mi)) continue;
       // EVERY name a data-path statement imports is a module-side data
       // constant → the module stays out of the groups, and the mock loop
@@ -224,7 +233,7 @@ export function emitModuleMocks(
     }
   }
 
-  for (const mi of info.moduleImports ?? []) {
+  for (const mi of mockInputs) {
     if (mi.isTypeOnly) continue;
 
     // --- allowlist, evaluated before the kind/MOCK_SKIP gates ------------------
@@ -470,9 +479,7 @@ function linkPassthroughMock(mi: ModuleImportInfo, spec: string): string {
   const named = keys
     .filter((_, i) => !(mi.hasDefault && i === 0))
     .map((n) =>
-      n === "useLinkStatus"
-        ? `useLinkStatus: vi.fn(() => ({ pending: false }))`
-        : `${n}: vi.fn()`,
+      n === "useLinkStatus" ? `useLinkStatus: vi.fn(() => ({ pending: false }))` : `${n}: vi.fn()`,
     );
   return `vi.mock(${JSON.stringify(spec)}, async () => {
   // The real <Link> reads Next's AppRouterContext, which jsdom has no way to
@@ -562,7 +569,12 @@ function dataModuleMock(
 ): string {
   if (group.bindings.length === 0) return `vi.mock(${JSON.stringify(spec)}, () => ({}));`;
 
-  const depsHere = (info.dataDeps ?? []).filter(
+  // The descendants' call-site evidence joins the unit's: the mock is shared
+  // by the whole render, and it is the CHILD — Drop, not the page — whose
+  // `interactions.liked` says what getUserDropInteractions has to return.
+  // Analyse already dropped any callee the unit itself deps on.
+  const allDeps = [...(info.dataDeps ?? []), ...(info.treeDataDeps ?? [])];
+  const depsHere = allDeps.filter(
     (d) => d.specifier !== undefined && group.specifiers.has(d.specifier),
   );
   let uncertain = false;
@@ -573,7 +585,7 @@ function dataModuleMock(
   // `members` and `user` usually come from different modules. One hop only
   // (fieldValueLiteral's rule); anything unreadable drops the note.
   const depFieldValue: DepFieldResolver = (varName, field) => {
-    const dep = (info.dataDeps ?? []).find((d) => d.varName === varName);
+    const dep = allDeps.find((d) => d.varName === varName);
     if (!dep) return undefined;
     if (dep.uncertain || dep.shape.kind === "unknown") {
       const v = inferredDepReturn(dep, apiRoutes)?.value;

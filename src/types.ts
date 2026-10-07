@@ -353,6 +353,13 @@ export interface PropUsage {
   hook?: string;
   /** Property accessed off the prop, when the reference is `prop.member`. */
   member?: string;
+  /**
+   * Full member path for a member-access, e.g. ["body","length"] for
+   * `drop.body.length`. `member` is its head. The {} floor survives one hop
+   * and dies on the second, so the chain is what tells synthesiseDefaults
+   * the head needs a value richer than {}.
+   */
+  chain?: string[];
 }
 
 export type StateKind = "useState" | "useReducer" | "useRef" | "useActionState";
@@ -742,6 +749,14 @@ export interface ModuleImportInfo {
    */
   dataExports?: string[];
   /**
+   * The LOCAL module behind this import only CALCULATES: no await, no async,
+   * no live (non-type) import, no top-level call (analyse/pureModule.ts).
+   * Such a module is not a data source however it is imported — the mock
+   * loop leaves it real. Without this, a tree-wide mock sweep replaces
+   * `splitCode` with {} and the render dies calling .map on the result.
+   */
+  isPureModule?: boolean;
+  /**
    * Module-side export names whose declarations are ASYNC functions, for
    * imports used as JSX tags. React's client renderer refuses an async
    * function component outright, so a server page rendering `<InsightsCard>`
@@ -869,6 +884,25 @@ export interface ComponentInfo {
   hookDetails?: HookDetail[];
   childAttrs?: ChildAttrInfo[];
   moduleImports?: ModuleImportInfo[];
+  /**
+   * moduleImports of the components rendered BELOW this unit — real code
+   * inside a spec's render. Drop awaits getUserDropInteractions even when
+   * the page itself imports only getDropsByAuthor, and the module mock is
+   * shared by the whole render: without the tree's data modules the real
+   * one runs (cookies() in a jsdom mount) or a {} fixture kills the mount.
+   */
+  treeImports?: ModuleImportInfo[];
+  /** Descendants' dataDeps — call-site shapes joined via calleeRoot. */
+  treeDataDeps?: DataDepInfo[];
+  /**
+   * What the CHILD components rendered by this unit's own JSX expect on the
+   * props they receive: tag → attr → the child's default value for it
+   * (analyse/childBridge.ts). A child reads more of a value than the
+   * parent's member accesses show — Drop hands RelativeTime a
+   * `drop.createdAt` nobody typed — so synth consults this when building an
+   * unresolved prop's stand-in, and analyse folds it into data fixtures.
+   */
+  childExpected?: Record<string, Record<string, unknown>>;
   fetchCalls?: FetchCallInfo[];
   /**
    * GET/mutation endpoints this component reaches through the app's own fetch
