@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { mergePackageJson } from "../packageJson.ts";
+import { detectAppReact, mergePackageJson } from "../packageJson.ts";
+import { PNPM_SUITE_SETTINGS } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
 import { classifyStamped, stamp } from "./stamp.ts";
@@ -131,6 +132,11 @@ export async function scaffoldUnitBrowser(
   if (!opts.skipInnerPackageJson) {
     await writeSuitePackageJson(outDir, opts.browserSpecs !== false);
     written.push(path.join(outDir, "package.json"));
+    const wsYaml = path.join(outDir, "pnpm-workspace.yaml");
+    if (!existsSync(wsYaml)) {
+      await writeFile(wsYaml, PNPM_SUITE_SETTINGS);
+      written.push(wsYaml);
+    }
   }
   return { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept };
 }
@@ -157,6 +163,11 @@ export interface StaleBrowserSpec {
  * disagree in the first place.
  */
 export function suitePackageJson(outDir: string, withBrowser: boolean): string {
+  // The suite's react IS the copy every plane renders with (aliases + host
+  // resolution point at the suite's node_modules), so it must be the
+  // version the app's component code was written against. See detectAppReact.
+  const pin = detectAppReact(outDir);
+  const typesPin = pin ? `^${pin.react.split(".")[0]}.0.0` : "^18.3.0";
   return `${JSON.stringify(
     {
       name: `${path.basename(outDir).replace(/[^a-zA-Z0-9_-]+/g, "-")}-suite`,
@@ -172,8 +183,8 @@ export function suitePackageJson(outDir: string, withBrowser: boolean): string {
         ...(withBrowser ? { [SUITE_SCRIPT.browser]: SUITE_COMMAND.browser } : {}),
       },
       dependencies: {
-        react: "^18.3.0",
-        "react-dom": "^18.3.0",
+        react: pin?.react ?? "^18.3.0",
+        "react-dom": pin?.reactDom ?? "^18.3.0",
       },
       devDependencies: {
         "@playwright/test": "^1.49.0",
@@ -183,8 +194,8 @@ export function suitePackageJson(outDir: string, withBrowser: boolean): string {
         // provider it is a faithful no-op, identical to production behavior.
         "@opentelemetry/api": "^1.9.0",
         "@types/node": "^22.0.0",
-        "@types/react": "^18.3.0",
-        "@types/react-dom": "^18.3.0",
+        "@types/react": typesPin,
+        "@types/react-dom": typesPin,
         typescript: "^5.6.0",
         vitest: "^2.1.0",
         "@vitest/ui": "^2.1.0",

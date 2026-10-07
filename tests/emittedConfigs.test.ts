@@ -313,13 +313,15 @@ describe("the emitted vitest config resolves to files that exist", () => {
     const plugins = (cfg.plugins as unknown[]).flat(Infinity) as Plug[];
     const plugin = plugins.find((p) => p && p.name === "flawless-multiroot-tsconfig-paths");
     expect(plugin, "the multi-root plugin is emitted").toBeDefined();
-    expect(plugin!.resolveId!("@/greeting", path.join(app, "src", "Toolbar.tsx"))).toBe(
+    const resolveId = plugin?.resolveId;
+    expect(resolveId, "the plugin carries a resolveId hook").toBeDefined();
+    expect(resolveId?.("@/greeting", path.join(app, "src", "Toolbar.tsx"))).toBe(
       path.join(app, "src", "greeting.ts"),
     );
-    expect(plugin!.resolveId!("@/greeting", path.join(docs, "src", "Toolbar.tsx"))).toBe(
+    expect(resolveId?.("@/greeting", path.join(docs, "src", "Toolbar.tsx"))).toBe(
       path.join(docs, "src", "greeting.ts"),
     );
-    expect(plugin!.resolveId!("@/nope", path.join(app, "src", "Toolbar.tsx"))).toBeNull();
+    expect(resolveId?.("@/nope", path.join(app, "src", "Toolbar.tsx"))).toBeNull();
   });
 });
 

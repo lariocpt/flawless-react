@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import type { AffectedSpecs } from "../changed.ts";
 import { grepFor, grepForRoutes } from "../changed.ts";
@@ -110,6 +110,13 @@ export async function runGeneratedTests(
     return { ran: 0, green: true, reason };
   }
 
+  // The vitest plane is the one that pays for a second physical React (see
+  // healReactIdentity). Repair after any install has rewritten the tree.
+  if (standalone && scripts.some((s) => s.id === "unit")) {
+    const healed = healReactIdentity(path.resolve(outDir));
+    if (healed.length > 0) say(`\n› healed dual-React copies: ${healed.join(", ")}\n`);
+  }
+
   const failed: string[] = [];
   for (const s of scripts) {
     say(`\n› ${s.cmd.join(" ")}\n`);
@@ -127,6 +134,77 @@ export async function runGeneratedTests(
 
 function sayInto(quiet: boolean): (s: string) => void {
   return (s) => void (quiet ? process.stderr : process.stdout).write(s);
+}
+
+/**
+ * Collapse the suite's separate physical copies of react/react-dom onto the
+ * app's copy, in place, right before a vitest run.
+ *
+ * Every request-level pin (vitest aliases, deps.inline, the app-version
+ * dependency) has been tried, and pnpm's layout defeats them all: an
+ * internalised package's own require("react") resolves by plain node rules
+ * from its realpath under the SUITE's .pnpm root, so the renderer and the
+ * app's context libraries land on two physical copies — same version,
+ * separate hook dispatchers ("Cannot read properties of null (reading
+ * 'useContext')"). Only module IDENTITY fixes it, and identity is
+ * filesystem-level: node's require cache is keyed by realpath, so the suite
+ * tree must not CONTAIN a second react. The top-level entries and the
+ * @testing-library peer links under .pnpm are replaced with relative
+ * symlinks to the app's copy (absolute links would break a moved checkout).
+ *
+ * Best-effort by design: every failure is swallowed, a re-run after any
+ * `install` (which rewrites the links) heals again, and suites whose app
+ * has no installed react are left exactly as they were.
+ */
+export function healReactIdentity(suiteDir: string): string[] {
+  const suiteNm = path.join(suiteDir, "node_modules");
+  if (!existsSync(suiteNm)) return [];
+  let appNm: string | undefined;
+  let dir = path.dirname(suiteDir);
+  for (let hop = 0; hop < 8 && !appNm; hop++) {
+    const nm = path.join(dir, "node_modules");
+    if (existsSync(path.join(nm, "react"))) appNm = nm;
+    else {
+      const up = path.dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  if (!appNm) return [];
+  const app = appNm;
+  const healed: string[] = [];
+  const repair = (entry: string, name: string): void => {
+    const appCopy = path.join(app, name);
+    try {
+      // Only copies the suite ACTUALLY carries are replaced; a missing entry
+      // already resolves outward toward the app, and inventing links in a
+      // package-manager-managed tree invites that manager's corrections.
+      if (!existsSync(entry) || realpathSync(entry) === realpathSync(appCopy)) return;
+      rmSync(entry, { recursive: true, force: true });
+      symlinkSync(path.relative(path.dirname(entry), appCopy), entry);
+      healed.push(path.relative(suiteDir, entry));
+    } catch {
+      /* permission or a busy tree: the suite runs on what it has */
+    }
+  };
+  for (const name of ["react", "react-dom"]) {
+    repair(path.join(suiteNm, name), name);
+    // pnpm's peer links are where the split actually bites: RTL renders
+    // through ITS react-dom peer, so replacing only the top level left the
+    // dual instance exactly where it was.
+    let pnpmDirs: string[];
+    try {
+      pnpmDirs = readdirSync(path.join(suiteNm, ".pnpm"));
+    } catch {
+      pnpmDirs = [];
+    }
+    for (const d of pnpmDirs) {
+      if (!d.startsWith("@testing-library")) continue;
+      const peer = path.join(suiteNm, ".pnpm", d, "node_modules", name);
+      if (existsSync(peer)) repair(peer, name);
+    }
+  }
+  return healed;
 }
 
 /**
@@ -284,6 +362,13 @@ export async function runAffectedTests(
     }
     say(`\n${reason}\n`);
     return { ran: 0, green: true, reason };
+  }
+
+  // Same repair as the full run: vitest is the plane that pays for two
+  // physical Reacts, and --changed runs it just as hard.
+  if (standalone && runs.some((r) => r.id === "unit")) {
+    const healed = healReactIdentity(path.resolve(outDir));
+    if (healed.length > 0) say(`\n› healed dual-React copies: ${healed.join(", ")}\n`);
   }
 
   const failed: string[] = [];

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
+import { appPackageRoot } from "../packageJson.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
 import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
@@ -75,9 +76,24 @@ export const unitAndBrowser: Task = {
     // the passthrough end to end, because a rebuild of the object anywhere on
     // the path would silently drop the counter and report zero debt.
     const todos = new TodoCounter();
+    // The shared-react anchor follows the SOURCES, not the suite directory.
+    // Externalized deps (next-themes & co.) resolve "react" from the APP's
+    // tree — node's require, no alias involved — so the alias must anchor at
+    // that same physical copy or the app's libraries render with one React
+    // while the suite renders with another ("Cannot read properties of null
+    // (reading 'useContext')"). The suite's own copy would win this lookup
+    // the moment it is installed, splitting the graph exactly there; the
+    // harness closure (@testing-library, react, react-dom) is INLINED in the
+    // vitest config instead, so its bare specifiers ride the alias too. An
+    // app with no installed react falls through to the suite's copy, which
+    // now carries the app's version pin.
     const aliasRes =
       aliasRoots.length > 0
-        ? computeResolveAliases(aliasRoots, ctx.nextjs ? ctx.nextjs.root : ctx.outDir)
+        ? computeResolveAliases(
+            aliasRoots,
+            ctx.nextjs ? ctx.nextjs.root : (aliasRoots[0] ?? ctx.outDir),
+            ctx.nextjs ? undefined : ctx.outDir,
+          )
         : { aliases: [] as AliasEntry[], multiRoot: [] as MultiRootAlias[] };
     const scaffoldOptions = {
       browserSpecs,
@@ -89,6 +105,14 @@ export const unitAndBrowser: Task = {
       provider: ctx.provider,
       resolveAliases: aliasRes.aliases.length > 0 ? aliasRes.aliases : undefined,
       multiRootAliases: aliasRes.multiRoot.length > 0 ? aliasRes.multiRoot : undefined,
+      // The app package's .env files for the emitted vitest config (server
+      // modules read DATABASE_URL & co. at import time; unset env crashes
+      // every importing spec at collection).
+      appEnvRoot: ctx.nextjs
+        ? ctx.nextjs.root
+        : aliasRoots[0]
+          ? appPackageRoot(aliasRoots[0])
+          : undefined,
       colocate: ctx.colocate,
       force: ctx.force,
       apiRoutes: ctx.nextjs?.apiRoutes,
@@ -159,6 +183,7 @@ export const unitAndBrowser: Task = {
 function computeResolveAliases(
   roots: string[],
   pinFrom?: string,
+  pinFallback?: string,
 ): { aliases: AliasEntry[]; multiRoot: MultiRootAlias[] } {
   const entries: AliasEntry[] = [];
   const multiRoot: MultiRootAlias[] = [];
@@ -181,18 +206,24 @@ function computeResolveAliases(
     }
   }
   for (const [prefix, dirs] of targets) {
-    if (dirs.length === 1) entries.push({ find: prefix, replacement: dirs[0]!, prefix: true });
+    const only = dirs[0];
+    if (dirs.length === 1 && only !== undefined)
+      entries.push({ find: prefix, replacement: only, prefix: true });
     else multiRoot.push({ prefix, dirs });
   }
 
   // The shared-react pin. A Next suite runs on the repo's own vitest/RTL
-  // stack, so it anchors at the app root — unchanged. A non-Next standalone
-  // suite installs its test stack into <outDir>/node_modules: the specs' RTL
-  // lives there, and its react must be the copy everything else is aliased
-  // to. nearestReactNodeModules's own preference (the dir that carries
-  // @testing-library/react wins) keeps this honest when outDir lacks it — the
-  // walk continues to the repo copy.
-  const nmDir = nearestReactNodeModules(pinFrom);
+  // stack, so it anchors at the app root. A non-Next standalone suite
+  // anchors at the SOURCES' copy first (see the call site): externalized
+  // deps resolve react from the app tree through plain node require, so
+  // that copy is the one the whole graph must share. Only when the app
+  // tree carries no react at all does pinFallback join — the suite's own
+  // installed test stack, which is version-matched to the app by
+  // detectAppReact. nearestReactNodeModules's preference (the dir that
+  // carries @testing-library/react wins) keeps each leg honest.
+  const nmDir =
+    nearestReactNodeModules(pinFrom) ??
+    (pinFallback ? nearestReactNodeModules(pinFallback) : undefined);
   if (nmDir) {
     const pin = (spec: string, rel: string): void => {
       const abs = path.join(nmDir, rel);
@@ -211,6 +242,27 @@ function computeResolveAliases(
     pin("react-dom/server.browser", "react-dom/server.browser.js");
     pin("react-dom", "react-dom");
     pin("react", "react");
+    // pnpm's realpath layout escapes every request-level pin above. When
+    // vitest INTERNALIZES a package (react-dom, testing-library — see the
+    // deps.inline note in the vitest config), the package's own
+    // require("react") runs from its realpath under
+    // <nm>/.pnpm/<name>@<ver>/node_modules/<name>/ and resolves by plain
+    // node rules — a second physical react beside the aliased one, same
+    // version, separate dispatcher ("Cannot read properties of null
+    // (reading 'useSyncExternalStore')"). A pattern against the RESOLVED
+    // path is the only hook that sees those loads.
+    const pnpmPin = (name: string): void => {
+      const abs = path.join(nmDir, name);
+      if (existsSync(abs))
+        entries.push({
+          find: `\\.pnpm/${name}@[^/]*/node_modules/${name}$`,
+          replacement: abs,
+          prefix: false,
+          raw: true,
+        });
+    };
+    pnpmPin("react");
+    pnpmPin("react-dom");
   }
   return { aliases: entries, multiRoot };
 }

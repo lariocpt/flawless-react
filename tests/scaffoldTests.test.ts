@@ -65,6 +65,7 @@ describe("scaffoldUnitBrowser (file writes)", () => {
       path.join(outDir, "unit", "Widget.test.tsx"),
       path.join(outDir, "browser", "Widget.spec.ts"),
       path.join(outDir, "package.json"),
+      path.join(outDir, "pnpm-workspace.yaml"),
     ];
     expect(written.sort()).toEqual([...expected].sort());
     expect(skipped).toEqual([]);

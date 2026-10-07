@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { stringifyLike } from "./scaffold/adoptStyle.ts";
 
 interface Pkg {
@@ -5,6 +7,132 @@ interface Pkg {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   [key: string]: unknown;
+}
+
+/**
+ * The app's own React pin, as a bare exact version.
+ *
+ * The suite installs its OWN react/react-dom (its harness deps live in the
+ * suite's tree), and every plane resolves react through that one copy: the
+ * vitest aliases point at the suite's node_modules, and the perf host's
+ * resolveFromSuite resolves from the suite directory. So the suite's copy IS
+ * the copy the app's component code runs against — and a suite pinned to 18
+ * under a React-19 app fails every component that touches a 19-only hook
+ * (`useOptimistic is not a function` across 100+ specs). Pin what the app
+ * declares instead; absent a detectable app pin, fall back to the default.
+ *
+ * Walks up from the suite dir past package.jsons that merely exist until one
+ * DEFINES react (monorepo roots often carry no react at all), resolving pnpm
+ * `catalog:` references through the package.json catalogs map or a sibling
+ * pnpm-workspace.yaml.
+ */
+export function detectAppReact(fromDir: string): { react: string; reactDom: string } | undefined {
+  let dir = path.dirname(path.resolve(fromDir));
+  for (let hop = 0; hop < 8; hop++) {
+    const pkgPath = path.join(dir, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+          catalogs?: Record<string, Record<string, string>>;
+          pnpm?: { catalog?: Record<string, string> };
+        };
+        const all = { ...pkg.devDependencies, ...pkg.dependencies };
+        const react = resolveCatalog(all.react, "react", dir, pkg);
+        const reactDom = resolveCatalog(all["react-dom"], "react-dom", dir, pkg);
+        const v = bareVersion(react);
+        const dv = bareVersion(reactDom);
+        if (v && dv) return { react: v, reactDom: dv };
+      } catch {
+        /* unparseable: keep walking */
+      }
+    }
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return undefined;
+}
+
+/**
+ * The nearest ancestor of `fromDir` that holds a package.json — the package
+ * an analysed source belongs to, and therefore where the app's .env files
+ * live (the app reads them from its own package directory).
+ */
+export function appPackageRoot(fromDir: string): string | undefined {
+  let dir = path.dirname(path.resolve(fromDir));
+  for (let hop = 0; hop < 8; hop++) {
+    if (existsSync(path.join(dir, "package.json"))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return undefined;
+}
+
+function resolveCatalog(
+  range: string | undefined,
+  key: "react" | "react-dom",
+  dir: string,
+  pkg: {
+    catalogs?: Record<string, Record<string, string>>;
+    pnpm?: { catalog?: Record<string, string> };
+  },
+): string | undefined {
+  if (!range) return undefined;
+  if (!range.startsWith("catalog:")) return range;
+  const named = range.slice("catalog:".length) || "default";
+  if (named === "default") {
+    return (
+      pkg.catalogs?.default?.[key] ?? pkg.pnpm?.catalog?.[key] ?? catalogFromYaml(dir, null, key)
+    );
+  }
+  return pkg.catalogs?.[named]?.[key] ?? catalogFromYaml(dir, named, key);
+}
+
+// `catalog:` / `catalogs:` maps in a pnpm-workspace.yaml, without a YAML
+// parser: `  react: x` under a top-level catalog:, or one more indent under
+// catalogs:<name>: . A file with only the default catalog is unambiguous.
+function catalogFromYaml(
+  dir: string,
+  catalog: string | null,
+  key: "react" | "react-dom",
+): string | undefined {
+  let yaml: string;
+  try {
+    yaml = readFileSync(path.join(dir, "pnpm-workspace.yaml"), "utf8");
+  } catch {
+    return undefined;
+  }
+  const escaped = key.replace("-", "\\-");
+  let section: "root" | "catalog" | "catalogs" | "other" = "other";
+  let named = "";
+  for (const line of yaml.split("\n")) {
+    if (/^[^\s#]/.test(line)) {
+      if (/^catalog:\s*$/.test(line)) section = "catalog";
+      else if (/^catalogs:\s*$/.test(line)) section = "catalogs";
+      else section = "other";
+      continue;
+    }
+    if (section === "catalog") {
+      const m = line.match(new RegExp(`^\\s{2}${escaped}:\\s*['"]?([^'"\\s#]+)`));
+      if (m) return m[1];
+    } else if (section === "catalogs") {
+      const nm = line.match(/^(\s{2})(\S[^:]*):\s*$/);
+      if (nm) named = nm[2];
+      else if (catalog && named === catalog) {
+        const m = line.match(new RegExp(`^\\s{4}${escaped}:\\s*['"]?([^'"\\s#]+)`));
+        if (m) return m[1];
+      }
+    }
+  }
+  return undefined;
+}
+
+function bareVersion(range: string | undefined): string | undefined {
+  const m = range?.match(/(\d+\.\d+\.\d+)/);
+  return m?.[1];
 }
 
 /**
@@ -59,6 +187,16 @@ export function mergePackageJson(existingSource: string, generated: string): str
       continue;
     }
     merged[field] = { ...(add ?? {}), ...(before ?? {}) };
+  }
+  // pnpm >=12 stopped reading package.json's `pnpm` settings block entirely
+  // and warns on every install (the allow-list lives in pnpm-workspace.yaml,
+  // which the suite emits). An older generation of this tool wrote
+  // pnpm.onlyBuiltDependencies into the suite's own package.json; the file is
+  // ours, so the dead key is stripped instead of warned about forever.
+  const pnpmBlock = (merged as { pnpm?: Record<string, unknown> }).pnpm;
+  if (pnpmBlock && "onlyBuiltDependencies" in pnpmBlock) {
+    delete pnpmBlock.onlyBuiltDependencies;
+    if (Object.keys(pnpmBlock).length === 0) delete merged.pnpm;
   }
   return stringifyLike(existingSource, merged);
 }

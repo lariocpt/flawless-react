@@ -73,6 +73,14 @@ export interface AliasEntry {
   /** Absolute replacement path (dir for prefixes, module path for exact). */
   replacement: string;
   prefix: boolean;
+  /**
+   * `find` is a RAW regex source (anchors included), emitted verbatim rather
+   * than escaped-and-wrapped. Used for the pnpm-realpath pins: vite resolves
+   * an internalized package to its realpath under <nm>/.pnpm/<name>@<ver>/,
+   * and the package's own require("react") is a request-level rewrite no
+   * request alias can intercept — only a pattern against the resolved path.
+   */
+  raw?: boolean;
 }
 
 /**
@@ -124,6 +132,15 @@ export interface UnitBrowserRenderOptions {
    * throws the same in its unit spec, and one derivation fixes both planes.
    */
   providerWraps?: Map<string, ProviderRef[]>;
+  /**
+   * The APP package's root — where its .env files live. Emitted into the
+   * vitest config as a config-load reader: modules under test execute their
+   * import-time side effects (a prisma client doing `new URL(process.env
+   * .DATABASE_URL)` at module scope crashes every importing spec at
+   * collection when the variable is unset, while the app itself reads that
+   * file from this very directory).
+   */
+  appEnvRoot?: string;
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
@@ -360,7 +377,14 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
       const target = a.prefix
         ? `path.resolve(configDir, ${rel}) + "/"`
         : `path.resolve(configDir, ${rel})`;
-      const find = a.prefix ? `/^${escapeRegex(a.find)}/` : `/^${escapeRegex(a.find)}$/`;
+      // Raw patterns are emitted as regex LITERALS, so every "/" in the
+      // source must carry a backslash — an unescaped one would terminate the
+      // literal mid-pattern and leave the config unparseable.
+      const find = a.raw
+        ? `/${a.find.replace(/\//g, "\\/")}/`
+        : a.prefix
+          ? `/^${escapeRegex(a.find)}/`
+          : `/^${escapeRegex(a.find)}$/`;
       return `      { find: ${find}, replacement: ${target} },`;
     })
     .concat(
@@ -441,7 +465,37 @@ const multiRootPlugin = {
 };
 `;
   const pluginsBlock = multi.length === 0 ? "" : `  plugins: [multiRootPlugin],\n`;
-  const fsImport = multi.length === 0 ? "" : `import { existsSync, statSync } from "node:fs";\n`;
+  // The app's .env files, read at config load — see UnitBrowserRenderOptions
+  // .appEnvRoot for why the suite must see them. Nothing is copied into this
+  // file, and keys already in the environment win: exporting an override
+  // still redirects the suite.
+  const envBlock = opts.appEnvRoot
+    ? `{
+  const appRoot = path.resolve(
+    configDir,
+    ${JSON.stringify(relativeToEmitted(opts.outDir, opts.appEnvRoot))},
+  );
+  for (const file of [".env.test.local", ".env.test", ".env.local", ".env"]) {
+    try {
+      const text = readFileSync(path.join(appRoot, file), "utf8");
+      for (const line of text.split("\\n")) {
+        const kv = line.match(/^(?:export )?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+        if (kv && !(kv[1] in process.env))
+          process.env[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, "");
+      }
+    } catch {
+      /* that file does not exist */
+    }
+  }
+}
+
+`
+    : "";
+  const fsNames = [
+    ...(multi.length > 0 ? ["existsSync", "statSync"] : []),
+    ...(envBlock ? ["readFileSync"] : []),
+  ];
+  const fsImport = fsNames.length === 0 ? "" : `import { ${fsNames.join(", ")} } from "node:fs";\n`;
   if (opts.colocate) {
     // Colocate mode runs as `vitest run --config <out>/vitest.config.mts`.
     // Vite roots itself at the CONFIG file's directory, so without an explicit
@@ -467,8 +521,7 @@ import { defineConfig } from "vitest/config";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, "..");
-${multiBlock}
-export default defineConfig({
+${multiBlock}${envBlock}export default defineConfig({
   root: projectRoot,
 ${pluginsBlock}  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
   // jsx "preserve", which gives vitest's esbuild nothing usable, and every
@@ -476,6 +529,11 @@ ${pluginsBlock}  // The automatic JSX runtime, pinned HERE: a Next.js host's tsc
   // >=18, where the automatic runtime always exists (FR-018 — found the
   // first time an emitted spec was actually executed in this repo).
   esbuild: { jsx: "automatic" },
+  // Kill the PostCSS config FILE search: vite walks up from the suite and
+  // picks up the repo's own postcss config (a tailwind v4 plugin vite cannot
+  // even load here — "Invalid PostCSS Plugin found at: plugins[0]"). Specs
+  // never need the app's styles (test.css is false below).
+  css: { postcss: { plugins: [] } },
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: [path.join(configDir, "setup.ts")],
@@ -488,19 +546,29 @@ ${resolveBlock}  test: {
     exclude: ["**/node_modules/**", "**/dist/**", "**/.{idea,git,cache,output,temp}/**"],
     globals: true,
     css: false,
+    // Run the harness's own closure (testing-library, react, react-dom)
+    // through vite instead of node's require: that is what lets the resolve
+    // ALIASES above apply to it. Externalized, @testing-library/react's
+    // require("react") bypasses vite entirely and lands on a second React —
+    // React-19 components then render under React-18 ("Objects are not valid
+    // as a React child", "useOptimistic is not a function").
+    server: {
+      deps: {
+        inline: [/@testing-library/, /^react$/, /^react\\//, /^react-dom$/, /^react-dom\\//],
+      },
+    },
   },
 });
 `;
   }
   const anchor =
-    aliasLines.length > 0 || multi.length > 0
+    aliasLines.length > 0 || multi.length > 0 || envBlock !== ""
       ? `${fsImport}import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
-${multiBlock}
-`
+${multiBlock}${envBlock}`
       : `import { defineConfig } from "vitest/config";
 
 `;
@@ -509,12 +577,28 @@ ${pluginsBlock}  // See the colocate branch: a host tsconfig with jsx "preserve"
   // Next.js default) left esbuild on the classic runtime and every render
   // threw "React is not defined" (FR-018).
   esbuild: { jsx: "automatic" },
+  // Kill the PostCSS config FILE search: vite walks up from the suite and
+  // picks up the repo's own postcss config (a tailwind v4 plugin vite cannot
+  // even load here — "Invalid PostCSS Plugin found at: plugins[0]"). Specs
+  // never need the app's styles (test.css is false below).
+  css: { postcss: { plugins: [] } },
 ${resolveBlock}  test: {
     environment: "jsdom",
     setupFiles: ["./setup.ts"],
     include: ["unit/**/*.test.{ts,tsx}"],
     globals: true,
     css: false,
+    // Run the harness's own closure (testing-library, react, react-dom)
+    // through vite instead of node's require: that is what lets the resolve
+    // ALIASES above apply to it. Externalized, @testing-library/react's
+    // require("react") bypasses vite entirely and lands on a second React —
+    // React-19 components then render under React-18 ("Objects are not valid
+    // as a React child", "useOptimistic is not a function").
+    server: {
+      deps: {
+        inline: [/@testing-library/, /^react$/, /^react\\//, /^react-dom$/, /^react-dom\\//],
+      },
+    },
   },
 });
 `;
@@ -833,6 +917,20 @@ vi.mock("next/navigation", () => ({
   useSearchParams: vi.fn(() => new URLSearchParams()),
   useParams: vi.fn(() => ({})),
   useRoute: vi.fn(() => "/"),
+  useSelectedLayoutSegment: vi.fn(() => null),
+  useSelectedLayoutSegments: vi.fn(() => []),
+}));
+// Global next/cache mock: revalidate & co. are no-ops without a server, and
+// cacheLife()/cacheTag() THROW at execution time ("... is only available
+// with the cacheComponents config") in a plain vitest process — an app whose
+// cached server actions call them fails every spec that executes one.
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+  revalidateTag: vi.fn(),
+  updateTag: vi.fn(),
+  refresh: vi.fn(),
+  cacheLife: vi.fn(),
+  cacheTag: vi.fn(),
 }));
 // Global next/font mocks: the loaders are compile-time shims in the Next
 // pipeline; their runtime modules have NO exports to enumerate. A factory

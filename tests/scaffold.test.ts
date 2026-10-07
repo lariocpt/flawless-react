@@ -290,6 +290,7 @@ describe("scaffold (file writes)", () => {
       const budgets = path.join(out, "budgets.json");
       const main = path.join(out, "host/main.tsx");
       const routes = path.join(out, "mock/routes.ts");
+      const wsYaml = path.join(out, "pnpm-workspace.yaml");
       await Bun.write(budgets, '{"sentinel":true}\n');
       await Bun.write(main, "// sentinel\n");
       await Bun.write(routes, "// sentinel\n");
@@ -305,7 +306,7 @@ describe("scaffold (file writes)", () => {
         apiSpec: API_SPEC,
       });
       expect(second.status).toBe("refreshed");
-      expect([...second.kept].sort()).toEqual([budgets, main, routes].sort());
+      expect([...second.kept].sort()).toEqual([budgets, main, routes, wsYaml].sort());
       expect(await Bun.file(budgets).text()).toBe('{"sentinel":true}\n');
       expect(await Bun.file(main).text()).toBe("// sentinel\n");
       expect(await Bun.file(routes).text()).toBe("// sentinel\n");
