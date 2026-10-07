@@ -62,22 +62,44 @@ function rank(v: unknown): number {
  * A child's expected VALUE as a fixture SHAPE. Booleans are skipped: no
  * boolean kind exists, and injecting a truthy stand-in could flip a branch
  * every later assertion reads.
+ *
+ * Strings split in two. A synth-seeded placeholder ("flawless-handle", "")
+ * carries no evidence about WHICH string fits, so it merges as the generic
+ * string kind. A string that survived synthesis VERBATIM is type evidence —
+ * an arm of a literal union ('like' | 'repost' | …) — and the mock must
+ * emit exactly that: NotificationList indexes ICONS by n.kind, and a
+ * plausible-but-wrong 'flawless-kind' looks up undefined and crashes the
+ * render. Verbatim strings ride as the field's `equals` value.
  */
-function valueToShape(v: unknown): MockShape | undefined {
-  if (v === DATE_PROP_SENTINEL) return { kind: "date" };
-  if (typeof v === "number") return { kind: "number" };
-  if (typeof v === "string") return { kind: "string" };
+interface Wanted {
+  shape: MockShape;
+  equals?: unknown;
+}
+
+function valueToShape(v: unknown): Wanted | undefined {
+  if (v === DATE_PROP_SENTINEL) return { shape: { kind: "date" } };
+  if (typeof v === "number") return { shape: { kind: "number" } };
+  if (typeof v === "string") {
+    if (v === "" || v.startsWith("flawless-")) return { shape: { kind: "string" } };
+    return { shape: { kind: "string" }, equals: v };
+  }
   // A MISSING element means "no evidence" and mockValues renders []; an
   // UNKNOWN element means "render {}" — Replies learned the difference the
   // hard way when [] became [{}] and started mounting a crashing child.
-  if (Array.isArray(v)) return { kind: "array" };
+  if (Array.isArray(v)) return { shape: { kind: "array" } };
   if (v !== null && typeof v === "object") {
     const fields: MockField[] = [];
     for (const [name, fv] of Object.entries(v as Record<string, unknown>)) {
-      const shape = valueToShape(fv);
-      if (shape) fields.push({ name, shape, rendersAsText: false });
+      const w = valueToShape(fv);
+      if (!w) continue;
+      fields.push({
+        name,
+        shape: w.shape,
+        rendersAsText: false,
+        ...(w.equals !== undefined ? { equals: w.equals as MockField["equals"] } : {}),
+      });
     }
-    return { kind: "object", fields };
+    return { shape: { kind: "object", fields } };
   }
   return undefined;
 }
@@ -99,7 +121,13 @@ function mergeShape(existing: MockShape | undefined, wanted: MockShape): MockSha
     for (const w of wanted.fields) {
       const i = fields.findIndex((f) => f.name === w.name);
       if (i === -1) fields.push(w);
-      else fields[i] = { ...fields[i], shape: mergeShape(fields[i].shape, w.shape) };
+      else {
+        const merged = { ...fields[i], shape: mergeShape(fields[i].shape, w.shape) };
+        // A literal the parent never knew about is pure gain; a literal the
+        // parent inferred from a comparison site (`kind === "repost"`) stays.
+        if (merged.equals === undefined && w.equals !== undefined) merged.equals = w.equals;
+        fields[i] = merged;
+      }
     }
     return { kind: "object", fields };
   }
@@ -226,8 +254,8 @@ export function bridgeDataShapes(
  * shape shared between two deps cannot leak. A path hop that does not exist
  * yet grows an object field; the merge lands at the end of the path.
  */
-function applyPath(root: MockShape, wanted: MockShape, path: string[]): MockShape {
-  if (path.length === 0) return mergeShape(root, wanted);
+function applyPath(root: MockShape, wanted: Wanted, path: string[]): MockShape {
+  if (path.length === 0) return mergeShape(root, wanted.shape);
   if (root.kind !== "object") {
     // The read went THROUGH this hop, so it has to be an object whatever
     // the body inferred here — unless what stands here already answers it.
@@ -237,11 +265,17 @@ function applyPath(root: MockShape, wanted: MockShape, path: string[]): MockShap
   const [head, ...tail] = path;
   const fields = [...root.fields];
   const i = fields.findIndex((f) => f.name === head);
+  // A literal rides on the FIELD standing at the END of the path.
+  const atEnd = tail.length === 0 && wanted.equals !== undefined;
   if (i === -1) {
     const made = applyPath({ kind: "unknown" }, wanted, tail);
-    fields.push({ name: head, shape: made, rendersAsText: false });
+    const field: MockField = { name: head, shape: made, rendersAsText: false };
+    if (atEnd) field.equals = wanted.equals as MockField["equals"];
+    fields.push(field);
   } else {
-    fields[i] = { ...fields[i], shape: applyPath(fields[i].shape, wanted, tail) };
+    const merged = { ...fields[i], shape: applyPath(fields[i].shape, wanted, tail) };
+    if (atEnd && merged.equals === undefined) merged.equals = wanted.equals as MockField["equals"];
+    fields[i] = merged;
   }
   return { kind: "object", fields };
 }
