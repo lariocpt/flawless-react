@@ -1790,8 +1790,12 @@ function constrainedSpec(
     // `{...(props as never)}` is a type error — never is not an object type — so
     // the spread is cast to the component's own props instead.
     const invoke = info.isAsync
-      ? `await ${name}(props as never)`
+      ? `await resolveAsyncUi(await ${name}(props as never))`
       : `<${name} {...(props as React.ComponentProps<typeof ${name}>)} />`;
+    // The async resolver helper is only in scope when something awaits it.
+    const asyncUiBits = info.isAsync
+      ? { imp: `import { cloneElement, isValidElement } from "react";\n`, fn: RSC_RESOLVE_ASYNC_UI }
+      : { imp: "", fn: "" };
     // Only a component that actually renders {children} can be asserted to pass
     // a slot through. A root error boundary takes {error, reset} and renders
     // neither, so injecting a slot and demanding it appear is a test the
@@ -1806,14 +1810,14 @@ function constrainedSpec(
       : { const: "", prop: "", title: "", assert: "" };
     return `import { test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type * as React from "react";
+${asyncUiBits.imp}import type * as React from "react";
 ${mockBlock}${emitComponentImport(info, importPath)}
 
 // ${name} ${note}.
 // Mounting it with Testing Library would nest <html> inside a container div:
 // jsdom tolerates that silently, so the test would pass while asserting
 // nothing true. Its contract is checked as static markup instead.
-const DEFAULTS: Record<string, unknown> = ${propsLiteral};
+${asyncUiBits.fn}const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
 ${slotBlock.const}
 test("${name} returns a document root${slotBlock.title}", async () => {
@@ -1941,6 +1945,45 @@ ${body}
 `;
 }
 
+/**
+ * Emitted into every spec that INVOKES an async server component, before its
+ * first test. Invoking the target yields elements of OTHER async components —
+ * react-dom refuses those outright ("<X> is an async Client Component") and
+ * renderToStaticMarkup stops dead at them (the empty-markup failures). The
+ * fix is mechanical: walk the element tree, invoke each async function in
+ * place, await it, and recurse — the renderer receives an entirely sync tree.
+ * Guard / static-text / inversion siblings in the same file share it.
+ */
+const RSC_RESOLVE_ASYNC_UI = `
+// Server components compose server components: invoke the async ones in the
+// tree so react-dom / renderToStaticMarkup only ever see sync elements.
+async function resolveAsyncUi(
+  node: React.ReactNode,
+  depth = 0,
+): Promise<React.ReactNode> {
+  if (node === null || node === undefined || depth > 24) return node;
+  if (Array.isArray(node)) {
+    const out: React.ReactNode[] = [];
+    for (const kid of await Promise.all(node.map((k) => resolveAsyncUi(k, depth + 1)))) {
+      if (Array.isArray(kid)) out.push(...kid);
+      else out.push(kid);
+    }
+    return out;
+  }
+  if (!isValidElement(node)) return node;
+  const el = node as React.ReactElement;
+  const ctor = el.type as unknown as { constructor?: { name?: string } } | null;
+  if (typeof el.type === "function" && ctor?.constructor?.name === "AsyncFunction") {
+    const inner = await (el.type as (props: unknown) => Promise<React.ReactNode>)(el.props);
+    return resolveAsyncUi(inner, depth + 1);
+  }
+  const kids = (el.props as { children?: React.ReactNode }).children;
+  if (kids === undefined || kids === null) return el;
+  const resolved = await resolveAsyncUi(kids, depth + 1);
+  return resolved === kids ? el : cloneElement(el, {}, resolved);
+}
+`;
+
 function rscSpec(
   c: FlatComponent,
   importPath: string,
@@ -2003,6 +2046,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
 
   return `import { describe, test, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { cloneElement, isValidElement } from "react";
 import type * as React from "react";
 ${mocks.join("\n")}
 ${providerLine}${emitComponentImport(info, importPath)}
@@ -2010,13 +2054,13 @@ ${providerLine}${emitComponentImport(info, importPath)}
 // ${name} is an async server component: it is invoked as a function and its
 // resolved JSX is rendered directly. Module-level data dependencies above are
 // mocked — fill in fixtures to make the assertions meaningful.
-${propsBlock}
+${propsBlock}${RSC_RESOLVE_ASYNC_UI}
 test("${name} (RSC): resolves, or takes one of its declared guard paths", async (t) => {
   // Hoisted so the assertion below stays OUTSIDE the try: an assertion
   // failure must be reported as itself, never swallowed by the guard catch.
   let rendered: ReturnType<typeof render> | undefined;
   try {
-    const ui: React.ReactNode = await ${name}(${callArgs});
+    const ui: React.ReactNode = await resolveAsyncUi(await ${name}(${callArgs}));
     ${renderExpr};
   } catch (err) {
     // notFound()/redirect() are legitimate outcomes when the mocked data layer
@@ -2093,7 +2137,7 @@ function emitStaticTextTests(name: string, info: ComponentInfo, mode: "unit" | "
     mode === "rsc"
       ? `let ui: React.ReactNode;
       try {
-        ui = await ${name}(${callArgs});
+        ui = await resolveAsyncUi(await ${name}(${callArgs}));
       } catch {
         return;
       }
@@ -2231,7 +2275,7 @@ test("${name}: ${c.varName} = null — the guard's other side renders", async ()
   // null is a legal return of ${c.calleeRoot}'s own annotation, so the page
   // below the guard is reachable by contract — and only this flip reaches it.
   vi.mocked(${c.calleeRoot}).mockResolvedValueOnce(null as never);
-  const ui: React.ReactNode = await ${name}(${callArgs});
+  const ui: React.ReactNode = await resolveAsyncUi(await ${name}(${callArgs}));
   const view = ${renderOf("ui")};
   const text = (view.container.textContent ?? "").replace(/\\s+/g, " ");
 ${texts.map((t) => `  expect(text).toContain(${JSON.stringify(t)});`).join("\n")}
@@ -2302,7 +2346,7 @@ ${texts.map((t) => `  expect(text).toContain(${JSON.stringify(t)});`).join("\n")
         : `  // Leg 1 — defaults. Asserting the witnesses HERE is what keeps the
   // inverted leg's absences honest: text that never rendered cannot
   // meaningfully "go absent".
-  const ui0: React.ReactNode = await ${name}(${callArgs});
+  const ui0: React.ReactNode = await resolveAsyncUi(await ${name}(${callArgs}));
   const first = ${renderOf("ui0")};
 ${textLine}${[...leg1, ...counters].join("\n")}
   first.unmount();

@@ -292,7 +292,14 @@ describe("renderUnitBrowser async server components", () => {
     expect(paths).toContain("browser/Chip.spec.ts");
 
     const src = contentOf(files, "unit/Page.test.tsx");
-    expect(src).toContain("const ui: React.ReactNode = await Page(buildProps() as never);");
+    // Async children are resolved too: an async RSC that returns elements of
+    // other async components would otherwise stop render() at the first one
+    // (react-dom refuses async client components) and assert against empty
+    // markup.
+    expect(src).toContain(
+      "const ui: React.ReactNode = await resolveAsyncUi(await Page(buildProps() as never));",
+    );
+    expect(src).toContain("async function resolveAsyncUi(");
     // render() sits INSIDE the try: the throw often happens there rather than in
     // the component call, and a guard outside it would miss the case entirely.
     expect(src).toMatch(/try \{[\s\S]*render\(<>\{ui\}<\/>\);[\s\S]*\} catch/);
@@ -784,7 +791,9 @@ describe("renderUnitBrowser document-root components", () => {
     const spec = contentOf(docRoot({ isAsync: true }), "unit/RootLayout.test.tsx");
     // An async component cannot be created as an element — it must be called to
     // get its returned tree.
-    expect(spec).toContain("const ui = await RootLayout(props as never);");
+    expect(spec).toContain(
+      "const ui = await resolveAsyncUi(await RootLayout(props as never));",
+    );
   });
 
   test("the children slot is asserted only when the component renders children", () => {
