@@ -243,7 +243,7 @@ export function emitModuleMocks(
       continue;
     }
     if (mi.specifier === "next/link") {
-      push(mi, linkPassthroughMock);
+      push(mi, (spec) => linkPassthroughMock(mi, spec));
       continue;
     }
     if (mi.specifier.startsWith("next/font/")) {
@@ -442,7 +442,16 @@ vi.mock("next/navigation", () => ({
 function headersMock(): string {
   return `vi.mock("next/headers", () => ({
   headers: vi.fn(async () => new Headers()),
-  cookies: vi.fn(async () => ({ get: vi.fn(), getAll: vi.fn(() => []) })),
+  // The real cookie jar is Map-like AND has get/getAll/set/delete: which one a
+  // page calls is the page's choice ((await cookies()).has(SLOW) in
+  // ProfileFeed), so the stub answers every spelling.
+  cookies: vi.fn(async () => ({
+    get: vi.fn(() => undefined),
+    getAll: vi.fn(() => []),
+    has: vi.fn(() => false),
+    set: vi.fn(),
+    delete: vi.fn(),
+  })),
 }));`;
 }
 
@@ -452,8 +461,20 @@ function headersMock(): string {
  * over a top-level `createElement` binding would throw
  * "Cannot access 'createElement' before initialization".
  */
-function linkPassthroughMock(): string {
-  return `vi.mock("next/link", async () => {
+function linkPassthroughMock(mi: ModuleImportInfo, spec: string): string {
+  // Named exports ride along: the real hooks read the same AppRouterContext,
+  // and a name the file imports but the factory omits is a "[vitest] No
+  // export" error the first time the component calls it (useLinkStatus in
+  // nav-link.tsx). Keys are module-side names — aliasing is the importer's.
+  const keys = mi.importedNames ?? mi.names;
+  const named = keys
+    .filter((_, i) => !(mi.hasDefault && i === 0))
+    .map((n) =>
+      n === "useLinkStatus"
+        ? `useLinkStatus: vi.fn(() => ({ pending: false }))`
+        : `${n}: vi.fn()`,
+    );
+  return `vi.mock(${JSON.stringify(spec)}, async () => {
   // The real <Link> reads Next's AppRouterContext, which jsdom has no way to
   // provide. A passthrough keeps the anchor, its href and its text queryable.
   const { createElement } = await import("react");
@@ -462,7 +483,7 @@ function linkPassthroughMock(): string {
       const { href, children, ...rest } = props;
       const to = typeof href === "string" ? href : (href?.pathname ?? "#");
       return createElement("a", { ...rest, href: to } as never, children as never);
-    },
+    },${named.length > 0 ? `\n    ${named.join(", ")},` : ""}
   };
 });`;
 }
