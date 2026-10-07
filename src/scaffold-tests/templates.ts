@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { type AuthStub, authShimVitestBlock, collectAuthStubs } from "../analyse/authShims.ts";
 import {
@@ -504,6 +505,24 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
             })(),
           ]
         : [],
+    )
+    .concat(
+      // zod v4's index.js re-exports a NAMESPACE binding (import * as z,
+      // then export { z }) — vite's module pipeline drops the rebinding:
+      // every export survives except z, which arrives undefined, and every
+      // schema module dies at collection on z.object of undefined. The
+      // CJS entry assigns exports.z = z outright, so interop hands z over
+      // intact. Only then does the specifier exist with that file (zod v3
+      // ships no .cjs, and its z is a plain local export vite transforms
+      // fine).
+      ...(existsSync(path.resolve(opts.outDir, "../node_modules/zod/index.cjs"))
+        ? [
+            (() => {
+              const rel = JSON.stringify("../node_modules/zod/index.cjs");
+              return `      { find: /^zod$/, replacement: path.resolve(configDir, ${rel}) },`;
+            })(),
+          ]
+        : []),
     )
     .concat(
       // The server-component MARKER package: not installed in many repos (vite
