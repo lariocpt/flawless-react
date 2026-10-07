@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyseFile } from "../src/analyse/index.ts";
-import { deriveContextProviderWraps, providerKey } from "../src/analyse/providerWraps.ts";
+import {
+  deriveContextProviderWraps,
+  type LibraryProviderShim,
+  libraryProviderShimsFor,
+  providerKey,
+  referencedLibraryShims,
+} from "../src/analyse/providerWraps.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
 import type { ComponentTree, ProviderRef } from "../src/types.ts";
 
@@ -198,9 +204,25 @@ export function WhoAmI() {
   return <span>{useAuth()}</span>;
 }
 `,
+  // The library-context shape (nakama): the hook comes from node_modules,
+  // so NOTHING in the project pairs with it — only the shim table can
+  // synthesise the provider these hooks demand at mount.
+  "post-list.tsx": `
+import { useQuery } from '@tanstack/react-query';
+export function PostList() {
+  const { data = [] } = useQuery({ queryKey: ['posts'], queryFn: () => fetch('/api/posts').then((r) => r.json()) });
+  return <ul>{data.length}</ul>;
+}
+export function PostPage() {
+  return <PostList />;
+}
+`,
 };
 
-async function derive(): Promise<Map<string, ProviderRef[]>> {
+async function derive(
+  shims?: (c: { info: { filePath: string } }) => LibraryProviderShim[],
+  inspect?: (dir: string, wraps: Map<string, ProviderRef[]>) => void,
+): Promise<Map<string, ProviderRef[]>> {
   const dir = mkdtempSync(path.join(os.tmpdir(), "provwraps-"));
   try {
     const entries: string[] = [];
@@ -219,7 +241,9 @@ async function derive(): Promise<Map<string, ProviderRef[]>> {
       ).catch(() => []);
       trees.push(...own);
     }
-    return await deriveContextProviderWraps(trees, new SourceFileCache());
+    const wraps = await deriveContextProviderWraps(trees, new SourceFileCache(), shims);
+    inspect?.(dir, wraps);
+    return wraps;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -333,6 +357,36 @@ describe("deriveContextProviderWraps", () => {
     expect(wraps.get(who!)?.[0]?.filePath.endsWith("auth-context.tsx")).toBe(true);
     // The provider itself is not wrapped by its own context.
     expect([...wraps.keys()].some((k) => k.endsWith("::AuthProvider"))).toBe(false);
+  });
+
+  test("library-context hooks wrap with the generated shim", async () => {
+    // "No QueryClient set, use QueryClientProvider to set one" — the mount
+    // throws because no project component pairs with a node_modules hook.
+    // The derivation synthesises the provider at the importing package's
+    // root (here the tmp dir: no package.json above it), and the transitive
+    // closure carries it to ancestors like PostPage.
+    let tmp = "";
+    let shimmed = new Map<string, ProviderRef[]>();
+    await derive(
+      (c) => libraryProviderShimsFor([c.info.filePath]),
+      (dir, wraps) => {
+        tmp = dir;
+        shimmed = wraps;
+      },
+    );
+    const list = [...shimmed.keys()].find((k) => k.endsWith("::PostList"));
+    expect(names(shimmed.get(list!))).toEqual(["FlawlessQueryClientProvider"]);
+    expect(shimmed.get(list!)?.[0]?.filePath).toBe(
+      path.join(tmp, ".flawless", "flawless-query-client.tsx"),
+    );
+    const page = [...shimmed.keys()].find((k) => k.endsWith("::PostPage"));
+    expect(names(shimmed.get(page!))).toEqual(["FlawlessQueryClientProvider"]);
+    // Without shims the derivation is unchanged: the hook pairs with nothing.
+    const bare = await derive();
+    expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
+    // And the shim module is claimed for writing only when a map references it.
+    expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(1);
+    expect(referencedLibraryShims(bare, [path.join(tmp, "post-list.tsx")])).toHaveLength(0);
   });
 
   test("providerKey matches the map keys the hostRegistry consumes", async () => {

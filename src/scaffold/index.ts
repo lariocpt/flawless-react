@@ -110,7 +110,7 @@ export async function scaffold(
   const written: string[] = [];
   const kept: string[] = [];
   for (const f of files) {
-    const abs = path.join(outDir, f.relPath);
+    const abs = f.absPath ?? path.join(outDir, f.relPath);
     // Not gated on --force, unlike the colocated specs: the point of these
     // files is that no flag rebuilds a tuned budget or hand-wired provider.
     // Delete the file to get a fresh one, same as provider.fixtures.ts.

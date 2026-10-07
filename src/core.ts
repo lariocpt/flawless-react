@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
-import { deriveContextProviderWraps } from "./analyse/providerWraps.ts";
+import { deriveContextProviderWraps, libraryProviderShimsFor } from "./analyse/providerWraps.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import { outDirRel, underOutDir } from "./emitPaths.ts";
 import { detectExpo } from "./expo/detect.ts";
@@ -399,7 +399,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // frequently imported by NO analysed component (the route layout imports
   // SidebarProvider, and route files are not component entries), so the host
   // cannot find them in the trees — it needs this map instead.
-  const providerWraps = await deriveContextProviderWraps(trees, analyseShared.cache);
+  const providerWraps = await deriveContextProviderWraps(trees, analyseShared.cache, (c) =>
+    libraryProviderShimsFor([c.info.filePath]),
+  );
 
   const firstTree = trees[0];
   if (firstTree && opts.propsOverride) {

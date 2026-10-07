@@ -1,6 +1,7 @@
 import path from "node:path";
 import { type AuthStub, authShimEsm, collectAuthStubs } from "../analyse/authShims.ts";
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
+import { libraryShimSource, referencedLibraryShims } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import {
   allocateSpecNames,
@@ -42,6 +43,8 @@ export interface ExcludedComponent {
 export interface RenderedFile {
   relPath: string;
   content: string;
+  /** When set, write here instead of <outDir>/<relPath> (library shim files). */
+  absPath?: string;
   executable?: boolean;
   /**
    * Never overwrite an existing file here, `--force` included.
@@ -127,6 +130,20 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
       ),
     },
   ];
+  // Generated library-provider shims the wrap map mounts: the file lives at
+  // the IMPORTING PACKAGE's root, not the outDir — a bare library import only
+  // resolves through that package's node_modules (bun workspaces hoist
+  // nothing). Tool-owned content, rewritten per run.
+  for (const shim of referencedLibraryShims(
+    opts.providerWraps,
+    flat.map((c) => c.info.filePath),
+  )) {
+    files.push({
+      relPath: path.relative(opts.outDir, shim.filePath),
+      absPath: shim.filePath,
+      content: libraryShimSource(shim.module, shim.componentName),
+    });
+  }
   if (!opts.nextjsHost) {
     files.unshift({ relPath: "tsconfig.json", content: tsConfig() });
     files.unshift({ relPath: "package.json", content: pkgJson(suiteName, opts.report) });
