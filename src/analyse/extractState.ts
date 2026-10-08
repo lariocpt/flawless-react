@@ -295,7 +295,21 @@ function classifyJsxFlow(
   sourceFile: ts.SourceFile,
 ): StateJsxFlow | undefined {
   let crossedFunction = false;
-  for (let p = refNode.parent; p && p !== bodyNode; p = p.parent) {
+  // The value SELECTS the child here rather than rendering:
+  // `{mode === 'write' ? <A/> : <B/>}` and `{mode && <X/>}` never put
+  // 'write' on screen. Only the raw value in text position is a witness.
+  let selectsOnly = false;
+  let prev: ts.Node = refNode;
+  for (let p = refNode.parent; p && p !== bodyNode; prev = p, p = p.parent) {
+    if (!selectsOnly) {
+      if (ts.isConditionalExpression(p) && p.condition === prev) selectsOnly = true;
+      if (
+        ts.isBinaryExpression(p) &&
+        p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+        p.left === prev
+      )
+        selectsOnly = true;
+    }
     if (
       ts.isJsxExpression(p) &&
       p.parent &&
@@ -304,7 +318,11 @@ function classifyJsxFlow(
       const tag = ts.isJsxElement(p.parent)
         ? p.parent.openingElement.tagName.getText(sourceFile)
         : "<fragment>";
-      return { via: "child", tag, pos: posOf(refNode, sourceFile) };
+      return {
+        via: selectsOnly ? "condition" : "child",
+        tag,
+        pos: posOf(refNode, sourceFile),
+      };
     }
     if (ts.isJsxAttribute(p) && !crossedFunction) {
       const owner = p.parent.parent;

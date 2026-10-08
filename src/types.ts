@@ -376,7 +376,7 @@ export interface SetterCallSite {
 
 export interface StateJsxFlow {
   tag: string;
-  via: "child" | "attr";
+  via: "child" | "attr" | "condition";
   attr?: string;
   pos: SourcePosition;
 }
