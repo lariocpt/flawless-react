@@ -94,13 +94,14 @@ describe("documented invocations parse against the live CLI", () => {
 const FOREIGN_FLAGS: Record<string, string> = {
   "--compile": "bun build",
   "--config": "playwright/vitest",
+  "--env-file": "node/bun runtime",
   // Not a tool at all: the reference's "every flag that takes a value accepts
   // both `--flag value` and `--flag=value`" sentence, where --flag is a
   // metavariable standing in for whatever flag is being described.
   "--flag": "documentation placeholder",
-  "--env-file": "node/bun runtime",
   "--grep": "playwright/vitest",
   "--localstorage-file": "playwright",
+  "--no-errors-on-unmatched": "biome check",
   "--porcelain": "git status",
   "--preload": "bun test",
   "--port": "crust mock-server",
