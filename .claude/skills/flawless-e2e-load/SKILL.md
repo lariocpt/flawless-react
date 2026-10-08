@@ -81,9 +81,12 @@ Put it there, not in the spec: `--force` regenerates specs and leaves
 `params.json` alone. Override the base URL with `FLAWLESS_E2E_BASEURL`.
 
 Dynamic segments come from `flawless/e2e/params.json` (write-once, merge-kept):
-`defaults` filled with seeded UUIDs, per-route overrides optional. A blank id
-does not fail — it produces a URL with an empty segment that hits the 404
-handler, which is exactly the failure mode env.sh exists to prevent for load.
+`defaults` filled with seeded UUIDs, per-route overrides optional. A route whose
+id fixture is missing never fabricates a URL: its specs emit a `test.skip`
+naming the file to fill (`no id fixture for /posts/[id] — fill
+flawless/e2e/params.json`), so an unfilled route shows as a visible skip, not a
+404 measured as a pass. On the load side the same hole is guarded by
+`routes.setup.ts`, which refuses the run rather than measuring the 404 handler.
 
 ## load: production build, proven auth
 
