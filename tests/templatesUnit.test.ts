@@ -778,9 +778,12 @@ describe("renderUnitBrowser document-root components", () => {
   test("a sync component is rendered as an element, never called directly", () => {
     const spec = contentOf(docRoot(), "unit/RootLayout.test.tsx");
     // Calling it directly runs its hooks with no React dispatcher, which fails
-    // with "Cannot read properties of null (reading 'useEffect')".
+    // with "Cannot read properties of null (reading 'useEffect')". The element
+    // is still run through resolveAsyncUi: renderToStaticMarkup cannot await a
+    // thenable, and a SYNC root can hide async server children behind
+    // <Suspense> (aurorascharff layout: TrendingTags, WhoToFollow).
     expect(spec).toContain(
-      "const ui = <RootLayout {...(props as React.ComponentProps<typeof RootLayout>)} />;",
+      "const ui = await resolveAsyncUi(<RootLayout {...(props as React.ComponentProps<typeof RootLayout>)} />);",
     );
     expect(spec).not.toContain("RootLayout(props as never)");
     expect(spec).toContain("renderToStaticMarkup(ui as React.ReactElement)");

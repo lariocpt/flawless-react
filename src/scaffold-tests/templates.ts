@@ -1809,13 +1809,17 @@ function constrainedSpec(
     // an element is safe either way — effects simply do not run during SSR.
     // `{...(props as never)}` is a type error — never is not an object type — so
     // the spread is cast to the component's own props instead.
+    // Even a SYNC root can hide async server children (TrendingTags behind a
+    // <Suspense>): renderToStaticMarkup cannot await a thenable at all, so the
+    // tree is resolved before it reaches the renderer.
     const invoke = info.isAsync
       ? `await resolveAsyncUi(await ${name}(props as never))`
-      : `<${name} {...(props as React.ComponentProps<typeof ${name}>)} />`;
-    // The async resolver helper is only in scope when something awaits it.
-    const asyncUiBits = info.isAsync
-      ? { imp: `import { cloneElement, isValidElement } from "react";\n`, fn: RSC_RESOLVE_ASYNC_UI }
-      : { imp: "", fn: "" };
+      : `await resolveAsyncUi(<${name} {...(props as React.ComponentProps<typeof ${name}>)} />)`;
+    // The resolver is always in scope now: even the sync-root invoke awaits it.
+    const asyncUiBits = {
+      imp: `import { cloneElement, isValidElement } from "react";\n`,
+      fn: RSC_RESOLVE_ASYNC_UI,
+    };
     // Only a component that actually renders {children} can be asserted to pass
     // a slot through. A root error boundary takes {error, reset} and renders
     // neither, so injecting a slot and demanding it appear is a test the
