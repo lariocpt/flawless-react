@@ -62,8 +62,12 @@ const MOCK_SKIP =
  *
  *   every imported binding pure → the module is not mocked at all;
  *   mixed pure + data           → the module IS mocked, and each pure binding
- *                                 gets a synchronous join stub (under its local
- *                                 name) beside the data stubs.
+ *                                 gets a synchronous join stub (under the
+ *                                 module-side export name) beside the data stubs.
+ *
+ * Names the render graph adds (ModuleImportInfo.mergedNames) are COVERED by a
+ * forced factory but never FORCE one: the mock decision is evidence of what
+ * this render needs, and no file relying on the mock named them.
  */
 const PURE_UTILITY_BINDINGS = new Set(["cn", "clsx", "cva", "twMerge", "tw"]);
 
@@ -84,6 +88,12 @@ interface MergedBinding {
   /** The declaration is a module-side data constant (ModuleImportInfo
    * .dataExports): a value read, never a dep to stub. */
   data: boolean;
+  /** The name only exists because the render graph imports it — no file that
+   * relies on the MOCK named it. It must be COVERED by the factory (a mocked
+   * module serves every importer), but it must never FORCE the mock: lib/utils,
+   * pure for the unit's `{ cn }`, gained a graph-only `timeAgo` and got mocked
+   * `async () => ({})` — a promise rendered as a child, an empty container. */
+  graphOnly?: boolean;
 }
 
 interface MergedModule {
@@ -109,13 +119,34 @@ function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key:
   group.specifiers.add(mi.specifier);
   for (const [name, r] of Object.entries(mi.importedReturns ?? {})) group.returns.set(name, r);
   mi.names.forEach((local, i) => {
-    if (group.bindings.some((b) => b.local === local)) return;
+    const moduleName = membershipName(mi, i);
+    const isDefault = mi.hasDefault && i === 0;
+    const graphOnly = !isDefault && mi.mergedNames?.includes(local) === true;
+    // Dedup on the MODULE-side name: the factory keys on it, and two files
+    // importing { toast } and { toast as t } must produce ONE `toast:` entry,
+    // not two — a duplicate key in the factory object is at best noise. A
+    // default is NOT that binding: its module-side name is only the local
+    // text, and `default:` coexists with a same-named export.
+    const existing =
+      group.bindings.find(
+        (b) =>
+          !isDefault &&
+          !b.isDefault &&
+          (b.moduleName ?? b.local) === moduleName &&
+          (!b.graphOnly || graphOnly),
+      ) ??
+      (!graphOnly ? group.bindings.find((b) => b.local === local) : undefined) ??
+      (graphOnly
+        ? group.bindings.find((b) => b.local === local && (b.moduleName ?? b.local) === moduleName)
+        : undefined);
+    if (existing) return;
     group.bindings.push({
       local,
-      moduleName: membershipName(mi, i),
-      isDefault: mi.hasDefault && i === 0,
+      moduleName,
+      isDefault,
       pure: PURE_UTILITY_BINDINGS.has(membershipName(mi, i)) || mi.isPureModule === true,
       data: mi.dataExports?.includes(membershipName(mi, i)) ?? false,
+      graphOnly,
     });
   });
 }
@@ -285,7 +316,13 @@ export function emitModuleMocks(
     if (!reachesDataPath(mi)) continue;
     const group = dataGroups.get(mockSpecifier(mi, specDir));
     if (!group) continue;
-    if (group.bindings.length > 0 && group.bindings.every((b) => b.pure || b.data)) continue;
+    // Pure/data-only module → keep it real. GRAPH-ONLY names do not count:
+    // the exemption asks "does any file that renders NEED this mocked?" —
+    // lib/utils (pure `cn` for the unit) gained a graph-only `timeAgo` and
+    // was mocked `async () => ({})`; a promise rendered as a child suspends
+    // the tree and the spec asserted against an empty container.
+    if (group.bindings.length > 0 && group.bindings.every((b) => b.pure || b.data || b.graphOnly))
+      continue;
     push(mi, (spec) => dataModuleMock(group, info, spec, todo, apiRoutes));
   }
 
@@ -672,7 +709,10 @@ function dataModuleMock(
   };
 
   const entry = (b: MergedBinding): string => {
-    const key = b.isDefault ? "default" : b.local;
+    // The factory REPLACES the module's exports: importers read the
+    // MODULE-side name. A renamed import ({ Toaster as SonnerToaster }) under
+    // the local key would leave the real importer facing a missing export.
+    const key = b.isDefault ? "default" : b.moduleName || b.local;
     // The factory replaces the whole module, so a pure class-string helper
     // beside the data exports has to be re-supplied here — synchronously.
     if (b.pure) return `${key}: ${PURE_UTILITY_STUB}`;
@@ -709,6 +749,11 @@ function dataModuleMock(
       // it survives member access and only fails on .length/.map, which is a
       // legible failure rather than a crash.
       uncertain = true;
+      // A graph-only name (some other file imports it; nothing here awaits it —
+      // awaiting makes a dep) renders at worst, and a promise child silently
+      // suspends the whole tree. SYNC {} fails loudly where it appears, and
+      // `await {}` still resolves.
+      if (b.graphOnly) return `${key}: vi.fn(() => ({}))`;
       return `${key}: vi.fn(async () => ({}))`;
     }
     // `db.query.users.findMany()` needs the vi.fn at the LEAF of the dotted

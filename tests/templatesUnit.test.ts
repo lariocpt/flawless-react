@@ -5,6 +5,7 @@ import type {
   ClickHandler,
   ComponentInfo,
   ComponentTree,
+  DataDepInfo,
   FetchCallInfo,
   ModuleImportInfo,
   ProviderRef,
@@ -53,6 +54,17 @@ function moduleImport(over: Partial<ModuleImportInfo> & { specifier: string }): 
     isTypeOnly: false,
     hasDefault: false,
     pos: pos(1),
+    ...over,
+  };
+}
+
+function dataDep(over: Partial<DataDepInfo> & { callee: string }): DataDepInfo {
+  return {
+    varName: undefined,
+    calleeRoot: over.callee,
+    awaited: true,
+    shape: { kind: "unknown" },
+    uncertain: true,
     ...over,
   };
 }
@@ -437,7 +449,7 @@ describe("renderUnitBrowser async server components", () => {
     expect(contentOf(files, "unit/Page.test.tsx")).not.toContain('vi.mock("@/lib/utils"');
   });
 
-  test("in a mixed module an aliased pure binding is stubbed sync under its LOCAL name", () => {
+  test("in a mixed module an aliased pure binding is stubbed under the MODULE-side name", () => {
     const files = renderUnitBrowser({
       trees: [
         tree(
@@ -458,11 +470,135 @@ describe("renderUnitBrowser async server components", () => {
       variants: 3,
     });
     const src = contentOf(files, "unit/Page.test.tsx");
-    // vi.mock factories key exports by the module's names, but the stub must be
-    // reachable where the component calls it — and it must return a string.
-    expect(src).toContain(`cx: ${PURE_STUB}`);
-    expect(src).not.toContain("cx: vi.fn(async");
+    // A vi.mock factory REPLACES the module: importers read exports by the
+    // module's own names — `import { cn as cx }` resolves `cn` off the mock —
+    // so the alias key would strand the real importer on a missing export.
+    expect(src).toContain(`cn: ${PURE_STUB}`);
+    expect(src).not.toContain("cx:");
     expect(src).toContain("getUser: vi.fn(async () => ({}))");
+  });
+
+  test("a graph-only name never forces a pure module into a mock", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            moduleImports: [moduleImport({ specifier: "@/lib/utils", names: ["cn"] })],
+            treeImports: [
+              moduleImport({
+                specifier: "@/lib/utils",
+                names: ["cn", "timeAgo"],
+                importedNames: ["cn", "timeAgo"],
+                mergedNames: ["timeAgo"],
+              }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    // The graph's RelativeTime imports timeAgo from lib/utils, but no file
+    // relying on a mock CALLS it. Mocking the module then stubs timeAgo
+    // `async () => ({})`: a promise rendered as a JSX child silently
+    // suspends the whole tree — three aurorascharff specs woke up with
+    // empty containers. Coverage must never drive the mock DECISION.
+    expect(contentOf(files, "unit/Page.test.tsx")).not.toContain('vi.mock("@/lib/utils"');
+  });
+
+  test("a mocked module covers every name the graph imports from it", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            dataDeps: [dataDep({ callee: "toast", calleeRoot: "toast", specifier: "sonner" })],
+            moduleImports: [moduleImport({ specifier: "sonner", names: ["toast"] })],
+            treeImports: [
+              moduleImport({
+                specifier: "sonner",
+                names: ["toast", "SonnerToaster"],
+                importedNames: ["toast", "Toaster"],
+                mergedNames: ["SonnerToaster"],
+              }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    // components/toaster's { Toaster as SonnerToaster } used to be dropped by
+    // the tree walk's first-wins dedup; the real importer then died at import
+    // time on the missing export. The module-side name keys the factory —
+    // importers read exports by it, never by the local alias.
+    const src = contentOf(files, "unit/Page.test.tsx");
+    expect(src).toContain("toast: vi.fn(async () => ({}))");
+    expect(src).toContain(
+      "Toaster: vi.fn((props: { children?: React.ReactNode }) => props.children ?? null)",
+    );
+  });
+
+  test("a renamed dep is stubbed under the module-side export name", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            dataDeps: [
+              dataDep({ callee: "fetchUser", calleeRoot: "fetchUser", specifier: "@/api" }),
+            ],
+            moduleImports: [
+              moduleImport({
+                specifier: "@/api",
+                names: ["fetchUser"],
+                importedNames: ["getUser"],
+              }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    const src = contentOf(files, "unit/Page.test.tsx");
+    expect(src).toContain("getUser: vi.fn(async () => ({}))");
+    expect(src).not.toContain("fetchUser:");
+  });
+
+  test("a graph-only helper with no evidence mocks synchronously", () => {
+    const files = renderUnitBrowser({
+      trees: [
+        tree(
+          comp("Page", {
+            exportKind: "default",
+            isAsync: true,
+            dataDeps: [dataDep({ callee: "getUser", calleeRoot: "getUser", specifier: "@/lib" })],
+            moduleImports: [moduleImport({ specifier: "@/lib", names: ["getUser"] })],
+            treeImports: [
+              moduleImport({
+                specifier: "@/lib",
+                names: ["getUser", "timeAgo"],
+                importedNames: ["getUser", "timeAgo"],
+                mergedNames: ["timeAgo"],
+              }),
+            ],
+          }),
+        ),
+      ],
+      outDir: OUT,
+      variants: 3,
+    });
+    // The dep forces the mock; timeAgo rides along for coverage. An async {}
+    // stub rendered as a child suspends the tree WITHOUT a word; sync {}
+    // fails loudly where it appears — and `await {}` still resolves.
+    const src = contentOf(files, "unit/Page.test.tsx");
+    expect(src).toContain("timeAgo: vi.fn(() => ({}))");
+    expect(src).not.toContain("timeAgo: vi.fn(async");
   });
 
   test("a module kept pure across several statements still gets no mock", () => {
@@ -786,7 +922,7 @@ describe("renderUnitBrowser document-root components", () => {
       "const ui = await resolveAsyncUi(<RootLayout {...(props as React.ComponentProps<typeof RootLayout>)} />);",
     );
     expect(spec).not.toContain("RootLayout(props as never)");
-    expect(spec).toContain("renderToStaticMarkup(ui as React.ReactElement)");
+    expect(spec).toContain("renderToReadableStream(ui as React.ReactElement)");
     expect(spec).toContain("expect(html).toMatch(/^<html/)");
   });
 

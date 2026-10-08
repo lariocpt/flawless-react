@@ -1809,9 +1809,10 @@ function constrainedSpec(
     // an element is safe either way — effects simply do not run during SSR.
     // `{...(props as never)}` is a type error — never is not an object type — so
     // the spread is cast to the component's own props instead.
-    // Even a SYNC root can hide async server children (TrendingTags behind a
-    // <Suspense>): renderToStaticMarkup cannot await a thenable at all, so the
-    // tree is resolved before it reaches the renderer.
+    // `{...(props as never)}` is a type error — never is not an object type — so
+    // the spread is cast to the component's own props instead.
+    // resolveAsyncUi stays for what the streaming renderer cannot pre-resolve
+    // cheaply: an ASYNC root must be invoked to obtain its element at all.
     const invoke = info.isAsync
       ? `await resolveAsyncUi(await ${name}(props as never))`
       : `await resolveAsyncUi(<${name} {...(props as React.ComponentProps<typeof ${name}>)} />)`;
@@ -1833,14 +1834,20 @@ function constrainedSpec(
         }
       : { const: "", prop: "", title: "", assert: "" };
     return `import { test, expect, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream } from "react-dom/server";
 ${asyncUiBits.imp}import type * as React from "react";
 ${mockBlock}${emitComponentImport(info, importPath)}
 
 // ${name} ${note}.
 // Mounting it with Testing Library would nest <html> inside a container div:
 // jsdom tolerates that silently, so the test would pass while asserting
-// nothing true. Its contract is checked as static markup instead.
+// nothing true. Its contract is checked as server markup instead — with the
+// STREAMING renderer, because a document root is exactly where apps render
+// PROMISES as children ({getUser().then(u => <Pill user={u}/>)} is React 19's
+// suspense-data pattern) and nest async components inside sync client ones.
+// renderToStaticMarkup can await nothing and dies on all of that with "A
+// component suspended while responding to synchronous input"; the streaming
+// renderer awaits them the way Next's own SSR does.
 ${asyncUiBits.fn}const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
 ${slotBlock.const}
@@ -1852,7 +1859,9 @@ test("${name} returns a document root${slotBlock.title}", async () => {
     if (k in props) props[k] = Promise.resolve(props[k]);
   }
   const ui = ${invoke};
-  const html = renderToStaticMarkup(ui as React.ReactElement);
+  const stream = await renderToReadableStream(ui as React.ReactElement);
+  const markup = await new Response(stream).text();
+  const html = markup.replace(/^<!DOCTYPE html>/i, "");
   expect(html).toMatch(/^<html/);
   expect(html).toContain("<body");${slotBlock.assert}
   void vi;

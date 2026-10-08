@@ -508,7 +508,6 @@ async function analyseOne(
   // (it sits on the primary path); tree entries fill what the unit never
   // touched.
   if (children.length > 0) {
-    const ownSpecifiers = new Set(moduleImports.map((mi) => mi.specifier));
     const ownCallees = new Set((info.dataDeps ?? []).map((d) => d.callee));
     const extras = new Map<string, ModuleImportInfo>();
     const depExtras: DataDepInfo[] = [];
@@ -534,11 +533,57 @@ async function analyseOne(
     // cache already warm, so a component's expectations never depend on how
     // far down the host's tree it happened to be discovered.
     const truncated = new Map<string, ComponentTree>();
+    // A mocked module is served to EVERY importer in the graph, so its factory
+    // must cover every name ANY file imports from it — sonner: one file's
+    // { toast } stood for the whole mock while components/toaster's
+    // { Toaster } was dropped, and the real importer died at import time on
+    // the missing export. The walk merges per-specifier name sets (the unit's
+    // own statements included); a default arriving late is skipped — its
+    // index-0 slot belongs to the entry that registered first.
+    const mergeImport = (base: ModuleImportInfo, extra: ModuleImportInfo): ModuleImportInfo => {
+      const add = extra.names
+        .map((n, i) => ({ n, i }))
+        .filter(({ n, i }) => !base.names.includes(n) && !(extra.hasDefault && i === 0));
+      if (add.length === 0) return base;
+      // The added names' return annotations travel with them: RelativeTime's
+      // `timeAgo(d): string` is what makes the stub SYNC when the module ends
+      // up mocked anyway — an async stub rendered as a JSX child silently
+      // suspends the whole tree.
+      const returns: Record<string, unknown> = { ...base.importedReturns };
+      for (const { i } of add) {
+        const m = extra.importedNames?.[i] ?? extra.names[i];
+        const r = extra.importedReturns?.[m];
+        if (r !== undefined && returns[m] === undefined) returns[m] = r;
+      }
+      const baseReturns = Object.keys(returns).length > 0;
+      return {
+        ...base,
+        names: [...base.names, ...add.map(({ n }) => n)],
+        importedNames: [
+          ...(base.importedNames ?? base.names),
+          ...add.map(({ i }) => extra.importedNames?.[i] ?? extra.names[i]),
+        ],
+        mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
+        ...(base.dataExports || extra.dataExports
+          ? {
+              dataExports: [
+                ...new Set([...(base.dataExports ?? []), ...(extra.dataExports ?? [])]),
+              ],
+            }
+          : {}),
+        ...(baseReturns ? { importedReturns: returns as never } : {}),
+      };
+    };
     const walkTree = (trees: ComponentTree[]): void => {
       for (const t of trees) {
         for (const mi of t.entry.moduleImports ?? []) {
-          if (!ownSpecifiers.has(mi.specifier) && !extras.has(mi.specifier)) {
-            extras.set(mi.specifier, mi);
+          const prev = extras.get(mi.specifier);
+          if (prev) {
+            extras.set(mi.specifier, mergeImport(prev, mi));
+          } else {
+            const own = moduleImports.find((m) => m.specifier === mi.specifier);
+            if (own) extras.set(mi.specifier, mergeImport(own, mi));
+            else extras.set(mi.specifier, mi);
           }
         }
         for (const d of t.entry.dataDeps ?? []) {

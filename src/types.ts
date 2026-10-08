@@ -696,6 +696,15 @@ export interface ModuleImportInfo {
    * local name — they have no module-side name.
    */
   importedNames?: string[];
+  /**
+   * Names contributed by the component-tree walk — this file never imported
+   * them; some other file in the render does. A mocked module must cover them
+   * (its factory replaces every importer's view), but they carry NO evidence
+   * about whether the module should be mocked at all: a module whose own
+   * bindings are pure helpers stays real even when the graph elsewhere calls
+   * `timeAgo` from it. The mock-decision exemptions read this field.
+   */
+  mergedNames?: string[];
   /** "component" iff any local name is used as a JSX tag root in the file. */
   kind: "component" | "value";
   isTypeOnly: boolean;
