@@ -298,18 +298,21 @@ function classifyJsxFlow(
   // The value SELECTS the child here rather than rendering:
   // `{mode === 'write' ? <A/> : <B/>}` and `{mode && <X/>}` never put
   // 'write' on screen. Only the raw value in text position is a witness.
+  // Chain-position tests — `refNode === p.condition` misses every nested
+  // read (`items.find((i) => i.id === mode) ? …`), so containment decides.
+  const selectsBranch = (n: ts.Node): boolean => {
+    if (ts.isConditionalExpression(n) && containsNode(n.condition, refNode)) return true;
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      containsNode(n.left, refNode)
+    )
+      return true;
+    return false;
+  };
   let selectsOnly = false;
-  let prev: ts.Node = refNode;
-  for (let p = refNode.parent; p && p !== bodyNode; prev = p, p = p.parent) {
-    if (!selectsOnly) {
-      if (ts.isConditionalExpression(p) && p.condition === prev) selectsOnly = true;
-      if (
-        ts.isBinaryExpression(p) &&
-        p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
-        p.left === prev
-      )
-        selectsOnly = true;
-    }
+  for (let p = refNode.parent; p && p !== bodyNode; p = p.parent) {
+    if (!selectsOnly && selectsBranch(p)) selectsOnly = true;
     if (
       ts.isJsxExpression(p) &&
       p.parent &&
@@ -340,4 +343,19 @@ function classifyJsxFlow(
     if (isFunctionBoundary(p)) crossedFunction = true;
   }
   return undefined;
+}
+
+/** Subtree containment — TS nodes carry no position-based ancestry helper. */
+function containsNode(root: ts.Node, target: ts.Node): boolean {
+  if (root === target) return true;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found || n === target) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(root, visit);
+  return found;
 }
