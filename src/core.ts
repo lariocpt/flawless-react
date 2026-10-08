@@ -8,6 +8,7 @@ import { detectExpo } from "./expo/detect.ts";
 import {
   detectComponentsGlob,
   detectNextjs,
+  ensureFormatterIgnores,
   ignoreEntries,
   ignoreRootFor,
   mergeIntoNextPackageJson,
@@ -592,6 +593,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       if (added.length > 0) {
         log(`nextjs: added ${added.length} entry(ies) to .gitignore (${added.join(", ")})`);
       }
+      for (const t of ensureFormatterIgnores(nextCtx.root, outRel)) {
+        log(
+          `nextjs: added ${t.entry} to ${t.file} — the suite is tool-owned, not project lint input`,
+        );
+      }
     } catch (err) {
       anyFailed = true;
       const message = `nextjs emit failed: ${(err as Error).message}`;
@@ -670,6 +676,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       if (added.length > 0) {
         log(`expo: added ${added.length} entry(ies) to .gitignore (${added.join(", ")})`);
       }
+      for (const t of ensureFormatterIgnores(expoCtx.root, outRel)) {
+        log(
+          `expo: added ${t.entry} to ${t.file} — the suite is tool-owned, not project lint input`,
+        );
+      }
     } catch (err) {
       anyFailed = true;
       const message = `expo emit failed: ${(err as Error).message}`;
@@ -699,6 +710,9 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         `added ${added.length} entry(ies) to ${path.join(ignoreRoot, ".gitignore")} ` +
           `(${added.join(", ")})`,
       );
+    }
+    for (const t of ensureFormatterIgnores(ignoreRoot, outDirRel(outDir, ignoreRoot))) {
+      log(`added ${t.entry} to ${path.join(ignoreRoot, t.file)} — tool-owned suite`);
     }
   }
 

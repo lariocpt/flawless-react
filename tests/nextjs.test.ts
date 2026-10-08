@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { walkApiRoutes } from "../src/nextjs/apiRoutes.ts";
-import { detectNextjs, mergeIntoNextPackageJson } from "../src/nextjs/detect.ts";
+import {
+  detectNextjs,
+  ensureFormatterIgnores,
+  mergeIntoNextPackageJson,
+} from "../src/nextjs/detect.ts";
 import { fetchLiveSwagger, loadLocalSpec, parseSpecRoutes } from "../src/nextjs/liveSpec.ts";
 import {
   renderBrowserSetup,
@@ -505,5 +509,64 @@ describe("merging into the target project's package.json", () => {
     const dir = pkgDir({ devDependencies: { vitest: "^3.2.0" } });
     await mergeIntoNextPackageJson(dir, {}, DEV, {});
     expect(readFileSync(path.join(dir, "package.json"), "utf8")).toContain('\n\t"devDependencies"');
+  });
+});
+
+describe("ensureFormatterIgnores", () => {
+  const repo = (files: Record<string, string>): string => {
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "repo" }));
+    for (const [name, body] of Object.entries(files)) writeFileSync(path.join(dir, name), body);
+    return dir;
+  };
+  const readIf = (dir: string, name: string): string | null => {
+    try {
+      return readFileSync(path.join(dir, name), "utf8");
+    } catch {
+      return null;
+    }
+  };
+
+  test("prettier and eslintrc in use: both ignore files gain the suite entry, once", () => {
+    const dir = repo({ ".prettierrc": "{}", ".eslintrc.json": "{}" });
+    const touched = ensureFormatterIgnores(dir, "flawless");
+    expect(touched.map((t) => t.file)).toEqual([".prettierignore", ".eslintignore"]);
+    expect(readIf(dir, ".prettierignore")).toContain("flawless/");
+    expect(readIf(dir, ".eslintignore")).toContain("flawless/");
+    // Idempotent: a second run adds nothing, and the entry never duplicates.
+    expect(ensureFormatterIgnores(dir, "flawless")).toEqual([]);
+    expect(readIf(dir, ".prettierignore")?.match(/flawless\//g)).toHaveLength(1);
+  });
+
+  test("flat config does not read .eslintignore — do not write a dead file for it", () => {
+    const dir = repo({ "eslint.config.js": "export default [];" });
+    expect(ensureFormatterIgnores(dir, "flawless")).toEqual([]);
+    expect(readIf(dir, ".eslintignore")).toBeNull();
+  });
+
+  test('prettier configured by the package.json "prettier" key counts as in use', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-ignore-pkg-"));
+    tmpDirs.push(dir);
+    writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ prettier: { quotes: "single" } }),
+    );
+    expect(ensureFormatterIgnores(dir, "qa").map((t) => t.file)).toEqual([".prettierignore"]);
+    expect(readIf(dir, ".prettierignore")).toContain("qa/");
+  });
+
+  test("an existing ignore file keeps its content; the entry follows --out", () => {
+    const dir = repo({ ".prettierrc": "{}", ".prettierignore": "dist/\n" });
+    ensureFormatterIgnores(dir, "web/qa");
+    const body = readIf(dir, ".prettierignore");
+    expect(body).toContain("dist/");
+    expect(body).toContain("web/qa/");
+  });
+
+  test("no formatter configured anywhere: nothing is written, no tool is summoned", () => {
+    const dir = repo({});
+    expect(ensureFormatterIgnores(dir, "flawless")).toEqual([]);
+    expect(readIf(dir, ".prettierignore")).toBeNull();
+    expect(readIf(dir, ".eslintignore")).toBeNull();
   });
 });

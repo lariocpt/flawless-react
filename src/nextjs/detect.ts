@@ -186,6 +186,91 @@ export function updateGitignore(nextRoot: string, entries: string[]): string[] {
   return added;
 }
 
+const PRETTIER_CONFIG_NAMES = [
+  ".prettierrc",
+  ".prettierrc.json",
+  ".prettierrc.js",
+  ".prettierrc.cjs",
+  ".prettierrc.yaml",
+  ".prettierrc.yml",
+  "prettier.config.js",
+  "prettier.config.cjs",
+];
+// The ES-LINT-RC family only. eslint.config.* is the flat config, and a flat
+// config does not read .eslintignore at all — writing the file there would be
+// dead weight that outlives the migration to make it seem supported.
+const ESLINTRC_CONFIG_NAMES = [
+  ".eslintrc",
+  ".eslintrc.js",
+  ".eslintrc.cjs",
+  ".eslintrc.json",
+  ".eslintrc.json5",
+  ".eslintrc.yaml",
+  ".eslintrc.yml",
+];
+
+/**
+ * Make the repo's own formatter and linter skip the suite directory.
+ *
+ * The tool formats its output with the project's prettier before finishing, but
+ * "failures are warnings, never task failures" only covers the tool's own run.
+ * The project's `prettier --check .` is not so forgiving, and dogfood proved the
+ * gap real: prettier 3.0.3 cannot parse `import ... with { type: "json" }` —
+ * import-attribute support landed in 3.1 — so the whole profile plane flagged
+ * as unparseable in that repo's CI, over files the tool owns and rewrites.
+ *
+ * Ignore FILES are the append-safe, schema-free surface: prettier reads
+ * `.prettierignore`, eslintrc reads `.eslintignore`, and both are inert until a
+ * repo actually uses the tool — so the file is written only where the tool is
+ * configured. Biome gets no entry: it has no ignore file, and its 2.x
+ * `files.includes` marker is version-gated JSONC that belongs in a documented
+ * one-line setup step, not rewritten into a user's config.
+ */
+export function ensureFormatterIgnores(
+  root: string,
+  outRel: string,
+): { file: string; entry: string }[] {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const pkg = ((): Record<string, unknown> => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    } catch {
+      return {};
+    }
+  })();
+  const usesPrettier =
+    PRETTIER_CONFIG_NAMES.some((n) => existsSync(path.join(root, n))) || pkg.prettier !== undefined;
+  const usesEslintrc =
+    ESLINTRC_CONFIG_NAMES.some((n) => existsSync(path.join(root, n))) ||
+    pkg.eslintConfig !== undefined;
+  const entry = `${outRel}/`;
+  const touched: { file: string; entry: string }[] = [];
+  for (const [file, inUse] of [
+    [".prettierignore", usesPrettier],
+    [".eslintignore", usesEslintrc],
+  ] as const) {
+    if (!inUse) continue;
+    const abs = path.join(root, file);
+    let current = "";
+    try {
+      if (existsSync(abs)) current = fs.readFileSync(abs, "utf8");
+    } catch {
+      current = "";
+    }
+    const have = new Set(
+      current
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean),
+    );
+    if (have.has(entry) || have.has(outRel)) continue;
+    const sep = current === "" || current.endsWith("\n") ? "" : "\n";
+    fs.writeFileSync(abs, `${current}${sep}\n# flawless-react — tool-owned suite\n${entry}\n`);
+    touched.push({ file, entry });
+  }
+  return touched;
+}
+
 export function detectComponentsGlob(nextRoot: string): string | undefined {
   for (const rel of ["components", "src/components", "app/components"]) {
     if (isDir(path.join(nextRoot, rel))) return path.join(nextRoot, rel, "**/*.tsx");
