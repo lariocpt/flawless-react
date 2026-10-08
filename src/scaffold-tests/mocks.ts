@@ -255,6 +255,10 @@ export function emitModuleMocks(
       push(mi, (spec) => linkPassthroughMock(mi, spec));
       continue;
     }
+    if (mi.specifier === "swr") {
+      push(mi, () => swrMock());
+      continue;
+    }
     if (mi.specifier.startsWith("next/font/")) {
       push(mi, (spec) => fontMock(mi, spec));
       continue;
@@ -408,6 +412,32 @@ export function mockSpecifier(mi: ModuleImportInfo, specDir: string | undefined)
   let rel = path.relative(specDir, mi.resolvedPath).split(path.sep).join("/");
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel.replace(/\.(tsx|ts|jsx|js)$/, "");
+}
+
+/**
+ * swr@2.5 beta reads its cache with React 19's use(). The root layout's
+ * preload() puts a LIVE Promise into the cache; a client badge's first
+ * read hits it, use() throws the thenable, and renderToStaticMarkup —
+ * which cannot await one — dies with "A component suspended while
+ * responding to synchronous input" (aurorascharff RootLayout). A
+ * deterministic sync surface fixes it for good: config is a pass-
+ * through, preload does nothing, and reads answer empty-cache shapes
+ * instead of thenables. The factory lists the module's public surface:
+ * a missing export is a loud import-time error, so the superset is the
+ * safe direction.
+ */
+function swrMock(): string {
+  const read =
+    "vi.fn(() => ({ data: undefined, error: undefined, isLoading: false, isValidating: false, mutate: vi.fn() }))";
+  return `vi.mock("swr", () => ({
+  default: ${read},
+  useSWR: ${read},
+  SWRConfig: (props: { children?: unknown }) => props.children ?? null,
+  SWRProvider: (props: { children?: unknown }) => props.children ?? null,
+  preload: vi.fn(),
+  mutate: vi.fn(),
+  useSWRConfig: vi.fn(() => ({ mutate: vi.fn(), revalidate: vi.fn() })),
+}));`;
 }
 
 function navigationMock(): string {
