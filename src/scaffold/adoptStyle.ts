@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /**
@@ -65,11 +66,23 @@ export async function adoptProjectStyle(
     const cwd = prettierDir?.dir ?? projectRoot;
     const bin = resolveLocalBin(cwd, "prettier") ?? Bun.which("prettier");
     const cmd = bin ? [bin] : ["bunx", "prettier"];
-    const proc = Bun.spawn([...cmd, "--write", "--ignore-unknown", ...files], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    // Ignore files govern the repo's sweeps, not the tool's own conformance pass.
+    // prettier skips ignored files even when they are passed explicitly (proven on
+    // 3.0.3), so once a run appends `flawless/` to the repo's .prettierignore the
+    // format pass would silently stop formatting the suite it just wrote — and
+    // any pre-existing repo ignore covering an output directory already had that
+    // effect. An empty ignore path keeps the pass alive for exactly the files the
+    // tool passed; the repo's own ignore still owns the repo's own sweeps.
+    const ignoreOverride = path.join(os.tmpdir(), "flawless-empty.prettierignore");
+    writeFileSync(ignoreOverride, "");
+    const proc = Bun.spawn(
+      [...cmd, "--write", "--ignore-unknown", "--ignore-path", ignoreOverride, ...files],
+      {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     const code = await proc.exited;
     if (code === 0) return { formatter: "prettier", formatted: files.length };
     const stderr = await new Response(proc.stderr).text();

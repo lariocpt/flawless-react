@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { adoptProjectStyle, detectJsonIndent, stringifyLike } from "../src/scaffold/adoptStyle.ts";
@@ -97,6 +97,34 @@ describe("adoptProjectStyle", () => {
     expect(typeof result.formatted).toBe("number");
     expect(result.formatted).toBeGreaterThanOrEqual(0);
     if (result.formatted === 0) expect(typeof result.warning).toBe("string");
+  });
+
+  test("the prettier pass overrides the repo's ignore files — its own output stays formatted", async () => {
+    // A run appends `flawless/` to the repo's .prettierignore, and prettier skips
+    // ignored files EVEN WHEN PASSED EXPLICITLY (proven on 3.0.3). Without an
+    // --ignore-path override, the next run's format pass would silently do
+    // nothing to the suite it just wrote. The stub records argv so the contract
+    // is checked without network or a real prettier version.
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ prettier: { semi: false } }));
+    const bin = path.join(dir, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    const argvFile = path.join(dir, "prettier-argv.txt");
+    writeFileSync(path.join(bin, "prettier"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${argvFile}'\n`);
+    chmodSync(path.join(bin, "prettier"), 0o755);
+    const target = path.join(dir, "flawless", "generated.ts");
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "const x = 1\n");
+
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result.formatter).toBe("prettier");
+    const argv = readFileSync(argvFile, "utf8").trim().split("\n");
+    const i = argv.indexOf("--ignore-path");
+    expect(i).toBeGreaterThanOrEqual(0);
+    // An EMPTY ignore file: the tool's explicit files all pass, while the repo's
+    // own .prettierignore — which ignores those very files — stays in force for
+    // the repo's own sweeps.
+    expect(readFileSync(argv[i + 1], "utf8")).toBe("");
   });
 
   test(".mts configs reach the formatter — the one file biome ci checks either way", async () => {
