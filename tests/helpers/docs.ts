@@ -1,7 +1,8 @@
 // Pulling command lines out of the project's own prose.
 //
-// The shipped docs are hand-maintained: README.md, docs/*.md and the six
-// .claude/skills entries all carry copies of the same invocations, with no
+// The shipped docs are hand-maintained: README.md, docs/*.md, the seven
+// .claude/skills entries and (when the checkout is beside this one) the
+// website's mdx corpus all carry copies of the same invocations, with no
 // generation step between them and the code. That is the thing that rots, and
 // round 8 proved it does — a skill documented a throw the tool never emits, an
 // exit-code table was wrong, the --ci field list was two fields stale. None of
@@ -12,7 +13,7 @@
 // lint keeps passing while checking nothing, so every consumer of this module
 // asserts a MINIMUM count as well as zero failures.
 
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..", "..");
@@ -117,6 +118,34 @@ export function proseFiles(): string[] {
   return files;
 }
 
+/**
+ * The sibling website checkout, when this machine has one.
+ *
+ * The site hand-copies invocations and flag names from this repo and has no CI
+ * of its own — the same rot the rest of this file exists to refuse, at its
+ * largest surface. It is linted when present (dev machines, the mesh) and
+ * skipped when not (a clean clone, CI of third parties): a docs gate must not
+ * make this repo's test suite require an unrelated repository.
+ */
+const WEBSITE_DOCS =
+  process.env.FLAWLESS_WEBSITE_DOCS ??
+  path.join(REPO_ROOT, "..", "flawless-react-website", "src", "pages", "docs");
+
+export function websiteProseFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, rel: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) walk(path.join(dir, e.name), `${rel}${e.name}/`);
+      else if (e.name.endsWith(".mdx")) out.push(`website:${rel}${e.name}`);
+    }
+  };
+  if (existsSync(WEBSITE_DOCS)) walk(WEBSITE_DOCS, "");
+  return out;
+}
+
 export function readProse(rel: string): Promise<string> {
+  if (rel.startsWith("website:")) {
+    return Bun.file(path.join(WEBSITE_DOCS, rel.slice("website:".length))).text();
+  }
   return Bun.file(path.join(REPO_ROOT, rel)).text();
 }

@@ -25,7 +25,17 @@ import path from "node:path";
 import { checkLines } from "../src/cli.ts";
 import { FLAG_NAMES, FLAGS, MAINTENANCE_FLAGS } from "../src/cliFlags.ts";
 import { ALL_TASK_IDS } from "../src/tasks/index.ts";
-import { commandLines, proseFiles, REPO_ROOT, readProse } from "./helpers/docs.ts";
+import {
+  commandLines,
+  proseFiles,
+  REPO_ROOT,
+  readProse,
+  websiteProseFiles,
+} from "./helpers/docs.ts";
+
+// Corpus for every "named in prose" inventory: this repo's shipped prose plus
+// the sibling website checkout when present (see websiteProseFiles).
+const corpus = (): string[] => [...proseFiles(), ...websiteProseFiles()];
 
 // ---------------------------------------------------------------------------
 // A — every documented invocation parses
@@ -42,10 +52,22 @@ const MIN_INVOCATIONS: Record<string, number> = {
 };
 
 describe("documented invocations parse against the live CLI", () => {
-  test.each(proseFiles())("%s", async (rel) => {
+  test.each([...proseFiles(), ...websiteProseFiles()])("%s", async (rel) => {
     const report = checkLines(commandLines(await readProse(rel)).join("\n"));
     expect(report.problems.map((p) => `${p.line}\n    ${p.problem}`).join("\n")).toBe("");
     expect(report.checked).toBeGreaterThanOrEqual(MIN_INVOCATIONS[rel] ?? 0);
+  });
+
+  // The website corpus is optional input (see websiteProseFiles), so its
+  // canary is conditional — but when the checkout is here, 66+ invocations
+  // live in its 27 pages and a fall to 40 means the extractor broke.
+  test("the website corpus contributes real invocations when present", async () => {
+    const files = websiteProseFiles();
+    if (files.length === 0) return;
+    let total = 0;
+    for (const rel of files)
+      total += checkLines(commandLines(await readProse(rel)).join("\n")).checked;
+    expect(total).toBeGreaterThanOrEqual(40);
   });
 
   test("the corpus as a whole is not empty", async () => {
@@ -70,12 +92,21 @@ describe("documented invocations parse against the live CLI", () => {
  * new tool; the cost of not having it is that `--forse` reads as prose.
  */
 const FOREIGN_FLAGS: Record<string, string> = {
+  "--compile": "bun build",
+  "--config": "playwright/vitest",
+  // Not a tool at all: the reference's "every flag that takes a value accepts
+  // both `--flag value` and `--flag=value`" sentence, where --flag is a
+  // metavariable standing in for whatever flag is being described.
+  "--flag": "documentation placeholder",
+  "--env-file": "node/bun runtime",
   "--grep": "playwright/vitest",
   "--localstorage-file": "playwright",
   "--porcelain": "git status",
   "--preload": "bun test",
   "--port": "crust mock-server",
+  "--project": "playwright test",
   "--proxy": "crust mock-server",
+  "--root": "vitest run",
   "--swagger": "crust mock-server",
   "--registry": "bun add",
   "--timeout": "crust load pipe",
@@ -95,7 +126,7 @@ describe("flag inventory", () => {
     // deliberately sit outside them (see MAINTENANCE_FLAGS' comment).
     const known = new Set([...FLAG_NAMES, ...MAINTENANCE_FLAGS.map((f) => f.name)]);
     const unknown = new Set<string>();
-    for (const rel of proseFiles()) {
+    for (const rel of corpus()) {
       for (const span of inlineCode(await readProse(rel))) {
         for (const flag of span.match(/--[a-z][a-z-]*[a-z]/g) ?? []) {
           if (!known.has(flag) && FOREIGN_FLAGS[flag] === undefined)
@@ -148,7 +179,7 @@ describe("task ids", () => {
   test("every task id named in prose exists", async () => {
     const real = new Set<string>(ALL_TASK_IDS);
     const bad = new Set<string>();
-    for (const rel of proseFiles()) {
+    for (const rel of corpus()) {
       for (const span of inlineCode(await readProse(rel))) {
         // Only spans that ARE a bare id, so prose about "perf" or a filename
         // containing a task name is not read as a claim about the registry.
@@ -278,7 +309,7 @@ describe("environment variables named in prose exist in the code", () => {
         .text();
     const known = new Set(haystack.split("\n"));
     const missing = new Set<string>();
-    for (const rel of proseFiles()) {
+    for (const rel of corpus()) {
       const text = await readProse(rel);
       for (const m of text.matchAll(
         /\b(FLAWLESS_[A-Z0-9_]+|LOAD_[A-Z0-9_]+|MOCK_[A-Z0-9_]+|RPT_[A-Z0-9_]+)\b/g,
@@ -320,11 +351,27 @@ describe("emitted artefact paths named in prose are really emitted", () => {
       // is generated — e2e/.auth.json is the storage state global-setup saves
       // after logging in. Those are real claims, and the honest check is that
       // an emitted file names them, not that a generate-only run produced them.
-      return emittedText.includes(path.basename(claim));
+      const base = path.basename(claim);
+      if (emittedText.includes(base)) return true;
+      // last-<name>.json, baseline-<name>.json — run-time artefacts named by
+      // placeholder. The skeleton (everything but the placeholder) must appear
+      // in what the fixture run emitted; the placeholder stands for a pipe name
+      // no generate-only run chose.
+      if (/<[^>]+>/.test(base)) {
+        const skel = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/<[^>]+>/g, "[^/:]+");
+        if (new RegExp(skel).test(emittedText)) return true;
+      }
+      // unit/InvoiceRow.test.tsx — the component name is the doc's own example;
+      // the checkable claim is the family, so verify a sibling of the same kind
+      // under the same plane.
+      const fam = /^(unit|browser|profile)\/[^/]+(?:\.[^/]+)*\.(test\.tsx|spec\.ts)$/.exec(claim);
+      if (fam && emitted.some((f) => f.startsWith(`${fam[1]}/`) && f.endsWith(`.${fam[2]}`)))
+        return true;
+      return false;
     };
     return (async () => {
       const bad = new Set<string>();
-      for (const rel of proseFiles()) {
+      for (const rel of corpus()) {
         for (const span of inlineCode(await readProse(rel))) {
           const claim = span.trim().replace(/^\.?\/?(flawless|<outDir>)\//, "");
           if (!EMITTED_DIRS.some((d) => claim.startsWith(`${d}/`))) continue;
