@@ -86,6 +86,40 @@ export async function adoptProjectStyle(
     const code = await proc.exited;
     if (code === 0) return { formatter: "prettier", formatted: files.length };
     const stderr = await new Response(proc.stderr).text();
+    // Syntax the repo's pinned prettier predates - `with { type: "json" }`
+    // import attributes need prettier 3.1, and the tool's specs use them.
+    // Those files are still valid TS the app's own toolchain accepts; the
+    // honest degrade is to skip THOSE and format the rest, not to abandon
+    // the whole pass. (Repo CI never sees any of them: the ignore files
+    // say so.)
+    // Normalize both sides: prettier reports paths relative to its cwd,
+    // while the caller's list may be absolute.
+    const unparseable = new Set(
+      [...stderr.matchAll(/^\[error\] (\S+):/gm)].map((m) => path.resolve(cwd, m[1])),
+    );
+    if (/SyntaxError/.test(stderr) && unparseable.size > 0 && unparseable.size < files.length) {
+      const rest = files.filter((f) => !unparseable.has(path.resolve(cwd, f)));
+      if (rest.length > 0) {
+        const retry = Bun.spawn(
+          [...cmd, "--write", "--ignore-unknown", "--ignore-path", ignoreOverride, ...rest],
+          { cwd, stdout: "pipe", stderr: "pipe" },
+        );
+        if ((await retry.exited) === 0) {
+          return {
+            formatter: "prettier",
+            formatted: rest.length,
+            warning: `prettier could not parse ${unparseable.size} generated file(s) - its version predates their syntax; the remaining ${rest.length} were formatted`,
+          };
+        }
+      }
+    }
+    if (/SyntaxError/.test(stderr)) {
+      return {
+        formatter: "prettier",
+        formatted: 0,
+        warning: `prettier could not parse the generated files (its version predates their syntax) - style pass skipped: ${stderr.slice(0, 160)}`,
+      };
+    }
     return {
       formatter: "prettier",
       formatted: 0,

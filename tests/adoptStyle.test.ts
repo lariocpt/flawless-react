@@ -127,6 +127,39 @@ describe("adoptProjectStyle", () => {
     expect(readFileSync(argv[i + 1], "utf8")).toBe("");
   });
 
+  test("prettier that cannot parse the tool's specs skips only the unparseable files", async () => {
+    // talkformai: prettier 3.0.3 cannot parse the `with { type: "json" }`
+    // import attributes every emitted profile spec carries (3.1+ syntax).
+    // Failing the whole run there punishes a complete generation for the
+    // repo's old pin; abandoning the whole pass would leave even the
+    // parseable files unformatted. The contract: skip the unparseable,
+    // format the rest, say so.
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ prettier: {} }));
+    const bin = path.join(dir, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    const lastArgv = path.join(dir, "prettier-argv.txt");
+    writeFileSync(
+      path.join(bin, "prettier"),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > '${lastArgv}'\nif printf '%s\\n' "$@" | grep -q 'bad.spec.ts'; then\n  echo '[error] flawless/bad.spec.ts: SyntaxError: ; expected. (3:39)' >&2\n  exit 2\nfi\n`,
+    );
+    chmodSync(path.join(bin, "prettier"), 0o755);
+    mkdirSync(path.join(dir, "flawless"), { recursive: true });
+    const bad = path.join(dir, "flawless", "bad.spec.ts");
+    const good = path.join(dir, "flawless", "good.ts");
+    writeFileSync(bad, 'import x from "./x.json" with { type: "json" };\nexport {};\n');
+    writeFileSync(good, "export const y = 1\n");
+
+    const result = await adoptProjectStyle(dir, [bad, good]);
+    expect(result.formatter).toBe("prettier");
+    expect(result.formatted).toBe(1);
+    expect(String(result.warning)).toContain("predates");
+    // The retry re-ran prettier WITHOUT the unparseable file.
+    const argv = readFileSync(lastArgv, "utf8");
+    expect(argv).toContain("good.ts");
+    expect(argv).not.toContain("bad.spec.ts");
+  });
+
   test(".mts configs reach the formatter — the one file biome ci checks either way", async () => {
     const dir = tmpDir();
     writeFileSync(path.join(dir, "biome.json"), "{}\n");
