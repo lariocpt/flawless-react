@@ -524,9 +524,12 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
                 "flawless:browser": `playwright test --config ${outRel}/browser/playwright.config.ts`,
               }
             : {}),
-          // --project=chromium, not both: the config also defines a headed
-          // "interactive" project for manual debugging, and without this every
-          // spec runs twice — once invisibly in a window nobody is watching.
+          // --project=chromium is a no-op against the emitted config's single
+          // project — kept because it says what this script IS (the headless
+          // perf plane) and keeps working on configs where the user added
+          // projects of their own. The config once shipped a headed second
+          // project, which turned every bare \`playwright test\` into a
+          // double pass with real windows; that project is gone.
           ...(taskIds.includes("perf-harness")
             ? {
                 "flawless:perf": `playwright test --config ${outRel}/playwright.config.ts --project=chromium ${outRel}/profile`,

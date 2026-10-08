@@ -75,7 +75,7 @@ export const SUITE_COMMAND = {
    */
   perf: "playwright test",
   browser: "playwright test --config browser/playwright.config.ts",
-  headed: "playwright test --project=interactive",
+  headed: "playwright test --headed",
   report: "node ./scripts/report.mjs",
 } as const;
 

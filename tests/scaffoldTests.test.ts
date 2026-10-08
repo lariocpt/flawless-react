@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { scaffoldUnitBrowser } from "../src/scaffold-tests/index.ts";
+import {
+  ensurePnpmSuiteSettings,
+  scaffoldUnitBrowser,
+  suitePackageJson,
+} from "../src/scaffold-tests/index.ts";
 import { hashBody, STAMP_RE, splitStamp } from "../src/scaffold-tests/stamp.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
 import type { ComponentInfo, ComponentTree } from "../src/types.ts";
@@ -66,6 +70,7 @@ describe("scaffoldUnitBrowser (file writes)", () => {
       path.join(outDir, "browser", "Widget.spec.ts"),
       path.join(outDir, "package.json"),
       path.join(outDir, "pnpm-workspace.yaml"),
+      path.join(outDir, "tsconfig.json"),
     ];
     expect(written.sort()).toEqual([...expected].sort());
     expect(skipped).toEqual([]);
@@ -536,5 +541,134 @@ describe("scaffold keeps hand-edited mock fixtures", () => {
 
     await scaffold(trees, { ...opts, force: true });
     expect(readFileSync(routes, "utf8")).toBe(edited);
+  });
+});
+
+describe("suite-local install surface (nextjs self-contained suite)", () => {
+  test("the unit-browser default emits the whole installable triad — the nextjs-mode skip that left the suite without a manifest is gone", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    const { written } = await scaffoldUnitBrowser({
+      trees: [tree(comp("Widget", path.join(root, "src", "Widget.tsx")))],
+      outDir,
+      variants: 1,
+      mswSetup: true,
+      browserSpecs: true,
+    });
+    expect(existsSync(path.join(outDir, "package.json"))).toBe(true);
+    expect(existsSync(path.join(outDir, "tsconfig.json"))).toBe(true);
+    expect(existsSync(path.join(outDir, "pnpm-workspace.yaml"))).toBe(true);
+    expect(written.map((w) => path.basename(w))).toContain("tsconfig.json");
+  });
+
+  test("the tsconfig is write-once — user edits survive a regen", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    mkdirSync(outDir, { recursive: true });
+    const edited = '{ "compilerOptions": { "strict": false } }\n';
+    writeFileSync(path.join(outDir, "tsconfig.json"), edited);
+    await scaffoldUnitBrowser({
+      trees: [tree(comp("Widget", path.join(root, "src", "Widget.tsx")))],
+      outDir,
+      variants: 1,
+    });
+    expect(readFileSync(path.join(outDir, "tsconfig.json"), "utf8")).toBe(edited);
+  });
+
+  test("react-scan belongs to the perf host and msw to the MSW setup — each declared exactly when its consumer is emitted", () => {
+    const both = JSON.parse(suitePackageJson("/app/flawless", true, true)) as {
+      dependencies: Record<string, string>;
+    };
+    // Same react-scan pin as perf-harness's own emitter: divergent pins would
+    // make the file's bytes depend on which task ran last.
+    expect(both.dependencies["react-scan"]).toBe("^0.4.3");
+    expect(both.dependencies.msw).toBe("^2.7.0");
+    const unitOnly = JSON.parse(suitePackageJson("/app/flawless", false, false)) as {
+      dependencies: Record<string, string>;
+    };
+    expect(unitOnly.dependencies["react-scan"]).toBeUndefined();
+    expect(unitOnly.dependencies.msw).toBeUndefined();
+  });
+
+  test("a nextjs manifest omits the module-type loader switch — the playwright configs under it load with the app's CJS default, and the nearest package.json picks that loader", () => {
+    const standalone = JSON.parse(suitePackageJson("/app/flawless", true, false)) as Record<
+      string,
+      unknown
+    >;
+    expect(standalone.type).toBe("module");
+    const next = JSON.parse(suitePackageJson("/app/flawless", true, true, true)) as Record<
+      string,
+      unknown
+    >;
+    expect(next.type).toBeUndefined();
+    // Dropping the loader switch must not take anything else with it.
+    expect(next.dependencies.msw).toBe("^2.7.0");
+    expect(next.dependencies["react-scan"]).toBe("^0.4.3");
+  });
+
+  test("regen over a nextjs manifest that declared module removes the declaration — every other key stays the user's", async () => {
+    const root = tmpRoot();
+    const outDir = path.join(root, "flawless");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(
+      path.join(outDir, "package.json"),
+      '{\n\t"name": "mine",\n\t"type": "module",\n\t"customValue": 42\n}\n',
+    );
+    await scaffoldUnitBrowser({
+      trees: [tree(comp("Widget", path.join(root, "src", "Widget.tsx")))],
+      outDir,
+      variants: 1,
+      mswSetup: true,
+      nextjs: true,
+    });
+    const pkg = readJson(path.join(outDir, "package.json"));
+    expect(pkg.type).toBeUndefined();
+    expect(pkg.customValue).toBe(42);
+    expect((pkg.dependencies as Record<string, string>).msw).toBe("^2.7.0");
+  });
+});
+
+describe("ensurePnpmSuiteSettings", () => {
+  test("a missing yaml is written whole — esbuild and msw both allowed, twice is a no-op", async () => {
+    const file = path.join(tmpRoot(), "pnpm-workspace.yaml");
+    expect(await ensurePnpmSuiteSettings(file)).toBe(true);
+    const body = readFileSync(file, "utf8");
+    expect(body).toMatch(/^\s+- esbuild$/m);
+    expect(body).toMatch(/^\s+- msw$/m);
+    expect(body).toMatch(/^\s+esbuild: true$/m);
+    expect(await ensurePnpmSuiteSettings(file)).toBe(false);
+  });
+
+  test("an old esbuild-only yaml gains msw once; user keys survive the touch", async () => {
+    const file = path.join(tmpRoot(), "pnpm-workspace.yaml");
+    writeFileSync(
+      file,
+      "onlyBuiltDependencies:\n  - esbuild\nallowBuilds:\n  esbuild: true\nnodeLinker: hoisted\n",
+    );
+    expect(await ensurePnpmSuiteSettings(file)).toBe(true);
+    const body = readFileSync(file, "utf8");
+    expect(body.match(/- msw/g)).toHaveLength(1);
+    expect(body.match(/msw: true/g)).toHaveLength(1);
+    expect(body).toContain("nodeLinker: hoisted");
+    expect(await ensurePnpmSuiteSettings(file)).toBe(false);
+  });
+
+  test("a key rewritten inline belongs to the user — the pass hands off instead of duplicating it", async () => {
+    const file = path.join(tmpRoot(), "pnpm-workspace.yaml");
+    const inline =
+      "onlyBuiltDependencies: [esbuild, msw]\nallowBuilds: { esbuild: true, msw: true }\n";
+    writeFileSync(file, inline);
+    expect(await ensurePnpmSuiteSettings(file)).toBe(false);
+    expect(readFileSync(file, "utf8")).toBe(inline);
+  });
+
+  test("a yaml without the blocks gains them appended, existing content untouched", async () => {
+    const file = path.join(tmpRoot(), "pnpm-workspace.yaml");
+    writeFileSync(file, "packages: []\n");
+    expect(await ensurePnpmSuiteSettings(file)).toBe(true);
+    const body = readFileSync(file, "utf8");
+    expect(body).toContain("packages: []");
+    expect(body).toMatch(/onlyBuiltDependencies:\n\s+- esbuild\n\s+- msw\n/);
+    expect(body).toMatch(/allowBuilds:\n\s+esbuild: true\n\s+msw: true\n/);
   });
 });

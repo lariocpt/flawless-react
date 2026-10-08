@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { detectAppReact, mergePackageJson } from "../packageJson.ts";
-import { PNPM_SUITE_SETTINGS } from "../scaffold/templates.ts";
+import { PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
 import { classifyStamped, stamp } from "./stamp.ts";
@@ -14,6 +14,14 @@ export interface ScaffoldUnitBrowserOptions {
   variants: number;
   skipInnerPackageJson?: boolean;
   mswSetup?: boolean;
+  /**
+   * The run is a Next.js suite living under the app. The manifest is emitted
+   * there too (a self-contained install needs it), but WITHOUT its "type"
+   * field: the playwright configs around it are written assuming the app's
+   * CJS transpile default (the nextjs e2e config anchors on __dirname), and
+   * a package.json placed above them decides how Playwright loads them.
+   */
+  nextjs?: boolean;
   provider?: string;
   resolveAliases?: AliasEntry[];
   /** Emitted alongside the config when set; see ReactExportShim in templates.ts. */
@@ -132,12 +140,22 @@ export async function scaffoldUnitBrowser(
   }
 
   if (!opts.skipInnerPackageJson) {
-    await writeSuitePackageJson(outDir, opts.browserSpecs !== false);
+    await writeSuitePackageJson(
+      outDir,
+      opts.browserSpecs !== false,
+      Boolean(opts.mswSetup),
+      Boolean(opts.nextjs),
+    );
     written.push(path.join(outDir, "package.json"));
-    const wsYaml = path.join(outDir, "pnpm-workspace.yaml");
-    if (!existsSync(wsYaml)) {
-      await writeFile(wsYaml, PNPM_SUITE_SETTINGS);
-      written.push(wsYaml);
+    if (await ensurePnpmSuiteSettings(path.join(outDir, "pnpm-workspace.yaml"))) {
+      written.push(path.join(outDir, "pnpm-workspace.yaml"));
+    }
+    // The suite type-checks in isolation (docs promise); emitted once, then
+    // the user's — the same write-once promise as the yaml above.
+    const tsPath = path.join(outDir, "tsconfig.json");
+    if (!existsSync(tsPath)) {
+      await writeFile(tsPath, tsConfig());
+      written.push(tsPath);
     }
   }
   return { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept };
@@ -164,7 +182,12 @@ export interface StaleBrowserSpec {
  * spelled copy of a key that is never needed alone is how the two files came to
  * disagree in the first place.
  */
-export function suitePackageJson(outDir: string, withBrowser: boolean): string {
+export function suitePackageJson(
+  outDir: string,
+  withBrowser: boolean,
+  msw = false,
+  nextjs = false,
+): string {
   // The suite's react IS the copy every plane renders with (aliases + host
   // resolution point at the suite's node_modules), so it must be the
   // version the app's component code was written against. See detectAppReact.
@@ -175,7 +198,14 @@ export function suitePackageJson(outDir: string, withBrowser: boolean): string {
       name: `${path.basename(outDir).replace(/[^a-zA-Z0-9_-]+/g, "-")}-suite`,
       version: "0.0.0",
       private: true,
-      type: "module",
+      // A standalone suite owns its loader: "module", with configs and
+      // sources written for ESM. A nextjs suite's manifest must NOT say it:
+      // the file sits above playwright configs emitted against the app's
+      // CJS transpile default (the nextjs e2e config anchors on __dirname),
+      // and the nearest package.json picks Playwright's loader — inheriting
+      // "module" here crashed those configs at import with "__dirname is not
+      // defined in ES module scope".
+      ...(nextjs ? {} : { type: "module" }),
       scripts: {
         [SUITE_SCRIPT.unit]: SUITE_COMMAND.unit,
         // browser/ is only rendered when browserSpecs is on. Declared
@@ -187,6 +217,16 @@ export function suitePackageJson(outDir: string, withBrowser: boolean): string {
       dependencies: {
         react: pin?.react ?? "^18.3.0",
         "react-dom": pin?.reactDom ?? "^18.3.0",
+        // The perf host's main.tsx imports react-scan; withBrowser IS
+        // "perf-harness ran", so the host is in this suite. Same pin as
+        // perf-harness's own emitter — divergent pins meant the file's
+        // bytes depended on which task ran last.
+        ...(withBrowser ? { "react-scan": "^0.4.3" } : {}),
+        // mswSetup IS "setup.ts wires the MSW server", and every nextjs
+        // suite fetches through it — a self-contained install cannot
+        // assume the APP ships msw (chanhdai happened to; that is luck,
+        // not a contract).
+        ...(msw ? { msw: "^2.7.0" } : {}),
       },
       devDependencies: {
         "@playwright/test": "^1.49.0",
@@ -216,12 +256,98 @@ export function suitePackageJson(outDir: string, withBrowser: boolean): string {
  * Through the shared merge, like perf-harness — the version pins above are
  * defaults an existing file overrides, not values that overwrite it.
  */
-async function writeSuitePackageJson(outDir: string, withBrowser: boolean): Promise<void> {
+async function writeSuitePackageJson(
+  outDir: string,
+  withBrowser: boolean,
+  msw: boolean,
+  nextjs = false,
+): Promise<void> {
   const pkgPath = path.join(outDir, "package.json");
-  const generated = suitePackageJson(outDir, withBrowser);
+  const generated = suitePackageJson(outDir, withBrowser, msw, nextjs);
   if (!existsSync(pkgPath)) {
     await writeFile(pkgPath, generated);
     return;
   }
-  await writeFile(pkgPath, mergePackageJson(await readFile(pkgPath, "utf8"), generated));
+  const merged = mergePackageJson(await readFile(pkgPath, "utf8"), generated);
+  // The merge lets an existing file win on every key — except in nextjs
+  // mode, where the loader switch is the TOOL's key (see suitePackageJson):
+  // a manifest that already says "module" would pin ESM onto the playwright
+  // configs around it and kill their __dirname at import. Everything else
+  // in the file stays the user's.
+  if (nextjs && /"type":/.test(merged)) {
+    const parsed = JSON.parse(merged) as Record<string, unknown>;
+    delete parsed.type;
+    await writeFile(pkgPath, `${JSON.stringify(parsed, null, 2)}\n`);
+    return;
+  }
+  await writeFile(pkgPath, merged);
+}
+
+/**
+ * Build scripts a suite install must run (pnpm 10+ refuses them by default
+ * and EXITS 1 doing so). esbuild's postinstall IS its binary — without it
+ * vitest dies at startup; msw's copies its service worker.
+ */
+const SUITE_BUILD_ALLOWLIST = ["esbuild", "msw"];
+
+/**
+ * The suite's pnpm-workspace.yaml: write-once in spirit, self-healing in
+ * fact. Every dogfood suite install died on ERR_PNPM_IGNORED_BUILDS because
+ * the allowlist had not grown with the suite's dependencies; a file that is
+ * merely re-written-when-absent repeats that on existing suites. A missing
+ * file is written whole; an existing one gains only the entries it lacks —
+ * user keys are untouched, nothing is ever duplicated, and a key the user
+ * rewrote inline (flow style, not a block) is theirs to keep, so the pass
+ * hands off entirely.
+ */
+export async function ensurePnpmSuiteSettings(wsPath: string): Promise<boolean> {
+  if (!existsSync(wsPath)) {
+    await writeFile(wsPath, PNPM_SUITE_SETTINGS);
+    return true;
+  }
+  const body = await readFile(wsPath, "utf8");
+  const inList = (name: string) => new RegExp(`^[ \\t]*-[ \\t]+${name}[ \\t]*$`, "m").test(body);
+  const flagged = (name: string) =>
+    new RegExp(`^[ \\t]*${name}:[ \\t]*true[ \\t]*$`, "m").test(body);
+  const items = SUITE_BUILD_ALLOWLIST.filter((n) => !inList(n)).map((n) => `  - ${n}`);
+  const flags = SUITE_BUILD_ALLOWLIST.filter((n) => !flagged(n)).map((n) => `  ${n}: true`);
+  if (items.length === 0 && flags.length === 0) return false;
+  let changed = false;
+  let next = body;
+  if (items.length > 0) {
+    const merged = appendToYamlBlock(next, "onlyBuiltDependencies:", items);
+    if (merged !== null) {
+      next = merged;
+      changed = true;
+    }
+  }
+  if (flags.length > 0) {
+    const merged = appendToYamlBlock(next, "allowBuilds:", flags);
+    if (merged !== null) {
+      next = merged;
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  await writeFile(wsPath, next);
+  return true;
+}
+
+/**
+ * Insert lines at the end of a top-level YAML block (creating it at EOF when
+ * absent). Null means hands off: the key carries an inline value the user
+ * wrote — duplicating the key would make the file invalid YAML.
+ */
+function appendToYamlBlock(body: string, header: string, lines: string[]): string | null {
+  const all = body.split("\n");
+  const at = all.findIndex((l) => l.trimStart().startsWith(header));
+  if (at === -1) {
+    const base = body.endsWith("\n") ? body : `${body}\n`;
+    return `${base}${header}\n${lines.join("\n")}\n`;
+  }
+  if (all[at].slice(all[at].indexOf(header) + header.length).trim() !== "") return null;
+  let end = at + 1;
+  while (end < all.length && /^[ \t]+\S/.test(all[end])) end++;
+  all.splice(end, 0, ...lines);
+  return all.join("\n");
 }
