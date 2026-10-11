@@ -703,7 +703,13 @@ function extractLabel(
     const runs: string[] = [];
     let run = "";
     let hasDynamic = false;
-    let propLabel: LabelSource | undefined;
+    let propLabel: Extract<LabelSource, { kind: "prop" }> | undefined;
+    // Literal text on either side of a prop interpolation: `+{step}` is the name
+    // "+3", not "3". Only trustworthy when exactly ONE prop is interpolated —
+    // with two, the second value would slip into the anchored tail unmatched.
+    let propCount = 0;
+    let before = "";
+    let after = "";
 
     const endRun = (): void => {
       const text = run.replace(/\s+/g, " ").trim();
@@ -715,15 +721,20 @@ function extractLabel(
       for (const child of children) {
         if (ts.isJsxText(child)) {
           run += child.text;
+          if (propCount === 0) before += child.text;
+          else after += child.text;
           continue;
         }
         if (ts.isJsxExpression(child) && child.expression) {
           if (ts.isStringLiteral(child.expression)) {
             run += child.expression.text;
+            if (propCount === 0) before += child.expression.text;
+            else after += child.expression.text;
             continue;
           }
           if (ts.isIdentifier(child.expression) && propNames.has(child.expression.text)) {
             propLabel ??= { kind: "prop", propName: child.expression.text };
+            propCount++;
           }
         }
         // On native, a container child is a level to look THROUGH, not a dynamic
@@ -751,7 +762,18 @@ function extractLabel(
     if (longest && longest.length >= MIN_LABEL_FRAGMENT) {
       return { kind: "text-partial", value: longest };
     }
-    if (propLabel) return propLabel;
+    if (propLabel) {
+      const b = before.replace(/\s+/g, " ").trim();
+      const a = after.replace(/\s+/g, " ").trim();
+      return propCount === 1 && (b || a)
+        ? {
+            kind: "prop",
+            propName: propLabel.propName,
+            ...(b ? { before: b } : {}),
+            ...(a ? { after: a } : {}),
+          }
+        : propLabel;
+    }
   }
   if (hints.ariaLabel) return { kind: "aria", value: hints.ariaLabel };
   if (hints.testid) return { kind: "testid", value: hints.testid };

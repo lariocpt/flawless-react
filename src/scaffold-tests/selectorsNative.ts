@@ -1,4 +1,5 @@
 import { TEXTLESS_ELEMENTS } from "../analyse/nativeProps.ts";
+import { propNameRegex } from "./selectors.ts";
 import type { ClickHandler, LabelSource } from "../types.ts";
 
 /**
@@ -138,6 +139,13 @@ export function emitNativeSelector(h: ClickHandler): NativeTarget | undefined {
     };
   }
   if (h.label.kind === "prop") {
+    if (h.label.before || h.label.after) {
+      return {
+        locator: `screen.getAllByText(${propNameRegex(h.label)})[0]`,
+        rung: "text",
+        self: false,
+      };
+    }
     return {
       locator: `screen.getAllByText(String(DEFAULTS[${j(h.label.propName)}] ?? ""))[0]`,
       rung: "text",
@@ -150,7 +158,10 @@ export function emitNativeSelector(h: ClickHandler): NativeTarget | undefined {
 function nameOption(label: LabelSource): string {
   if (label.kind === "text") return `, { name: ${j(label.value)} }`;
   if (label.kind === "text-partial") return `, { name: ${partialRegex(label.value)} }`;
-  if (label.kind === "prop") return `, { name: String(DEFAULTS[${j(label.propName)}] ?? "") }`;
+  if (label.kind === "prop") {
+    if (label.before || label.after) return `, { name: ${propNameRegex(label, "i")} }`;
+    return `, { name: String(DEFAULTS[${j(label.propName)}] ?? "") }`;
+  }
   return "";
 }
 

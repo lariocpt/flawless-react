@@ -62,7 +62,14 @@ export type LabelSource =
    * as the whole name is a test that can never pass.
    */
   | { kind: "text-partial"; value: string }
-  | { kind: "prop"; propName: string }
+  /**
+   * The element's whole accessible name is one prop interpolated into static
+   * copy: `<button>+{step}</button>`. `before`/`after` are the trimmed literal
+   * text on either side of that interpolation, so the matcher can keep it — a
+   * name query of just the prop value never matches "+3", and the failure reads
+   * like an interaction gap rather than a dropped prefix.
+   */
+  | { kind: "prop"; propName: string; before?: string; after?: string }
   | { kind: "aria"; value: string }
   | { kind: "testid"; value: string }
   | { kind: "none" };

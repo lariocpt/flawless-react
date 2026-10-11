@@ -33,6 +33,9 @@ export function emitVitestSelector(h: ClickHandler): string | undefined {
       return `screen.getAllByRole(${JSON.stringify(role)}, { name: ${partialRegex(h.label.value)} })[0] as HTMLElement`;
     }
     if (h.label.kind === "prop") {
+      if (h.label.before || h.label.after) {
+        return `screen.getAllByRole(${JSON.stringify(role)}, { name: ${propNameRegex(h.label, "i")} })[0] as HTMLElement`;
+      }
       return `screen.getAllByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })[0] as HTMLElement`;
     }
   }
@@ -77,6 +80,11 @@ export function emitPlaywrightSelector(h: ClickHandler): string | undefined {
       return `page.getByRole(${JSON.stringify(role)}, { name: ${partialRegex(h.label.value)} })`;
     }
     if (h.label.kind === "prop") {
+      if (h.label.before || h.label.after) {
+        // A regex keeps the emitPlaywrightSelector case-sensitivity the
+        // exact: true string option had; PW ignores `exact` for regex names.
+        return `page.getByRole(${JSON.stringify(role)}, { name: ${propNameRegex(h.label)} })`;
+      }
       return `page.getByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? ""), exact: true })`;
     }
   }
@@ -436,6 +444,27 @@ export function awaitSelector(selector: string): string {
  */
 function partialRegex(value: string): string {
   return `/${value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/`;
+}
+
+/**
+ * A RegExp expression for an accessible name that is one prop interpolated into
+ * static copy: `+{step}` renders "+3", and a name query of just "3" never finds
+ * it. The static halves are escaped here; the prop value is escaped in the
+ * emitted code because it is only known at runtime. The `\s*` seams cover the
+ * accessible-name computation's and RTL's differing opinions about whether two
+ * adjacent text nodes join with a space.
+ */
+export function propNameRegex(
+  label: Extract<LabelSource, { kind: "prop" }>,
+  flags = "",
+): string {
+  const runtime = `String(DEFAULTS[${JSON.stringify(label.propName)}] ?? "").replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&")`;
+  const parts = ['"^"'];
+  if (label.before) parts.push(JSON.stringify(label.before.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")));
+  parts.push(`"\\\\s*"`, runtime, `"\\\\s*"`);
+  if (label.after) parts.push(JSON.stringify(label.after.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")));
+  parts.push(`"$"`);
+  return `new RegExp(${parts.join(" + ")}${flags ? `, ${JSON.stringify(flags)}` : ""})`;
 }
 
 /** JSX lowercases host elements; anything capitalised is a component reference. */
