@@ -113,6 +113,12 @@ export const unitAndBrowser: Task = {
       provider: ctx.provider,
       resolveAliases: aliasRes.aliases.length > 0 ? aliasRes.aliases : undefined,
       multiRootAliases: aliasRes.multiRoot.length > 0 ? aliasRes.multiRoot : undefined,
+      // The single-React anchor: vitest aliases only reach code VITE loads,
+      // so setup.ts redirects every NATIVE react/react-dom load (an
+      // externalised @testing-library/react requires its peer-linked suite
+      // copy otherwise — physically a second React, null dispatcher on every
+      // mount) to this same pair.
+      reactPinDir: aliasRes.pinDir,
       reactShim,
       // The app package's .env files for the emitted vitest config (server
       // modules read DATABASE_URL & co. at import time; unset env crashes
@@ -196,7 +202,11 @@ function computeResolveAliases(
   roots: string[],
   pinFrom?: string,
   pinFallback?: string,
-): { aliases: AliasEntry[]; multiRoot: MultiRootAlias[] } {
+): {
+  aliases: AliasEntry[];
+  multiRoot: MultiRootAlias[];
+  pinDir?: string;
+} {
   const entries: AliasEntry[] = [];
   const multiRoot: MultiRootAlias[] = [];
   const targets = new Map<string, string[]>();
@@ -276,7 +286,9 @@ function computeResolveAliases(
     pnpmPin("react");
     pnpmPin("react-dom");
   }
-  return { aliases: entries, multiRoot };
+  // The anchor travels with the aliases: setup.ts needs the SAME directory to
+  // pin the loads the aliases cannot reach (see ReactPinDir).
+  return { aliases: entries, multiRoot, pinDir: nmDir };
 }
 
 /**

@@ -142,6 +142,15 @@ export interface UnitBrowserRenderOptions {
   /** tsconfig prefixes claimed by several roots with different targets: the
    *  emitted config resolves those per importer instead of aliasing them. */
   multiRootAliases?: MultiRootAlias[];
+  /**
+   * The node_modules holding the ONE react/react-dom pair the emitted config
+   * aliases point at (computeResolveAliases' anchor). setup.ts redirects every
+   * NATIVE load of the react family here: vite aliases only reach code vite
+   * loads, and an externalised @testing-library/react otherwise requires the
+   * suite's own peer-linked copy — physically a second React under pnpm, and
+   * every mount dies on a null dispatcher.
+   */
+  reactPinDir?: string;
   /** Emit unit specs beside the analysed sources as <base>.flawless.test.tsx. */
   colocate?: boolean;
   /** API routes with response bodies, for fetch-spec fixtures. */
@@ -183,7 +192,14 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const withBrowser = opts.browserSpecs !== false;
   const authStubs = collectAuthStubs(flat.map((c) => c.info));
   const files: RenderedFile[] = [
-    { relPath: "setup.ts", content: setupTs(Boolean(opts.mswSetup), authStubs) },
+    {
+      relPath: "setup.ts",
+      content: setupTs(
+        Boolean(opts.mswSetup),
+        authStubs,
+        opts.reactPinDir ? { dir: opts.reactPinDir, outDir: path.resolve(opts.outDir) } : undefined,
+      ),
+    },
     // The inert target of the /^server-only$/ alias in the vitest config: the
     // marker package is missing or throw-on-import, and a transitive importer
     // (MDX -> a server table -> "server-only") cannot be saved by a per-spec
@@ -683,12 +699,12 @@ ${resolveBlock}  test: {
     exclude: ["**/node_modules/**", "**/dist/**", "**/.{idea,git,cache,output,temp}/**"],
     globals: true,
     css: false,
-    // Run the harness's own closure (testing-library, react, react-dom)
-    // through vite instead of node's require: that is what lets the resolve
-    // ALIASES above apply to it. Externalized, @testing-library/react's
-    // require("react") bypasses vite entirely and lands on a second React —
-    // React-19 components then render under React-18 ("Objects are not valid
-    // as a React child", "useOptimistic is not a function").
+    // Best-effort: run the harness's own closure (testing-library, react,
+    // react-dom) through vite so the resolve ALIASES above apply to it.
+    // Vitest does not honour these patterns uniformly (an externalised
+    // @testing-library/react still requires react-dom by plain node rules,
+    // landing on a second physical React), so the guarantee lives in the
+    // native resolve hook in setup.ts — this only helps where it works.
     server: {
       deps: {
         inline: [/@testing-library/, /^react$/, /^react\\//, /^react-dom$/, /^react-dom\\//],
@@ -725,12 +741,12 @@ ${resolveBlock}  test: {
     include: ["unit/**/*.test.{ts,tsx}"],
     globals: true,
     css: false,
-    // Run the harness's own closure (testing-library, react, react-dom)
-    // through vite instead of node's require: that is what lets the resolve
-    // ALIASES above apply to it. Externalized, @testing-library/react's
-    // require("react") bypasses vite entirely and lands on a second React —
-    // React-19 components then render under React-18 ("Objects are not valid
-    // as a React child", "useOptimistic is not a function").
+    // Best-effort: run the harness's own closure (testing-library, react,
+    // react-dom) through vite so the resolve ALIASES above apply to it.
+    // Vitest does not honour these patterns uniformly (an externalised
+    // @testing-library/react still requires react-dom by plain node rules,
+    // landing on a second physical React), so the guarantee lives in the
+    // native resolve hook in setup.ts — this only helps where it works.
     server: {
       deps: {
         inline: [/@testing-library/, /^react$/, /^react\\//, /^react-dom$/, /^react-dom\\//],
@@ -745,25 +761,124 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
 
-function setupTs(mswSetup: boolean, authStubs = new Map<string, AuthStub>()): string {
+function setupTs(
+  mswSetup: boolean,
+  authStubs = new Map<string, AuthStub>(),
+  reactPin?: { dir: string; outDir: string },
+): string {
   // Global signed-out stubs for provider-bound auth libs (analyse/authShims.ts
   // says why): a bare unit mount has no SessionProvider/ClerkProvider, and the
   // real modules throw before the component under test renders.
   const authMocks = [...authStubs.entries()]
     .map(([spec, stub]) => authShimVitestBlock(spec, stub))
     .join("");
+  // The single-React pin (UnitBrowserRenderOptions.reactPinDir says why):
+  // emitted only when the canonical pair the config aliases point at exists.
+  const pinRel =
+    reactPin &&
+    existsSync(path.join(reactPin.dir, "react")) &&
+    existsSync(path.join(reactPin.dir, "react-dom"))
+      ? {
+          react: JSON.stringify(
+            relativeToEmitted(reactPin.outDir, path.join(reactPin.dir, "react")),
+          ),
+          reactDom: JSON.stringify(
+            relativeToEmitted(reactPin.outDir, path.join(reactPin.dir, "react-dom")),
+          ),
+        }
+      : undefined;
+  const pinImports = pinRel
+    ? `import * as __flFs from "node:fs";
+import * as __flPath from "node:path";
+import * as __flUrl from "node:url";
+`
+    : "";
+  // String.raw so the redirect's regexes keep their backslashes without
+  // quadruple escaping through this template. Emitted inside the registerHooks
+  // block's braces; the ${} holes are the only interpolation.
+  const pinSource = pinRel
+    ? String.raw`
+  // Single React pin: vite's aliases reach only the code VITE loads. pnpm
+  // stores react (and the peer-linked react-dom) PHYSICALLY under every
+  // node_modules root, so an externalised @testing-library/react requires
+  // the SUITE's pair through plain node resolution while transformed
+  // components read hooks from the aliased app copy — two dispatchers, and
+  // every mount dies on "Cannot read properties of null (reading 'useRef')".
+  // This hook owns every native resolution in the worker thread, so the
+  // whole react family — bare specifiers and the absolute/file: paths
+  // vite-node hands externalised modules — is redirected to the one pair the
+  // config's aliases point at (resolved against the suite directory: the
+  // committed suite stays relocatable, like the config itself).
+   // NOT the two-argument new URL(spec, import.meta.url) form: vite rewrites
+   // that exact pattern as an asset import and the expression throws at
+   // runtime — fileURLToPath takes the url directly (a string under
+   // vite-node, a URL object in plain ESM; the query a runner may append
+   // sits after the filename, so dirname is unaffected).
+  const SUITE_DIR = (() => {
+    try {
+      return __flPath.dirname(__flUrl.fileURLToPath(import.meta.url));
+    } catch {
+      return undefined;
+    }
+  })();
+  const REACT_DIRS: Record<string, string> = {
+    react: SUITE_DIR ? __flPath.resolve(SUITE_DIR, ${pinRel.react}) : "",
+    "react-dom": SUITE_DIR ? __flPath.resolve(SUITE_DIR, ${pinRel.reactDom}) : "",
+  };
+  const flPinFile = (name: string, rest: string): string | undefined => {
+    const base = REACT_DIRS[name];
+    if (!base) return undefined;
+    const p = rest ? base + rest.replace(/^[/\\]+/, "/") : base;
+    try {
+      return __flFs.statSync(p).isDirectory() ? p + "/index.js" : p;
+    } catch {
+      return __flFs.existsSync(p + ".js") ? p + ".js" : undefined;
+    }
+  };
+  const flPinResolve = (specifier: string): string | undefined => {
+    const bare = /^(react|react-dom)(?:[/\\](.+))?$/.exec(specifier);
+    if (bare) return flPinFile(bare[1], bare[2] ?? "");
+    if (!specifier.startsWith("file:") && !__flPath.isAbsolute(specifier))
+      return undefined;
+    let p = specifier;
+    if (p.startsWith("file:")) {
+      try {
+        p = __flUrl.fileURLToPath(p);
+      } catch {
+        return undefined;
+      }
+    }
+    const copy =
+      /[\\/]node_modules[\\/]\.pnpm[\\/](?:react|react-dom)@[^\\/]+[\\/]node_modules[\\/](react|react-dom)([/\\].*)?$/.exec(p);
+    return copy ? flPinFile(copy[1], copy[2] ?? "") : undefined;
+  };
+`
+    : "";
+  const pinRedirect = pinRel
+    ? `        {
+          const pinned = flPinResolve(specifier);
+          if (pinned)
+            return {
+              url: __flUrl.pathToFileURL(pinned).href,
+              format: "commonjs",
+              shortCircuit: true,
+            };
+        }
+`
+    : "";
   const polyfills = `
 // Native-import interception: the runner loads node_modules packages through
 // plain import(), where vi.mock cannot reach them. The resolve hook below
-// answers two classes that die at collection: font-loader wrappers executing
-// at module scope (geist), and router-wrapper libraries mounting the REAL
-// next/navigation — "invariant expected app router to be mounted".
+// answers three classes: font-loader wrappers executing at module scope
+// (geist), router-wrapper libraries mounting the REAL next/navigation —
+// "invariant expected app router to be mounted" — and (when configured) the
+// react family, pinned to a single physical copy.
 // registerHooks (synchronous, runs IN this thread) is preferred over
 // register() (spawns a separate hooks thread Node deprecates); the stubs ride
 // as data: URLs so no file-path juggling is needed — import.meta.url is an
 // http: URL under vite-node, which the native loader rejects. The capability
 // guard keeps older Node (no registerHooks) compiling and running unchanged.
-import * as __flNodeModule from "node:module";
+${pinImports}import * as __flNodeModule from "node:module";
 {
   const fontStub =
     "const font={className:'',variable:'',style:{fontFamily:''}};" +
@@ -777,7 +892,7 @@ import * as __flNodeModule from "node:module";
     "export function useRouter(){return{push:noop,replace:noop,refresh:noop,back:noop,forward:noop,prefetch:noop}}" +
     "export function useSearchParams(){return new URLSearchParams()}" +
     "export function useParams(){return {}}" +
-    "export function useRoute(){return '/'}";
+    "export function useRoute(){return '/'}";${pinSource}
   const registerHooks = (__flNodeModule as unknown as {
     registerHooks?: (hooks: {
       resolve?: (
@@ -790,7 +905,7 @@ import * as __flNodeModule from "node:module";
   if (registerHooks) {
     registerHooks({
       resolve: (specifier, _context, nextResolve) => {
-        // Bundled library output imports "next/navigation.js" with the
+${pinRedirect}        // Bundled library output imports "next/navigation.js" with the
         // extension, so the bare name and the .js spelling both match.
         if (/^next\\/font(\\/.*)?$/.test(specifier)) {
           return {
