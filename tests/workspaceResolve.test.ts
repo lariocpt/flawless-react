@@ -356,7 +356,7 @@ export function Card(props: CardProps) {
 `,
     );
     const info = await analysedEntry(entry);
-    expect(info.propsShape).toEqual({ title: "", count: 0 });
+    expect(info.propsShape).toEqual({ title: "", count: 1 });
   });
 
   test("a rename re-export (export { A as B } from) resolves under the exported name", async () => {
@@ -371,7 +371,7 @@ export function Card(props: PanelProps) {
 `,
     );
     const info = await analysedEntry(entry);
-    expect(info.propsShape).toEqual({ title: "", count: 0 });
+    expect(info.propsShape).toEqual({ title: "", count: 1 });
   });
 
   test("a non-exported same-named interface in an earlier star arm cannot shadow the real one", async () => {

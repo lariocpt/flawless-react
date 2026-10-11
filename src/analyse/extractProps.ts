@@ -1144,7 +1144,11 @@ function mapType(t: ts.TypeNode): MapResult {
     case ts.SyntaxKind.StringKeyword:
       return { kind: "scalar", value: "" };
     case ts.SyntaxKind.NumberKeyword:
-      return { kind: "scalar", value: 0 };
+      // 1, not 0 — the house number value everywhere else (fixtureValue,
+      // mockLiteral). A 0 in DEFAULTS silently degenerates the arithmetic a
+      // click test drives: `setN(n + step)` with step=0 re-renders NOTHING and
+      // the spec times out waiting for a render that can never happen.
+      return { kind: "scalar", value: 1 };
     case ts.SyntaxKind.BooleanKeyword:
       return { kind: "scalar", value: false };
     case ts.SyntaxKind.NullKeyword:

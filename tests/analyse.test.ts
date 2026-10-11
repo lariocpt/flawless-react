@@ -121,7 +121,7 @@ describe("parseFile", () => {
     // ONLY through the satisfies target's type argument.
     expect(primary?.propsTypeRef?.typeName.getText()).toBe("TagProps");
     const p = extractProps(r.sourceFile, primary?.propsTypeNode, primary?.propsTypeLiteral);
-    expect(p.propsShape).toEqual({ label: "", count: 0 });
+    expect(p.propsShape).toEqual({ label: "", count: 1 });
   });
 
   test("throws helpfully on a non-component file", async () => {
@@ -142,7 +142,7 @@ describe("extractProps", () => {
     const r = extractProps(parsed.sourceFile, parsed.components[0]?.propsTypeRef);
     expect(r.propsShape).toEqual({
       name: "",
-      count: 0,
+      count: 1,
       active: false,
       variant: "primary",
     });

@@ -140,7 +140,7 @@ export const Widget = forwardRef<HTMLDivElement, Props>(function Widget({ label,
 });
 `);
     expect(info.wrappers).toEqual(["forwardRef"]);
-    expect(info.propsShape).toEqual({ label: "", count: 0 });
+    expect(info.propsShape).toEqual({ label: "", count: 1 });
   });
 
   test("const X: FC<Props> = memo(...) keeps the declared Props", async () => {
