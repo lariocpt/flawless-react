@@ -92,7 +92,6 @@ describe("every emitted spec is valid TypeScript", () => {
     for (const [rel, content] of files) {
       if (!/\.(ts|tsx)$/.test(rel)) continue;
       const sf = ts.createSourceFile(rel, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-      // biome-ignore lint/suspicious/noExplicitAny: parseDiagnostics is internal but stable
       const diags = (sf as any).parseDiagnostics as ts.Diagnostic[];
       if (diags?.length) {
         bad.push(`${rel}: ${ts.flattenDiagnosticMessageText(diags[0]?.messageText, " ")}`);
@@ -110,7 +109,6 @@ describe("every emitted spec is valid TypeScript", () => {
       true,
       ts.ScriptKind.JS,
     );
-    // biome-ignore lint/suspicious/noExplicitAny: as above
     expect(((sf as any).parseDiagnostics as ts.Diagnostic[]).length).toBe(0);
   });
 

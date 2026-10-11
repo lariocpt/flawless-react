@@ -300,35 +300,39 @@ async function derive(
 const names = (refs: ProviderRef[] | undefined): string[] =>
   (refs ?? []).map((r) => r.componentName);
 
+/** The wrap entry for the component whose key ends with `suffix`, loudly:
+ *  a missing key is the finding, not something to `!` past into undefined. */
+const refsof = (wraps: Map<string, ProviderRef[]>, suffix: string): ProviderRef[] => {
+  const key = [...wraps.keys()].find((k) => k.endsWith(suffix));
+  if (key === undefined) throw new Error(`no wrap key ending in "${suffix}"`);
+  const refs = wraps.get(key);
+  if (refs === undefined) throw new Error(`wrap key "${key}" has no refs`);
+  return refs;
+};
+
 describe("deriveContextProviderWraps", () => {
   test("same-file hook call finds the co-located provider", async () => {
     const wraps = await derive();
-    const trigger = [...wraps.keys()].find((k) => k.endsWith("::SidebarTrigger"));
-    expect(trigger).toBeDefined();
-    const refs = wraps.get(trigger!);
+    const refs = refsof(wraps, "::SidebarTrigger");
     expect(names(refs)).toEqual(["SidebarProvider"]);
-    expect(refs![0]!.filePath.endsWith("sidebar.tsx")).toBe(true);
-    expect(refs![0]!.exportKind).toBe("named");
+    expect(refs[0]?.filePath.endsWith("sidebar.tsx")).toBe(true);
+    expect(refs[0]?.exportKind).toBe("named");
   });
 
   test("cross-file call resolves through the import, alias included", async () => {
     const wraps = await derive();
-    const alias = [...wraps.keys()].find((k) => k.endsWith("::AliasUser"));
-    expect(names(wraps.get(alias!))).toEqual(["SidebarProvider"]);
+    expect(names(refsof(wraps, "::AliasUser"))).toEqual(["SidebarProvider"]);
   });
 
   test("transitive: the ancestor inherits what its child requires", async () => {
     const wraps = await derive();
-    const app = [...wraps.keys()].find((k) => k.endsWith("::AppSidebar"));
-    expect(names(wraps.get(app!))).toEqual(["SidebarProvider"]);
+    expect(names(refsof(wraps, "::AppSidebar"))).toEqual(["SidebarProvider"]);
   });
 
   test("cmdk shape: bare renderer wraps the member consumers", async () => {
     const wraps = await derive();
-    const input = [...wraps.keys()].find((k) => k.endsWith("::CommandInput"));
-    expect(names(wraps.get(input!))).toEqual(["Command"]);
-    const list = [...wraps.keys()].find((k) => k.endsWith("::CommandList"));
-    expect(names(wraps.get(list!))).toEqual(["Command"]);
+    expect(names(refsof(wraps, "::CommandInput"))).toEqual(["Command"]);
+    expect(names(refsof(wraps, "::CommandList"))).toEqual(["Command"]);
     // The provider itself never gets wrapped in itself.
     expect([...wraps.keys()].some((k) => k.endsWith("::Command") && !k.endsWith("Input"))).toBe(
       false,
@@ -337,8 +341,7 @@ describe("deriveContextProviderWraps", () => {
 
   test("base-ui shape: the N.Provider renderer wins, self-providers stay bare", async () => {
     const wraps = await derive();
-    const toast = [...wraps.keys()].find((k) => k.endsWith("::Toast"));
-    expect(names(wraps.get(toast!))).toEqual(["ToastProvider"]);
+    expect(names(refsof(wraps, "::Toast"))).toEqual(["ToastProvider"]);
     // Toaster renders <ToastProvider> itself — nesting a second provider can
     // actively break it (the kiranism Toaster passes because it is NOT
     // wrapped), and the provider component itself is never wrapped.
@@ -356,10 +359,8 @@ describe("deriveContextProviderWraps", () => {
     // — the file renders <DialogPrimitive.Root> nowhere near the .Provider
     // shape, so only the Root-as-provider reading derives the wrap.
     const wraps = await derive();
-    const portal = [...wraps.keys()].find((k) => k.endsWith("::DialogPortal"));
-    expect(names(wraps.get(portal!))).toEqual(["Dialog"]);
-    const trigger = [...wraps.keys()].find((k) => k.endsWith("::DialogTrigger"));
-    expect(names(wraps.get(trigger!))).toEqual(["Dialog"]);
+    expect(names(refsof(wraps, "::DialogPortal"))).toEqual(["Dialog"]);
+    expect(names(refsof(wraps, "::DialogTrigger"))).toEqual(["Dialog"]);
     // The Root renderer provides its own context; it never gets wrapped.
     expect([...wraps.keys()].some((k) => k.endsWith("::Dialog"))).toBe(false);
   });
@@ -370,26 +371,22 @@ describe("deriveContextProviderWraps", () => {
     // would only relocate the consumer's context throw, so no wrap at all.
     expect([...wraps.keys()].some((k) => k.endsWith("::XAxis"))).toBe(false);
     // The destructuring default genuinely rescues the identical shape.
-    const grid = [...wraps.keys()].find((k) => k.endsWith("::TileGrid"));
-    expect(names(wraps.get(grid!))).toEqual(["TiledProvider"]);
+    expect(names(refsof(wraps, "::TileGrid"))).toEqual(["TiledProvider"]);
   });
 
   test("provider refs carry the re-export alias", async () => {
     // chanhdai's collapsible: CollapsibleWithContext leaves its module as
     // `Collapsible`. A wrap importing the internal name renders undefined.
     const wraps = await derive();
-    const grid = [...wraps.keys()].find((k) => k.endsWith("::TileGrid"));
-    const ref = wraps.get(grid!)?.[0];
+    const ref = refsof(wraps, "::TileGrid")[0];
     expect(ref?.componentName).toBe("TiledProvider");
     expect(ref?.exportedAs).toBe("TiledPublic");
   });
 
   test("the context object pairs hook and provider when the name misses", async () => {
     const wraps = await derive();
-    const panel = [...wraps.keys()].find((k) => k.endsWith("::AccPanel"));
-    expect(names(wraps.get(panel!))).toEqual(["AccordionRoot"]);
-    const badge = [...wraps.keys()].find((k) => k.endsWith("::AccBadge"));
-    expect(names(wraps.get(badge!))).toEqual(["AccordionRoot"]);
+    expect(names(refsof(wraps, "::AccPanel"))).toEqual(["AccordionRoot"]);
+    expect(names(refsof(wraps, "::AccBadge"))).toEqual(["AccordionRoot"]);
     // The supplier itself is never wrapped by its own context.
     expect([...wraps.keys()].some((k) => k.endsWith("::AccordionRoot"))).toBe(false);
   });
@@ -400,9 +397,9 @@ describe("deriveContextProviderWraps", () => {
     // object from auth-context-shared. The naming convention misses inside the
     // hook's module; only the resolved (module, name) of the context joins them.
     const wraps = await derive();
-    const who = [...wraps.keys()].find((k) => k.endsWith("::WhoAmI"));
-    expect(names(wraps.get(who!))).toEqual(["AuthProvider"]);
-    expect(wraps.get(who!)?.[0]?.filePath.endsWith("auth-context.tsx")).toBe(true);
+    const refs = refsof(wraps, "::WhoAmI");
+    expect(names(refs)).toEqual(["AuthProvider"]);
+    expect(refs[0]?.filePath.endsWith("auth-context.tsx")).toBe(true);
     // The provider itself is not wrapped by its own context.
     expect([...wraps.keys()].some((k) => k.endsWith("::AuthProvider"))).toBe(false);
   });
@@ -422,25 +419,20 @@ describe("deriveContextProviderWraps", () => {
         shimmed = wraps;
       },
     );
-    const list = [...shimmed.keys()].find((k) => k.endsWith("::PostList"));
-    expect(names(shimmed.get(list!))).toEqual(["FlawlessQueryClientProvider"]);
-    expect(shimmed.get(list!)?.[0]?.filePath).toBe(
-      path.join(tmp, ".flawless", "flawless-query-client.tsx"),
-    );
-    const page = [...shimmed.keys()].find((k) => k.endsWith("::PostPage"));
-    expect(names(shimmed.get(page!))).toEqual(["FlawlessQueryClientProvider"]);
+    const listRefs = refsof(shimmed, "::PostList");
+    expect(names(listRefs)).toEqual(["FlawlessQueryClientProvider"]);
+    expect(listRefs[0]?.filePath).toBe(path.join(tmp, ".flawless", "flawless-query-client.tsx"));
+    expect(names(refsof(shimmed, "::PostPage"))).toEqual(["FlawlessQueryClientProvider"]);
     // The wrapper shape: SettingsForm never mentions the library — its
     // project hook calls useMutation internally.
-    const form = [...shimmed.keys()].find((k) => k.endsWith("::SettingsForm"));
-    expect(names(shimmed.get(form!))).toEqual(["FlawlessQueryClientProvider"]);
+    expect(names(refsof(shimmed, "::SettingsForm"))).toEqual(["FlawlessQueryClientProvider"]);
     // Two levels across files: DialogShell → useDialogState → useDetailQuery
     // → useQuery (the McpServerDialog chain).
-    const shell = [...shimmed.keys()].find((k) => k.endsWith("::DialogShell"));
-    expect(names(shimmed.get(shell!))).toEqual(["FlawlessQueryClientProvider"]);
+    expect(names(refsof(shimmed, "::DialogShell"))).toEqual(["FlawlessQueryClientProvider"]);
     // The router family: the MemoryRouter shim, second table entry.
-    const palette = [...shimmed.keys()].find((k) => k.endsWith("::Palette"));
-    expect(names(shimmed.get(palette!))).toEqual(["FlawlessRouterProvider"]);
-    expect(shimmed.get(palette!)?.[0]?.filePath.endsWith("flawless-router.tsx")).toBe(true);
+    const paletteRefs = refsof(shimmed, "::Palette");
+    expect(names(paletteRefs)).toEqual(["FlawlessRouterProvider"]);
+    expect(paletteRefs[0]?.filePath.endsWith("flawless-router.tsx")).toBe(true);
     // Without shims the derivation is unchanged: the hook pairs with nothing.
     const bare = await derive();
     expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
@@ -455,7 +447,8 @@ describe("deriveContextProviderWraps", () => {
 
   test("providerKey matches the map keys the hostRegistry consumes", async () => {
     const wraps = await derive();
-    const sidebar = [...wraps.keys()].find((k) => k.endsWith("::SidebarTrigger"))!;
+    const sidebar = [...wraps.keys()].find((k) => k.endsWith("::SidebarTrigger"));
+    if (sidebar === undefined) throw new Error("no wrap key ending in ::SidebarTrigger");
     expect(sidebar.endsWith(providerKey({ filePath: "", componentName: "SidebarTrigger" }))).toBe(
       true,
     );

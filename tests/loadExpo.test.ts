@@ -72,6 +72,7 @@ describe("the one-hop api-endpoint harvest", () => {
         "  return (await res.json()) as T;\n" +
         "}\n" +
         "export async function getThing(id: string, tab: string): Promise<{ thing: string }> {\n" +
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: source-under-test text — the ${...} must reach the analysed file verbatim
         "  return apiFetch<{ thing: string }>(`/things/${id}?tab=${tab}`);\n" +
         "}\n",
     );

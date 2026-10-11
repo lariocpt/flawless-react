@@ -222,7 +222,6 @@ describe("the native content model", () => {
     [{ tag: "Switch" }, "toggle"],
     [{ tag: "input" }, "skip"],
   ])("nativeFillKind(%o) === %p", (field, want) => {
-    // biome-ignore lint/suspicious/noExplicitAny: table-driven over a narrow union
     expect(nativeFillKind(field as any)).toBe(want as ReturnType<typeof nativeFillKind>);
   });
 

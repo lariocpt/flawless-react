@@ -89,6 +89,7 @@ describe("evaluate", () => {
   test("anything outside the closed set is unknown", () => {
     expect(evalSrc("fetchUser()")).toBeUndefined();
     expect(evalSrc("a + b", envOf({ a: 1, b: 2 }))).toBeUndefined();
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: source-under-test text — the ${...} must reach the analysed file verbatim
     expect(evalSrc("`x${y}`", envOf({ y: "z" }))).toBeUndefined();
   });
 });
