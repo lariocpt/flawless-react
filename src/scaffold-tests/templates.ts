@@ -7,6 +7,7 @@ import {
   referencedLibraryShims,
 } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { appReactMajor } from "../packageJson.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type {
@@ -359,7 +360,16 @@ test("${name} is a next/og route handler", () => {
   // these specs never render interactively, so nothing to wrap.
   const autoProv = autoProviderBits(c.info, opts.providerWraps, specDir);
   if (mode === "compound-part" || mode === "document-root") {
-    return constrainedSpec(c, importPath, providerImport, mode, specDir, todo, opts.apiRoutes);
+    return constrainedSpec(
+      c,
+      importPath,
+      providerImport,
+      mode,
+      specDir,
+      todo,
+      opts.apiRoutes,
+      (appReactMajor(opts.outDir) ?? 18) <= 17,
+    );
   }
   return mode === "rsc"
     ? rscSpec(c, importPath, providerImport, specDir, todo, opts.apiRoutes, autoProv)
@@ -1254,112 +1264,6 @@ afterAll(() => server.close());
 }
 
 // ---------------------------------------------------------------------------
-// Native-import stub modules (Node ESM resolve hook + stubs, see setupTs)
-// ---------------------------------------------------------------------------
-
-function fontStubMjs(): string {
-  return `// Runtime stub for the Next.js font loaders. Next replaces these imports at
-// BUILD time; under a bare test runner the loaders either cannot resolve
-// (next/font/local is a directory import Node ESM rejects) or are empty
-// shims whose default export is not callable. Any module that runs the
-// loader at module scope — geist and friends — needs this to stand in. The
-// default export must be a FUNCTION: wrapper packages CALL it at module
-// scope and use the result's className/variable/style.
-const font = {
-  className: "",
-  variable: "",
-  style: { fontFamily: "" },
-};
-
-export function createDefault() {
-  return font;
-}
-
-export default function fontLoader() {
-  return font;
-}
-`;
-}
-
-function navigationStubMjs(): string {
-  return `// Runtime stub for next/navigation under NATIVE imports. The test runner
-// loads node_modules packages through plain import(), where vi.mock cannot
-// reach; libraries that wrap the router (@bprogress and friends) then hit
-// the real module and die on "invariant expected app router to be mounted".
-// Same semantics as the setup-file vi.mock: redirects throw (Next aborts
-// rendering at those calls), router methods are no-ops.
-const noop = () => {};
-
-export function notFound() {
-  throw new Error("notFound() called");
-}
-
-export function redirect() {
-  throw new Error("NEXT_REDIRECT");
-}
-
-export function permanentRedirect() {
-  throw new Error("NEXT_REDIRECT");
-}
-
-export function usePathname() {
-  return "/";
-}
-
-export function useRouter() {
-  return {
-    push: noop,
-    replace: noop,
-    refresh: noop,
-    back: noop,
-    forward: noop,
-    prefetch: noop,
-  };
-}
-
-export function useSearchParams() {
-  return new URLSearchParams();
-}
-
-export function useParams() {
-  return {};
-}
-
-export function useRoute() {
-  return "/";
-}
-`;
-}
-
-function nativeImportHooksMjs(): string {
-  return `// Node ESM resolve hook: the test runner loads node_modules packages through
-// native import(), where vi.mock cannot reach. Two classes of Next module
-// break that way. The font loaders: geist and friends run them at module
-// scope, and next/font/local's directory import has no ESM answer (next
-// ships no exports map). next/navigation: router-wrapper libraries hit the
-// real module and throw "invariant expected app router to be mounted".
-// Point each class at its stub; everything else resolves normally. Bundled
-// library output imports "next/navigation.js" with the extension, so the
-// bare name and the .js spelling both match.
-import { fileURLToPath, pathToFileURL } from "node:url";
-
-const dir = pathToFileURL(fileURLToPath(new URL(".", import.meta.url))).href;
-const FONT_STUB = \`\${dir}font-stub.mjs\`;
-const NAVIGATION_STUB = \`\${dir}navigation-stub.mjs\`;
-
-export async function resolve(specifier, context, nextResolve) {
-  if (/^next\\/font(\\/.*)?$/.test(specifier)) {
-    return { url: FONT_STUB, format: "module", shortCircuit: true };
-  }
-  if (/^next\\/navigation(\\.js)?$/.test(specifier)) {
-    return { url: NAVIGATION_STUB, format: "module", shortCircuit: true };
-  }
-  return nextResolve(specifier, context);
-}
-`;
-}
-
-// ---------------------------------------------------------------------------
 // Client-component unit spec
 // ---------------------------------------------------------------------------
 
@@ -1505,7 +1409,8 @@ function unitSpec(
     info.rootTag && /^[a-z]/.test(info.rootTag) && !info.renderGuarded ? info.rootTag : undefined;
   const variantAssert = variantRootTag
     ? `const { container } = renderTarget(v);\n      expect(container.querySelector(${JSON.stringify(variantRootTag)}), \`\${JSON.stringify(v)} rendered no <${variantRootTag}>\`).not.toBeNull();`
-    : "expect(() => renderTarget(v), `${JSON.stringify(v)} threw on mount`).not.toThrow();";
+    : // biome-ignore lint/suspicious/noTemplateCurlyInString: emitted-spec text — the placeholder interpolates when the SPEC runs, and must survive this generator untouched
+      "expect(() => renderTarget(v), `${JSON.stringify(v)} threw on mount`).not.toThrow();";
 
   // `Props` exists only to type the props spread, and the React import exists
   // only to declare it. A zero-prop component renders bare, so emitting either
@@ -1903,6 +1808,7 @@ function constrainedSpec(
   specDir?: string,
   todo?: TodoRecorder,
   apiRoutes?: NextjsApiRoute[],
+  legacyServer = false,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -1948,9 +1854,32 @@ function constrainedSpec(
           assert: `\n  expect(html).toContain(SLOT);`,
         }
       : { const: "", prop: "", title: "", assert: "" };
+    // React 17 has no streaming renderer (renderToReadableStream is 18+) and
+    // no promise-as-child support at all, so the markup assertion runs
+    // through renderToStaticMarkup and the promise-prop wrapping is dropped.
+    const serverImport = legacyServer
+      ? `import { renderToStaticMarkup } from "react-dom/server";\n`
+      : `import { renderToReadableStream } from "react-dom/server";\n`;
+    const promiseBlock = legacyServer
+      ? ""
+      : `const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};\n`;
+    const promiseLoop = legacyServer
+      ? ""
+      : `  for (const k of PROMISE_PROPS) {
+    if (k in props) props[k] = Promise.resolve(props[k]);
+  }\n`;
+    const renderLines = legacyServer
+      ? `  const html = renderToStaticMarkup(ui as React.ReactElement).replace(
+    /^<!DOCTYPE html>/i,
+    "",
+  );
+`
+      : `  const stream = await renderToReadableStream(ui as React.ReactElement);
+  const markup = await new Response(stream).text();
+  const html = markup.replace(/^<!DOCTYPE html>/i, "");
+`;
     return `import { test, expect, vi } from "vitest";
-import { renderToReadableStream } from "react-dom/server";
-${asyncUiBits.imp}import type * as React from "react";
+${serverImport}${asyncUiBits.imp}import type * as React from "react";
 ${mockBlock}${emitComponentImport(info, importPath)}
 
 // ${name} ${note}.
@@ -1964,20 +1893,13 @@ ${mockBlock}${emitComponentImport(info, importPath)}
 // component suspended while responding to synchronous input"; the streaming
 // renderer awaits them the way Next's own SSR does.
 ${asyncUiBits.fn}const DEFAULTS: Record<string, unknown> = ${propsLiteral};
-const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
-${slotBlock.const}
+${promiseBlock}${slotBlock.const}
 test("${name} returns a document root${slotBlock.title}", async () => {
   const props: Record<string, unknown> = {
     ...DEFAULTS,${slotBlock.prop}
   };
-  for (const k of PROMISE_PROPS) {
-    if (k in props) props[k] = Promise.resolve(props[k]);
-  }
-  const ui = ${invoke};
-  const stream = await renderToReadableStream(ui as React.ReactElement);
-  const markup = await new Response(stream).text();
-  const html = markup.replace(/^<!DOCTYPE html>/i, "");
-  expect(html).toMatch(/^<html/);
+${promiseLoop}  const ui = ${invoke};
+${renderLines}  expect(html).toMatch(/^<html/);
   expect(html).toContain("<body");${slotBlock.assert}
   void vi;
 });

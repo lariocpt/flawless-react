@@ -4,7 +4,7 @@ import { type AuthStub, authShimEsm, collectAuthStubs } from "../analyse/authShi
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { libraryShimSource, referencedLibraryShims } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
-import { detectAppReact } from "../packageJson.ts";
+import { appReactMajor, detectAppReact } from "../packageJson.ts";
 import {
   allocateSpecNames,
   compoundWrappable,
@@ -115,7 +115,9 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     // that wiring from the analysis. The tables it reads live in ./registry.
     {
       relPath: "host/main.tsx",
-      content: hostMain(opts.providerImportPath, useMsw),
+      // legacyMount: a React 17 host renders through ReactDOM.render — there
+      // is no react-dom/client to import, so this cannot be runtime-detected.
+      content: hostMain(opts.providerImportPath, useMsw, (appReactMajor(opts.outDir) ?? 18) <= 17),
       writeOnce: true,
     },
     { relPath: "profile/_helpers.ts", content: helpers() },
@@ -1172,11 +1174,48 @@ ${wrapIn}
 `;
 }
 
-function hostMain(providerImportPath?: string, mswSetup = false): string {
+function hostMain(providerImportPath?: string, mswSetup = false, legacyMount = false): string {
   const providerImport = providerImportPath
     ? `import AppProvider from ${JSON.stringify(stripTsExt(providerImportPath))};\n`
     : "";
   const wrapBody = providerImportPath ? "createElement(AppProvider as never, null, tree)" : "tree";
+  // React 17 has no react-dom/client. The host speaks the legacy renderer
+  // through the same small Root interface the 18+ path uses, so every
+  // mount/rerender/unmount call site stays version-blind.
+  const mountImport = legacyMount
+    ? `import * as ReactDOM from "react-dom";
+
+interface Root {
+  render(node: ReactNode): void;
+  unmount(): void;
+}
+`
+    : `import { createRoot, type Root } from "react-dom/client";
+`;
+  const rootInit = legacyMount
+    ? `  // React 17 has no onUncaughtError: the legacy render throws synchronously.
+  // Record and rethrow — the mount wait-loop reads the same variable the
+  // concurrent renderer's callback fills, so failure reporting stays identical.
+  activeRoot = {
+    render: (node) => {
+      try {
+        ReactDOM.render(node as never, el);
+      } catch (err) {
+        lastRenderError = err;
+        throw err;
+      }
+    },
+    unmount: () => {
+      ReactDOM.unmountComponentAtNode(el);
+    },
+  };
+`
+    : `  activeRoot = createRoot(el, {
+    onUncaughtError: (err: unknown) => {
+      lastRenderError = err;
+    },
+  });
+`;
   const mswImport = mswSetup ? `import { startMockWorker } from "../mocks/browser";\n` : "";
   const mswBoot = mswSetup
     ? `
@@ -1195,8 +1234,7 @@ try {
 
   return `import "./_polyfill";
 import { createElement, Profiler, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { scan } from "react-scan";
+${mountImport}import { scan } from "react-scan";
 ${mswImport}${providerImport}// ./registry last among the app imports: it pulls every component module,
 // and the monolithic host evaluated msw/provider modules FIRST — a component
 // with module-scope code leaning on a provider module's side effects (i18n
@@ -1254,22 +1292,29 @@ let activeName: string | undefined;
 
 const scanEvents: Array<{ name: string; reason: string; ts: number }> = [];
 
-scan({
-  enabled: true,
-  log: false,
-  onRender: (fiber: { type?: { displayName?: string; name?: string } }, renders: unknown[]) => {
-    const name = fiber.type?.displayName ?? fiber.type?.name ?? "anonymous";
-    for (const r of renders as Array<{ changes?: unknown[]; unnecessary?: boolean; reason?: string }>) {
-      if (r.unnecessary) {
-        scanEvents.push({
-          name,
-          reason: r.reason ?? "unnecessary rerender",
-          ts: performance.now(),
-        });
+// react-scan is measurement sugar: on a React it cannot instrument (17 is
+// supported but its internals differ) it must never take the host down —
+// render counts come from the Profiler, not from scan.
+try {
+  scan({
+    enabled: true,
+    log: false,
+    onRender: (fiber: { type?: { displayName?: string; name?: string } }, renders: unknown[]) => {
+      const name = fiber.type?.displayName ?? fiber.type?.name ?? "anonymous";
+      for (const r of renders as Array<{ changes?: unknown[]; unnecessary?: boolean; reason?: string }>) {
+        if (r.unnecessary) {
+          scanEvents.push({
+            name,
+            reason: r.reason ?? "unnecessary rerender",
+            ts: performance.now(),
+          });
+        }
       }
-    }
-  },
-});
+    },
+  });
+} catch (err) {
+  console.warn("[flawless] react-scan disabled:", err);
+}
 
 // The last exception React swallowed on our behalf. Without it every render
 // failure looked identical — "did not render within 5000ms" — no matter whether
@@ -1280,12 +1325,7 @@ function ensureRoot(): Root {
   if (activeRoot) return activeRoot;
   const el = document.getElementById("root");
   if (!el) throw new Error("#root not found");
-  activeRoot = createRoot(el, {
-    onUncaughtError: (err: unknown) => {
-      lastRenderError = err;
-    },
-  });
-  return activeRoot;
+${rootInit}  return activeRoot;
 }
 
 // Wrap the profiled component tree in the user's Provider (if --provider was
@@ -1920,7 +1960,7 @@ function readme(
   // there is no `bun install` here to pin anything.
   const reactNote = nextjs
     ? "- Components import their own React from the host project's `node_modules`, which is the only copy in play."
-    : "- Components import their own React from the parent project's `node_modules`. The suite's own React must match the major version; `bun install` here pins `^18.3.0`.";
+    : "- Components import their own React from the parent project's `node_modules`. The suite's own React must match the major version; `bun install` here pins the version your app declares (detected at generation; `^18.3.0` when nothing is detectable).";
   const componentList =
     componentNames.length > 1
       ? `\n\nComponents in this suite: ${componentNames.map((n) => `\`${n}\``).join(", ")}.\n`

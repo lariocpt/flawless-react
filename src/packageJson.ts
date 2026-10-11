@@ -56,6 +56,27 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
 }
 
 /**
+ * The app's React MAJOR (17, 18, 19 …) — the switch that picks the test
+ * stack. React 17 has no `react-dom/client`, no `createRoot`, and no
+ * streaming server renderer, and @testing-library/react 15+ dropped it from
+ * its peers; the emitters that touch those APIs branch on this number.
+ * Undefined when no app pin was detected — callers treat that as the
+ * default major their manifests carry.
+ */
+export function appReactMajor(fromDir: string): number | undefined {
+  // Per-component spec dispatch consults this; cache the scan so generation
+  // does not re-walk package.jsons per component.
+  const key = path.resolve(fromDir);
+  if (MAJOR_MEMO.has(key)) return MAJOR_MEMO.get(key);
+  const pin = detectAppReact(fromDir);
+  const major = pin ? Number(pin.react.split(".")[0]) : undefined;
+  const out = pin && Number.isFinite(major) ? major : undefined;
+  MAJOR_MEMO.set(key, out);
+  return out;
+}
+const MAJOR_MEMO = new Map<string, number | undefined>();
+
+/**
  * The nearest ancestor of `fromDir` that holds a package.json — the package
  * an analysed source belongs to, and therefore where the app's .env files
  * live (the app reads them from its own package directory).

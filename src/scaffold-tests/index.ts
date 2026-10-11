@@ -193,6 +193,10 @@ export function suitePackageJson(
   // version the app's component code was written against. See detectAppReact.
   const pin = detectAppReact(outDir);
   const typesPin = pin ? `^${pin.react.split(".")[0]}.0.0` : "^18.3.0";
+  // RTL majors split at React 17: 15+ dropped it from their peers, and 14
+  // is the last line whose peers carry ^16.8 || ^17 || ^18. Installing 16
+  // into a React-17 app resolves a harness that cannot render it at all.
+  const rtlPin = pin && Number(pin.react.split(".")[0]) <= 17 ? "^14.0.0" : "^16.0.0";
   return `${JSON.stringify(
     {
       name: `${path.basename(outDir).replace(/[^a-zA-Z0-9_-]+/g, "-")}-suite`,
@@ -242,7 +246,7 @@ export function suitePackageJson(
         vitest: "^2.1.0",
         "@vitest/ui": "^2.1.0",
         jsdom: "^25.0.0",
-        "@testing-library/react": "^16.0.0",
+        "@testing-library/react": rtlPin,
         "@testing-library/user-event": "^14.5.0",
         "@testing-library/jest-dom": "^6.5.0",
       },
