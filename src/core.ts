@@ -484,9 +484,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       // scaffold/templates.ts, scaffold-tests/mocks.ts). These land in a file;
       // the rest of path.relative's uses in this file are log lines.
       const outRel = outDirRel(outDir, nextCtx.root);
-      // React 17 apps get the last @testing-library/react whose peers carry
-      // ^17 (major 14); 15+ dropped it. Mirrors suitePackageJson's branch.
+      // React 17 apps get @testing-library/react 12 — 13+ peer-require
+      // react ^18 and hard-require the react-dom 18 client entry at load.
+      // Mirrors suitePackageJson's branch.
       const appMajor = appReactMajor(path.join(nextCtx.root, "package.json"));
+      const legacyRtl = appMajor !== undefined && appMajor <= 17;
       const scriptMerge = await mergeIntoNextPackageJson(
         nextCtx.root,
         {},
@@ -494,8 +496,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
           msw: "^2.6.0",
           vitest: "^2.1.0",
           jsdom: "^25.0.0",
-          "@testing-library/react":
-            appMajor !== undefined && appMajor <= 17 ? "^14.0.0" : "^16.0.0",
+          "@testing-library/react": legacyRtl ? "^12.1.5" : "^16.0.0",
+          ...(legacyRtl ? { "@testing-library/dom": "^8.20.1" } : {}),
           "@testing-library/user-event": "^14.5.0",
           "@testing-library/jest-dom": "^6.5.0",
           "@playwright/test": "^1.49.0",

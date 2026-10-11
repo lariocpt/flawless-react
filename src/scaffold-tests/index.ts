@@ -193,10 +193,13 @@ export function suitePackageJson(
   // version the app's component code was written against. See detectAppReact.
   const pin = detectAppReact(outDir);
   const typesPin = pin ? `^${pin.react.split(".")[0]}.0.0` : "^18.3.0";
-  // RTL majors split at React 17: 15+ dropped it from their peers, and 14
-  // is the last line whose peers carry ^16.8 || ^17 || ^18. Installing 16
-  // into a React-17 app resolves a harness that cannot render it at all.
-  const rtlPin = pin && Number(pin.react.split(".")[0]) <= 17 ? "^14.0.0" : "^16.0.0";
+  // RTL majors split at React 18: 13+ peer-require react ^18 and their
+  // dist/pure.js hard-requires the react-dom 18 client entry (a canary
+  // proved 14.3.1 fails at collection under React 17). 12.1.5 is the last
+  // major whose peers carry <18; its bundled dom-v8 covers every API the
+  // spec templates emit.
+  const legacyRtl = pin && Number(pin.react.split(".")[0]) <= 17;
+  const rtlPin = legacyRtl ? "^12.1.5" : "^16.0.0";
   return `${JSON.stringify(
     {
       name: `${path.basename(outDir).replace(/[^a-zA-Z0-9_-]+/g, "-")}-suite`,
@@ -247,6 +250,11 @@ export function suitePackageJson(
         "@vitest/ui": "^2.1.0",
         jsdom: "^25.0.0",
         "@testing-library/react": rtlPin,
+        // user-event 14 peers @testing-library/dom >=7.21.4. Modern RTL
+        // ships dom 10 as a dependency; RTL 12's dom 8 is only reachable
+        // transitively, and pnpm's strict linking does not expose it to a
+        // sibling — declare it so the peer resolves deterministically.
+        ...(legacyRtl ? { "@testing-library/dom": "^8.20.1" } : {}),
         "@testing-library/user-event": "^14.5.0",
         "@testing-library/jest-dom": "^6.5.0",
       },

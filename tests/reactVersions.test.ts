@@ -13,8 +13,10 @@ import type { ComponentInfo, ComponentTree } from "../src/types.ts";
  * React 17 / 18 / 19 support.
  *
  * React 17 predates react-dom/client, createRoot, the streaming server
- * renderer and promise-as-child, and @testing-library/react 15+ dropped it
- * from its peer ranges. The emitters that touch those APIs branch on the
+ * renderer and promise-as-child, and @testing-library/react 13+ dropped it
+ * from its peer ranges (14.3.1 hard-requires the react-dom 18 client entry
+ * at load, so even declaring the peer is not enough). The emitters that
+ * touch those APIs branch on the
  * app's detected React major — this file pins both sides of each branch,
  * because a default that only ever ran on 18/19 proves nothing about the
  * legacy path, and an unexercised streaming path silently regresses 18/19.
@@ -61,12 +63,15 @@ function parseErrors(file: string, content: string): string[] {
 }
 
 describe("suite manifest per React major", () => {
-  test("React 17 app: RTL 14 (the last major whose peers carry ^17)", async () => {
+  test("React 17 app: RTL 12 (the last major whose peers carry <18)", async () => {
     const outDir = await appWith("17.0.2");
     const pkg = JSON.parse(suitePackageJson(outDir, false));
     expect(pkg.dependencies.react).toBe("17.0.2");
     expect(pkg.dependencies["react-dom"]).toBe("17.0.2");
-    expect(pkg.devDependencies["@testing-library/react"]).toBe("^14.0.0");
+    expect(pkg.devDependencies["@testing-library/react"]).toBe("^12.1.5");
+    // user-event 14's dom peer is only transitively reachable from RTL 12;
+    // the manifest has to name it for pnpm to link it.
+    expect(pkg.devDependencies["@testing-library/dom"]).toBe("^8.20.1");
     expect(pkg.devDependencies["@types/react"]).toBe("^17.0.0");
   });
 
@@ -76,6 +81,7 @@ describe("suite manifest per React major", () => {
       const pkg = JSON.parse(suitePackageJson(outDir, false));
       expect(pkg.dependencies.react).toBe(version);
       expect(pkg.devDependencies["@testing-library/react"]).toBe("^16.0.0");
+      expect(pkg.devDependencies["@testing-library/dom"]).toBeUndefined();
       expect(pkg.devDependencies["@types/react"]).toBe(`^${version.split(".")[0]}.0.0`);
     }
   });
