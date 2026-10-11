@@ -724,9 +724,30 @@ const stubServerModules: BunPlugin = {
         "\\nexport default make();",
       loader: "js",
     }));
-    build.onResolve({ filter: /^next\\/navigation$/ }, (args) => ({
+    // The \\.js variant is real: nuqs (and other tsm-compiled libs) ship
+    // pre-compiled JS importing "next/navigation.js" to satisfy TS module
+    // resolution — an exact-specifier filter lets the genuine module
+    // through, and its useRouter throws "expected app router to be
+    // mounted" on every mount.
+    build.onResolve({ filter: /^next\\/navigation(\\.js)?$/ }, (args) => ({
       path: args.path,
       namespace: "flawless-next-nav-stub",
+    }));
+    // next/link and next/image are REAL components that resolve from the
+    // app's node_modules — and the link's router hook needs the app-router
+    // context no host provides ("invariant expected app router to be
+    // mounted", every chanhdai mount including icons, because the layout
+    // tree in main.tsx renders SiteHeader). Answer with the DOM elements
+    // they compile down to; anchors keep hrefs clickable for e2e habits.
+    build.onResolve({ filter: /^next[\\/](link|image)(\.js)?$/ }, (args) => ({
+      path: args.path.indexOf("image") >= 0 ? "flawless:next/image" : "flawless:next/link",
+      namespace: "flawless-next-component-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-next-component-stub" }, (args) => ({
+      contents: args.path.endsWith(":image")
+        ? "import * as React from 'react'; function FlawlessImage(props) { var src = typeof props.src === 'string' ? props.src : (props.src && props.src.src) || ''; return React.createElement('img', { src: src, alt: props.alt ?? '', className: props.className, width: props.width, height: props.height }); } const Image = FlawlessImage; Image.loader = (s) => (typeof s === 'string' ? s : (s && s.src) || ''); export default Image;"
+        : "import * as React from 'react'; function FlawlessLink({ children, href, prefetch, scroll, replace, shallow, scrollBehavior, legacyBehavior, passHref, className, ...rest }) { return React.createElement('a', Object.assign({ href: href == null ? '#' : String(href) }, rest), children); } export default FlawlessLink;",
+      loader: "jsx",
     }));
     // next/font (google/local) factories RUN at module scope in every repo
     // that imports a font package (geist et al.) — and the real loader is a
@@ -774,9 +795,56 @@ const stubServerModules: BunPlugin = {
             },
       );
     }
-    build.onLoad({ filter: /\\.(ts|tsx)$/ }, (args) => {
+    build.onLoad({ filter: /\\.(ts|tsx|js|jsx|mjs)$/, namespace: "file" }, (args) => {
       const src = SERVER_STUBS[args.path];
-      return src ? { contents: src, loader: "ts" } : undefined;
+      if (src) return { contents: src, loader: "ts" };
+      // next/font's NAMED exports are a compiler fiction — no real module
+      // backs them at runtime, so the stub above answers the specifier with
+      // a CJS Proxy. But CJS->ESM interop copies the export object's OWN
+      // keys before reading any of them, and a Proxy without an ownKeys
+      // trap reports none: every named font import arrives as undefined
+      // and the host dies at boot with "IBM_Plex_Serif is not a function"
+      // (chanhdai's first perf run, 341 specs, one error). Rewrite the
+      // forms that break — named and namespace imports — onto the default
+      // import, which interop preserves verbatim, and which the stub's
+      // callable Proxy answers for every name.
+      let code;
+      try {
+        code = readFileSync(args.path, "utf8");
+      } catch {
+        return;
+      }
+      if (!/next\\/font/.test(code)) return;
+      let flFontSeq = 0;
+      const rewritten = code
+        .replace(
+          /import\\s+(?:(\\w+)\\s*,\\s*)?\\{([^}]*)\\}\\s+from\\s+(["'])(next\\/font[^"']*)\\3/g,
+          (m, def, clause, quote, spec) => {
+            const text = String(clause).trim();
+            if (text.startsWith("type")) return m;
+            const parts = text
+              .split(",")
+              .map((s) => /^\\s*(\\w+)(?:\\s+as\\s+(\\w+))?\\s*$/.exec(s.trim()));
+            const named = parts.filter((p): p is RegExpExecArray => p !== null);
+            if (named.length !== parts.length) return m;
+            const alias = def || "__flFont" + flFontSeq++;
+            return (
+              "import " + alias + " from " + quote + spec + quote + "; const " +
+              named.map((p) => (p[2] || p[1]) + " = " + alias).join(", ") + ";"
+            );
+          },
+        )
+        .replace(
+          /import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+(["'])(next\\/font[^"']*)\\2/g,
+          (m, name, quote, spec) => {
+            const alias = "__flFont" + flFontSeq++;
+            return "import " + alias + " from " + quote + spec + quote + "; const " + name + " = " + alias + ";";
+          },
+        );
+      if (rewritten === code) return;
+      const ext = args.path.slice(args.path.lastIndexOf(".") + 1);
+      const loader = ext === "tsx" || ext === "jsx" ? ext : ext === "js" || ext === "mjs" ? "js" : "ts";
+      return { contents: rewritten, loader };
     });
   },
 };
@@ -792,6 +860,7 @@ if (stubCount > 0) {
 `;
 
   return `import path from "node:path";
+import { readFileSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
 const HOST_DIR = import.meta.dir;
@@ -808,6 +877,14 @@ const resolveFromSuite: BunPlugin = {
   name: "resolve-from-suite",
   setup(build) {
     build.onResolve({ filter: /^[a-zA-Z@][^:]*$/ }, (args) => {
+      // msw ships its browser worker entry behind a "browser" export
+      // CONDITION, and Bun.resolveSync resolves server-side conditions —
+      // answering this plugin would pin the node variant onto a browser
+      // bundle ("setupWorker failed in a non-browser environment", with
+      // global.process now faithfully present for scandir to split). Let it
+      // fall through: the bundler's own resolver applies the target's
+      // conditions, and every msw importer lives where node_modules sees it.
+      if (args.path === "msw" || args.path.startsWith("msw/")) return;
       try {
         let resolved: string;
         try {
@@ -932,6 +1009,33 @@ function hostHtml(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>flawless-react host</title>
+    <script>
+      // Node-shim fill-in BEFORE any bundle code evaluates. The _polyfill
+      // module cannot own this: the bundler decides module execution order,
+      // and a CJS require chain reached through an app dependency (fast-glob
+      // via @nodelib/fs.scandir splitting process.versions.node) ran before
+      // it. An inline classic script is the only position that provably
+      // precedes the bundle's module script.
+      (function () {
+        var g = globalThis;
+        var p = (g.process = g.process || {});
+        try {
+          p.env = p.env || {};
+          p.versions = p.versions || {};
+          if (typeof p.versions.node !== "string") p.versions.node = "22.0.0";
+          if (typeof p.platform !== "string") p.platform = "browser";
+          if (!Array.isArray(p.argv)) p.argv = [];
+          // versions.node is also msw's isNodeProcess fingerprint. The
+          // renderer type is the Electron hatch msw and @mswjs/interceptors
+          // built for exactly this: process-shaped-but-in-a-browser.
+          if (typeof p.type !== "string") p.type = "renderer";
+          if (typeof p.cwd !== "function") p.cwd = function () { return "/"; };
+          if (typeof g.global === "undefined") g.global = g;
+          if (typeof g.setImmediate === "undefined")
+            g.setImmediate = function (fn) { return setTimeout(fn, 0); };
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
@@ -949,13 +1053,45 @@ function hostPolyfill(): string {
 // Imported first from main.tsx — ESM evaluates imports in source order, so
 // globalThis is patched before any other module is initialised.
 const g = globalThis as unknown as {
-  process?: { env: Record<string, string | undefined>; platform: string; versions: Record<string, string>; argv: string[] };
+  process?: {
+    env: Record<string, string | undefined>;
+    platform: string;
+    versions: Record<string, string>;
+    argv: string[];
+    type?: string;
+    cwd?: () => string;
+  };
   global?: typeof globalThis;
   setImmediate?: (fn: (...args: unknown[]) => void, ...args: unknown[]) => number;
 };
 
 if (typeof g.process === "undefined") {
-  g.process = { env: { NODE_ENV: "development" }, platform: "browser", versions: {}, argv: [] };
+  g.process = {
+    env: { NODE_ENV: "development" },
+    platform: "browser",
+    versions: {},
+    argv: [],
+    type: "renderer",
+    cwd: () => "/",
+  };
+} else {
+  // The bundler's own browser shim usually wins the race to define process,
+  // and it is partial: no versions.node, which @nodelib/fs.scandir (and
+  // every other fast-glob caller) splits at module scope. Fill the holes
+  // rather than assume an all-or-nothing assignment.
+  const p = g.process as Record<string, unknown>;
+  try {
+    p.env ??= {};
+    p.versions ??= {};
+    const v = p.versions as Record<string, string>;
+    if (typeof v.node !== "string") v.node = "22.0.0";
+    if (typeof p.platform !== "string") p.platform = "browser";
+    if (!Array.isArray(p.argv)) p.argv = [];
+    if (typeof p.type !== "string") p.type = "renderer";
+    if (typeof p.cwd !== "function") p.cwd = () => "/";
+  } catch {
+    // A frozen shim is not this file's problem to solve.
+  }
 }
 if (typeof g.global === "undefined") {
   g.global = globalThis;
