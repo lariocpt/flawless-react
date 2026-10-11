@@ -280,7 +280,10 @@ async function writeSuitePackageJson(
     await writeFile(pkgPath, generated);
     return;
   }
-  const merged = mergePackageJson(await readFile(pkgPath, "utf8"), generated);
+  const merged = repairRtlPin(
+    mergePackageJson(await readFile(pkgPath, "utf8"), generated),
+    detectAppReact(outDir),
+  );
   // The merge lets an existing file win on every key — except in nextjs
   // mode, where the loader switch is the TOOL's key (see suitePackageJson):
   // a manifest that already says "module" would pin ESM onto the playwright
@@ -293,6 +296,37 @@ async function writeSuitePackageJson(
     return;
   }
   await writeFile(pkgPath, merged);
+}
+
+/**
+ * The merge lets an existing manifest out-vote every pin — but a pin that
+ * peer-requires react ^18 (RTL 13+) inside a React-17 suite cannot even be
+ * collected: dist/pure.js requires the react-dom 18 client entry that 17
+ * does not ship. When the surviving range is one this tool itself emitted
+ * before that was known (a canary proved ^14.0.0 fails at collection), the
+ * merge yields that one key back. Ranges the tool never offered, or that
+ * merely degrade rather than fail outright (RTL 12 on react 18 renders in
+ * legacy mode with a warning), are left alone.
+ */
+export function repairRtlPin(
+  merged: string,
+  pin: { react: string; reactDom: string } | undefined,
+): string {
+  const appMajor = pin ? Number(pin.react.split(".")[0]) : undefined;
+  if (appMajor === undefined || !(appMajor <= 17)) return merged;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(merged) as Record<string, unknown>;
+  } catch {
+    return merged;
+  }
+  const dev = parsed.devDependencies as Record<string, string> | undefined;
+  const range = dev?.["@testing-library/react"];
+  const rtlMajor = range ? /^\D*(\d+)/.exec(range)?.[1] : undefined;
+  if (!dev || rtlMajor === undefined || Number(rtlMajor) < 13) return merged;
+  dev["@testing-library/react"] = "^12.1.5";
+  if (!dev["@testing-library/dom"]) dev["@testing-library/dom"] = "^8.20.1";
+  return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
 /**

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { renderSuite } from "../src/scaffold/templates.ts";
-import { suitePackageJson } from "../src/scaffold-tests/index.ts";
+import { repairRtlPin, suitePackageJson } from "../src/scaffold-tests/index.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
 import type { ComponentInfo, ComponentTree } from "../src/types.ts";
 
@@ -91,6 +91,37 @@ describe("suite manifest per React major", () => {
     const pkg = JSON.parse(suitePackageJson(path.join(base, "flawless"), false));
     expect(pkg.dependencies.react).toBe("^18.3.0");
     expect(pkg.devDependencies["@testing-library/react"]).toBe("^16.0.0");
+  });
+
+  test("merge survivors: a stale RTL 13+ range on a React-17 app is repaired", async () => {
+    // The manifest merge lets an existing file win — including this tool's
+    // own pre-fix ^14.0.0, which cannot load under React 17 at all.
+    const manifest = JSON.stringify({
+      devDependencies: { "@testing-library/react": "^14.0.0", vitest: "^2.1.0" },
+    });
+    const fixed = JSON.parse(repairRtlPin(manifest, { react: "17.0.2", reactDom: "17.0.2" }));
+    expect(fixed.devDependencies["@testing-library/react"]).toBe("^12.1.5");
+    expect(fixed.devDependencies["@testing-library/dom"]).toBe("^8.20.1");
+    expect(fixed.devDependencies.vitest).toBe("^2.1.0");
+  });
+
+  test("merge survivors: workable ranges and other majors are left alone", async () => {
+    const pin17 = { react: "17.0.2", reactDom: "17.0.2" };
+    const pin18 = { react: "18.3.1", reactDom: "18.3.1" };
+    // RTL 12 on 17 is the target; hand-pinned odd formats the tool never
+    // emitted (workspace protocol, bare latest) are the user's business.
+    for (const [range, pin] of [
+      ["^12.1.5", pin17],
+      ["catalog:", pin17],
+      ["latest", pin17],
+      ["^16.0.0", pin18],
+    ] as const) {
+      const manifest = JSON.stringify({ devDependencies: { "@testing-library/react": range } });
+      expect(repairRtlPin(manifest, pin)).toBe(manifest);
+    }
+    // Undefined pin (no detectable app react): nothing to branch on.
+    const manifest = JSON.stringify({ devDependencies: { "@testing-library/react": "^14.0.0" } });
+    expect(repairRtlPin(manifest, undefined)).toBe(manifest);
   });
 });
 
