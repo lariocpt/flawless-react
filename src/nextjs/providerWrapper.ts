@@ -125,6 +125,15 @@ const DROP_REASONS = {
 } as const;
 export type DropReason = keyof typeof DROP_REASONS;
 
+/**
+ * Specifiers whose JSX is React's own coordination machinery, not an app
+ * provider: `<Suspense>`, `<Fragment>`, `<StrictMode>`. They appear in layout
+ * chains the same way providers do and resolve to node_modules, so without this
+ * filter every suite's drop list opened with "Suspense — unresolved import",
+ * which is neither a provider nor a thing the reader can act on.
+ */
+const REACT_OWN_COMPONENTS = /^react(-dom)?(\/|$)/;
+
 /** Short label for a drop reason, for the run summary (the file itself spells it out). */
 export function dropReasonLabel(reason: DropReason): string {
   return DROP_REASONS[reason].short;
@@ -182,6 +191,10 @@ export function ensureClientProviderWrapper(
     const root = tagName.split(".")[0] as string;
     const imp = imports.get(root);
     if (!imp) continue;
+    // React's own coordination components sit in the same JSX chain as app
+    // providers and own no app context: naming "Suspense — unresolved import"
+    // above a real drop buries the one line the reader came for.
+    if (REACT_OWN_COMPONENTS.test(imp.specifier)) continue;
     const target = resolver.resolve(imp.specifier, layout);
     if (!target) {
       dropped.push({ name: tagName, specifier: imp.specifier, reason: "unresolved" });
