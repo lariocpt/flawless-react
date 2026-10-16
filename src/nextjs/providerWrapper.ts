@@ -101,6 +101,33 @@ export interface ProviderWrapperResult {
   created: boolean;
   /** Local names of the providers included in the wrapper. */
   included: string[];
+  /** Providers the layout's chain has and the wrapper does NOT mount. */
+  dropped: Array<{ name: string; reason: DropReason }>;
+}
+
+/** Why a provider in the layout's chain could not be mounted, and what to say about it. */
+const DROP_REASONS = {
+  auth: {
+    short: "auth-gated",
+    long:
+      "imports an auth library, and the unit plane replaces those libraries with a signed-out " +
+      "stub — mounted, a provider that gates its children on a session renders nothing, and every " +
+      "wrapped spec inherits the blank tree",
+  },
+  server: {
+    short: "not a client module",
+    long: 'is not a "use client" module, so its own render cannot run under jsdom',
+  },
+  unresolved: {
+    short: "unresolved import",
+    long: "does not resolve to a readable module in this repo (a package export, or an alias the workspace map does not cover)",
+  },
+} as const;
+export type DropReason = keyof typeof DROP_REASONS;
+
+/** Short label for a drop reason, for the run summary (the file itself spells it out). */
+export function dropReasonLabel(reason: DropReason): string {
+  return DROP_REASONS[reason].short;
 }
 
 /**
@@ -125,7 +152,7 @@ export function ensureClientProviderWrapper(
   // layout's provider chain changes. provider.fixtures.ts beside it is not
   // regenerated under any flag — see renderFixtures.
   if (existsSync(outPath) && !force) {
-    return { path: outPath, created: false, included: [] };
+    return { path: outPath, created: false, included: [], dropped: [] };
   }
 
   const sf = ts.createSourceFile(
@@ -146,6 +173,8 @@ export function ensureClientProviderWrapper(
     attrs: string;
     dropped: DroppedAttr[];
   }> = [];
+  /** Providers in the chain that will NOT be mounted, in chain order. */
+  const dropped: Array<{ name: string; specifier: string; reason: DropReason }> = [];
 
   for (const el of chain) {
     const tagName = el.tagText;
@@ -154,12 +183,21 @@ export function ensureClientProviderWrapper(
     const imp = imports.get(root);
     if (!imp) continue;
     const target = resolver.resolve(imp.specifier, layout);
-    if (!target) continue;
-    if (!fileStartsWithUseClient(target)) continue;
-    if (moduleImportsAuthLib(target)) continue;
+    if (!target) {
+      dropped.push({ name: tagName, specifier: imp.specifier, reason: "unresolved" });
+      continue;
+    }
+    if (!fileStartsWithUseClient(target)) {
+      dropped.push({ name: tagName, specifier: imp.specifier, reason: "server" });
+      continue;
+    }
+    if (moduleImportsAuthLib(target)) {
+      dropped.push({ name: tagName, specifier: imp.specifier, reason: "auth" });
+      continue;
+    }
 
-    const { attrs, dropped } = literalAttrs(el.attributes, sf);
-    included.push({ name: tagName, importLine: imp.line, attrs, dropped });
+    const { attrs, dropped: droppedAttrs } = literalAttrs(el.attributes, sf);
+    included.push({ name: tagName, importLine: imp.line, attrs, dropped: droppedAttrs });
   }
 
   const holes = included.flatMap((i) =>
@@ -176,8 +214,13 @@ export function ensureClientProviderWrapper(
     writeFileSync(fixturesPath, renderFixtures(layout, holes, imports));
   }
 
-  writeFileSync(outPath, renderWrapper(layout, included, holes.length > 0));
-  return { path: outPath, created: true, included: included.map((i) => i.name) };
+  writeFileSync(outPath, renderWrapper(layout, included, holes.length > 0, dropped));
+  return {
+    path: outPath,
+    created: true,
+    included: included.map((i) => i.name),
+    dropped: dropped.map((d) => ({ name: d.name, reason: d.reason })),
+  };
 }
 
 interface ChainElement {
@@ -346,6 +389,7 @@ function renderWrapper(
   layoutFile: string,
   included: Array<{ name: string; importLine: string; attrs: string; dropped: DroppedAttr[] }>,
   hasFixtures: boolean,
+  droppedLayers: Array<{ name: string; specifier: string; reason: DropReason }> = [],
 ): string {
   const importLines = [...new Set(included.map((i) => i.importLine))].join("\n");
   const layoutRel = path.basename(layoutFile);
@@ -380,11 +424,27 @@ function renderWrapper(
         )
       : "      <>{children}</>";
 
+  // A dropped layer is the loudest thing in this file and was silent: an empty
+  // wrapper whose specs all fail on "could not find X in the context" reads as a
+  // broken component, not as a provider chain the generator declined to mount.
+  // Name each one, why, and where the fix goes (here is not a durable place).
+  const droppedNote =
+    droppedLayers.length === 0
+      ? ""
+      : `\n// DROPPED from ${layoutRel}'s provider chain — specs mount WITHOUT these:\n${droppedLayers
+          .map(
+            (d) =>
+              `//   ${d.name}, from ${commentSafe(d.specifier)}, ${DROP_REASONS[d.reason].long}.`,
+          )
+          .join(
+            "\n",
+          )}\n// A spec that needs one of these contexts wants its own --provider: this file is\n// derived from the layout and regenerated by --force, so editing it here does not stick.\n`;
+
   return `"use client";
 // flawless-react provider wrapper — auto-derived from ${layoutRel} (a root
 // layout: async, server-only imports, or the <html> shell — unusable under
 // jsdom). REGENERATED by --force: put values you want to keep in
-// provider.fixtures.ts, which is never rewritten.
+// provider.fixtures.ts, which is never rewritten.${droppedNote}
 import type { ReactNode } from "react";
 ${importLines}${hasFixtures ? '\nimport { providerFixtures } from "./provider.fixtures";' : ""}
 

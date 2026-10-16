@@ -16,7 +16,11 @@ import {
 } from "./nextjs/detect.ts";
 import { emitNextjsMocks } from "./nextjs/emit.ts";
 import { fetchLiveSwagger, loadLocalSpec } from "./nextjs/liveSpec.ts";
-import { ensureClientProviderWrapper, isUsableUnitProvider } from "./nextjs/providerWrapper.ts";
+import {
+  dropReasonLabel,
+  ensureClientProviderWrapper,
+  isUsableUnitProvider,
+} from "./nextjs/providerWrapper.ts";
 import { appReactMajor } from "./packageJson.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
@@ -338,9 +342,15 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         );
         if (wrapped) {
           providerOverride = wrapped.path;
+          const droppedText =
+            wrapped.dropped.length === 0
+              ? ""
+              : ` — dropped ${wrapped.dropped
+                  .map((d) => `${d.name} (${dropReasonLabel(d.reason)})`)
+                  .join(", ")}`;
           log(
             wrapped.created
-              ? `nextjs: app resolver is a server layout — derived ${path.relative(nextCtx.root, wrapped.path)} (providers: ${wrapped.included.join(", ") || "none detected"})`
+              ? `nextjs: app resolver is a server layout — derived ${path.relative(nextCtx.root, wrapped.path)} (providers: ${wrapped.included.join(", ") || "none mounted"}${droppedText})`
               : `nextjs: using existing ${path.relative(nextCtx.root, wrapped.path)}`,
           );
         }

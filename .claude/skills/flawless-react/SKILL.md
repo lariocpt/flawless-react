@@ -65,16 +65,22 @@ tells you to persist a logged-in storageState into.
 importing `next/font` or `next/headers` — unusable under jsdom. flawless
 detects that and derives `flawless/provider.tsx` from the JSX chain that
 encloses `{children}`, keeping only `"use client"` components and literal
-attributes; anything it drops becomes a `TODO(flawless)` comment. A provider
+attributes. What it leaves out is named where you will read it: a dropped
+attribute as a `TODO(flawless)` comment beside the wrapper, a dropped provider
+layer in a block at the top of the file with the reason and the fix. A provider
 layer whose module directly imports an auth library (`@clerk/*`, `next-auth`)
 is skipped rather than mounted: the unit and browser planes replace those
 libraries with a signed-out stub, so a provider gating its children on a
 session renders *nothing* and every spec inherits the blank screen — while the
-stub already satisfies the context reads auth-consuming components make. `--force`
+stub already satisfies the context reads auth-consuming components make. Expect
+the components under it to fail on "Could not find Convex client" or "could not
+find … in the context" — that is the drop, not the component. `--force`
 regenerates it, so a change to the layout's provider chain reaches an existing
 suite — put the values you supply (a seeded auth state, a theme) in
 `provider.fixtures.ts` beside it, which is never regenerated under any flag.
-Pass `--provider <file>` to override.
+Pass `--provider <file>` to override — that is also the way to supply a context
+the derived wrapper dropped, since editing `provider.tsx` does not survive
+`--force`.
 
 **API fixtures.** Static route walking only sees `app/api/**/route.ts`, which
 is useless for catch-all APIs (Hono, tRPC). Pass `--api openapi.json` (or
