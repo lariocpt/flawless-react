@@ -191,6 +191,46 @@ export const Widget = React.memo(
   });
 });
 
+describe("children into an asChild Slot (fixture child shape)", () => {
+  async function analysed(source: string): Promise<import("../src/types.ts").ComponentInfo> {
+    const dir = tmp();
+    const file = path.join(dir, "Widget.tsx");
+    writeFileSync(file, source);
+    const t = await analyse({ entry: file, depth: 0, includeChildren: false });
+    return t.entry;
+  }
+  const childrenProps = `import type { ReactNode } from "react";\ntype P = { children: ReactNode };\n`;
+
+  test("asChild with the `{children}` expression sets childrenSlotted", async () => {
+    const info = await analysed(
+      `${childrenProps}export const Widget = ({ children }: P) => <button asChild>{children}</button>;`,
+    );
+    expect(info.childrenSlotted).toBe(true);
+  });
+
+  test("bare <Slot> and nested triggers both count", async () => {
+    const slotted = await analysed(
+      `${childrenProps}export const Widget = ({ children }: P) => <Slot>{children}</Slot>;`,
+    );
+    expect(slotted.childrenSlotted).toBe(true);
+    const nested = await analysed(
+      `${childrenProps}export const Widget = ({ children }: P) => (\n  <div><span><Trigger asChild>{children}</Trigger></span></div>\n);`,
+    );
+    expect(nested.childrenSlotted).toBe(true);
+  });
+
+  test("plain rendering and asChild={false} leave it unset", async () => {
+    const plain = await analysed(
+      `${childrenProps}export const Widget = ({ children }: P) => <div>{children}</div>;`,
+    );
+    expect(plain.childrenSlotted).toBeUndefined();
+    const off = await analysed(
+      `${childrenProps}export const Widget = ({ children }: P) => <button asChild={false}>{children}</button>;`,
+    );
+    expect(off.childrenSlotted).toBeUndefined();
+  });
+});
+
 describe("analyseFile shared context", () => {
   const LEAF = `export function Leaf({ label }: { label: string }) {
   return <em>{label}</em>;
