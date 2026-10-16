@@ -356,6 +356,32 @@ export async function mergeIntoNextPackageJson(
     }
     pkg.scripts = merged;
   }
+  // pnpm ≥10 treats an UNRECORDED build-script decision as an error: with
+  // verifyDepsBeforeRun (the default in 11), `pnpm run dev` install-checks
+  // first, and ERR_PNPM_IGNORED_BUILDS over msw/@playwright/test — packages
+  // THIS merge introduced — killed the app's own dev server before Next
+  // could boot. Writing the ignore down IS the decision: msw's postinstall
+  // copies a service worker into a public dir and playwright's downloads
+  // browsers; neither is needed to run the app, and neither may block it.
+  // A dependency the app already approved (onlyBuiltDependencies) stays
+  // approved — that is the app's call, not ours.
+  if (existsSync(path.join(nextRoot, "pnpm-lock.yaml"))) {
+    const BUILD_SCRIPT_DEPS = ["@playwright/test", "msw"];
+    const added = Object.keys(devDeps);
+    const p = pkg as Pkg & {
+      pnpm?: { ignoredBuiltDependencies?: string[]; onlyBuiltDependencies?: string[] };
+    };
+    const approved = new Set(p.pnpm?.onlyBuiltDependencies ?? []);
+    const ignored = [...(p.pnpm?.ignoredBuiltDependencies ?? [])];
+    let changed = false;
+    for (const d of BUILD_SCRIPT_DEPS) {
+      if (added.includes(d) && !approved.has(d) && !ignored.includes(d)) {
+        ignored.push(d);
+        changed = true;
+      }
+    }
+    if (changed) p.pnpm = { ...p.pnpm, ignoredBuiltDependencies: ignored.sort() };
+  }
   fs.writeFileSync(pkgPath, stringifyLike(source, pkg));
   return { keptScripts };
 }

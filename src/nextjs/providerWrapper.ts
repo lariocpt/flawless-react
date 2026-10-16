@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { isAuthLibSpecifier } from "../analyse/authShims.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { readPrologueDirective } from "../analyse/sourceCache.ts";
 import type { NextjsContext } from "../types.ts";
@@ -155,6 +156,7 @@ export function ensureClientProviderWrapper(
     const target = resolver.resolve(imp.specifier, layout);
     if (!target) continue;
     if (!fileStartsWithUseClient(target)) continue;
+    if (moduleImportsAuthLib(target)) continue;
 
     const { attrs, dropped } = literalAttrs(el.attributes, sf);
     included.push({ name: tagName, importLine: imp.line, attrs, dropped });
@@ -246,6 +248,48 @@ function collectImportLines(sf: ts.SourceFile): Map<string, { specifier: string;
 
 function fileStartsWithUseClient(file: string): boolean {
   return readPrologueDirective(file) === "use client";
+}
+
+/**
+ * True when the module directly imports a provider-bound auth library
+ * (analyse/authShims.ts). The unit plane stubs those libraries globally with
+ * a signed-out snapshot, and an app's auth-aggregate provider (Clerk/Convex
+ * or next-auth SessionProvider chains) then turns the derived wrapper into an
+ * auth wall: signed-out, its Authenticated/SignedIn gates render nothing, so
+ * every wrapped spec mounts an empty tree and every child assertion fails —
+ * while the stubs already satisfy the context reads auth-consuming components
+ * actually make. Including such a provider buys the unit mount nothing and
+ * wedges it (miro-clone: ConvexClientProvider constructs a ConvexReactClient
+ * at module scope AND gates children behind auth).
+ */
+function moduleImportsAuthLib(file: string): boolean {
+  let sf: ts.SourceFile;
+  try {
+    sf = ts.createSourceFile(
+      file,
+      readFileSync(file, "utf8"),
+      ts.ScriptTarget.ES2022,
+      true,
+      ts.ScriptKind.TSX,
+    );
+  } catch {
+    return false;
+  }
+  for (const stmt of sf.statements) {
+    if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
+      if (isAuthLibSpecifier(stmt.moduleSpecifier.text)) return true;
+    }
+    // `export { SessionProvider } from "next-auth/react"` binds just as well.
+    if (
+      ts.isExportDeclaration(stmt) &&
+      stmt.moduleSpecifier &&
+      ts.isStringLiteral(stmt.moduleSpecifier) &&
+      isAuthLibSpecifier(stmt.moduleSpecifier.text)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** A prop the layout passed that is not literal-composable, and its source text. */
