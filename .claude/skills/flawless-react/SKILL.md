@@ -65,7 +65,12 @@ tells you to persist a logged-in storageState into.
 importing `next/font` or `next/headers` — unusable under jsdom. flawless
 detects that and derives `flawless/provider.tsx` from the JSX chain that
 encloses `{children}`, keeping only `"use client"` components and literal
-attributes; anything it drops becomes a `TODO(flawless)` comment. `--force`
+attributes; anything it drops becomes a `TODO(flawless)` comment. A provider
+layer whose module directly imports an auth library (`@clerk/*`, `next-auth`)
+is skipped rather than mounted: the unit and browser planes replace those
+libraries with a signed-out stub, so a provider gating its children on a
+session renders *nothing* and every spec inherits the blank screen — while the
+stub already satisfies the context reads auth-consuming components make. `--force`
 regenerates it, so a change to the layout's provider chain reaches an existing
 suite — put the values you supply (a seeded auth state, a theme) in
 `provider.fixtures.ts` beside it, which is never regenerated under any flag.
@@ -76,6 +81,28 @@ is useless for catch-all APIs (Hono, tRPC). Pass `--api openapi.json` (or
 `--swagger-url http://localhost:3000/api/docs`) and real example bodies flow
 into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 `--swagger-url=off` to skip the live-spec probe.
+
+## React 17 / 18 / 19
+
+The app's React major (`detectAppReact` in the root `package.json`) is the
+single switch. At or above 18 the host mounts through `createRoot`; below 18
+it falls back to legacy `ReactDOM.render`, document roots render with
+`renderToStaticMarkup`, and promise-valued props are not passed. The suite's
+`react`/`react-dom` are pinned to the app's version (two React copies is the
+classic red-suite cause), and Testing Library follows the app: React ≤17 gets
+`@testing-library/react@^12.1.5` + `@testing-library/dom@^8.20.1` — 13/14
+peer-require react ^18 and 14 hard-requires the `react-dom/client` entry that
+does not exist in 17. A stale 13+ range left by an older run is repaired by
+the next one (`repairRtlPin`).
+
+Two footprints complete the merge: for pnpm apps the `package.json` merge
+records `pnpm.ignoredBuiltDependencies` for the deps it introduces
+(`@playwright/test`, `msw`) — pnpm ≥10 errors on an unrecorded build-script
+decision, and `ERR_PNPM_IGNORED_BUILDS` killed the app's own `pnpm run dev`
+before Next could boot; and the suite's Vitest config reads the app's
+`.env.test.local` → `.env.example` (first value wins, env vars beat them) —
+`.env.example` last because template repos ship only the example, and its
+placeholders exist to satisfy module-scope construction.
 
 ## Expo / React Native mode
 
@@ -117,6 +144,18 @@ Driven by static analysis, so they only assert what can be derived:
 - literal copy the component renders unconditionally;
 - one test per detected interaction, with negative assertions on every other
   handler prop (a click that fires two callbacks fails);
+- disclosures opened first: a control behind a closed `Dialog`/`Menu`/`Popover`
+  is not in the DOM, so the spec clicks its trigger — by prop label, literal
+  text, or its fixture child — clears the spies, then queries with `findBy*`;
+  static-copy assertions skip closed content outright. A root written `open`,
+  `defaultOpen` or `open={true}` is never gated;
+- a named local handler read through: `onClick={handleConfirm}` whose
+  declaration calls exactly ONE prop handler directly is asserted as that prop.
+  Two props means the handler claims neither — canary;
+- `children` handed to an `asChild`/`Slot`/`Slottable` site mounted as a
+  `<span>`, never bare text — Slot clones elements and a text child throws;
+- id-typed props never default to `""` (`flawless-<prop>` instead) — providers
+  validate ids, they do not render them;
 - state-derived tests: initial-state witnesses and handler→setter tests;
 - one `describe` per `useEffect` fetch with **success / loading / error /
   empty** cases via `server.use(...)` overrides;
@@ -256,6 +295,20 @@ your `package.json`.
   them real return values (that is the TODO).
 - **Playwright has no browser** — `bunx playwright install chromium`. The
   runner attempts this automatically; `FLAWLESS_SKIP_BROWSER_INSTALL=1` opts out.
+- **Spec fails `ReferenceError: <name> is not defined`, host build printed
+  nothing** — a host resolve-plugin fall-through dropped a bare specifier's
+  module onto a variant without that export (`msw` named imports were the
+  casualty). Run `bun host/server.ts` from the suite dir to see the build;
+  check the plugin's `args.path` gates, not the spec.
+- **Every e2e route 404s while `/` loads in a browser** — the app's own
+  middleware is an auth wall (`auth.protect()`); with placeholder keys every
+  route behind it 404s. Real credentials in `e2e/global-setup.ts`, or do not
+  claim those routes.
+- **Both Playwright configs collide** (`test.describe() called here` /
+  `No tests found`) — two `@playwright/test` copies (app root + suite). Run the
+  plane from the suite dir with its own config:
+  `node node_modules/@playwright/test/cli.js test --config e2e/playwright.config.ts`.
+  Same for vitest: `node ../node_modules/vitest/vitest.mjs run --config vitest.config.mts`.
 
 ## Limits worth stating up front
 

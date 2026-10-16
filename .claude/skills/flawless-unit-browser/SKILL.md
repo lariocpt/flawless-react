@@ -76,6 +76,40 @@ When you fill a fixture, also tighten the assertion: a mocked building named
 passes while rendering an empty state — the vacuous pass this tool exists to
 prevent.
 
+## Gated steps: the spec opens the disclosure first
+
+A control that only exists once a disclosure is open (a button inside a dialog,
+menu or popover) cannot be clicked by a step that never opened it. When the
+analysis says a trigger's label is **static text arriving as a child**, the step
+is emitted *gated*: it opens the disclosure first, clicking the spec's own child
+span, resets the spies so the isolation asserts stay meaningful, and then queries
+its real target with the awaiting `findBy*` form —
+
+```tsx
+await userEvent.click(screen.getAllByText(CHILD_TEXT)[0] as HTMLElement);
+for (const v of Object.values(handlers)) v.mockClear();
+await userEvent.click((await screen.findAllByText("Confirm"))[0] as HTMLElement);
+expect(handlers.onConfirm).toHaveBeenCalled();
+```
+
+`CHILD_TEXT` is the `"flawless child"` string the spec renders into a component
+that accepts children, so a children-kind gate is only emitted where the spec
+declares it. The other gate labels come from the same ladder as any target:
+`data-testid`, `aria-label`, literal text. Three things to know:
+
+- It exists in the unit and browser specs. Route e2e specs do not open dialogs;
+  they assert what the route renders on its own.
+- A disclosure the component holds open itself — a bare `open`, `defaultOpen` or
+  `open={true}` at the call site — is not gated. Nothing is closed, so there is
+  nothing to open first.
+- **A gated step with no prelude is a bug report, not a skip.** If the label
+  could not be resolved the step is emitted unprotected and goes red on the
+  click. Do not delete the assertion and do not mark it skipped: either give the
+  trigger an accessible name the analyser can see (a `data-testid`, an
+  `aria-label`, a literal child) or teach the generator that label shape. Same
+  rule as an unlabelled canary — the red is the tool telling you where its own
+  reading stopped.
+
 ## Placement and survival
 
 Colocated specs (`--colocate`, `<file>.flawless.test.tsx` beside the source)
