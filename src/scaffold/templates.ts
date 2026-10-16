@@ -739,7 +739,7 @@ const stubServerModules: BunPlugin = {
     // mounted", every chanhdai mount including icons, because the layout
     // tree in main.tsx renders SiteHeader). Answer with the DOM elements
     // they compile down to; anchors keep hrefs clickable for e2e habits.
-    build.onResolve({ filter: /^next[\\/](link|image)(\.js)?$/ }, (args) => ({
+    build.onResolve({ filter: /^next[\\/](link|image)(\\.js)?$/ }, (args) => ({
       path: args.path.indexOf("image") >= 0 ? "flawless:next/image" : "flawless:next/link",
       namespace: "flawless-next-component-stub",
     }));
@@ -877,14 +877,21 @@ const resolveFromSuite: BunPlugin = {
   name: "resolve-from-suite",
   setup(build) {
     build.onResolve({ filter: /^[a-zA-Z@][^:]*$/ }, (args) => {
-      // msw ships its browser worker entry behind a "browser" export
+      // msw ships its BROWSER WORKER entry behind a "browser" export
       // CONDITION, and Bun.resolveSync resolves server-side conditions —
-      // answering this plugin would pin the node variant onto a browser
-      // bundle ("setupWorker failed in a non-browser environment", with
-      // global.process now faithfully present for scandir to split). Let it
-      // fall through: the bundler's own resolver applies the target's
-      // conditions, and every msw importer lives where node_modules sees it.
-      if (args.path === "msw" || args.path.startsWith("msw/")) return;
+      // answering this plugin for msw/browser would pin the node variant
+      // onto a browser bundle ("setupWorker failed in a non-browser
+      // environment", with global.process now faithfully present for
+      // scandir to split). Subpaths therefore fall through: the bundler's
+      // own resolver applies the target's conditions. The BARE specifier
+      // does NOT — with a catch-all plugin on bare specifiers attached, a
+      // fallen-through "msw" came back as a module shell whose named
+      // imports were silently dropped: miro-clone's host booted with
+      // "http is not defined" exactly where handlers.ts had written
+      // import { http } from "msw". Core msw is environment-neutral
+      // (its checkGlobals only checks URL), so resolving it like any other
+      // package is both correct and the only shape the bundler wires.
+      if (args.path.startsWith("msw/")) return;
       try {
         let resolved: string;
         try {
