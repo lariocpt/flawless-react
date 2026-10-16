@@ -304,6 +304,12 @@ your `package.json`.
   middleware is an auth wall (`auth.protect()`); with placeholder keys every
   route behind it 404s. Real credentials in `e2e/global-setup.ts`, or do not
   claim those routes.
+- **e2e dies on "Timed out waiting …ms from config.webServer", no spec run** —
+  the same wall one stage earlier. Playwright calls the server up only on a
+  2xx/3xx from the readiness url, which is the app root, and retries a 404
+  forever (`[WebServer] GET / 404` repeating in the log). Fill the credentials,
+  or set `FLAWLESS_E2E_BASEURL` to a server you started yourself — the emitted
+  config drops its own `webServer` block for that.
 - **Both Playwright configs collide** (`test.describe() called here` /
   `No tests found`) — two `@playwright/test` copies (app root + suite). Run the
   plane from the suite dir with its own config:
