@@ -1,6 +1,6 @@
 import { TEXTLESS_ELEMENTS } from "../analyse/nativeProps.ts";
-import { propNameRegex } from "./selectors.ts";
 import type { ClickHandler, LabelSource } from "../types.ts";
+import { propNameRegex } from "./selectors.ts";
 
 /**
  * @testing-library/react-native locators, as a priority ladder.

@@ -413,6 +413,12 @@ export function emitTriggerSelector(label: LabelSource): string | undefined {
       return `screen.getAllByLabelText(${JSON.stringify(label.value)})[0] as HTMLElement`;
     case "text":
       return `screen.getAllByText(${JSON.stringify(label.value)})[0] as HTMLElement`;
+    // The trigger's content is the fixture child itself — the spec renders
+    // <span>{CHILD_TEXT}</span> into it, and clicking that span bubbles to
+    // the trigger. Only valid where the spec declared CHILD_TEXT (callers
+    // check info.acceptsChildren).
+    case "children":
+      return `screen.getAllByText(CHILD_TEXT)[0] as HTMLElement`;
     default:
       return undefined;
   }
@@ -454,13 +460,11 @@ function partialRegex(value: string): string {
  * accessible-name computation's and RTL's differing opinions about whether two
  * adjacent text nodes join with a space.
  */
-export function propNameRegex(
-  label: Extract<LabelSource, { kind: "prop" }>,
-  flags = "",
-): string {
+export function propNameRegex(label: Extract<LabelSource, { kind: "prop" }>, flags = ""): string {
   const runtime = `String(DEFAULTS[${JSON.stringify(label.propName)}] ?? "").replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&")`;
   const parts = ['"^"'];
-  if (label.before) parts.push(JSON.stringify(label.before.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")));
+  if (label.before)
+    parts.push(JSON.stringify(label.before.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")));
   parts.push(`"\\\\s*"`, runtime, `"\\\\s*"`);
   if (label.after) parts.push(JSON.stringify(label.after.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")));
   parts.push(`"$"`);
