@@ -290,6 +290,14 @@ export default defineConfig({
     storageState: authState,
     trace: "retain-on-failure",
   },
+  // Readiness means "2xx or 3xx from this url" — a 404 is a server that is not
+  // up, and the app's own middleware can make the root answer exactly that
+  // (Clerk's auth.protect() with placeholder keys 404s every route it guards).
+  // Then the run dies here, before a single spec, on "Timed out waiting
+  // 120000ms from config.webServer". Credentials in global-setup.ts fix it
+  // properly; to drive a server you started yourself, export
+  // FLAWLESS_E2E_BASEURL (which drops this whole block) or point this url at a
+  // route that answers 2xx/3xx.
   webServer: process.env.FLAWLESS_E2E_BASEURL
     ? undefined
     : {

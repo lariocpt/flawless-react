@@ -449,6 +449,9 @@ Something reads an env var at module scope. The suite's Vitest config loads the 
 **Every e2e route 404s or redirects while `/` loads fine in a browser**
 The app's own middleware is an auth wall — Clerk's `auth.protect()`, a `next-auth` matcher — and with placeholder keys every route behind it answers 404 or bounces to sign-in. That is the app working, not the suite breaking: fill real credentials in `flawless/e2e/global-setup.ts`, or do not claim e2e coverage for the routes behind the wall.
 
+**The e2e run dies with "Timed out waiting 120000ms from config.webServer"**
+Same wall, one stage earlier: Playwright counts a server as up only on a 2xx or 3xx from the readiness URL, and it probes the app root. A root the middleware 404s is therefore a server that never starts, and you get a timeout with no spec run and no assertion — the `[WebServer]` log showing `GET / 404` over and over is the tell. Credentials make the root answer 200 or a sign-in redirect and the run proceeds. To drive a server you started yourself, export `FLAWLESS_E2E_BASEURL` (the emitted config drops its own `webServer` block for that) or repoint the config's readiness url at a route that answers.
+
 **Component fetches `/api/...` and gets a 404**
 Either pass `--api <openapi.json|yaml>` to scaffold a mock server, or edit the generated `mock/routes.ts` after the fact (when `--api` was passed) to add the missing route. Without `--api`, no mock server is generated and `/api/*` requests return 404 from the host server.
 
