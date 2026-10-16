@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { findDisclosures } from "./extractDisclosures.ts";
 import { emptyEnv, initialRenderExpression, type RenderEnv, reachability } from "./renderPath.ts";
 
 const MAX_TEXTS = 8;
@@ -26,7 +27,16 @@ export function extractStaticText(bodyNode: ts.Node, env: RenderEnv = emptyEnv()
   }
 
   const found: string[] = [];
+  // Disclosure content is the purest form of "text that only sometimes
+  // renders": a Radix Dialog/Menu/Popover Content subtree is not in the DOM
+  // until its trigger is clicked, and asserting on it straight after render
+  // reddens every static-content test (ConfirmModal's "Cancel"/"Confirm").
+  // The interaction tests open the disclosure themselves; static copy does
+  // not get that step, so gated subtrees are skipped outright.
+  const gated = new Set<ts.Node>();
+  for (const d of findDisclosures(root)) for (const n of d.gated) gated.add(n);
   const visit = (n: ts.Node): void => {
+    if (gated.has(n)) return;
     const text = literalText(n);
     if (
       text !== undefined &&

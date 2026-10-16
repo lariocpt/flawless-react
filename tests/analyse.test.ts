@@ -504,3 +504,45 @@ describe("error boundaries are the one reachable undecidable render", () => {
     expect(tree.entry.renderUndecidable).toBe(true);
   });
 });
+
+describe("a local handler resolves to the prop it directly calls (ConfirmModal)", () => {
+  async function clicksOf(src: string) {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-local-"));
+    const file = path.join(dir, "W.tsx");
+    writeFileSync(file, src);
+    const t = await analyse({ entry: file, depth: 0, includeChildren: false });
+    return t.entry.interactions?.clicks ?? [];
+  }
+
+  test("the one-statement forwarder becomes a prop claim", async () => {
+    const clicks = await clicksOf(`export function W({ onConfirm }: { onConfirm: () => void }) {
+  const handleConfirm = () => {
+    onConfirm();
+  };
+  return <button onClick={handleConfirm}>Confirm</button>;
+}`);
+    expect(clicks[0]?.binding).toEqual({ kind: "prop", propName: "onConfirm" });
+  });
+
+  test("a call behind a .then callback does NOT upgrade — it is not synchronous", async () => {
+    const clicks = await clicksOf(`export function W({ onDone }: { onDone: () => void }) {
+  const handle = () => {
+    save().then(() => onDone());
+  };
+  return <button onClick={handle}>Go</button>;
+}`);
+    expect(clicks[0]?.binding).toEqual({ kind: "local", localName: "handle" });
+  });
+
+  test("a forwarder to TWO props claims neither", async () => {
+    const clicks =
+      await clicksOf(`export function W({ onA, onB }: { onA: () => void; onB: () => void }) {
+  function handle() {
+    onA();
+    onB();
+  }
+  return <button onClick={handle}>Both</button>;
+}`);
+    expect(clicks[0]?.binding).toEqual({ kind: "local", localName: "handle" });
+  });
+});

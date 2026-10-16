@@ -298,17 +298,19 @@ export function extractInteractions(
         const label = extractLabel(enclosing, hints, propNames, descend);
 
         if (tag === "form") {
-          forms.push(
-            buildForm(
-              enclosing,
-              n.attributes,
-              propNames,
-              posOf(n, sourceFile),
-              sourceFile,
-              scope,
-              bodyNode,
-            ),
+          const form = buildForm(
+            enclosing,
+            n.attributes,
+            propNames,
+            posOf(n, sourceFile),
+            sourceFile,
+            scope,
+            bodyNode,
           );
+          // A form inside a closed dialog is not in the DOM until the trigger
+          // opens it — the same gate the click tests honour (RenameModal).
+          const gate = gateFor(n);
+          forms.push(gate ? { ...form, gatedBy: gate } : form);
         }
 
         for (const attr of n.attributes.properties) {
@@ -317,7 +319,7 @@ export function extractInteractions(
           const event = attr.name.text;
           if (!eventPattern.test(event)) continue;
           if (tag === "form" && event === "onSubmit") continue;
-          const binding = classifyBinding(attr.initializer, propNames);
+          const binding = classifyBinding(attr.initializer, propNames, bodyNode);
           const gatedBy = gateFor(n);
           clicks.push({
             event,
@@ -783,12 +785,24 @@ function extractLabel(
 function classifyBinding(
   init: ts.JsxAttribute["initializer"],
   propNames: Set<string>,
+  /** The component body, to resolve a local handler to its declaration. */
+  bodyNode?: ts.Node,
 ): HandlerBinding {
   if (!init || !ts.isJsxExpression(init) || !init.expression) return { kind: "inline" };
   const expr = init.expression;
   if (ts.isIdentifier(expr)) {
     if (propNames.has(expr.text) && /^on[A-Z]/.test(expr.text)) {
       return { kind: "prop", propName: expr.text };
+    }
+    // A named local is only opaque until its declaration is read:
+    // `onClick={handleConfirm}` where `const handleConfirm = () => { onConfirm(); }`
+    // IS a prop call — ConfirmModal's canary asserted the spy was NOT called
+    // while the handler called exactly that. Only the DIRECT shapes upgrade
+    // (see directPropCall); anything less obvious stays a canary.
+    if (bodyNode) {
+      const fn = resolveLocalHandler(bodyNode, expr.text);
+      const prop = fn === undefined ? undefined : directPropCall(fn.body, propNames);
+      if (prop) return { kind: "prop", propName: prop };
     }
     return { kind: "local", localName: expr.text };
   }
@@ -807,6 +821,69 @@ function classifyBinding(
     return { kind: "inline" };
   }
   return { kind: "inline" };
+}
+
+/** Find `const NAME = (…) => …` / `function NAME(…) {}` inside the body. */
+function resolveLocalHandler(
+  body: ts.Node,
+  name: string,
+): ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | undefined {
+  let out: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | undefined;
+  const visit = (n: ts.Node): void => {
+    if (out) return;
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
+    ) {
+      out = n.initializer;
+      return;
+    }
+    if (ts.isFunctionDeclaration(n) && n.name?.text === name) {
+      out = n;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(body, visit);
+  return out;
+}
+
+/**
+ * The ONE prop a handler body calls DIRECTLY: `() => { prop(); cleanup(); }`
+ * or `() => prop()`. findPropCallInBody descends into callbacks, which suits
+ * the inline arrow written at the JSX site (its author sees what it does);
+ * across statements that generosity would claim calls hidden behind an
+ * `await` or a `.then`, so this is the strict variant for resolved locals.
+ * More than one distinct prop call and nothing is claimed — the emit would
+ * otherwise assert the siblings were NOT called while the handler calls them.
+ */
+function directPropCall(body: ts.ConciseBody, propNames: Set<string>): string | undefined {
+  const calls: string[] = [];
+  const check = (expr: ts.Expression): void => {
+    if (!ts.isCallExpression(expr)) return;
+    const callee = expr.expression;
+    if (ts.isIdentifier(callee) && propNames.has(callee.text)) {
+      calls.push(callee.text);
+    } else if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "props" &&
+      propNames.has(callee.name.text)
+    ) {
+      calls.push(callee.name.text);
+    }
+  };
+  if (ts.isBlock(body)) {
+    for (const st of body.statements) {
+      if (ts.isExpressionStatement(st)) check(st.expression);
+    }
+  } else {
+    check(body);
+  }
+  const unique = [...new Set(calls)];
+  return unique.length === 1 ? unique[0] : undefined;
 }
 
 function findPropCallInBody(body: ts.Node, propNames: Set<string>): string | undefined {
@@ -852,7 +929,7 @@ function buildForm(
   for (const a of attrs.properties) {
     if (!ts.isJsxAttribute(a)) continue;
     const name = ts.isIdentifier(a.name) ? a.name.text : undefined;
-    if (name === "onSubmit") submit = classifyBinding(a.initializer, propNames);
+    if (name === "onSubmit") submit = classifyBinding(a.initializer, propNames, componentBody);
     if (name === "action") actionLocal = readIdentifierInitializer(a.initializer);
     if (name === "data-testid") hints.testid = readStringInitializer(a.initializer);
     if (name === "aria-label") hints.ariaLabel = readStringInitializer(a.initializer);

@@ -71,7 +71,13 @@ export type LabelSource =
    */
   | { kind: "prop"; propName: string; before?: string; after?: string }
   | { kind: "aria"; value: string }
-  | { kind: "testid"; value: string }
+  /**
+   * The trigger's whole subtree is the `{children}` expression — the app's
+   * consumer IS the trigger (ConfirmModal's `<AlertDialogTrigger asChild>
+   * {children}</AlertDialogTrigger>`). Nothing inside names it, but a unit
+   * spec passes CHILD_TEXT there, so clicking the child text opens it.
+   */
+  | { kind: "children" }
   | { kind: "none" };
 
 export interface ElementHints {
@@ -253,6 +259,12 @@ export interface FormInfo {
   /** The button that submits it, when the markup identifies one. */
   submitControl?: SubmitControl;
   hints: { testid?: string; ariaLabel?: string; id?: string };
+  /**
+   * The disclosure whose trigger must be clicked before this form exists at
+   * all — a form inside a closed Radix dialog is not in the DOM until the
+   * trigger opens it (RenameModal). Same gate the click tests honour.
+   */
+  gatedBy?: LabelSource;
   /**
    * The server action this form's `action={…}` dispatches to, as the module
    * names it.
@@ -858,6 +870,12 @@ export interface ComponentInfo {
   hostDialect?: "dom" | "native";
   /** Component renders JSX children (declared prop, or a children-taking host). */
   acceptsChildren?: boolean;
+  /**
+   * Children flow into an `asChild` Slot or a bare <Slot>/<Slottable> — the
+   * fixture must pass an ELEMENT child (a text child makes Slot throw).
+   * analyse/childrenIntoSlot.ts.
+   */
+  childrenSlotted?: boolean;
   /** prop → full literal option list, for grouped variant describes. */
   variantOptions?: Record<string, PropValue[]>;
   /** prop → option → its cva class string. Compared, never asserted verbatim. */

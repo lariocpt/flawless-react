@@ -58,12 +58,31 @@ function disclosureFor(trigger: ts.Node, root: ts.Node): Disclosure | undefined 
       return tag !== undefined && GATED_ROOT_TAG.test(tag);
     });
     if (gatedRoots.length === 0) continue;
+    // An enclosing root written `open` / `open={true}` / `defaultOpen` mounts
+    // its content right away — nothing to open first, so nothing is gated.
+    // (An expression like `open={isOpen}` stays gated: its initial value
+    // belongs to render-state this structural pass cannot see.)
+    if (ts.isJsxElement(a) && isAlwaysOpen(a.openingElement)) return undefined;
 
     const gated = new Set<ts.Node>();
     for (const subtree of gatedRoots) collectAll(subtree, gated);
     return { trigger: handle, gated };
   }
   return undefined;
+}
+
+/** `open`/`defaultOpen` written as a bare attribute or a literal `true`. */
+function isAlwaysOpen(opening: ts.JsxOpeningElement): boolean {
+  for (const p of opening.attributes.properties) {
+    if (!ts.isJsxAttribute(p) || !ts.isIdentifier(p.name)) continue;
+    if (p.name.text !== "open" && p.name.text !== "defaultOpen") continue;
+    const init = p.initializer;
+    if (init === undefined) return true;
+    if (ts.isJsxExpression(init) && init.expression?.kind === ts.SyntaxKind.TrueKeyword) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -95,7 +114,29 @@ function triggerHandle(trigger: ts.Node): LabelSource {
   // More than one candidate and we cannot tell which identifies the trigger.
   const unique = [...new Set(texts)];
   const only = unique.length === 1 ? unique[0] : undefined;
-  return only && only.length >= 2 ? { kind: "text", value: only } : { kind: "none" };
+  if (only && only.length >= 2) return { kind: "text", value: only };
+  // Nothing names the trigger because the APP CONSUMER is its content —
+  // `<AlertDialogTrigger asChild>{children}</AlertDialogTrigger>`. A unit
+  // spec passes CHILD_TEXT as children, so that text is the click handle.
+  if (childrenExprInSubtree(trigger)) return { kind: "children" };
+  return { kind: "none" };
+}
+
+/** True when the subtree renders the `{children}` identifier expression. */
+function childrenExprInSubtree(n: ts.Node): boolean {
+  if (
+    ts.isJsxExpression(n) &&
+    n.expression !== undefined &&
+    ts.isIdentifier(n.expression) &&
+    n.expression.text === "children"
+  ) {
+    return true;
+  }
+  let found = false;
+  ts.forEachChild(n, (c) => {
+    if (!found && childrenExprInSubtree(c)) found = true;
+  });
+  return found;
 }
 
 function contains(haystack: ts.Node, needle: ts.Node): boolean {

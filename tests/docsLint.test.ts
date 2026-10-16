@@ -100,6 +100,7 @@ const FOREIGN_FLAGS: Record<string, string> = {
   // metavariable standing in for whatever flag is being described.
   "--flag": "documentation placeholder",
   "--grep": "playwright/vitest",
+  "--headed": "playwright test",
   "--localstorage-file": "playwright",
   "--no-errors-on-unmatched": "biome check",
   "--porcelain": "git status",

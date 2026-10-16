@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
@@ -216,6 +216,53 @@ describe("ensureClientProviderWrapper", () => {
     expect(fixtures).toContain('ComponentProps<typeof Providers>["fonts"]');
     // The comment cites where the layout passed it, so the hole is traceable.
     expect(fixtures).toMatch(/layout\.tsx:\d+ passed fonts=/);
+  });
+
+  test("skips auth-bound aggregate providers — the unit plane stubs auth libs", () => {
+    // An app's Clerk/next-auth aggregate provider is an auth WALL: signed-out
+    // (the stub state) its gates render nothing, so every wrapped spec mounts
+    // an empty tree. The global stubs already satisfy context reads, so the
+    // wrapper must pass children through without the wall (miro-clone dogfood).
+    const root = tmpDir();
+    const write = (rel: string, text: string) => {
+      const p = path.join(root, rel);
+      mkdirSync(path.dirname(p), { recursive: true });
+      writeFileSync(p, text);
+    };
+    write(
+      "app/layout.tsx",
+      `"use client";
+import type { ReactNode } from "react";
+import { ThemeWrap } from "./theme-wrap";
+import { AuthProviders } from "./auth-providers";
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <ThemeWrap>
+      <AuthProviders>{children}</AuthProviders>
+    </ThemeWrap>
+  );
+}
+`,
+    );
+    write(
+      "app/theme-wrap.tsx",
+      `"use client";\nexport const ThemeWrap = ({ children }: any) => <div>{children}</div>;\n`,
+    );
+    write(
+      "app/auth-providers.tsx",
+      `"use client";\nimport { useSession } from "next-auth/react";\nexport const AuthProviders = ({ children }: any) => (useSession() ? children : children);\n`,
+    );
+    const ctx = {
+      root,
+      router: "app" as const,
+      appResolver: path.join(root, "app/layout.tsx"),
+      apiRoutes: [],
+    };
+    const result = ensureClientProviderWrapper(ctx, tmpDir());
+    expect(result?.included).toEqual(["ThemeWrap"]);
+    const src = readFileSync(result?.path as string, "utf8");
+    expect(src).toContain("<ThemeWrap>");
+    expect(src).not.toContain("AuthProviders");
   });
 
   test("--force refreshes the derived provider but never the fixtures", () => {
@@ -509,6 +556,30 @@ describe("merging into the target project's package.json", () => {
     const dir = pkgDir({ devDependencies: { vitest: "^3.2.0" } });
     await mergeIntoNextPackageJson(dir, {}, DEV, {});
     expect(readFileSync(path.join(dir, "package.json"), "utf8")).toContain('\n\t"devDependencies"');
+  });
+  test("a pnpm app gets its tool-introduced build scripts pre-IGNORED", async () => {
+    // verifyDepsBeforeRun makes ERR_PNPM_IGNORED_BUILDS fatal: with no record
+    // of the decision, `pnpm run dev` died in its install check over msw —
+    // the app could not boot after a regeneration that only touched specs.
+    const dir = pkgDir({});
+    writeFileSync(path.join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    await mergeIntoNextPackageJson(
+      dir,
+      {},
+      { msw: "^2.6.0", "@playwright/test": "^1.49.0", vitest: "^2.1.0" },
+      {},
+    );
+    const after = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+    expect(after.pnpm.ignoredBuiltDependencies).toEqual(["@playwright/test", "msw"]);
+  });
+
+  test("an approval the app already gave is respected — never double-listed", async () => {
+    const dir = pkgDir({ pnpm: { onlyBuiltDependencies: ["msw"] } });
+    writeFileSync(path.join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    await mergeIntoNextPackageJson(dir, {}, { msw: "^2.6.0" }, {});
+    const after = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+    expect(after.pnpm.onlyBuiltDependencies).toEqual(["msw"]);
+    expect(after.pnpm.ignoredBuiltDependencies ?? []).toEqual([]);
   });
 });
 

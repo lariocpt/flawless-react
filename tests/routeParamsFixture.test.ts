@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { analyseFile, createAnalyseSharedContext } from "../src/analyse/index.ts";
-import { withRouteParams } from "../src/scaffold-tests/registry.ts";
+import { synthesiseDefaults, withRouteParams } from "../src/scaffold-tests/registry.ts";
 import type { ComponentInfo } from "../src/types.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures/rsc");
@@ -89,5 +89,18 @@ describe("a helper's own return annotation reaches its mock", () => {
     const info = await infoFor("MembershipGuardPage.tsx");
     const mi = (info.moduleImports ?? []).find((m) => m.specifier === "./data-helpers.ts");
     expect(mi?.importedReturns && "recordVisit" in mi.importedReturns).toBe(false);
+  });
+});
+
+describe("synthesiseDefaults fills id-like string props", () => {
+  test('`roomId: ""` becomes an identifier — Liveblocks rejects the empty one', () => {
+    const info = {
+      propsShape: { roomId: "", title: "", children: null },
+    } as unknown as ComponentInfo;
+    expect(synthesiseDefaults(info)).toEqual({
+      roomId: "flawless-roomid",
+      title: "",
+      children: null,
+    });
   });
 });

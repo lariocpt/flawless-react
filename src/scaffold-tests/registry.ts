@@ -361,7 +361,16 @@ export function synthesiseDefaults(info: ComponentInfo): PropsShape {
   // Floor every promise prop at {}: the await resolves to an object, and
   // destructured fields read as undefined, which renders as nothing.
   for (const p of info.promiseProps ?? []) objectish[p] ??= {};
-  return { ...objectish, ...info.propsShape };
+  const merged = { ...objectish, ...info.propsShape };
+  // An identifier, not copy. A required string prop spelled `…Id` is fed to
+  // something that looks the value up or validates it — Liveblocks threw
+  // "RoomProvider id property is required" over the empty string Room passes
+  // straight through. Same reasoning as withRouteParams below, one layer up:
+  // the empty string is neutral for a caption and never for an id.
+  for (const [k, v] of Object.entries(merged)) {
+    if (v === "" && /Id$/.test(k)) merged[k] = `flawless-${k.toLowerCase()}`;
+  }
+  return merged;
 }
 
 /**
@@ -402,7 +411,9 @@ export function withRouteParams(shape: PropsShape): PropsShape {
   let changed = false;
   for (const [k, v] of Object.entries(params as Record<string, PropValue>)) {
     if (v === "") {
-      filled[k] = `flawless-${k}`;
+      // /Id$/ too: the caller may synthesiseDefaults first, but the fill here
+      // is the last pass before the literal — an id leaf must not stay empty.
+      filled[k] = /Id$/.test(k) ? `flawless-${k.toLowerCase()}` : `flawless-${k}`;
       changed = true;
     } else if (Array.isArray(v) && v.length === 0) {
       // A catch-all segment (`[...slug]`) is an array of segments, and an empty

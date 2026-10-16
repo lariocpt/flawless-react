@@ -631,14 +631,17 @@ const multiRootPlugin = {
   // The app's .env files, read at config load — see UnitBrowserRenderOptions
   // .appEnvRoot for why the suite must see them. Nothing is copied into this
   // file, and keys already in the environment win: exporting an override
-  // still redirects the suite.
+  // still redirects the suite. .env.example rides last: template repos ship
+  // only the example, and its placeholders exist precisely to satisfy
+  // module-scope construction (a provider that reads NEXT_PUBLIC_*_URL at
+  // import throws for every spec at collection without some value).
   const envBlock = opts.appEnvRoot
     ? `{
   const appRoot = path.resolve(
     configDir,
     ${JSON.stringify(relativeToEmitted(opts.outDir, opts.appEnvRoot))},
   );
-  for (const file of [".env.test.local", ".env.test", ".env.local", ".env"]) {
+  for (const file of [".env.test.local", ".env.test", ".env.local", ".env", ".env.example"]) {
     try {
       const text = readFileSync(path.join(appRoot, file), "utf8");
       for (const line of text.split("\\n")) {
@@ -1395,8 +1398,12 @@ function unitSpec(
     allHandlers.length > 0;
   const spread = hasProps ? ` {...(merged as unknown as Props)}` : "";
   const childTextConst = info.acceptsChildren ? `const CHILD_TEXT = "flawless child";\n` : "";
+  // The child must be an ELEMENT where the component slots it into an
+  // asChild/Slot site — Slot clones elements and throws on the bare text
+  // (analyse/childrenIntoSlot.ts). A span renders identically everywhere else.
+  const childJsx = info.childrenSlotted ? "<span>{CHILD_TEXT}</span>" : "{CHILD_TEXT}";
   const element = info.acceptsChildren
-    ? `<${name}${spread}>{CHILD_TEXT}</${name}>`
+    ? `<${name}${spread}>${childJsx}</${name}>`
     : `<${name}${spread} />`;
   const wrappedElement = autoProv?.open ? `${autoProv.open}${element}${autoProv.close}` : element;
   const renderExpr = providerImport
@@ -2525,7 +2532,17 @@ test.skip("${name}: interactions need a fixture — an early return may render n
   for (let i = 0; i < info.forms.length; i++) {
     const form = info.forms[i];
     if (!form) continue;
-    parts.push(emitFormTest(name, form, allHandlers, i, claimCtx.ctx.mockedBindings, todo));
+    parts.push(
+      emitFormTest(
+        name,
+        form,
+        allHandlers,
+        i,
+        claimCtx.ctx.mockedBindings,
+        claimCtx.info.acceptsChildren === true,
+        todo,
+      ),
+    );
   }
   if (parts.length === 0) {
     parts.push(`// no interactions detected — render-only smoke is above.`);
@@ -2563,7 +2580,12 @@ test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — ${describeUnlocat
   // clicked, so the spec opens it first and then queries with findBy*, which
   // retries. getBy* asserts against the DOM as it stands the instant the click
   // returns — before the content has mounted.
-  const gateSelector = click.gatedBy ? emitTriggerSelector(click.gatedBy) : undefined;
+  // The "children" handle clicks CHILD_TEXT, which only exists in a spec whose
+  // component accepts children — without that, the trigger never rendered.
+  const gateSelector =
+    click.gatedBy && !(click.gatedBy.kind === "children" && !claimCtx.info.acceptsChildren)
+      ? emitTriggerSelector(click.gatedBy)
+      : undefined;
   const dispatch = emitVitestDispatch(
     click.event,
     gateSelector ? awaitSelector(selector) : selector,
@@ -2701,6 +2723,8 @@ function emitFormTest(
   idx: number,
   /** Bindings this spec mocks, so an action claim is only made when observable. */
   mockedBindings: Set<string>,
+  /** Whether the spec renders CHILD_TEXT — the only handle a children-trigger has. */
+  acceptsChildren: boolean,
   todo?: TodoRecorder,
 ): string {
   const fillSteps: string[] = [];
@@ -2732,6 +2756,14 @@ function emitFormTest(
 });`;
   }
   const submitClick = `await userEvent.click(${submitTarget});`;
+  // A form inside a closed dialog is not in the DOM until the trigger opens
+  // it — every field query below would run against a tree that never
+  // mounted (RenameModal). Same gate the click tests click.
+  const formGate =
+    form.gatedBy && (form.gatedBy.kind !== "children" || acceptsChildren)
+      ? emitTriggerSelector(form.gatedBy)
+      : undefined;
+  const openStep = formGate ? `  await userEvent.click(${formGate});\n` : "";
   if (form.submit?.kind === "prop") {
     const propName = form.submit.propName;
     const others = allHandlers.filter((h) => h !== propName);
@@ -2741,7 +2773,7 @@ function emitFormTest(
     return `test("${name} submits form #${idx} → ${propName} called once", async () => {
   const { container } = renderTarget();
   void container;
-${fillSteps.join("\n")}
+${openStep}${fillSteps.join("\n")}
 ${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   ${submitClick}
   expect(handlers.${propName}).toHaveBeenCalled();
@@ -2768,7 +2800,7 @@ ${isolation || "  // no other handlers to isolate"}
     return `test("${name} submits form #${idx} → ${action} called", async () => {
   const { container } = renderTarget();
   void container;
-${fillSteps.join("\n")}
+${openStep}${fillSteps.join("\n")}
 ${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   // Nothing clears module mocks between tests and a mount effect may already have
   // called this one, so without the clear the assertion is about the file.
@@ -2798,7 +2830,7 @@ ${allHandlers.map((h) => `  expect(handlers.${h}).not.toHaveBeenCalled();`).join
   return `test("${name} form #${idx} accepts input and submits", async () => {
   const { container } = renderTarget();
   void container;
-${fillSteps.join("\n")}
+${openStep}${fillSteps.join("\n")}
 ${valueAsserts.join("\n") || "  // no text field whose value could be read back"}
   ${submitClick}
 ${submitAfter}

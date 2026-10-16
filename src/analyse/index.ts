@@ -9,6 +9,7 @@ import type {
   RenderMode,
 } from "../types.ts";
 import { bridgeDataShapes } from "./childBridge.ts";
+import { childrenIntoSlot } from "./childrenIntoSlot.ts";
 import { deriveCompoundFamily } from "./compoundFamily.ts";
 import { dataConstantExports } from "./dataExports.ts";
 import { extractChildAttrs } from "./extractChildAttrs.ts";
@@ -266,6 +267,9 @@ async function analyseOne(
   const initialRender = initialRenderExpression(unit.bodyNode, renderEnv);
   const flows = extractFlows(unit.bodyNode, renderEnv, hostTag);
   const rootTag = extractRootTag(unit.bodyNode, renderEnv, hostTag);
+  // Fixture-children shape: an asChild Slot / <Slot> child site cannot take
+  // the bare text the unit template otherwise passes (Slot clones elements).
+  const childrenSlotted = acceptsChildren && childrenIntoSlot(unit.bodyNode);
   const staticText = extractStaticText(unit.bodyNode, renderEnv);
   // Sibling components' modes, so a wrapper around a part is recognised as one
   // too. Computed without local modes of their own: one hop is enough for the
@@ -424,6 +428,7 @@ async function analyseOne(
     variantOptions,
     variantClasses,
     acceptsChildren,
+    ...(childrenSlotted ? { childrenSlotted: true } : {}),
     ...(hostElement ? { hostElement } : {}),
     ...(hostDialect === "native" ? { hostDialect } : {}),
     state,
