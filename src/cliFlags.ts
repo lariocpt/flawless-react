@@ -251,6 +251,7 @@ const PRELUDE = `flawless-react — multi-task quality kit for React components
 Usage:
   flawless-react <entry-or-glob> [options]
   flawless-react                       (interactive menu)
+  flawless-react skills <list|install> (the agent skills this binary carries)
 
 Positional:
   <entry-or-glob>      A .tsx file path or a glob (e.g. "src/**/*.tsx").
@@ -259,7 +260,9 @@ Positional:
 Options:
 `;
 
-function renderBlock(flags: readonly FlagDoc[]): string {
+/** Exported for the `skills` subcommand's own help, so both surfaces lay the
+ *  flags out in one column with one rule rather than two hand-set tables. */
+export function renderBlock(flags: readonly FlagDoc[]): string {
   let out = "";
   for (const f of flags) {
     const lines = typeof f.summary === "string" ? [f.summary] : f.summary;

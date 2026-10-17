@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkLines } from "../src/cli.ts";
 import { FLAG_NAMES, FLAGS, MAINTENANCE_FLAGS } from "../src/cliFlags.ts";
+import { SKILL_FLAGS } from "../src/skills/spec.ts";
 import { ALL_TASK_IDS } from "../src/tasks/index.ts";
 import {
   commandLines,
@@ -124,9 +125,15 @@ function inlineCode(markdown: string): string[] {
 
 describe("flag inventory", () => {
   test("every flag named in prose is real, or a listed foreign flag", async () => {
-    // Both surfaces: the run options, and the parse-only maintenance flags that
-    // deliberately sit outside them (see MAINTENANCE_FLAGS' comment).
-    const known = new Set([...FLAG_NAMES, ...MAINTENANCE_FLAGS.map((f) => f.name)]);
+    // All three surfaces: the run options, the parse-only maintenance flags that
+    // deliberately sit outside them (see MAINTENANCE_FLAGS' comment), and the
+    // flags of the `skills` subcommand — a prose mention of `--select` is a
+    // promise about `skills install`, not about a run.
+    const known = new Set([
+      ...FLAG_NAMES,
+      ...MAINTENANCE_FLAGS.map((f) => f.name),
+      ...SKILL_FLAGS.map((f) => f.name),
+    ]);
     const unknown = new Set<string>();
     for (const rel of corpus()) {
       for (const span of inlineCode(await readProse(rel))) {

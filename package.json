@@ -16,6 +16,8 @@
   "files": [
     "bin",
     "src",
+    "scripts",
+    ".agents/skills",
     "README.md",
     "LICENSE"
   ],
@@ -27,7 +29,8 @@
     "lint": "biome lint",
     "format": "biome format --write",
     "check": "biome check",
-    "check:fix": "biome check --write"
+    "check:fix": "biome check --write",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^0.7.0",

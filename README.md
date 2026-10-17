@@ -30,6 +30,7 @@ Once the suite is generated, it belongs to you. A re-run regenerates derived fil
 - [Worked example](#worked-example)
 - [Working with stores and APIs](#working-with-stores-and-apis)
 - [Programmatic API](#programmatic-api)
+- [Agent skills](#agent-skills)
 - [Limits & assumptions](#limits--assumptions)
 - [Troubleshooting](#troubleshooting)
 - [Further reading](#further-reading)
@@ -394,6 +395,44 @@ Everything is derived from static analysis, so the specs only claim what can be 
 - async server components get `await Component(props)` plus `vi.mock` stubs for their data imports (and no browser spec — they can't mount).
 
 Anything that could not be derived is left as a `TODO(flawless)` marker rather than a silently-passing assertion. The workflow is: generate, run, fill the TODOs with real fixtures, rerun. With `--colocate`, regeneration won't touch specs you've hardened.
+
+## Agent skills
+
+The repo ships a skill per feature under `.agents/skills/` — `flawless-react` for
+the whole tool, `flawless-unit-browser`, `flawless-e2e-load`, `flawless-findings`,
+`flawless-regen`, `flawless-api`, `flawless-expo` — and Claude Code, Codex, Cursor
+and OpenCode all read that directory. A skill is what stops an agent guessing at
+this tool: how the browser plane differs from the unit plane, which findings are
+suppressible, what a `--changed` run does and does not rewrite.
+
+```bash
+flawless-react skills list            # what is installed, in both scopes
+flawless-react skills install         # pick them in a menu
+flawless-react skills install --all   # every skill, no menu (CI, scripts)
+flawless-react skills install --select flawless-react,flawless-e2e-load
+flawless-react skills install --global  # into ~/.agents/skills, every project
+```
+
+They go to `.agents/skills/<name>/SKILL.md`, and each also gets its own link at
+`.claude/skills/<name>` — Claude Code looks for skills there, and reads one file, so
+it gets a link per skill and never a directory of things it was not asked to load.
+That is why the install reports two counts:
+
+```
+✔ installed 3, up-to-date 4 → /repo/.agents/skills
+  linked 3 into /repo/.claude/skills for Claude Code
+```
+
+Three rules worth knowing. **The install never overwrites**: a `SKILL.md` you have
+edited since is kept, named, and is why you may need `--force`. **Nothing in the
+Claude layer can fail an install** — the bytes are written first, and a `.claude`
+directory that is not ours to change is left alone and reported, including one that
+links somewhere else (`--force` included). **Skills are embedded in the binary**, so
+this works from a published install on a machine with no checkout of this repo.
+
+`npm install` asks whether to install them; an interactive
+`flawless-react` run asks once at the end, and stops asking as soon as the project
+has one. `FLAWLESS_NO_SKILLS=1` silences both.
 
 ## Limits & assumptions
 

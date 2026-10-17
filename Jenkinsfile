@@ -205,7 +205,9 @@ pipeline {
                         rm -rf npmstage && mkdir npmstage
                         # Only what package.json's files[] declares. `bin` is the bun shim, not
                         # the compiled artifact — that goes to the apps plane, not the registry.
-                        cp -r bin src README.md LICENSE package.json npmstage/
+                        # `.agents/skills` is what `skills install` reads, and `scripts` holds the
+                        # postinstall prompt: drop either and the published CLI loses the verb.
+                        cp -r bin src scripts .agents README.md LICENSE package.json npmstage/
                         rm -f npmstage/bin/flawless-react-bin
                         sed -i '0,/"version"/s|"version"[[:space:]]*:[[:space:]]*"[^"]*"|"version": "'"$NPM_VERSION"'"|' npmstage/package.json
 
