@@ -214,6 +214,41 @@ describe("a component whose guard the analyser cannot decide", () => {
   });
 });
 
+describe("a component whose render a library decides", () => {
+  test("its spec stands down from the markup floor only when the container is empty", async () => {
+    // invoify's Toast: a clean mount, an empty container, and a red spec that
+    // blamed the component for Radix's closed-at-rest contract. Its five
+    // sibling exports in the same file passed the same floor, so the difference
+    // is only observable at runtime.
+    const specs = await specsFor("RadixDisclosure.tsx");
+    const browser = specs.get("browser/ClosedToast.spec.ts") ?? "";
+    expect(browser).toContain(
+      'test.skip(true, "renders nothing into the container at these props — @radix-ui/react-toast is closed at rest")',
+    );
+    // A stand-down about markup, not about the mount: no-errors and the host's
+    // by-name committed render still have to hold.
+    expect(browser).toContain("expect(errors).toEqual([])");
+    expect(browser).toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+  });
+
+  test("an eager Radix primitive keeps the plain unconditional floor", async () => {
+    // The list is not `@radix-ui/` wholesale, and this is why: Slot, Label,
+    // Switch and the rest render eagerly, so an empty container from one of
+    // those IS a broken render.
+    const specs = await specsFor("SlotOnly.tsx");
+    const browser = specs.get("browser/SlotButton.spec.ts") ?? "";
+    expect(browser).not.toContain("is closed at rest");
+    expect(browser).toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+  });
+
+  test("a component with copy of its own keeps the plain unconditional floor", async () => {
+    const specs = await specsFor("RadixWithCopy.tsx");
+    const browser = specs.get("browser/ToastBanner.spec.ts") ?? "";
+    expect(browser).not.toContain("is closed at rest");
+    expect(browser).toContain("expect(rootHtml.length).toBeGreaterThan(0)");
+  });
+});
+
 describe("a component that logs errors itself", () => {
   test("keeps its uncaught-error assertion and drops the console one", async () => {
     const tree = await treeFor("GatedSubmit.tsx");

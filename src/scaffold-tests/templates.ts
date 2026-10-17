@@ -1611,7 +1611,10 @@ test("${name} forwards className to the markup it renders", () => {
  * while still catching a variant that reaches no DOM at all.
  *
  * Bails when any two options share a class string (they legitimately render the
- * same), when one is empty, or when there is only one option to compare.
+ * same), when one is empty, or when there is only one option to compare. When
+ * the component's own render carries no class attribute at all the test SKIPS
+ * itself with a reason: the comparison has no observable to run against, which
+ * is a fact about the component (Radix's Toast.Root) rather than a regression.
  */
 function emitVariantDistinctness(name: string, info: ComponentInfo): string {
   const classes = info.variantClasses ?? {};
@@ -1625,7 +1628,21 @@ function emitVariantDistinctness(name: string, info: ComponentInfo): string {
     if (new Set(strings).size !== strings.length) continue;
 
     parts.push(`
-test("${name}: every \`${key}\` option renders distinct markup", () => {
+test("${name}: every \`${key}\` option renders distinct markup", (ctx) => {
+  // The witness is an element carrying a class, so first check that this
+  // component has one at all. Radix's Toast.Root hands jsdom an element with
+  // NO class attribute — invoify's Toast failed below on variant="default",
+  // the option the component itself picks — and every option after it would
+  // have failed the same way for a reason the spec cannot see: the cva table's
+  // classes reach the DOM through Radix's styling context, not through the
+  // rendered element. A comparison with no observable is the component's
+  // shape, not a regression: skip once, named, instead of calling it red.
+  const probe = renderTarget();
+  const probeCarriesClass = probe.container.querySelector("[class]") !== null;
+  probe.unmount();
+  if (!probeCarriesClass) {
+    ctx.skip("no element in this component's render carries a class — nothing to compare");
+  }
   const seen = ${JSON.stringify(options)}.map((option) => {
     const { container, unmount } = renderTarget({ ${JSON.stringify(key)}: option });
     const el = container.querySelector("[class]");
@@ -3142,10 +3159,32 @@ test(\`\${NAME}: no interactions detected — mount-only smoke above is sufficie
  * entirely was too much, though: when the guard DOES pass, the component's
  * literal copy has to be there, and that is still checkable. The conditional is
  * the honest shape.
+ *
+ * The third case is delegation. A component whose whole output is a primitive
+ * from an open-state library (Radix's `Root`, Ark's, Headless UI's) mounts to an
+ * EMPTY container at rest — the library decides whether anything renders until
+ * something opens it. invoify's Toast failed the floor there while its mount was
+ * clean, and its five sibling exports passed it, so no static rule separates
+ * them: the stand-down is taken at RUNTIME, only when the container really is
+ * empty, and only for a component with no literal copy of its own (a component
+ * that owns copy and renders nothing IS broken, and still goes red).
  */
 function guardedMountAssertion(guarded: boolean, info: ComponentInfo): string {
   if (!guarded) {
+    const delegated = delegatedRenderModules(info);
+    if (delegated.length === 0 || (info.staticText ?? []).some((t) => t.trim().length > 0)) {
+      return `  const rootHtml = await page.locator("#root").innerHTML();
+  expect(rootHtml.length).toBeGreaterThan(0);`;
+    }
     return `  const rootHtml = await page.locator("#root").innerHTML();
+  if (rootHtml.trim().length === 0) {
+    // An empty container is not evidence about this component: its output is
+    // ${delegated.join(", ")}, whose primitives render nothing until they are
+    // opened. What is asserted here is the mount — no console error above, and
+    // mount() itself resolved, which means the host saw a committed render of
+    // THIS component by name. Markup stays a claim the source cannot make.
+    test.skip(true, "renders nothing into the container at these props — ${delegated.join(", ")} is closed at rest");
+  }
   expect(rootHtml.length).toBeGreaterThan(0);`;
   }
   // The longest literal is the most identifying thing the source offers.
@@ -3165,6 +3204,47 @@ function guardedMountAssertion(guarded: boolean, info: ComponentInfo): string {
   if (rootHtml.trim().length > 0) {
     expect(await page.getByText(${JSON.stringify(witness)}).count()).toBeGreaterThan(0);
   }`;
+}
+
+/**
+ * Radix primitives whose `Root` renders NOTHING until something opens them —
+ * the library's documented contract, and invoify's Toast: a clean, error-free
+ * mount into an empty container while its five sibling exports in the same file
+ * rendered fine. Deliberately NOT `@radix-ui/` wholesale: Slot, Label, Switch,
+ * Avatar and the rest render eagerly, and a component made of those which came
+ * back empty WOULD be broken. Headless UI and Ark UI are left out for the same
+ * reason — no corpus evidence, and their buttons and triggers render eagerly too.
+ */
+const LIBRARY_DECIDED_RENDER_PREFIXES = [
+  "@radix-ui/react-toast",
+  "@radix-ui/react-dialog",
+  "@radix-ui/react-alert-dialog",
+  "@radix-ui/react-popover",
+  "@radix-ui/react-tooltip",
+  "@radix-ui/react-hover-card",
+  "@radix-ui/react-dropdown-menu",
+  "@radix-ui/react-context-menu",
+  "@radix-ui/react-menubar",
+  "@radix-ui/react-navigation-menu",
+  "@radix-ui/react-menu",
+  // Injected through Next's router, outside the mounted container, so an empty
+  // container is the expected shape of a component built only out of them.
+  "next/script",
+  "next/head",
+];
+
+/**
+ * Which of those this component's file imports, for the mount-test reason. The
+ * import is the only evidence available here — the sibling that renders eagerly
+ * is separated from the closed-at-rest one at RUNTIME, not by this list.
+ */
+function delegatedRenderModules(info: ComponentInfo): string[] {
+  const seen = new Set<string>();
+  for (const m of info.moduleImports ?? []) {
+    if (LIBRARY_DECIDED_RENDER_PREFIXES.some((p) => m.specifier.startsWith(p)))
+      seen.add(m.specifier);
+  }
+  return [...seen].sort();
 }
 
 /** The Playwright form of a disclosure trigger, so a browser spec can open it. */
