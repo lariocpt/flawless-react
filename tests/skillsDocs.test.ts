@@ -1,4 +1,6 @@
-// The six .claude/skills entries, checked as the shipped documentation they are.
+// The skill entries under .agents/skills, checked as the shipped documentation
+// they are. (.claude/skills holds a symlink per skill into this same corpus, so
+// there is one set of bytes to lint, not two.)
 //
 // They are what a coding agent reads to drive this tool, and round 8 found one
 // documenting a `throw` the tool never emits. Their fenced examples are linted
@@ -12,21 +14,41 @@
 // overwriting.
 
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { REPO_ROOT, readProse } from "./helpers/docs.ts";
 
-const SKILLS_DIR = path.join(REPO_ROOT, ".claude", "skills");
+const SKILLS_DIR = path.join(REPO_ROOT, ".agents", "skills");
+const COMPAT_DIR = path.join(REPO_ROOT, ".claude", "skills");
 const skillNames = readdirSync(SKILLS_DIR).sort();
 
 describe("skill frontmatter", () => {
   // A canary: a refactor that stops finding skills must fail, not pass quietly.
-  test("all six skills are present", () => {
+  test("the whole skill corpus is found", () => {
     expect(skillNames.length).toBeGreaterThanOrEqual(6);
   });
 
+  test("the compat root holds a link per skill, and only those", () => {
+    // The compat layer is the one thing an agent notices when it is missing: it
+    // reads `.claude/skills`, finds nothing, and answers that this tool has no
+    // skills. A new skill added without its link, or a leftover link after a
+    // rename, is invisible until that happens.
+    expect(readdirSync(COMPAT_DIR).sort()).toEqual(skillNames);
+    for (const name of skillNames) {
+      const compat = path.join(COMPAT_DIR, name);
+      // lstat, not stat: stat follows the link and reports the directory it
+      // points at, which would make this assertion pass for a real directory too.
+      expect(lstatSync(compat).isSymbolicLink()).toBe(true);
+      // A relative link, so the pair survives a moved checkout; and it must
+      // land on the canonical directory, not on a sibling that shares its name.
+      expect(readlinkSync(compat)).toBe(`../../.agents/skills/${name}`);
+      expect(realpathSync(compat)).toBe(realpathSync(path.join(SKILLS_DIR, name)));
+      expect(existsSync(path.join(compat, "SKILL.md"))).toBe(true);
+    }
+  });
+
   test.each(skillNames)("%s", async (name) => {
-    const text = await readProse(`.claude/skills/${name}/SKILL.md`);
+    const text = await readProse(`.agents/skills/${name}/SKILL.md`);
     const fm = /^---\n([\s\S]*?)\n---\n/.exec(text);
     if (fm === null) throw new Error(`${name}: no frontmatter block`);
     const block = fm[1] as string;
@@ -44,7 +66,7 @@ describe("skill cross-references", () => {
     const real = new Set(skillNames);
     const dangling = new Set<string>();
     for (const name of skillNames) {
-      const text = await readProse(`.claude/skills/${name}/SKILL.md`);
+      const text = await readProse(`.agents/skills/${name}/SKILL.md`);
       for (const m of text.matchAll(/\bflawless-[a-z0-9-]+\b/g)) {
         const ref = m[0];
         // "flawless-react" is both a skill and the tool's own name, and the
@@ -61,7 +83,7 @@ describe("skill cross-references", () => {
   // The umbrella skill's description promises five deeper siblings by name.
   // That list is a claim like any other, and nothing had ever checked it.
   test("the umbrella skill's named siblings all exist", async () => {
-    const text = await readProse(".claude/skills/flawless-react/SKILL.md");
+    const text = await readProse(".agents/skills/flawless-react/SKILL.md");
     const desc = /^description: (.+)$/m.exec(text);
     if (desc === null) throw new Error("flawless-react: no description");
     const named = [...(desc[1] as string).matchAll(/flawless-[a-z0-9-]+/g)]
