@@ -365,9 +365,11 @@ the output dir:
 
 ## The docs are part of the deliverable
 
-Everything this project claims about itself — `README.md`, `docs/*.md`, the six
-`.claude/skills` entries, and the separate website repo — is checked against the
-code, not trusted.
+Everything this project claims about itself — `README.md`, `docs/*.md`, the
+skills under `.agents/skills`, and the separate website repo — is checked
+against the code, not trusted. `.claude/skills` is a per-skill symlink into that
+same corpus for agents that look only there, so the lint walks one root and every
+agent reads the same bytes.
 
 That is new, and it is new because nothing had ever checked it. No test in
 `tests/` opened a prose file, and a single reading pass in round 8 turned up a

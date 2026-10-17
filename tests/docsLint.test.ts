@@ -1,7 +1,7 @@
 // The shipped prose, checked against the code it describes.
 //
 // Until this file existed, nothing in tests/ opened README.md, docs/** or
-// .claude/skills/**. The greps that looked like they did were about the READMEs
+// .agents/skills/**. The greps that looked like they did were about the READMEs
 // the tool WRITES into flawless/e2e/ and flawless/load/. So every claim this
 // project makes about itself was unguarded, and round 8 found what that costs
 // in a single reading pass: a skill documenting a throw the tool never emits, a
@@ -47,8 +47,8 @@ const corpus = (): string[] => [...proseFiles(), ...websiteProseFiles()];
 const MIN_INVOCATIONS: Record<string, number> = {
   "README.md": 6,
   "docs/extending.md": 1,
-  ".claude/skills/flawless-react/SKILL.md": 2,
-  ".claude/skills/flawless-regen/SKILL.md": 1,
+  ".agents/skills/flawless-react/SKILL.md": 2,
+  ".agents/skills/flawless-regen/SKILL.md": 1,
 };
 
 describe("documented invocations parse against the live CLI", () => {

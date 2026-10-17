@@ -97,9 +97,9 @@ describe("prose counts that name a number in the source", () => {
     const files = [
       "README.md",
       "docs/reviews/2026-08-expo-probes.md",
-      ".claude/skills/flawless-react/SKILL.md",
-      ".claude/skills/flawless-expo/SKILL.md",
-      ".claude/skills/flawless-findings/SKILL.md",
+      ".agents/skills/flawless-react/SKILL.md",
+      ".agents/skills/flawless-expo/SKILL.md",
+      ".agents/skills/flawless-findings/SKILL.md",
     ];
     const wrong: string[] = [];
     for (const rel of files) {

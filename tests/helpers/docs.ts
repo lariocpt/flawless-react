@@ -1,7 +1,7 @@
 // Pulling command lines out of the project's own prose.
 //
-// The shipped docs are hand-maintained: README.md, docs/*.md, the seven
-// .claude/skills entries and (when the checkout is beside this one) the
+// The shipped docs are hand-maintained: README.md, docs/*.md, the skill entries
+// under `.agents/skills` and (when the checkout is beside this one) the
 // website's mdx corpus all carry copies of the same invocations, with no
 // generation step between them and the code. That is the thing that rots, and
 // round 8 proved it does — a skill documented a throw the tool never emits, an
@@ -106,14 +106,19 @@ export function commandLines(markdown: string): string[] {
  * docs/reviews/ is deliberately absent. Those are dated ledgers describing what
  * was true at the time — linting them against today's code would demand that
  * history be rewritten whenever a finding is fixed.
+ *
+ * The skills are read from `.agents/skills`, the canonical root. `.claude/skills`
+ * holds a per-skill symlink into it for agents that only look there, and is not
+ * walked: a symlink is the same bytes as the file it points at, and linting both
+ * would report every finding in the corpus twice.
  */
 export function proseFiles(): string[] {
   const files = ["README.md"];
   for (const f of readdirSync(path.join(REPO_ROOT, "docs"))) {
     if (f.endsWith(".md")) files.push(`docs/${f}`);
   }
-  for (const d of readdirSync(path.join(REPO_ROOT, ".claude", "skills"))) {
-    files.push(`.claude/skills/${d}/SKILL.md`);
+  for (const d of readdirSync(path.join(REPO_ROOT, ".agents", "skills"))) {
+    files.push(`.agents/skills/${d}/SKILL.md`);
   }
   return files;
 }
