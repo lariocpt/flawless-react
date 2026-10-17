@@ -688,3 +688,92 @@ describe("stale profile spec sweep (FR-062)", () => {
     expect((await Bun.file(live).text()).length).toBeGreaterThan(0);
   });
 });
+
+describe("a kept host/main.tsx follows the provider", () => {
+  // The harness is write-once, so a kept main.tsx keeps importing the provider
+  // the FIRST run chose. When the provider moves — a pages `_app` that cannot
+  // mount under jsdom now derives to flawless/provider.tsx — the kept import
+  // pulls a file that throws, and every browser and profile mount dies on
+  // "mount: X did not render within 5000ms" without ever naming the cause
+  // (talkformai: 18 failed, all of them a Supabase client constructor).
+  test("re-points the import the tool owns and keeps every hand edit", async () => {
+    const tree = await analyse({ entry: DASHBOARD, depth: 0, includeChildren: false });
+    const out = await tmpDir();
+    const first = path.resolve(__dirname, "fixtures/_AppProvider.tsx");
+    await scaffold(tree, {
+      outDir: out,
+      variants: 2,
+      force: false,
+      report: false,
+      provider: first,
+      apiSpec: API_SPEC,
+    });
+    const main = path.join(out, "host/main.tsx");
+    const text = await Bun.file(main).text();
+    const from = /^import AppProvider from (['"])([^'"]+)\1;$/m.exec(text)?.[2];
+    expect(from).toBeDefined();
+    // The hand wiring that makes this file write-once in the first place.
+    await Bun.write(main, `${text}\n// MY OWN WIRING\n`);
+
+    const second = path.join(out, "provider.tsx");
+    await Bun.write(
+      second,
+      "export default function P({ children }: { children: unknown }) {\n  return children;\n}\n",
+    );
+    const res = await scaffold(tree, {
+      outDir: out,
+      variants: 2,
+      force: false,
+      report: false,
+      provider: second,
+      apiSpec: API_SPEC,
+    });
+    expect(res.providerImportRefresh).toEqual({ from, to: "../provider" });
+    const after = await Bun.file(main).text();
+    expect(after).toContain("// MY OWN WIRING");
+    expect(after).toContain('import AppProvider from "../provider";');
+    expect(after).not.toContain(from);
+    // A re-run agrees with itself: nothing left to say.
+    const again = await scaffold(tree, {
+      outDir: out,
+      variants: 2,
+      force: false,
+      report: false,
+      provider: second,
+      apiSpec: API_SPEC,
+    });
+    expect(again.providerImportRefresh).toBeUndefined();
+    expect(again.providerImportWarning).toBeUndefined();
+  });
+
+  test("an import shape the tool does not own is named, never rewritten", async () => {
+    const tree = await analyse({ entry: DASHBOARD, depth: 0, includeChildren: false });
+    const out = await tmpDir();
+    await scaffold(tree, {
+      outDir: out,
+      variants: 2,
+      force: false,
+      report: false,
+      provider: path.resolve(__dirname, "fixtures/_AppProvider.tsx"),
+      apiSpec: API_SPEC,
+    });
+    const main = path.join(out, "host/main.tsx");
+    const hand = (await Bun.file(main).text()).replace(
+      /^import AppProvider from .*$/m,
+      'import { AppProvider } from "./hand-picked-provider";',
+    );
+    await Bun.write(main, hand);
+
+    const res = await scaffold(tree, {
+      outDir: out,
+      variants: 2,
+      force: false,
+      report: false,
+      provider: path.join(out, "provider.tsx"),
+      apiSpec: API_SPEC,
+    });
+    expect(res.providerImportRefresh).toBeUndefined();
+    expect(res.providerImportWarning).toContain("does not recognise");
+    expect(await Bun.file(main).text()).toContain("./hand-picked-provider");
+  });
+});

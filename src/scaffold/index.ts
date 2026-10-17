@@ -34,6 +34,14 @@ export interface ScaffoldResult {
   staleRemoved: string[];
   /** Stale profile specs kept (hand work or unprovable) — the owner's call. */
   staleKept: StaleProfileSpec[];
+  /**
+   * The kept host/main.tsx imported a provider this run no longer resolves to,
+   * and the tool re-pointed that ONE import line (specifiers as the file had
+   * them and as it now does). Everything else in the file is untouched.
+   */
+  providerImportRefresh?: { from: string; to: string };
+  /** The kept host/main.tsx names AppProvider in a shape the tool will not touch. */
+  providerImportWarning?: string;
 }
 
 /** A stale profile spec the writer refused to remove, and why. */
@@ -101,6 +109,7 @@ export async function scaffold(
     ...(opts.heaps ? { heaps: opts.heaps } : {}),
     report: opts.report,
     providerImportPath,
+    ...(opts.provider ? { providerFile: opts.provider } : {}),
     mockRoutes,
     nextjsHost: opts.nextjsHost,
     mswSetup: opts.mswSetup,
@@ -161,6 +170,26 @@ export async function scaffold(
     }
   }
 
+  // A kept host/main.tsx is user-owned — its ALL spread and hand wiring survive
+  // every run — but `import AppProvider from "…"` is not a tuned value: it names
+  // the provider THIS run resolved. When the provider moves, the kept import
+  // keeps pulling the old file and the whole host mounts the wrong tree. On the
+  // talkformai dogfood a pages `_app` that cannot mount began deriving to
+  // flawless/provider.tsx while main.tsx went on importing src/pages/_app, so
+  // all 18 browser mounts died as "mount: X did not render within 5000ms" — a
+  // timeout that never mentions the cause, which was a Supabase client
+  // constructor throwing inside _app. Re-point the one line and report it: an
+  // intentional repoint is then visible in git diff, not silently reverted.
+  let providerImportRefresh: { from: string; to: string } | undefined;
+  let providerImportWarning: string | undefined;
+  if (providerImportPath && kept.includes(mainPath)) {
+    const repair = await refreshProviderImport(mainPath, providerImportPath);
+    if (repair) {
+      providerImportRefresh = repair.refreshed;
+      providerImportWarning = repair.warning;
+    }
+  }
+
   return {
     written,
     kept,
@@ -168,7 +197,48 @@ export async function scaffold(
     preSplitMain,
     staleRemoved,
     staleKept,
+    ...(providerImportRefresh ? { providerImportRefresh } : {}),
+    ...(providerImportWarning ? { providerImportWarning } : {}),
   };
+}
+
+/** Comparable module id for a specifier written inside `fromFile` (extension-blind). */
+function specifierId(fromFile: string, specifier: string): string {
+  return path.resolve(path.dirname(fromFile), specifier).replace(/\.(tsx|jsx|ts|mjs|cjs|js)$/, "");
+}
+
+/**
+ * Re-point a kept host/main.tsx's AppProvider import when it disagrees with the
+ * provider this run resolved. Returns nothing when there is nothing to say.
+ *
+ * Only the exact line the tool emits is rewritten — quote style preserved — so
+ * a named import, a multi-line import, or an aliased default is left alone and
+ * reported instead. Those shapes mean a hand edit, and hand edits are why this
+ * file is write-once.
+ */
+async function refreshProviderImport(
+  mainPath: string,
+  want: string,
+): Promise<{ refreshed?: { from: string; to: string }; warning?: string } | undefined> {
+  const text = await Bun.file(mainPath).text();
+  const wantNoExt = want.replace(/\.(tsx|jsx|ts)$/, "");
+  const match = /^import AppProvider from (['"])([^'"]+)\1;$/m.exec(text);
+  if (!match) {
+    return text.includes("AppProvider")
+      ? {
+          warning:
+            "host/main.tsx references AppProvider through an import this tool does not " +
+            "recognise — its provider import was left alone and may not match --provider",
+        }
+      : undefined;
+  }
+  const [, quote, from] = match;
+  if (specifierId(mainPath, from) === specifierId(mainPath, want)) return undefined;
+  await Bun.write(
+    mainPath,
+    text.replace(match[0], `import AppProvider from ${quote}${wantNoExt}${quote};`),
+  );
+  return { refreshed: { from, to: wantNoExt } };
 }
 
 export { renderSuite } from "./templates.ts";

@@ -351,7 +351,13 @@ the output dir:
 - **Provider substitution** — when the auto-detected app resolver is an async
   server layout, `nextjs/providerWrapper.ts` derives a client-safe
   `flawless/provider.tsx` from the `{children}`-enclosing JSX chain and uses
-  that instead. Refreshed by `--force`; the fixtures file beside it is not.
+  that instead. A pages-router `_app.tsx` is the same problem wearing a
+  different hat: it renders `<Component />` rather than `{children}`, so the
+  chain is anchored on `<Component />` — mounting `_app` itself would wrap
+  nothing. Providers from a library the harness stubs to signed out are dropped
+  with `auth` as their reason, and a component that reads a library context
+  nobody supplies gets a generated provider from `analyse/providerWraps.ts`.
+  Refreshed by `--force`; the fixtures file beside it is not.
 - **Style adoption** — `scaffold/adoptStyle.ts` reformats everything written
   with the host project's own biome or prettier, and JSON merges preserve the
   file's existing indentation. Generation should read as an additive diff, not

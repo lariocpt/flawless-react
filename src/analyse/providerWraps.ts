@@ -159,6 +159,45 @@ import { MemoryRouter } from "react-router-dom";`,
   // throw for another.
   return <MemoryRouter>{children}</MemoryRouter>;`,
   },
+  {
+    // Form-through-context: useFormContext / useController / useWatch /
+    // useFieldArray / useFormState read the form off React context and get
+    // NULL with no FormProvider above the mount, which the library then
+    // dereferences — "Cannot read properties of null (reading 'control')".
+    // Wrapping is what the library's own test docs prescribe. Discovered on
+    // invoify's shadcn form.tsx, where it is also NOT the whole story: that
+    // FormField spec passes no props at all, because its contract arrives as
+    // one opaque spread (...props: ControllerProps<…> from node_modules), so
+    // with the wrap in place it fails one level deeper on the missing `name`.
+    // A required prop the analyser cannot see is a different gap, and stays a
+    // documented tail rather than being papered over with a invented form.
+    // A component that supplies `control` itself is wrapped for nothing: an
+    // outer provider loses to an explicit control, so the wrap stays harmless.
+    //
+    // React 19 exports its own useFormState, and the gate matches on the
+    // IMPORTED MODULE as well as the name (deriveContextProviderWraps), so
+    // listing it here cannot wrap a component that got it from "react".
+    module: "react-hook-form",
+    hooks: [
+      "useController",
+      "useFieldArray",
+      "useFormState",
+      "useWatch",
+      // The read-only accessor the rest of the family is built on, and the one
+      // shadcn's form.tsx imports directly.
+      "useFormContext",
+    ],
+    componentName: "FlawlessFormProvider",
+    fileBase: "flawless-form.tsx",
+    imports: `import type { ReactNode } from "react";
+import { FormProvider, useForm } from "react-hook-form";`,
+    body: `  // A form with no defaultValues and nothing wired to submit: a field
+  // component's contract is about the field, not about data, and an unset value
+  // is the honest starting point for a spec that supplies none. Fresh per mount
+  // so one spec's typing cannot leak into the next spec's formState.
+  const methods = useForm();
+  return <FormProvider {...methods}>{children}</FormProvider>;`,
+  },
 ];
 
 export interface LibraryProviderShim {
@@ -583,6 +622,66 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
   const explicitProvider = (base: string): boolean => usage.some((r) => r.provider.has(base));
   const rootIsProvider = (r: { root: Set<string> }, base: string): boolean =>
     r.root.has(base) && !explicitProvider(base);
+  // `const ToastProvider = ToastPrimitives.Provider` — the shadcn shape, where
+  // the provider is an ALIAS of the namespace's own `.Provider` rather than a
+  // component declaration. No parsed unit renders it, so a file full of members
+  // (`Toast` = `ToastPrimitives.Root`) looked unwrappable while exporting
+  // exactly the provider that would have wrapped them: invoify's Toast, Toaster
+  // and every variant spec died on "must be used within ToastProvider". Only an
+  // EXPORTED alias is a wrap — an import is the only way the mount reaches it —
+  // and it outranks the Root-as-provider reading, because a radix Root consumes
+  // that same context: wrapping its members in the Root just reproduces the
+  // throw one level up.
+  const aliasByBase = new Map<string, string[]>();
+  const exportedAs = new Map<string, string>();
+  const markExported = (local: string, exported: string): void => {
+    if (!exportedAs.has(local)) exportedAs.set(local, exported);
+  };
+  const isExportStatement = (n: ts.Node): boolean =>
+    ts.canHaveModifiers(n) &&
+    (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  for (const stmt of parsed.sourceFile.statements) {
+    if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name)) continue;
+        if (isExportStatement(stmt)) markExported(d.name.text, d.name.text);
+        const init = d.initializer;
+        if (
+          init &&
+          ts.isPropertyAccessExpression(init) &&
+          ts.isIdentifier(init.expression) &&
+          init.name.text === "Provider" &&
+          external.has(init.expression.text)
+        ) {
+          aliasByBase.set(init.expression.text, [
+            ...(aliasByBase.get(init.expression.text) ?? []),
+            d.name.text,
+          ]);
+        }
+      }
+    } else if (ts.isExportDeclaration(stmt)) {
+      const clause = stmt.exportClause;
+      if (clause && ts.isNamedExports(clause)) {
+        for (const spec of clause.elements) {
+          markExported((spec.propertyName ?? spec.name).text, spec.name.text);
+        }
+      }
+    } else if (
+      (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+      stmt.name &&
+      isExportStatement(stmt)
+    ) {
+      markExported(stmt.name.text, stmt.name.text);
+    }
+  }
+  const aliasProviderFor = (base: string): ProviderRef | undefined => {
+    for (const local of aliasByBase.get(base) ?? []) {
+      const exported = exportedAs.get(local);
+      if (exported !== undefined)
+        return { componentName: exported, filePath: parsed.filePath, exportKind: "named" };
+    }
+    return undefined;
+  };
   const providerFor = (base: string): number =>
     usage.findIndex(
       (r, i) =>
@@ -593,31 +692,41 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
     );
   let provider: ProviderRef | undefined;
   for (const base of memberBases) {
-    const pi = providerFor(base);
-    if (pi === -1) continue;
-    const u = parsed.components[pi];
+    // An explicit <N.Provider> renderer is the file's own mount surface and
+    // wins; with none, an exported alias of <N.Provider> beats the Root
+    // reading; with neither, the Root (or bare) renderer provides.
+    const aliased = explicitProvider(base) ? undefined : aliasProviderFor(base);
+    const pi = aliased ? -1 : providerFor(base);
+    const unit = pi === -1 ? undefined : parsed.components[pi];
+    // `providerFor` already excludes a unit the file does not export; restating
+    // it here is what narrows `exportKind` to the two kinds a mount can import.
+    const fromUnit: ProviderRef | undefined =
+      unit && unit.exportKind !== "none"
+        ? {
+            componentName: unit.componentName,
+            filePath: parsed.filePath,
+            exportKind: unit.exportKind,
+            exportedAs: unit.exportedAs,
+          }
+        : undefined;
+    const ref = aliased ?? fromUnit;
+    if (!ref) continue;
     // A unit that mounts the provider itself — as the <N.Provider> tag OR as
     // the file's wrapper around it (Toaster renders <ToastProvider>, not
     // <ToastPrimitive.Provider>) — supplies its own context and a nested
     // second provider can actively break it.
-    const providerTag = u.componentName;
+    const providerTag = ref.componentName;
     usage.forEach((r, ui) => {
       if (
         r.member.has(base) &&
-        !r.provider.has(base) &&
-        !rootIsProvider(r, base) &&
+        (aliased || (!r.provider.has(base) && !rootIsProvider(r, base))) &&
         ui !== pi &&
         !r.bareAll.has(providerTag)
       ) {
         consumers.add(parsed.components[ui].componentName);
       }
     });
-    provider ??= {
-      componentName: u.componentName,
-      filePath: parsed.filePath,
-      exportKind: u.exportKind,
-      exportedAs: u.exportedAs,
-    };
+    provider ??= ref;
   }
   return { consumers, provider };
 }

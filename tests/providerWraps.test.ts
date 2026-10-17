@@ -90,6 +90,36 @@ export function Toaster() {
   return <ToastProvider><ToastPrimitive.Viewport /></ToastProvider>;
 }
 `,
+  // invoify's toast.tsx: the provider is not a component at all but an ALIAS of
+  // the namespace member (`const ToastProvider = ToastPrimitives.Provider`,
+  // re-exported in a list). Toast renders ToastPrimitives.Root, so a file full
+  // of members looked unwrappable while exporting exactly the provider that
+  // wraps them — every Toast/Toaster spec died on "must be used within
+  // ToastProvider". An alias the file does not export is no wrap either: an
+  // import is the only way the generated mount reaches it, so ToastAction's
+  // HIDDEN alias must not be offered for Alert's members.
+  "shadcn-toast.tsx": `
+import * as ToastPrimitives from '@radix-ui/react-toast';
+const ToastProvider = ToastPrimitives.Provider;
+export function Toast(props: Record<string, unknown>) {
+  return <ToastPrimitives.Root {...props} />;
+}
+export function ToastViewport() {
+  return <ToastPrimitives.Viewport />;
+}
+const HIDDEN = ToastPrimitives.Provider;
+export function ToastAction() {
+  return <ToastPrimitives.Action />;
+}
+export { ToastProvider, ToastAction };
+`,
+  "alert.tsx": `
+import * as AlertPrimitives from '@radix-ui/react-alert-dialog';
+const UNEXPORTED = AlertPrimitives.Provider;
+export function Alert(props: Record<string, unknown>) {
+  return <AlertPrimitives.Root {...props} />;
+}
+`,
   // A bare external icon with no member siblings is a leaf, not a provider
   // namespace — the pairing requirement keeps icon imports out.
   "icons.tsx": `
@@ -349,6 +379,22 @@ describe("deriveContextProviderWraps", () => {
     expect([...wraps.keys()].some((k) => k.endsWith("::ToastProvider"))).toBe(false);
   });
 
+  test("an exported alias of N.Provider wraps the members", async () => {
+    // invoify's toast.tsx: `const ToastProvider = ToastPrimitives.Provider` is
+    // the provider, and it is not a component, so no unit renders it. Toast
+    // renders <ToastPrimitives.Root>, which CONSUMES that context — so every
+    // member of the file, Root included, needs the alias mounted around it.
+    const wraps = await derive();
+    expect(names(refsof(wraps, "::Toast"))).toEqual(["ToastProvider"]);
+    expect(names(refsof(wraps, "::ToastViewport"))).toEqual(["ToastProvider"]);
+    expect(names(refsof(wraps, "::ToastAction"))).toEqual(["ToastProvider"]);
+    // The alias supplies its own context; wrapping it in itself is a loop.
+    expect([...wraps.keys()].some((k) => k.endsWith("::ToastProvider"))).toBe(false);
+    // An alias the file never exports is unreachable from a generated mount,
+    // so Alert gets no wrap rather than an import of a module-private name.
+    expect([...wraps.keys()].some((k) => k.endsWith("::Alert"))).toBe(false);
+  });
+
   test("bare icon imports are leaves, not providers", async () => {
     const wraps = await derive();
     expect([...wraps.keys()].some((k) => k.endsWith("::Closer"))).toBe(false);
@@ -452,5 +498,72 @@ describe("deriveContextProviderWraps", () => {
     expect(sidebar.endsWith(providerKey({ filePath: "", componentName: "SidebarTrigger" }))).toBe(
       true,
     );
+  });
+});
+
+describe("react-hook-form's context", () => {
+  // Found on invoify. Kept out of the shared FILES above on purpose: that
+  // fixture set is counted by the library-shim test ("query and router, same
+  // tmp root" == 2), and a third shim in the same package root would move it.
+  async function deriveRhf(files: Record<string, string>): Promise<Map<string, ProviderRef[]>> {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "provwraps-rhf-"));
+    try {
+      const cache = new SourceFileCache();
+      const trees: ComponentTree[] = [];
+      for (const [name, content] of Object.entries(files)) {
+        const file = path.join(dir, name);
+        writeFileSync(file, content);
+        trees.push(
+          ...(await analyseFile(
+            { entry: file, depth: 3, includeChildren: true, roots: "exported" },
+            { cache },
+          ).catch(() => [])),
+        );
+      }
+      return await deriveContextProviderWraps(trees, cache, (c) =>
+        libraryProviderShimsFor([c.info.filePath]),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("a component that reads the form through context gets a form", async () => {
+    // useFormContext() hands back null with no FormProvider above the mount
+    // and the library dereferences it, so a field component of this shape has
+    // no mountable default. Note the reach: TotalBadge never names a library
+    // hook, it calls the file's own useCurrentTotal, which calls one.
+    const wraps = await deriveRhf({
+      "totals.tsx": `
+import { useFormContext, useWatch } from 'react-hook-form';
+export function useCurrentTotal(): number {
+  return Number(useFormContext().getValues('total') ?? 0);
+}
+export function TotalBadge() {
+  const total = useCurrentTotal();
+  const live = useWatch({ name: 'total' });
+  return <span>{String(live ?? total)}</span>;
+}
+`,
+    });
+    const refs = refsof(wraps, "::TotalBadge");
+    expect(names(refs)).toEqual(["FlawlessFormProvider"]);
+    expect(refs[0]?.filePath.endsWith(".flawless/flawless-form.tsx")).toBe(true);
+  });
+
+  test("React's own useFormState does not ask for a form", async () => {
+    // The name collides across two libraries. The gate matches the IMPORTED
+    // MODULE as well as the name, so a component that took useFormState from
+    // "react" is not wrapped in a form provider it never asked for.
+    const wraps = await deriveRhf({
+      "search-form.tsx": `
+import { useFormState } from 'react';
+export function SearchForm() {
+  const [state, dispatch] = useFormState(async (prev: string, form: FormData) => form.get('q') as string, '');
+  return <form action={dispatch}><span>{state}</span></form>;
+}
+`,
+    });
+    expect([...wraps.keys()].some((k) => k.endsWith("::SearchForm"))).toBe(false);
   });
 });

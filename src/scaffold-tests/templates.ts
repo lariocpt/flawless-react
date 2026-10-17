@@ -191,7 +191,12 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   const flat = flattenTrees(opts.trees);
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
-  const authStubs = collectAuthStubs(flat.map((c) => c.info));
+  const authStubs = collectAuthStubs(
+    flat.map((c) => c.info),
+    // The provider wrapper renders around every spec but is not an analysed
+    // component: its auth imports must reach the stub table too.
+    opts.provider ? [opts.provider] : [],
+  );
   const files: RenderedFile[] = [
     {
       relPath: "setup.ts",
@@ -1185,6 +1190,45 @@ vi.mock("next/navigation", () => ({
   useSelectedLayoutSegment: vi.fn(() => null),
   useSelectedLayoutSegments: vi.fn(() => []),
 }));
+// Global next/router mock — the PAGES-router twin of the one above. Outside
+// Next's App container its useRouter throws "NextRouter was not mounted", so a
+// pages app's component dies at render before any assertion (talkformai: all
+// 26). Navigation is recorded and never performed, and every documented field
+// is defined: router.query.id is what a render touches, and an undefined one
+// is a different crash rather than a quieter one.
+vi.mock("next/router", async () => {
+  const React = await import("react");
+  const __router = {
+    pathname: "/",
+    route: "/",
+    query: {},
+    asPath: "/",
+    basePath: "",
+    locale: undefined,
+    locales: [],
+    isLocaleDomain: false,
+    isReady: true,
+    isPreview: false,
+    push: vi.fn(async () => true),
+    replace: vi.fn(async () => true),
+    prefetch: vi.fn(async () => {}),
+    pushScope: vi.fn(() => []),
+    popScope: vi.fn(() => false),
+    beforePopState: vi.fn(),
+    reload: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    events: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+  };
+  return {
+    router: __router,
+    useRouter: vi.fn(() => __router),
+    withRouter: vi.fn(
+      (Component: any) =>
+        (props: any) => React.createElement(Component, { ...props, router: __router }),
+    ),
+  };
+});
 // Global next/cache mock: revalidate & co. are no-ops without a server, and
 // cacheLife()/cacheTag() THROW at execution time ("... is only available
 // with the cacheComponents config") in a plain vitest process — an app whose

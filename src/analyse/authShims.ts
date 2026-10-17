@@ -15,10 +15,29 @@
  * names the analysis actually saw imported, because ESM named imports have to
  * bind: a catch-all default export cannot satisfy `import { useUser }`.
  */
-import type { ComponentInfo } from "../types.ts";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
 
 /** Package names matched exactly or by subpath ("next-auth/react", "@clerk/nextjs/server"). */
-const AUTH_LIB_PREFIXES = ["@clerk/nextjs", "@clerk/clerk-react", "next-auth"];
+const AUTH_LIB_PREFIXES = [
+  "@clerk/nextjs",
+  "@clerk/clerk-react",
+  "next-auth",
+  // The Supabase auth layer, in both its generations: `auth-helpers-*` is the
+  // tutorial stack (talkformai's pages/_app builds a client in a useState
+  // initializer, so with no env file the CONSTRUCTOR throws before a single
+  // spec runs — 17 files, 26 tests, all dead on
+  // "either NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY env
+  // variables or supabaseUrl and supabaseKey are required!"), and `@supabase/ssr`
+  // is its replacement. Both are provider-bound: the session context they
+  // supply is exactly what a unit mount cannot have. `@supabase/supabase-js`
+  // itself stays unstubbed — it is the SDK rather than the provider, and a
+  // stubbed `from().select()` chain would turn a named failure into undefined
+  // results quietly flowing through an assertion.
+  "@supabase/auth-helpers-nextjs",
+  "@supabase/auth-helpers-react",
+  "@supabase/ssr",
+];
 
 export function isAuthLibSpecifier(specifier: string): boolean {
   return AUTH_LIB_PREFIXES.some((p) => specifier === p || specifier.startsWith(`${p}/`));
@@ -30,6 +49,64 @@ export interface AuthStub {
   hasDefault: boolean;
 }
 
+/** The part of ModuleImportInfo the collector reads, so a raw file can feed it too. */
+interface AuthImportEvidence {
+  specifier: string;
+  names: readonly string[];
+  importedNames?: readonly string[];
+  isTypeOnly?: boolean;
+}
+
+/**
+ * Import declarations of a file the analysis never visits. The app resolver is
+ * mounted by every spec without being an analysed component, so its auth
+ * imports would stay unstubbed while its module graph runs for real:
+ * talkformai's pages/_app.tsx is the only file importing
+ * `createPagesBrowserClient` / `SessionContextProvider`, and with no env file in
+ * the repo the real client threw from its constructor — 17 spec files, 26
+ * tests, none of them reaching an assertion. The import table is all the
+ * collector needs; the shim binds the names.
+ */
+function fileImportEvidence(file: string): AuthImportEvidence[] {
+  let sf: ts.SourceFile;
+  try {
+    sf = ts.createSourceFile(
+      file,
+      readFileSync(file, "utf8"),
+      ts.ScriptTarget.ES2022,
+      true,
+      ts.ScriptKind.TSX,
+    );
+  } catch {
+    return [];
+  }
+  const out: AuthImportEvidence[] = [];
+  for (const stmt of sf.statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const clause = stmt.importClause;
+    if (!clause || clause.isTypeOnly) continue;
+    const names: string[] = [];
+    const importedNames: string[] = [];
+    if (clause.name) {
+      names.push(clause.name.text);
+      importedNames.push("default");
+    }
+    const bindings = clause.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const el of bindings.elements) {
+        names.push(el.name.text);
+        importedNames.push(el.propertyName?.text ?? el.name.text);
+      }
+    } else if (bindings && ts.isNamespaceImport(bindings)) {
+      names.push(bindings.name.text);
+      importedNames.push(bindings.name.text);
+    }
+    if (names.length === 0) continue;
+    out.push({ specifier: stmt.moduleSpecifier.text, names, importedNames });
+  }
+  return out;
+}
+
 /**
  * Specifier → the export names any analysed file imports from it. Collect from
  * EVERY analysed component, not just the mountable ones: an excluded component
@@ -39,24 +116,27 @@ export interface AuthStub {
  * that does `import * as clerk from "@clerk/nextjs"` will see undefined
  * members and the dogfood failure will name the specifier.
  */
-export function collectAuthStubs(infos: Iterable<ComponentInfo>): Map<string, AuthStub> {
+export function collectAuthStubs(
+  infos: Iterable<{ moduleImports?: readonly AuthImportEvidence[] }>,
+  extraFiles: readonly string[] = [],
+): Map<string, AuthStub> {
   const acc = new Map<string, { names: Set<string>; hasDefault: boolean }>();
-  for (const info of infos) {
-    for (const mi of info.moduleImports ?? []) {
-      if (mi.isTypeOnly || !isAuthLibSpecifier(mi.specifier)) continue;
-      let entry = acc.get(mi.specifier);
-      if (!entry) {
-        entry = { names: new Set(), hasDefault: false };
-        acc.set(mi.specifier, entry);
-      }
-      const e = entry;
-      mi.names.forEach((local, i) => {
-        const moduleSide = mi.importedNames?.[i] ?? local;
-        if (moduleSide === "default") e.hasDefault = true;
-        else e.names.add(moduleSide);
-      });
+  const absorb = (mi: AuthImportEvidence): void => {
+    if (mi.isTypeOnly || !isAuthLibSpecifier(mi.specifier)) return;
+    let entry = acc.get(mi.specifier);
+    if (!entry) {
+      entry = { names: new Set(), hasDefault: false };
+      acc.set(mi.specifier, entry);
     }
-  }
+    const e = entry;
+    mi.names.forEach((local, i) => {
+      const moduleSide = mi.importedNames?.[i] ?? local;
+      if (moduleSide === "default") e.hasDefault = true;
+      else e.names.add(moduleSide);
+    });
+  };
+  for (const info of infos) for (const mi of info.moduleImports ?? []) absorb(mi);
+  for (const file of extraFiles) for (const mi of fileImportEvidence(file)) absorb(mi);
   return new Map(
     [...acc.entries()]
       .sort(([a], [b]) => (a < b ? -1 : 1))

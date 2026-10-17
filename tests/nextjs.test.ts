@@ -315,6 +315,60 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     expect(readFileSync(result?.path as string, "utf8")).not.toContain("DROPPED from");
   });
 
+  test("a pages-router _app contributes its chain, never its route element", () => {
+    // talkformai dogfood: pages/_app.tsx was mounted verbatim as the unit
+    // provider. A spec passes {children}, so `Component` is undefined and React
+    // throws "Element type is invalid" in every spec before an assertion runs —
+    // and `AppProps` is not something a wrap can fake either. The chain around
+    // `<Component />` is still worth mounting.
+    const root = tmpDir();
+    const write = (rel: string, text: string) => {
+      const p = path.join(root, rel);
+      mkdirSync(path.dirname(p), { recursive: true });
+      writeFileSync(p, text);
+    };
+    write(
+      "pages/_app.tsx",
+      `"use client";
+import { useState } from "react";
+import type { AppProps } from "next/app";
+import { createPagesBrowserClient } from "@supabase/auth-helpers-nextjs";
+import { SessionContextProvider } from "@supabase/auth-helpers-react";
+import { Theme } from "./theme";
+export default function App({ Component, pageProps }: AppProps) {
+  const [client] = useState(() => createPagesBrowserClient());
+  return (
+    <Theme>
+      <SessionContextProvider supabaseClient={client} initialSession={pageProps.initialSession}>
+        <Component />
+      </SessionContextProvider>
+    </Theme>
+  );
+}
+`,
+    );
+    write(
+      "pages/theme.tsx",
+      `"use client";\nexport const Theme = ({ children }: any) => <div data-theme>{children}</div>;\n`,
+    );
+    const app = path.join(root, "pages/_app.tsx");
+    expect(isUsableUnitProvider(app)).toBe(false);
+    const result = ensureClientProviderWrapper(
+      { root, router: "pages" as const, appResolver: app, apiRoutes: [] },
+      tmpDir(),
+    );
+    expect(result?.included).toEqual(["Theme"]);
+    // The Supabase session provider is dropped as what it is — an auth library
+    // the unit plane stubs signed-out — not as "unresolved import", which is
+    // what resolving into its node_modules dist would have reported.
+    expect(result?.dropped).toEqual([{ name: "SessionContextProvider", reason: "auth" }]);
+    const src = readFileSync(result?.path as string, "utf8");
+    expect(src).toContain("<Theme>");
+    expect(src).toContain("{children}");
+    expect(src).not.toContain("<Component");
+    expect(src).not.toContain("import { SessionContextProvider }");
+  });
+
   test("--force refreshes the derived provider but never the fixtures", () => {
     // The asymmetry is the point: provider.tsx is derived from the layout and
     // can be rebuilt; the fixtures hold values a human typed against a real app
