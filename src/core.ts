@@ -331,7 +331,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     if (providerOverride !== undefined && !isUsableUnitProvider(providerOverride)) {
       if (providerExplicit) {
         warn(
-          `provider: ${providerOverride} looks like a server component (async or server-only imports) — unit specs may fail under jsdom`,
+          `provider: ${providerOverride} cannot mount under jsdom (async, server-only imports, or a pages \`_app\` rendering the route element) — unit specs will fail`,
         );
       } else {
         const wrapped = ensureClientProviderWrapper(
@@ -350,7 +350,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
                   .join(", ")}`;
           log(
             wrapped.created
-              ? `nextjs: app resolver is a server layout — derived ${path.relative(nextCtx.root, wrapped.path)} (providers: ${wrapped.included.join(", ") || "none mounted"}${droppedText})`
+              ? `nextjs: app resolver cannot mount under jsdom — derived ${path.relative(nextCtx.root, wrapped.path)} (providers: ${wrapped.included.join(", ") || "none mounted"}${droppedText})`
               : `nextjs: using existing ${path.relative(nextCtx.root, wrapped.path)}`,
           );
         }

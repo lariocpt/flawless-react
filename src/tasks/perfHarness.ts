@@ -119,6 +119,17 @@ export const perfHarness: Task = {
             .join(", ") +
           " (delete to retire)"
         : "";
+    // The provider lives in a file the tool owns, but main.tsx's import of it
+    // is kept — so when the provider moves, the kept harness mounts the OLD
+    // provider and every mount fails on an opaque 5000ms timeout. scaffold
+    // re-points that one line; the run has to say which host it re-pointed.
+    const providerNote = res.providerImportRefresh
+      ? `; re-pointed host/main.tsx's provider import ${res.providerImportRefresh.from} → ` +
+        `${res.providerImportRefresh.to} (the harness is kept, this line is not)`
+      : "";
+    if (res.providerImportWarning) {
+      console.warn(`[flawless] ${res.providerImportWarning}.`);
+    }
     return {
       id: "perf-harness",
       ok: true,
@@ -127,7 +138,7 @@ export const perfHarness: Task = {
       status: res.status,
       summary:
         res.status === "refreshed"
-          ? `refreshed perf suite for ${covered}${keptNote}${migrationNote}${staleRemovedNote}${staleKeptNote}`
+          ? `refreshed perf suite for ${covered}${keptNote}${providerNote}${migrationNote}${staleRemovedNote}${staleKeptNote}`
           : `scaffolded perf suite for ${covered}${migrationNote}${staleRemovedNote}${staleKeptNote}`,
     };
   },

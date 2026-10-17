@@ -77,6 +77,12 @@ export interface RenderOptions {
   variants: number;
   report: boolean;
   providerImportPath?: string;
+  /**
+   * Absolute path of the same provider, for reading its import table: the host
+   * mounts it around every component, so its provider-bound auth imports need
+   * stubbing too (analyse/authShims.ts).
+   */
+  providerFile?: string;
   mockRoutes?: MockRoute[];
   suiteName?: string;
   nextjsHost?: boolean;
@@ -92,7 +98,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     excluded,
     serverActionStubs,
     authStubs,
-  } = selectHostComponents(trees, opts.outDir);
+  } = selectHostComponents(trees, opts.outDir, opts.providerFile);
   const hasMock = Array.isArray(opts.mockRoutes);
   const useMsw = Boolean(opts.mswSetup);
   const suiteName = opts.suiteName ?? trees[0]?.entry.componentName ?? "suite";
@@ -229,6 +235,7 @@ interface ServerActionStub {
 function selectHostComponents(
   trees: ComponentTree[],
   outDir: string,
+  providerFile?: string,
 ): {
   hosted: FlatComponent[];
   excluded: ExcludedComponent[];
@@ -242,8 +249,14 @@ function selectHostComponents(
   const specNames = allocateSpecNames(flat);
   // EVERY analysed component contributes imports here, hosted or not: an
   // excluded component still sits in a hosted neighbour's import chain, and
-  // one library that throws at module init takes the whole bundle down.
-  const authStubs = collectAuthStubs(flat.map((c) => c.info));
+  // one library that throws at module init takes the whole bundle down. The
+  // provider wrapper joins them for the same reason — the host renders it around
+  // every component, so its auth imports are in that bundle whether the
+  // analysis visited the file or not.
+  const authStubs = collectAuthStubs(
+    flat.map((c) => c.info),
+    providerFile ? [providerFile] : [],
+  );
 
   const hosted: FlatComponent[] = [];
   const excluded: ExcludedComponent[] = [];
@@ -619,6 +632,36 @@ function hostServer(
     "export const useSelectedLayoutSegments = () => [];",
     'export const useLinkStatus = () => "idle";',
   ].join("\n");
+  // next/router — the PAGES-router twin of the stub above. Its useRouter
+  // throws "NextRouter was not mounted" outside Next's App container, so a
+  // pages app's component dies at render in the host exactly as it does under
+  // jsdom (talkformai: NavBar, DashboardMode, SignInForm — every mount). Navigate
+  // nowhere, but define every field the router API documents: `router.query.id`
+  // and `router.pathname.split("/")` are what a render actually touches, and an
+  // undefined one is a different crash, not a quieter one.
+  const pagesRouterStubSource = [
+    "import * as React from 'react';",
+    "const __router = { pathname: '/', route: '/', query: {}, asPath: '/', basePath: '', locale: undefined, locales: [], isLocaleDomain: false, isReady: true, isPreview: false, push: () => Promise.resolve(true), replace: () => Promise.resolve(true), prefetch: () => Promise.resolve(), pushScope: () => [], popScope: () => false, beforePopState: () => {}, reload: () => {}, back: () => {}, forward: () => {}, events: { on: () => {}, off: () => {}, emit: () => {} } };",
+    "export const router = __router;",
+    "export const useRouter = () => __router;",
+    "export const withRouter = (Component) => (props) => React.createElement(Component, Object.assign({}, props, { router: __router }));",
+  ].join("\n");
+  // next/script renders NOTHING into the tree: it injects its tag through
+  // Next's client router context, which a bare host does not have. A component
+  // whose whole output is <Script> therefore mounted as an empty container and
+  // failed the browser smoke on its markup floor — talkformai's GoogleAnalytics
+  // and PostHogScript, both expect(rootHtml.length).toBeGreaterThan(0) on an
+  // otherwise clean, error-free mount. Answer with a script element rendered IN
+  // PLACE so the component's own render is what gets measured, marked
+  // type="text/plain" so the browser neither fetches src nor executes inline
+  // code: third-party analytics has no business running inside a render
+  // benchmark. An inert stand-in is this host's answer everywhere else (DB
+  // drivers, fonts, both routers) — a silent blank was the outlier.
+  const nextScriptStubSource = [
+    "import * as React from 'react';",
+    "function FlawlessScript(props) { return React.createElement('script', { type: 'text/plain', src: typeof props.src === 'string' ? props.src : undefined, id: props.id, 'data-flawless-stub': 'next/script' }); }",
+    "export default FlawlessScript;",
+  ].join("\n");
   const stubPlugin = `
 // Path relative to this file -> replacement source, resolved to the absolute
 // paths Bun's onLoad reports. See the comment where this was generated.
@@ -664,12 +707,24 @@ const stubServerModules: BunPlugin = {
     // generated/prisma/client.ts) still drags in these BARE runtime
     // specifiers, which is where the bundle is cut. Perf then measures the
     // component's render with inert data — the suite's mocking philosophy.
+    //
+    // Yield the ones with a generated stub of their own. The Supabase family
+    // is matched here by PACKAGE PATTERN and in SERVER_STUB_SPECIFIERS by
+    // EXACT NAME, and esbuild asks hooks in registration order — this one is
+    // registered first, so it used to win: the signed-out auth-helpers stub
+    // sat in the map unused while the component got the inert CJS Proxy, and
+    // talkformai's NavBar / SignInForm / DashboardMode all timed out on
+    // "useSessionContext is not a function". A named stub is a decision about
+    // that module's surface; a pattern stub is only a fallback.
     build.onResolve(
       {
         filter:
           /^(@supabase\\/[a-z0-9._-]+|@prisma\\/adapter[a-z0-9._-]*|mongodb|mongoose|pg|kysely|drizzle-orm)([\\/:].*)?$/,
       },
-      (args) => ({ path: args.path, namespace: "flawless-node-stub" }),
+      (args) =>
+        SERVER_STUB_SPECIFIERS[args.path]
+          ? undefined
+          : { path: args.path, namespace: "flawless-node-stub" },
     );
     // Prisma's generated client destructures the runtime namespace AT MODULE
     // SCOPE — a Proxy'd CJS namespace loses its keys through bun's __toESM
@@ -764,6 +819,25 @@ const stubServerModules: BunPlugin = {
     }));
     build.onLoad({ filter: /.*/, namespace: "flawless-next-nav-stub" }, () => ({
       contents: ${JSON.stringify(navStubSource)},
+      loader: "js",
+    }));
+    // Pages-router twin of the nav stub, same \\.js reasoning.
+    build.onResolve({ filter: /^next[\\/]router(\\.js)?$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-next-router-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-next-router-stub" }, () => ({
+      contents: ${JSON.stringify(pagesRouterStubSource)},
+      loader: "js",
+    }));
+    // next/script: renders nothing without Next's router context, so a component
+    // made only of <Script> would mount as an empty container. See the source.
+    build.onResolve({ filter: /^next[\\/]script(\\.js)?$/ }, (args) => ({
+      path: args.path,
+      namespace: "flawless-next-script-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "flawless-next-script-stub" }, () => ({
+      contents: ${JSON.stringify(nextScriptStubSource)},
       loader: "js",
     }));
     // The server-component marker: absent in many repos (Bun's resolver

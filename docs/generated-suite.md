@@ -151,6 +151,8 @@ export default function AppProvider({ children }: { children: ReactNode }) {
 }
 ```
 
+**The provider import line is tool plumbing.** `import AppProvider from "…"` is the one line in this file the tool owns: when the resolved provider moves — you pass `--provider` on a later run, or Next.js derivation starts or stops producing `flawless/provider.tsx` — the next run re-points that line, keeping its quote style and every other byte of your `main.tsx`, and names the change in the run summary. Delete the line if you want to mount unwrapped permanently; the tool will not put it back.
+
 **Edit when**: you want async setup before each mount (seeding store state, logging in a mock user). Add a `setup`/`teardown` named export and call them from `host/main.tsx`'s `mount`/`unmount`.
 
 ## `mock/server.ts` + `mock/routes.ts` (only with `--api`)
