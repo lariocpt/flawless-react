@@ -34,6 +34,15 @@ async function clack(): Promise<ClackPrompts> {
   return cached;
 }
 
+/**
+ * The same clack instance the generation prompts use, for any other interactive
+ * surface that wants the injection seam (FR-024) rather than a second copy of
+ * the dynamic import. `skills install`'s menu is the other caller.
+ */
+export async function loadClack(): Promise<ClackPrompts> {
+  return clack();
+}
+
 export interface InteractivePromptResult {
   pattern: string;
   outDir: string;

@@ -386,6 +386,12 @@ underneath one of them (FR-048).
   against a reading of the source.
 - [tests/skillsDocs.test.ts](../tests/skillsDocs.test.ts) covers what is
   specific to a skill: frontmatter, and the siblings it cross-references.
+- The corpus ships **inside** the deliverable: [src/skills/data.ts](../src/skills/data.ts)
+  imports every `SKILL.md` as text, so `flawless-react skills install` works from a
+  published install on a machine with no checkout of this repo. Two consequences are
+  tested rather than remembered — the embedded bytes equal the tracked files, and
+  `package.json`'s `files` still covers `.agents/skills` plus the postinstall script,
+  because a publish that drops either ships a CLI whose only new command cannot run.
 - Both carry a "the lint can actually fail" block. A guard that cannot redden is
   worse than no guard, because it reads as coverage.
 

@@ -10,6 +10,12 @@ import { flawlessArgv, stripTrailingComment } from "./docLine.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
 import {
+  isSkillsArgv,
+  parseSkillsCommand,
+  renderSkillsHelp,
+  type SkillsCommand,
+} from "./skills/spec.ts";
+import {
   type CliArgs,
   type HeapMode,
   type PropsShape,
@@ -318,7 +324,15 @@ export function checkLines(text: string): CheckReport {
     }
     report.checked++;
     try {
-      parseArgs(argv);
+      // Two other grammars, neither of which parseArgs speaks: `skills …` is a
+      // subcommand and `--flags` a bare switch. Left to parseArgs, a working
+      // `flawless-react skills install --all` would be reported broken (its verb
+      // read as an entry glob) and a stale flag in prose would pass uncaught —
+      // both directions of the same silence.
+      if (isSkillsArgv(argv)) parseSkillsCommand(argv.slice(1));
+      else if (argv[0] === "--flags") {
+        if (argv.length > 1) throw new Error("--flags takes no arguments");
+      } else parseArgs(argv);
     } catch (err) {
       report.problems.push({ line, problem: (err as Error).message });
     }
@@ -327,6 +341,27 @@ export function checkLines(text: string): CheckReport {
 }
 
 export async function main(argv: string[]): Promise<void> {
+  // The skills subcommand, ahead of parseArgs for the same reason as the two
+  // surfaces below it: `skills` is not an entry glob, and falling through would
+  // mean parsing it as one. The bytes stay behind a dynamic import — the grammar
+  // here costs a few hundred bytes, the ~70 KB of embedded SKILL.md comes in only
+  // once a verb is actually being run.
+  if (isSkillsArgv(argv)) {
+    let cmd: SkillsCommand;
+    try {
+      cmd = parseSkillsCommand(argv.slice(1));
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+      process.exit(2);
+    }
+    if (cmd.verb === "help") {
+      process.stdout.write(renderSkillsHelp());
+      process.exit(0);
+    }
+    const { runSkillsCommand } = await import("./skills/cli.ts");
+    process.exit(await runSkillsCommand(cmd));
+  }
+
   // Two parse-only surfaces, ahead of parseArgs and well ahead of the core
   // graph. They exist for consumers that CANNOT import this module: the website
   // repo keeps hand-copied examples and a "every flag flawless-react accepts"
@@ -481,6 +516,14 @@ export async function main(argv: string[]): Promise<void> {
     );
   }
   if (wantInteractive) {
+    // The skills question, asked here rather than never: an interactive run is a
+    // person who has just watched the tool work, with a terminal in front of them.
+    // It goes BEFORE the outro because clack owns the session, and the gate is the
+    // project having no `flawless-*` skill yet — so answering it is what stops it
+    // being asked, with no marker file trailing the user. npm's postinstall asks
+    // the same question at install time; `FLAWLESS_NO_SKILLS` silences both.
+    const { defaultSkillsIO, offerSkills } = await import("./skills/cli.ts");
+    await offerSkills(defaultSkillsIO());
     await outro(result.exitCode !== 0 ? "done (with failures)" : "done");
   }
   process.exit(result.exitCode);
