@@ -1185,3 +1185,37 @@ describe("renderUnitBrowser always-emitted files", () => {
     expect(contentOf(files, "vitest.config.mts")).toContain('environment: "jsdom"');
   });
 });
+
+describe("variant distinctness unit spec", () => {
+  const toast = comp("Toast", {
+    variantClasses: { variant: { default: "bg-background", destructive: "bg-destructive" } },
+  });
+
+  test("probes for a class before comparing options, and skips by name", () => {
+    // invoify's Toast: Radix's Toast.Root hands jsdom an element with no class
+    // attribute, so the cva table has no observable to compare and EVERY
+    // option failed. A named skip states that; a red spec blames the component.
+    const src = contentOf(
+      renderUnitBrowser({ trees: [tree(toast)], outDir: OUT, variants: 3 }),
+      "unit/Toast.test.tsx",
+    );
+    expect(src).toContain('const probeCarriesClass = probe.container.querySelector("[class]")');
+    expect(src).toContain("ctx.skip(");
+    expect(src).toContain("nothing to compare");
+    // The probe is unmounted before the comparison, so the options are each
+    // measured against a clean container.
+    expect(src).toMatch(/probe\.unmount\(\);\s*\n\s*if \(!probeCarriesClass\)/);
+  });
+
+  test("the comparison itself is untouched when a class is there to compare", () => {
+    const src = contentOf(
+      renderUnitBrowser({ trees: [tree(toast)], outDir: OUT, variants: 3 }),
+      "unit/Toast.test.tsx",
+    );
+    expect(src).toContain('test("Toast: every `variant` option renders distinct markup"');
+    expect(src).toMatch(
+      /expect\(el, `variant=\$\{option\} rendered no element carrying a class`\)/,
+    );
+    expect(src).toContain('expect(new Set(seen).size, "two options rendered identical markup")');
+  });
+});
