@@ -70,6 +70,13 @@ export type LabelSource =
    * like an interaction gap rather than a dropped prefix.
    */
   | { kind: "prop"; propName: string; before?: string; after?: string }
+  /**
+   * A literal `data-testid`. Produced by both label ladders and consumed by
+   * every selector emitter (`getByTestId`), so it belongs in the union even
+   * though the analysers rank it differently: extractDisclosures tries it
+   * before `aria-label`, extractInteractions after.
+   */
+  | { kind: "testid"; value: string }
   | { kind: "aria"; value: string }
   /**
    * The trigger's whole subtree is the `{children}` expression — the app's
