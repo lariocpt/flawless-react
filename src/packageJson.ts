@@ -138,13 +138,18 @@ function catalogFromYaml(
     }
     if (section === "catalog") {
       const m = line.match(new RegExp(`^\\s{2}${escaped}:\\s*['"]?([^'"\\s#]+)`));
-      if (m) return m[1];
+      const value = m?.[1];
+      if (value) return value;
     } else if (section === "catalogs") {
       const nm = line.match(/^(\s{2})(\S[^:]*):\s*$/);
-      if (nm) named = nm[2];
+      const namedHeader = nm?.[2];
+      // Group 2 is only missing when the line did not match at all, so the
+      // else-if still means "a line inside the catalogs block".
+      if (namedHeader !== undefined) named = namedHeader;
       else if (catalog && named === catalog) {
         const m = line.match(new RegExp(`^\\s{4}${escaped}:\\s*['"]?([^'"\\s#]+)`));
-        if (m) return m[1];
+        const value = m?.[1];
+        if (value) return value;
       }
     }
   }

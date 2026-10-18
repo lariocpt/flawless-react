@@ -124,7 +124,9 @@ describe("adoptProjectStyle", () => {
     // An EMPTY ignore file: the tool's explicit files all pass, while the repo's
     // own .prettierignore — which ignores those very files — stays in force for
     // the repo's own sweeps.
-    expect(readFileSync(argv[i + 1], "utf8")).toBe("");
+    const ignorePath = argv[i + 1];
+    if (ignorePath === undefined) throw new Error("--ignore-path passed with no path");
+    expect(readFileSync(ignorePath, "utf8")).toBe("");
   });
 
   test("prettier that cannot parse the tool's specs skips only the unparseable files", async () => {

@@ -244,7 +244,7 @@ const DATE_MEMBERS = new Set([
  * length and every other read (charAt, split, an unknown field — "" answers
  * length, string methods and JSX children alike).
  */
-function chainTerminal(member: string): unknown {
+function chainTerminal(member: string): PropValue {
   if (member === "length") return "";
   if (ARRAY_MEMBERS.has(member)) return [];
   if (DATE_MEMBERS.has(member)) return DATE_PROP_SENTINEL;
@@ -272,21 +272,24 @@ function terminalRank(v: unknown): number {
  * objects; a lone field read (`embeddedCode.lang`) only guarantees the
  * holder exists.
  */
-function foldChains(chains: string[][]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+function foldChains(chains: string[][]): PropsShape {
+  const out: PropsShape = {};
   for (const segs of chains) {
     const holderPath = segs.slice(0, -1);
-    let cur: Record<string, unknown> = out;
-    for (let i = 0; i < holderPath.length - 1; i++) {
-      const k = holderPath[i];
-      const ex = cur[k];
+    const terminalSeg = segs[segs.length - 1];
+    const key = holderPath[holderPath.length - 1];
+    // A chain is always holder + terminal, which is what the caller tested.
+    if (terminalSeg === undefined || key === undefined) continue;
+    let cur: PropsShape = out;
+    for (const hop of holderPath.slice(0, -1)) {
+      const ex = cur[hop];
       // The read went THROUGH this hop, so it has to be an object — an
       // earlier "" or [] terminal here died on the hop after it.
-      if (typeof ex !== "object" || ex === null) cur[k] = {};
-      cur = cur[k] as Record<string, unknown>;
+      const node = typeof ex === "object" && ex !== null ? ex : {};
+      cur[hop] = node;
+      cur = node as PropsShape;
     }
-    const key = holderPath[holderPath.length - 1];
-    const v = chainTerminal(segs[segs.length - 1]);
+    const v = chainTerminal(terminalSeg);
     const ex = cur[key];
     if (ex === undefined || terminalRank(v) > terminalRank(ex)) cur[key] = v;
   }
@@ -335,8 +338,8 @@ export function synthesiseDefaults(info: ComponentInfo): PropsShape {
     if (Array.isArray(objectish[propName])) continue;
     const folded = foldChains(list);
     objectish[propName] =
-      Object.keys(objectish[propName] as object).length > 0
-        ? { ...(objectish[propName] as object), ...folded }
+      Object.keys(objectish[propName] as PropsShape).length > 0
+        ? { ...(objectish[propName] as PropsShape), ...folded }
         : folded;
   }
   // The child bridge: `<RelativeTime date={drop.createdAt}/>` is evidence

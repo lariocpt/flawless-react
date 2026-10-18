@@ -82,8 +82,17 @@ pipeline {
                     # clearMocksOnScope, a layout that cannot be render()ed, specs making live
                     # HTTP calls, a jest.mock specifier resolved from the wrong directory) was
                     # invisible to tsc and fatal to jest. Measured at ~16s including the install.
+                    # oven/bun:1.4, NOT oven/bun:1. `bun test` runs test files concurrently and
+                    # thirteen of them install a scratch tree at the same moment through one
+                    # shared ~/.bun/install/cache. Below 1.4, two processes extracting the SAME
+                    # package corrupt that cache — on a cold cache, which is every CI run and
+                    # almost no developer machine, so it read as a registry outage ("Fail
+                    # extracting tarball for \"next\"") while `bun test` was green on every warm
+                    # local checkout, and which stage a build died in was itself a race.
+                    # Verified on 1.4.3: eight concurrent cold-cache installs of the nextapp
+                    # fixture all clean, and the whole suite with zero extraction errors.
                     CID=$(docker create -w /w --add-host apps.in.drlario.org:host-gateway \\
-                        -e FLAWLESS_CI_BROWSER=1 -e FLAWLESS_CI_NATIVE=1 oven/bun:1 sh -c '
+                        -e FLAWLESS_CI_BROWSER=1 -e FLAWLESS_CI_NATIVE=1 oven/bun:1.4 sh -c '
                         set -eu
                         cd /w
                         apt-get update >/dev/null
@@ -110,6 +119,9 @@ pipeline {
                         # A real chromium for the gated browser case (FR-022).
                         bunx playwright install --with-deps chromium >/dev/null
                         bun test
+                        # Zero errors, and it stays there: this line was red for eight builds
+                        # while the tree carried 78 pre-existing ones, which taught nobody
+                        # anything except that the gate was ignored. Both stages run bun 1.4.
                         bunx tsc --noEmit
                         # The gate package.json declares and CI never ran (FR-023): biome ci
                         # lints AND format-checks the whole tree, which the pre-commit

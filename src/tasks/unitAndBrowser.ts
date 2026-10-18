@@ -244,7 +244,7 @@ function computeResolveAliases(
   // detectAppReact. nearestReactNodeModules's preference (the dir that
   // carries @testing-library/react wins) keeps each leg honest.
   const nmDir =
-    nearestReactNodeModules(pinFrom) ??
+    (pinFrom ? nearestReactNodeModules(pinFrom) : undefined) ??
     (pinFallback ? nearestReactNodeModules(pinFallback) : undefined);
   if (nmDir) {
     const pin = (spec: string, rel: string): void => {
@@ -342,12 +342,13 @@ function detectCanaryReactExports(
       continue;
     }
     for (const m of src.matchAll(importRe)) {
-      for (const raw of m[1].split(",")) {
-        const name = raw
+      const clause = m[1] ?? "";
+      for (const raw of clause.split(",")) {
+        const first = raw
           .trim()
           .replace(/^type\s+/, "")
-          .split(/\s+as\s+/)[0]
-          .trim();
+          .split(/\s+as\s+/)[0];
+        const name = first?.trim() ?? "";
         if (/^[A-Za-z_$][\w$]*$/.test(name)) imported.add(name);
       }
     }

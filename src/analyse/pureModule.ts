@@ -64,12 +64,19 @@ export function isPureLocalModule(absPath: string): boolean {
   for (const st of sf.statements) {
     if (ts.isImportDeclaration(st)) {
       const clause = st.importClause;
+      const named =
+        clause !== undefined && clause.namedBindings !== undefined
+          ? clause.namedBindings
+          : undefined;
       const typeOnly =
-        clause !== undefined &&
-        (clause.isTypeOnly ||
-          (clause.namedBindings !== undefined &&
-            ts.isNamedImports(clause.namedBindings) &&
-            clause.namedBindings.isTypeOnly));
+        clause?.isTypeOnly === true ||
+        // `import { type A, type B } from …` marks each SPECIFIER type-only.
+        // `NamedImports` has no `isTypeOnly` of its own, so reading it off the
+        // list returned undefined and every such module counted as live.
+        (named !== undefined &&
+          ts.isNamedImports(named) &&
+          named.elements.length > 0 &&
+          named.elements.every((e) => e.isTypeOnly));
       if (!typeOnly) return false; // imports something LIVE
     } else if (ts.isExportDeclaration(st) && !st.isTypeOnly) {
       return false; // `export { x } from "./live"`

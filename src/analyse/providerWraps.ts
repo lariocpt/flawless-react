@@ -295,7 +295,10 @@ interface NamespaceFacts {
 /** A JSX tag as (base identifier, last member): Identifier → base only;
  *  `<A.B.C>` parses as a PropertyAccessExpression chain (TS 5.x) — QualifiedName
  *  handling stays for old ASTs. */
-function tagNameParts(tag: ts.JsxTagName): { base: string; member?: string } {
+function tagNameParts(tag: ts.JsxTagNameExpression | ts.QualifiedName): {
+  base: string;
+  member?: string;
+} {
   if (ts.isIdentifier(tag)) return { base: tag.text };
   if (ts.isQualifiedName(tag)) {
     return ts.isIdentifier(tag.left)
@@ -336,10 +339,9 @@ function providerMountsBare(unit: ParsedComponentUnit): boolean {
     (n): n is ts.FunctionLikeDeclaration =>
       n !== undefined && ts.isFunctionLike(n) && n.parameters.length > 0,
   );
+  const firstParam = fnNode?.parameters[0];
   const pattern =
-    fnNode && ts.isObjectBindingPattern(fnNode.parameters[0].name)
-      ? fnNode.parameters[0].name
-      : undefined;
+    firstParam && ts.isObjectBindingPattern(firstParam.name) ? firstParam.name : undefined;
   const defaulted = new Set<string>();
   if (pattern) {
     for (const el of pattern.elements) {
@@ -435,14 +437,11 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
           : ts.isPropertyAccessExpression(n.expression)
             ? n.expression.name.text
             : undefined;
+        const firstArg = n.arguments[0];
         if (fn === undefined) {
           // nothing to key on
-        } else if (
-          fn === "useContext" &&
-          n.arguments.length > 0 &&
-          ts.isIdentifier(n.arguments[0])
-        ) {
-          ctx.add((n.arguments[0] as ts.Identifier).text);
+        } else if (fn === "useContext" && firstArg && ts.isIdentifier(firstArg)) {
+          ctx.add(firstArg.text);
         } else {
           calls.add(fn);
           // A callee that is an IMPORT of a provider-gated library hook means
@@ -683,13 +682,16 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
     return undefined;
   };
   const providerFor = (base: string): number =>
-    usage.findIndex(
-      (r, i) =>
+    usage.findIndex((r, i) => {
+      const unit = parsed.components[i];
+      return (
+        unit !== undefined &&
         (r.provider.has(base) || r.bare.has(base) || rootIsProvider(r, base)) &&
-        parsed.components[i].exportKind !== "none" &&
-        !parsed.components[i].isAsync &&
-        providerMountsBare(parsed.components[i]),
-    );
+        unit.exportKind !== "none" &&
+        !unit.isAsync &&
+        providerMountsBare(unit)
+      );
+    });
   let provider: ProviderRef | undefined;
   for (const base of memberBases) {
     // An explicit <N.Provider> renderer is the file's own mount surface and
@@ -717,13 +719,15 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
     // second provider can actively break it.
     const providerTag = ref.componentName;
     usage.forEach((r, ui) => {
+      const consumer = parsed.components[ui];
       if (
+        consumer &&
         r.member.has(base) &&
         (aliased || (!r.provider.has(base) && !rootIsProvider(r, base))) &&
         ui !== pi &&
         !r.bareAll.has(providerTag)
       ) {
-        consumers.add(parsed.components[ui].componentName);
+        consumers.add(consumer.componentName);
       }
     });
     provider ??= ref;

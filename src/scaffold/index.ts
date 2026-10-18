@@ -233,6 +233,9 @@ async function refreshProviderImport(
       : undefined;
   }
   const [, quote, from] = match;
+  // The pattern has both groups whenever it matched at all, so this is the
+  // checker's guard, not a case the caller can reach: nothing to refresh.
+  if (quote === undefined || from === undefined) return undefined;
   if (specifierId(mainPath, from) === specifierId(mainPath, want)) return undefined;
   await Bun.write(
     mainPath,

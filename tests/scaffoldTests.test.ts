@@ -596,14 +596,14 @@ describe("suite-local install surface (nextjs self-contained suite)", () => {
       unknown
     >;
     expect(standalone.type).toBe("module");
-    const next = JSON.parse(suitePackageJson("/app/flawless", true, true, true)) as Record<
-      string,
-      unknown
-    >;
+    const next = JSON.parse(suitePackageJson("/app/flawless", true, true, true)) as {
+      type?: string;
+      dependencies?: Record<string, string>;
+    };
     expect(next.type).toBeUndefined();
     // Dropping the loader switch must not take anything else with it.
-    expect(next.dependencies.msw).toBe("^2.7.0");
-    expect(next.dependencies["react-scan"]).toBe("^0.4.3");
+    expect(next.dependencies?.msw).toBe("^2.7.0");
+    expect(next.dependencies?.["react-scan"]).toBe("^0.4.3");
   });
 
   test("regen over a nextjs manifest that declared module removes the declaration — every other key stays the user's", async () => {

@@ -391,9 +391,10 @@ function appendToYamlBlock(body: string, header: string, lines: string[]): strin
     const base = body.endsWith("\n") ? body : `${body}\n`;
     return `${base}${header}\n${lines.join("\n")}\n`;
   }
-  if (all[at].slice(all[at].indexOf(header) + header.length).trim() !== "") return null;
+  const atLine = all[at] ?? "";
+  if (atLine.slice(atLine.indexOf(header) + header.length).trim() !== "") return null;
   let end = at + 1;
-  while (end < all.length && /^[ \t]+\S/.test(all[end])) end++;
+  while (end < all.length && /^[ \t]+\S/.test(all[end] ?? "")) end++;
   all.splice(end, 0, ...lines);
   return all.join("\n");
 }
