@@ -801,7 +801,8 @@ function classifyBinding(
     // (see directPropCall); anything less obvious stays a canary.
     if (bodyNode) {
       const fn = resolveLocalHandler(bodyNode, expr.text);
-      const prop = fn === undefined ? undefined : directPropCall(fn.body, propNames);
+      const body = fn?.body;
+      const prop = body === undefined ? undefined : directPropCall(body, propNames);
       if (prop) return { kind: "prop", propName: prop };
     }
     return { kind: "local", localName: expr.text };
@@ -831,14 +832,12 @@ function resolveLocalHandler(
   let out: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | undefined;
   const visit = (n: ts.Node): void => {
     if (out) return;
-    if (
-      ts.isVariableDeclaration(n) &&
-      ts.isIdentifier(n.name) &&
-      n.name.text === name &&
-      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
-    ) {
-      out = n.initializer;
-      return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name) {
+      const init = n.initializer;
+      if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
+        out = init;
+        return;
+      }
     }
     if (ts.isFunctionDeclaration(n) && n.name?.text === name) {
       out = n;
