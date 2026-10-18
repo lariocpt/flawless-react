@@ -1,6 +1,6 @@
 ---
 name: flawless-react
-description: Generate and maintain React/Next.js/Expo test suites with flawless-react — task selection, Next.js and Expo modes, provider wrappers, MSW fixtures from an OpenAPI spec, colocated specs, route e2e, crust load pipes, the programmatic API, and how to read its findings. Use when adding component/e2e/load tests to a React codebase, when a generated flawless suite is red, or for "scaffold tests for this component" work. Deeper guidance lives in the sibling skills flawless-unit-browser, flawless-e2e-load, flawless-findings, flawless-regen, flawless-api, and flawless-expo.
+description: Generate and maintain React/Next.js/Expo test suites with flawless-react — task selection, Next.js and Expo modes, provider wrappers, MSW fixtures from an OpenAPI spec, colocated specs, route e2e, crust load pipes, the programmatic API, and how to read its findings. Use when adding component/e2e/load tests to a React codebase, when a generated flawless suite is red, or for "scaffold tests for this component" work. Deeper guidance lives in the sibling skills flawless-nextjs, flawless-unit-browser, flawless-perf-harness, flawless-perf-static, flawless-a11y, flawless-react-rules, flawless-findings, flawless-e2e, flawless-load, flawless-api-fixtures, flawless-regen, flawless-api, and flawless-expo.
 ---
 
 # flawless-react
@@ -26,6 +26,26 @@ bunx flawless-react "src/app/dashboard/page.tsx" \
   --colocate --no-interactive
 ```
 
+## Which skill to load
+
+This skill is the map. Each plane's traps live in its own skill.
+
+| situation | skill |
+| --- | --- |
+| `--nextjs`: provider derivation and drops, module stubs, React pins, `package.json` merge, `.env` order | flawless-nextjs |
+| unit + browser spec shapes, provider wrapper, `TODO(flawless)`, registered mocks | flawless-unit-browser |
+| the runtime perf plane: `host/`, `profile/`, budgets, `--heaps`, port 5173 | flawless-perf-harness |
+| the static analyser's nine `perf/*` rules, sidecars, what a clean report means | flawless-perf-static |
+| accessibility findings (biome a11y on web, the six native rules) | flawless-a11y |
+| the curated biome correctness/suspicious sweep | flawless-react-rules |
+| triaging a findings list, REPORT.md accounting, suppressions, the counts ledger | flawless-findings |
+| route e2e against a real app: login, `params.json`, the auth wall | flawless-e2e |
+| crust load pipes, `LOAD_BASE`/`LOAD_AUTH`, baselines, anti-vacuous probes | flawless-load |
+| `--api` / `--swagger-url`, MSW handlers, synthesised fixture bodies | flawless-api-fixtures |
+| re-running over an existing suite: `--force`, `--changed`, kept vs refreshed | flawless-regen |
+| `runFlawless()` / `analyse()` from a script | flawless-api |
+| `--expo`: what runs, what refuses, native specs and selectors | flawless-expo |
+
 ## Tasks
 
 | id | what it writes | needs |
@@ -33,8 +53,8 @@ bunx flawless-react "src/app/dashboard/page.tsx" \
 | `unit-browser` | Vitest + Testing Library specs (+ Playwright browser specs when `perf-harness` is also selected) | — |
 | `perf-harness` | `host/` bundle + Profiler/react-scan Playwright suite + heap snapshots | — |
 | `perf-static` | `reports/<C>.perf-static.json` findings, no files to run | — |
-| `a11y` | web: biome jsx-a11y findings; `--expo`: native `a11y/*` findings | biome in the target project (web path only) |
-| `react-rules` | biome correctness rules (exhaustive deps, hook order, keys) | biome |
+| `a11y` | web: biome's a11y rule group; `--expo`: the tool's six native `a11y/*` rules | biome in the target project (web path only) |
+| `react-rules` | biome `correctness` + `suspicious`, curated; scratch config, local `biome.json` bypassed | biome |
 | `e2e` | `flawless/e2e/` route specs against a real dev server | running app + seeded data |
 | `load` | `flawless/load/routes.pipes` crust load pipelines | crust to run them |
 
@@ -87,6 +107,11 @@ is useless for catch-all APIs (Hono, tRPC). Pass `--api openapi.json` (or
 `--swagger-url http://localhost:3000/api/docs`) and real example bodies flow
 into `flawless/mocks/handlers.ts` and into each generated fetch spec. Use
 `--swagger-url=off` to skip the live-spec probe.
+
+Everything below that summary is in flawless-nextjs — module stubs and the rule
+that a named one outranks a pattern one, the Testing Library pins and how a stale
+range is repaired, the `package.json` merge with `pnpm.ignoredBuiltDependencies`,
+the two `.env` load orders, and where gitignore entries land.
 
 ## React 17 / 18 / 19
 
@@ -203,6 +228,10 @@ If the project's own test script is a bare `bun test`, it will also collect
 
 ## e2e and load
 
+Route specs, the global-setup login and the auth wall are flawless-e2e; crust
+pipes, `LOAD_BASE`/`LOAD_AUTH` and their baselines are flawless-load. The short
+version:
+
 e2e runs against the app's **real dev server** — MSW cannot intercept a server
 component's direct database access, so mocking it would be a lie. Seed the
 database first, fill in `flawless/e2e/global-setup.ts` (it ships a worked login
@@ -263,6 +292,10 @@ Rules worth knowing:
 - `perf/unresolved-prop` — the analyser could not synthesise a default, so the
   generated spec passes `undefined`. Fix with `--props '{"x":1}'` or by editing
   the spec's `DEFAULTS`.
+
+Triage order, what a suppression costs, and which rule belongs to which task are
+the three skills flawless-perf-static, flawless-a11y and flawless-react-rules;
+flawless-findings keeps the REPORT.md accounting and the counts ledger.
 
 ## Programmatic use
 

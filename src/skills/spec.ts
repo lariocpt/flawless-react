@@ -80,12 +80,19 @@ export const SKILL_FLAGS: readonly FlagDoc[] = [
  */
 export const SKILL_CHOICES = [
   "flawless-react",
+  "flawless-nextjs",
   "flawless-unit-browser",
-  "flawless-e2e-load",
+  "flawless-perf-harness",
+  "flawless-perf-static",
+  "flawless-a11y",
+  "flawless-react-rules",
   "flawless-findings",
+  "flawless-e2e",
+  "flawless-load",
+  "flawless-api-fixtures",
   "flawless-regen",
-  "flawless-expo",
   "flawless-api",
+  "flawless-expo",
 ] as const;
 
 /** The names a `--select` may use. */

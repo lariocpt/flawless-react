@@ -9,13 +9,15 @@
 // makes to its siblings.
 //
 // The crust sibling's tests/skills.test.ts also exercises an install/--force
-// path. flawless-react has none: these are plain repo files, not embedded in
-// the binary, so there is nothing to install and nothing to guard against
-// overwriting.
+// path. So does ours — but that half lives in tests/skills.test.ts, which drives
+// `flawless-react skills install` against the corpus embedded in the binary. This
+// file covers what is specific to a skill file: its frontmatter, the
+// cross-references it makes to its siblings, and the compat links beside it.
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { SKILL_CHOICES } from "../src/skills/spec.ts";
 import { REPO_ROOT, readProse } from "./helpers/docs.ts";
 
 const SKILLS_DIR = path.join(REPO_ROOT, ".agents", "skills");
@@ -25,7 +27,14 @@ const skillNames = readdirSync(SKILLS_DIR).sort();
 describe("skill frontmatter", () => {
   // A canary: a refactor that stops finding skills must fail, not pass quietly.
   test("the whole skill corpus is found", () => {
-    expect(skillNames.length).toBeGreaterThanOrEqual(6);
+    expect(skillNames.length).toBeGreaterThanOrEqual(14);
+  });
+
+  // The gap this closes: a SKILL.md added under .agents/skills that nobody adds
+  // to SKILL_CHOICES passes every other skill test and simply never ships,
+  // because `skills install` cannot offer what the binary does not carry.
+  test("every skill on disk is in the embedded set", () => {
+    expect(skillNames).toEqual([...SKILL_CHOICES].sort());
   });
 
   test("the compat root holds a link per skill, and only those", () => {
