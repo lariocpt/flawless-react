@@ -124,18 +124,34 @@ export default function HomePage() {
     // the Jenkinsfile installs (Debian trixie ships node 20.19, and vitest 4
     // hits `webidl.util.markAsUncloneable is not a function` there). Locally,
     // on node 26, it passed.
-    const install = Bun.spawn(["bun", "add", "-d", ...SUITE_PINS], {
-      cwd: app,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, code] = await Promise.all([new Response(install.stderr).text(), install.exited]);
+    const attempt = async (): Promise<[string, number]> => {
+      const install = Bun.spawn(["bun", "add", "-d", ...SUITE_PINS], {
+        cwd: app,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return [await new Response(install.stderr).text(), await install.exited];
+    };
+
+    let [stderr, code] = await attempt();
+    // One retry, for one specific reason. A `bun` older than 1.4 corrupts the
+    // SHARED install cache when several processes extract the same package at
+    // once, and every *Execution test file installs at the same moment — so a
+    // cold cache failed here with `Fail extracting tarball for "next"` while the
+    // message below blamed the registry. The Jenkinsfile pins oven/bun:1.4, where
+    // that race is gone (verified: 8 concurrent cold-cache installs of this
+    // fixture's tree, clean); the retry only covers the suite running on an older
+    // bun, and it works because the competing installer has finished by then.
+    if (code !== 0) {
+      [stderr, code] = await attempt();
+    }
     if (code !== 0) {
       throw new Error(
         "could not install the real test runners, so this file cannot check what they " +
           "select. It is deliberately not skipped: a skip here restores exactly the blind " +
           "spot d47abbe shipped through, where every check passed and the command selected " +
-          `nothing. Needs network access to the registry.\n${stderr}`,
+          "nothing. Needs network access to the registry, and a bun at least 1.4 — below " +
+          `that, concurrent installers corrupt a shared cold cache.\n${stderr}`,
       );
     }
     return { app, outDir };
