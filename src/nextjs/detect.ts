@@ -117,7 +117,17 @@ async function detectAppResolver(
  * written beside the analysed sources rather than under the out dir.
  */
 export function ignoreEntries(outRel: string): string[] {
+  // The default out dir is `.flawless`, and `.*` is a common first line in a
+  // real .gitignore — saleor-dashboard's is, and its 1494 generated specs came
+  // out invisible to `git status` with nothing said about it. So negate the one
+  // directory a run owns. It leads the appended block and matches only the
+  // directory itself (trailing slash, anchored), which is what lets every entry
+  // below still ignore its own byproduct: git's last match wins, and none of
+  // them were ever competing for the directory. Skipping this silently is the
+  // bug — a suite nobody can stage is not a deliverable.
+  const base = outRel === "." ? "" : (outRel.split("/").pop() ?? "");
   return [
+    ...(base.startsWith(".") ? [`!${outRel}/`] : []),
     underOutDir(outRel, "reports/"),
     underOutDir(outRel, "heaps/"),
     underOutDir(outRel, "playwright-report/"),
