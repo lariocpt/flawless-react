@@ -3,7 +3,7 @@ import path from "node:path";
 import { extractDataDeps } from "../src/analyse/extractDataDeps.ts";
 import { parseFile } from "../src/analyse/parseFile.ts";
 import { mockLiteral } from "../src/scaffold-tests/mockValues.ts";
-import type { DataDepInfo, MockShape } from "../src/types.ts";
+import type { DataDepInfo, MockField, MockShape } from "../src/types.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures/rsc");
 
@@ -18,6 +18,17 @@ function byVar(deps: DataDepInfo[], varName: string): DataDepInfo {
   const found = deps.find((d) => d.varName === varName);
   if (!found) throw new Error(`no data dep for ${varName}`);
   return found;
+}
+
+/**
+ * The object shape an array dep's elements carry. Throws instead of returning
+ * []: half of the assertions below are `toBeUndefined()`, and an empty field
+ * list would make them pass for the wrong reason.
+ */
+function elementFields(shape: MockShape): MockField[] {
+  const element = shape.kind === "array" ? shape.element : undefined;
+  if (element?.kind !== "object") throw new Error("array dep has no object element shape");
+  return element.fields;
 }
 
 describe("extractDataDeps", () => {
@@ -131,10 +142,7 @@ describe("a fixture the component's own predicate accepts", () => {
     const deps = await loadDeps("MembershipGuardPage.tsx");
     const shape = byVar(deps, "memberships").shape;
     expect(shape.kind).toBe("array");
-    const element = shape.kind === "array" ? shape.element : undefined;
-    expect(element?.kind).toBe("object");
-    const status = element?.kind === "object" && element.fields.find((f) => f.name === "status");
-    expect(status?.equals).toBe("active");
+    expect(elementFields(shape).find((f) => f.name === "status")?.equals).toBe("active");
   });
 
   test("a field compared to a route param records the PATH, not a value", async () => {
@@ -142,21 +150,19 @@ describe("a fixture the component's own predicate accepts", () => {
     // the spec's DEFAULTS carries — two places spelling "flawless-id"
     // independently is exactly how they drift.
     const deps = await loadDeps("MembershipGuardPage.tsx");
-    const shape = byVar(deps, "memberships").shape;
-    const element = shape.kind === "array" ? shape.element : undefined;
-    const bid = element?.kind === "object" && element.fields.find((f) => f.name === "building_id");
+    const bid = elementFields(byVar(deps, "memberships").shape).find(
+      (f) => f.name === "building_id",
+    );
     expect(bid?.equalsProp).toEqual(["params", "id"]);
     expect(bid?.equals).toBeUndefined();
   });
 
   test("!== is not recorded — it says what the value must NOT be", async () => {
     const deps = await loadDeps("MembershipGuardPage.tsx");
-    const shape = byVar(deps, "memberships").shape;
-    const element = shape.kind === "array" ? shape.element : undefined;
     // `label` is rendered in the map callback and never compared, so it keeps
     // its synthesised value — the control that proves `equals` is not set for
     // every field just because one field on the row has it.
-    const label = element?.kind === "object" && element.fields.find((f) => f.name === "label");
+    const label = elementFields(byVar(deps, "memberships").shape).find((f) => f.name === "label");
     expect(label?.equals).toBeUndefined();
     expect(label?.equalsProp).toBeUndefined();
   });
