@@ -60,11 +60,15 @@ function moduleImport(over: Partial<ModuleImportInfo> & { specifier: string }): 
 
 function dataDep(over: Partial<DataDepInfo> & { callee: string }): DataDepInfo {
   return {
+    // A destructured binding has no local name, and these template tests are
+    // about the call, not the binding. `pos` is required by the type, so the
+    // fixture says which line it is on like every other builder in this file.
     varName: undefined,
     calleeRoot: over.callee,
     awaited: true,
     shape: { kind: "unknown" },
     uncertain: true,
+    pos: pos(1),
     ...over,
   };
 }
@@ -515,7 +519,13 @@ describe("renderUnitBrowser async server components", () => {
           comp("Page", {
             exportKind: "default",
             isAsync: true,
-            dataDeps: [dataDep({ callee: "toast", calleeRoot: "toast", specifier: "sonner" })],
+            dataDeps: [
+              dataDep({
+                callee: "toast",
+                calleeRoot: "toast",
+                specifier: "sonner",
+              }),
+            ],
             moduleImports: [moduleImport({ specifier: "sonner", names: ["toast"] })],
             treeImports: [
               moduleImport({
@@ -550,7 +560,11 @@ describe("renderUnitBrowser async server components", () => {
             exportKind: "default",
             isAsync: true,
             dataDeps: [
-              dataDep({ callee: "fetchUser", calleeRoot: "fetchUser", specifier: "@/api" }),
+              dataDep({
+                callee: "fetchUser",
+                calleeRoot: "fetchUser",
+                specifier: "@/api",
+              }),
             ],
             moduleImports: [
               moduleImport({
@@ -577,7 +591,13 @@ describe("renderUnitBrowser async server components", () => {
           comp("Page", {
             exportKind: "default",
             isAsync: true,
-            dataDeps: [dataDep({ callee: "getUser", calleeRoot: "getUser", specifier: "@/lib" })],
+            dataDeps: [
+              dataDep({
+                callee: "getUser",
+                calleeRoot: "getUser",
+                specifier: "@/lib",
+              }),
+            ],
             moduleImports: [moduleImport({ specifier: "@/lib", names: ["getUser"] })],
             treeImports: [
               moduleImport({

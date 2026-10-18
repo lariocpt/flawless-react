@@ -711,7 +711,9 @@ describe("a kept host/main.tsx follows the provider", () => {
     const main = path.join(out, "host/main.tsx");
     const text = await Bun.file(main).text();
     const from = /^import AppProvider from (['"])([^'"]+)\1;$/m.exec(text)?.[2];
-    expect(from).toBeDefined();
+    if (from === undefined) {
+      throw new Error("the emitted host/main.tsx carries no AppProvider import to refresh");
+    }
     // The hand wiring that makes this file write-once in the first place.
     await Bun.write(main, `${text}\n// MY OWN WIRING\n`);
 
