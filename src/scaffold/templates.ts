@@ -527,11 +527,13 @@ function collectEnvDefines(): string {
     for (const line of txt.split("\n")) {
       const m = line.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
       if (!m) continue;
-      let v = m[2].trim();
+      const name = m[1];
+      if (name === undefined) continue;
+      let v = (m[2] ?? "").trim();
       if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
         v = v.slice(1, -1);
       }
-      if (v) merged.set(m[1], v);
+      if (v) merged.set(name, v);
     }
   }
   return [...merged].map(([k, v]) => `"process.env.${k}": ${JSON.stringify(v)},`).join("\n    ");

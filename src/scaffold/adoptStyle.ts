@@ -94,9 +94,10 @@ export async function adoptProjectStyle(
     // say so.)
     // Normalize both sides: prettier reports paths relative to its cwd,
     // while the caller's list may be absolute.
-    const unparseable = new Set(
-      [...stderr.matchAll(/^\[error\] (\S+):/gm)].map((m) => path.resolve(cwd, m[1])),
-    );
+    const unparseable = new Set<string>();
+    for (const m of stderr.matchAll(/^\[error\] (\S+):/gm)) {
+      if (m[1] !== undefined) unparseable.add(path.resolve(cwd, m[1]));
+    }
     if (/SyntaxError/.test(stderr) && unparseable.size > 0 && unparseable.size < files.length) {
       const rest = files.filter((f) => !unparseable.has(path.resolve(cwd, f)));
       if (rest.length > 0) {
