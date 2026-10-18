@@ -39,6 +39,14 @@ and let the second idea be its own change.
 - CI runs on `oven/bun:1.4`. Below 1.4 concurrent installers corrupt a shared cold
   cache, which is every CI run and almost no developer machine — the failure reads
   as a registry outage ("Fail extracting tarball"), not as what it is.
+- A `bun test` tally that disagrees with the published CI build's is a measurement
+  problem, not a code problem: a gitignored nested checkout (`.claude/worktrees/`)
+  can get collected at an old revision, where its stale assertions fail against this
+  tree. `find . -name '*.test.ts' -not -path './tests/*'` finds it. Move that copy
+  out; do not make its assertions pass.
+- When a read of a file disagrees with `git status`, trust git and re-read from disk.
+  An edit that reported success and never landed is worse than no edit, and the only
+  witness is the next `git diff`.
 
 ## Never commit
 
