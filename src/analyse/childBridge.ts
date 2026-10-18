@@ -119,15 +119,17 @@ function mergeShape(existing: MockShape | undefined, wanted: MockShape): MockSha
   if (existing.kind === "object" && wanted.kind === "object") {
     const fields = [...existing.fields];
     for (const w of wanted.fields) {
-      const i = fields.findIndex((f) => f.name === w.name);
-      if (i === -1) fields.push(w);
-      else {
-        const merged = { ...fields[i], shape: mergeShape(fields[i].shape, w.shape) };
-        // A literal the parent never knew about is pure gain; a literal the
-        // parent inferred from a comparison site (`kind === "repost"`) stays.
-        if (merged.equals === undefined && w.equals !== undefined) merged.equals = w.equals;
-        fields[i] = merged;
+      const at = fields.findIndex((f) => f.name === w.name);
+      const prev = at === -1 ? undefined : fields[at];
+      if (prev === undefined) {
+        fields.push(w);
+        continue;
       }
+      const merged = { ...prev, shape: mergeShape(prev.shape, w.shape) };
+      // A literal the parent never knew about is pure gain; a literal the
+      // parent inferred from a comparison site (`kind === "repost"`) stays.
+      if (merged.equals === undefined && w.equals !== undefined) merged.equals = w.equals;
+      fields[at] = merged;
     }
     return { kind: "object", fields };
   }
@@ -173,12 +175,12 @@ export function bridgeDataShapes(
       ELEM_METHODS.has(n.expression.name.text)
     ) {
       const cb = n.arguments[0];
-      if (
-        (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) &&
-        cb.parameters.length > 0 &&
-        ts.isIdentifier(cb.parameters[0].name)
-      ) {
-        elemAliases.set(cb.parameters[0].name.text, n.expression.expression.text);
+      const param =
+        cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb))
+          ? cb.parameters[0]
+          : undefined;
+      if (param && ts.isIdentifier(param.name)) {
+        elemAliases.set(param.name.text, n.expression.expression.text);
       }
     }
     ts.forEachChild(n, collectAliases);
@@ -237,11 +239,11 @@ export function bridgeDataShapes(
       const isElem = aliasOf !== undefined && dep.varName === aliasOf;
       const isVar = dep.varName === site.root;
       if (!isVar && !isElem) continue;
-      if (isElem && dep.shape.kind !== "array") continue;
-      const head = isElem && dep.shape.kind === "array" ? dep.shape.element : undefined;
       if (isElem) {
-        const element = applyPath(head ?? { kind: "unknown" }, wanted, site.path);
-        dep.shape = { ...dep.shape, element };
+        // A `.map()` site writes the ELEMENT, so only an array dep can take it.
+        if (dep.shape.kind !== "array") continue;
+        const element = applyPath(dep.shape.element ?? { kind: "unknown" }, wanted, site.path);
+        dep.shape = { kind: "array", element };
       } else {
         dep.shape = applyPath(dep.shape, wanted, site.path);
       }
@@ -262,20 +264,25 @@ function applyPath(root: MockShape, wanted: Wanted, path: string[]): MockShape {
     if (root.kind !== "unknown" && root.kind !== "truthy-object") return root;
     root = { kind: "object", fields: [] };
   }
-  const [head, ...tail] = path;
+  // `path.length === 0` returned above, so the hop exists. Named because the
+  // indexed reads below need `string`, not `string | undefined`.
+  const head = path[0];
+  if (head === undefined) return root;
+  const tail = path.slice(1);
   const fields = [...root.fields];
-  const i = fields.findIndex((f) => f.name === head);
+  const at = fields.findIndex((f) => f.name === head);
+  const prev = at === -1 ? undefined : fields[at];
   // A literal rides on the FIELD standing at the END of the path.
   const atEnd = tail.length === 0 && wanted.equals !== undefined;
-  if (i === -1) {
+  if (prev === undefined) {
     const made = applyPath({ kind: "unknown" }, wanted, tail);
     const field: MockField = { name: head, shape: made, rendersAsText: false };
     if (atEnd) field.equals = wanted.equals as MockField["equals"];
     fields.push(field);
   } else {
-    const merged = { ...fields[i], shape: applyPath(fields[i].shape, wanted, tail) };
+    const merged = { ...prev, shape: applyPath(prev.shape, wanted, tail) };
     if (atEnd && merged.equals === undefined) merged.equals = wanted.equals as MockField["equals"];
-    fields[i] = merged;
+    fields[at] = merged;
   }
   return { kind: "object", fields };
 }
