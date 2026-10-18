@@ -10,6 +10,7 @@ import {
   providerKey,
   referencedLibraryShims,
 } from "../src/analyse/providerWraps.ts";
+import { ModuleResolver } from "../src/analyse/resolveModule.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
 import type { ComponentTree, ProviderRef } from "../src/types.ts";
 
@@ -315,7 +316,7 @@ async function derive(
       // with a note; here they only need to exist on disk for imports.
       const own = await analyseFile(
         { entry, depth: 3, includeChildren: true, roots: "exported" },
-        { cache: new SourceFileCache() },
+        { cache: new SourceFileCache(), resolver: new ModuleResolver() },
       ).catch(() => []);
       trees.push(...own);
     }
@@ -516,7 +517,7 @@ describe("react-hook-form's context", () => {
         trees.push(
           ...(await analyseFile(
             { entry: file, depth: 3, includeChildren: true, roots: "exported" },
-            { cache },
+            { cache, resolver: new ModuleResolver() },
           ).catch(() => [])),
         );
       }
