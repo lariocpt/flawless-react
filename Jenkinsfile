@@ -119,6 +119,9 @@ pipeline {
                         # A real chromium for the gated browser case (FR-022).
                         bunx playwright install --with-deps chromium >/dev/null
                         bun test
+                        # Zero errors, and it stays there: this line was red for eight builds
+                        # while the tree carried 78 pre-existing ones, which taught nobody
+                        # anything except that the gate was ignored. Both stages run bun 1.4.
                         bunx tsc --noEmit
                         # The gate package.json declares and CI never ran (FR-023): biome ci
                         # lints AND format-checks the whole tree, which the pre-commit
