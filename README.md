@@ -417,6 +417,12 @@ flawless-react skills install --select flawless-react,flawless-e2e
 flawless-react skills install --global  # into ~/.agents/skills, every project
 ```
 
+Nothing there needs a project, an entry or `--nextjs`: `skills` is the one
+subcommand that touches no code at all, so a global install — or a one-shot
+`bunx` / `npx` — can drop the corpus into `~/.agents/skills` and be finished.
+Scope is a flag, never a menu choice; the menu picks skills, with everything you
+do not already have selected.
+
 They go to `.agents/skills/<name>/SKILL.md`, and each also gets its own link at
 `.claude/skills/<name>` — Claude Code looks for skills there, and reads one file, so
 it gets a link per skill and never a directory of things it was not asked to load.

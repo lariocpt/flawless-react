@@ -19,12 +19,14 @@
 //     FOREIGN_FLAGS below, which fails loudly when a new one appears rather
 //     than waving unknown flags through.
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkLines } from "../src/cli.ts";
 import { FLAG_NAMES, FLAGS, MAINTENANCE_FLAGS } from "../src/cliFlags.ts";
-import { SKILL_FLAGS } from "../src/skills/spec.ts";
+import { runSkillsCommand, type SkillsIO } from "../src/skills/cli.ts";
+import { parseSkillsCommand, SKILL_FLAGS } from "../src/skills/spec.ts";
 import { ALL_TASK_IDS } from "../src/tasks/index.ts";
 import {
   commandLines,
@@ -86,6 +88,46 @@ describe("documented invocations parse against the live CLI", () => {
       total += checkLines(commandLines(await readProse(rel)).join("\n")).checked;
     }
     expect(total).toBeGreaterThanOrEqual(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A2 — the one prose claim about `skills` that grammar cannot make
+// ---------------------------------------------------------------------------
+
+// README and the website's Skills page both say `skills install` needs no
+// project, no entry and no `--nextjs`. Every other command in this tool reads a
+// codebase, so that promise is the thing a reader cannot tell from the flags —
+// and the day `skills` grows a target, the docs go silently false. Only running
+// it in an empty directory says anything.
+describe("`skills install` needs no project, as the docs promise", () => {
+  test("an empty directory is enough, and both roots get the pair", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "docs-skills-"));
+    try {
+      const lines: string[] = [];
+      const io: SkillsIO = {
+        log: (l?: string) => lines.push(l ?? ""),
+        warn: (l: string) => lines.push(l),
+        isTTY: false,
+      };
+      const code = await runSkillsCommand(
+        parseSkillsCommand(["install", "--select", "flawless-react"]),
+        io,
+        cwd,
+      );
+      expect(code).toBe(0);
+      const skillDir = path.join(cwd, ".agents", "skills", "flawless-react");
+      expect(readFileSync(path.join(skillDir, "SKILL.md"), "utf8")).toContain(
+        "name: flawless-react",
+      );
+      // The Claude Code half of the pair comes from the same command, no second
+      // flag: a relative link, resolving back to the canonical skill directory.
+      const compat = path.join(cwd, ".claude", "skills", "flawless-react");
+      expect(lstatSync(compat).isSymbolicLink()).toBe(true);
+      expect(realpathSync(compat)).toBe(realpathSync(skillDir));
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 
