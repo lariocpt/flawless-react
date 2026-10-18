@@ -431,6 +431,78 @@ describe("generated output is ignored outside Next.js mode too", () => {
     expect(entries).toContain("*.flawless.json");
   });
 
+  test("a dot-named out dir negates itself, first", () => {
+    // `.*` in the app's .gitignore is the saleor-dashboard case: the whole
+    // generated suite invisible to git. The negation must come before the
+    // byproduct entries, which still ignore what they always did.
+    expect(ignoreEntries(".flawless")).toEqual([
+      "!.flawless/",
+      ".flawless/reports/",
+      ".flawless/heaps/",
+      ".flawless/playwright-report/",
+      ".flawless/node_modules/",
+      ".flawless/test-results/",
+      ".flawless/browser/test-results/",
+      ".flawless/e2e/test-results/",
+      ".flawless/e2e/.auth.json",
+      ".flawless/load/last-*.json",
+      "*.flawless.json",
+    ]);
+    // A nested dot dir is negated relative to the ignore root, like every entry.
+    expect(ignoreEntries("apps/web/.flawless")[0]).toBe("!apps/web/.flawless/");
+    // Not a dot dir, nothing to negate; and an out dir that IS the project root
+    // ("." per outDirRel) is not a dot-named directory, so it must not emit `!./`.
+    expect(ignoreEntries("flawless")[0]).toBe("flawless/reports/");
+    expect(ignoreEntries(".")).toEqual([
+      "reports/",
+      "heaps/",
+      "playwright-report/",
+      "node_modules/",
+      "test-results/",
+      "browser/test-results/",
+      "e2e/test-results/",
+      "e2e/.auth.json",
+      "load/last-*.json",
+      "*.flawless.json",
+    ]);
+  });
+
+  test("a run in a repo that ignores `.*` still leaves a committable suite", async () => {
+    const root = await tmpDir();
+    await Bun.$`cp -r ${path.join(import.meta.dir, "fixtures", "nextapp")} ${path.join(root, "app")}`.quiet();
+    const app = path.join(root, "app");
+    await Bun.$`git init -q ${app}`.quiet();
+    await Bun.write(path.join(app, ".gitignore"), ".*\nnode_modules\n");
+
+    const proc = Bun.spawn(
+      [
+        "bun",
+        path.join(import.meta.dir, "..", "src", "bin.ts"),
+        "src/**/*.tsx",
+        "--ci",
+        "--tasks",
+        "perf-static,perf-harness",
+      ],
+      { stdout: "pipe", stderr: "pipe", cwd: app },
+    );
+    await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+
+    // Git's opinion, again, and with -uall so an invisible directory cannot hide
+    // behind a collapsed `?? .flawless/` line.
+    const visible = await Bun.$`git -C ${app} status --short -uall`.quiet().text();
+    expect(visible).toContain(".flawless/playwright.config.ts");
+    expect(visible).toContain(".flawless/profile/");
+    // The byproducts are still ignored, with the negation sitting earlier in the
+    // same block: last match wins, and it never matched the contents anyway.
+    const ignored = await Bun.$`git -C ${app} status --short -uall --ignored=matching`
+      .quiet()
+      .text();
+    expect(
+      ignored.split("\n").filter((l) => l.startsWith("!! .flawless/reports/")).length,
+    ).toBeGreaterThan(0);
+  });
+
   test("a real non-Next run writes them, and leaks no report, heap, auth file or sidecar", async () => {
     const root = await tmpDir();
     await Bun.$`cp -r ${path.join(import.meta.dir, "fixtures", "nextapp")} ${path.join(root, "app")}`.quiet();
