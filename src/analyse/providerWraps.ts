@@ -79,6 +79,13 @@ const provKey = (ref: ProviderRef): string => `${ref.filePath}::${ref.componentN
 const isInternalSpecifier = (s: string): boolean =>
   s.startsWith(".") || s.startsWith("@/") || s.startsWith("~/");
 
+/** Every bare module specifier that carries a shim's provider-gated surface:
+ *  the canonical `module` plus any alias that re-exports the same thing. */
+const shimModules = (spec: { module: string; modules?: string[] }): string[] => [
+  spec.module,
+  ...(spec.modules ?? []),
+];
+
 /**
  * Providers the project cannot be expected to import: the context lives in a
  * node_modules library, and its hooks throw when no library provider sits
@@ -94,6 +101,17 @@ const isInternalSpecifier = (s: string): boolean =>
  */
 interface LibraryShimSpec {
   module: string;
+  /**
+   * Other bare module specifiers that carry the SAME provider-gated surface:
+   * `react-router-dom` re-exports the `react-router` core (v5 and v6 do that,
+   * v7 moved it and left the old name as the alias), so the same hook or
+   * component can arrive under either name and needs the same provider. The
+   * generated wrap still imports from `module`, the canonical one, because a
+   * package that imports either almost always depends on both — an app that
+   * really has only the alias gets an unresolvable import, which is a louder
+   * failure than a silent no-wrap.
+   */
+  modules?: string[];
   hooks: string[];
   /**
    * Provider-gated COMPONENTS, the same requirement seen from the other side:
@@ -144,6 +162,14 @@ import { type ReactNode, useState } from "react";`,
     // useNavigate and the mount dies with "useNavigate() may be used only in
     // the context of a <Router>". MemoryRouter is the standard test context.
     module: "react-router-dom",
+    // The same surface is also exported by `react-router` itself: v5 and v6
+    // re-export the core through react-router-dom, v7 moved it and left the old
+    // name as the alias. saleor-dashboard writes both (146 files against
+    // react-router-dom, 48 against react-router), and a component that renders
+    // <Link> calls no hook at all — "You should not use <Link> outside a
+    // <Router>" is what the mount says for it.
+    modules: ["react-router"],
+    components: ["Link", "NavLink"],
     hooks: [
       "useHref",
       "useLinkClickHandler",
@@ -245,6 +271,8 @@ import { IntlProvider } from "react-intl";`,
 export interface LibraryProviderShim {
   /** Bare module specifier whose hooks need the wrap. */
   module: string;
+  /** Alias module specifiers for the same surface (see LibraryShimSpec). */
+  modules?: string[];
   /** Module-side hook names that require the provider above them. */
   hooks: string[];
   /** Module-side component names that require it too (see LibraryShimSpec). */
@@ -280,6 +308,7 @@ export function libraryProviderShimsFor(componentFiles: string[]): LibraryProvid
     for (const root of roots) {
       out.push({
         module: spec.module,
+        modules: spec.modules,
         hooks: spec.hooks,
         components: spec.components,
         componentName: spec.componentName,
@@ -500,7 +529,7 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
           const b = parsed.imports.get(fn);
           if (b && !b.isTypeOnly) {
             for (const s of LIBRARY_SHIMS) {
-              if (s.module === b.specifier && s.hooks.includes(b.importedName ?? fn)) {
+              if (shimModules(s).includes(b.specifier) && s.hooks.includes(b.importedName ?? fn)) {
                 libs.add(s.module);
               }
             }
@@ -978,7 +1007,8 @@ export async function deriveContextProviderWraps(
         if (parsed) await walkLibs(sourceFile, moduleSide);
         const shim = shims?.(c).find(
           (s) =>
-            libs.has(s.module) && (hookSpec === s.module ? s.hooks.includes(moduleSide) : true),
+            shimModules(s).some((m) => libs.has(m)) &&
+            (shimModules(s).includes(hookSpec ?? "") ? s.hooks.includes(moduleSide) : true),
         );
         if (shim) {
           addReq(compKey, {
@@ -1002,7 +1032,7 @@ export async function deriveContextProviderWraps(
         if (reqs.get(compKey)?.has(`${s.filePath}::${s.componentName}`)) continue;
         for (const tag of ownTags) {
           const b = own.imports.get(tag);
-          if (!b || b.isTypeOnly || b.specifier !== s.module) continue;
+          if (!b || b.isTypeOnly || !shimModules(s).includes(b.specifier)) continue;
           if (!s.components.includes(b.importedName ?? tag)) continue;
           addReq(compKey, {
             componentName: s.componentName,

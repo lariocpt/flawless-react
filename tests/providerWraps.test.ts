@@ -306,6 +306,15 @@ export function Greeting() {
   return <p><Msg id="hi" defaultMessage="Hi" /></p>;
 }
 `,
+  // react-router's core is re-exported through react-router-dom (v5, v6) and
+  // became the only home in v7, so the same <Link> arrives under either name —
+  // and rendering it needs the router exactly like calling useNavigate does.
+  "crumb.tsx": `
+import { Link } from 'react-router';
+export function Crumb() {
+  return <Link to="/x">x</Link>;
+}
+`,
 };
 
 async function derive(
@@ -495,6 +504,9 @@ describe("deriveContextProviderWraps", () => {
     const intlRefs = refsof(shimmed, "::Greeting");
     expect(names(intlRefs)).toEqual(["FlawlessIntlProvider"]);
     expect(intlRefs[0]?.filePath.endsWith("flawless-intl.tsx")).toBe(true);
+    // The alias module, arriving as a rendered component rather than a call:
+    // the same router wrap, because it is the same provider.
+    expect(names(refsof(shimmed, "::Crumb"))).toEqual(["FlawlessRouterProvider"]);
     // Without shims the derivation is unchanged: the hook pairs with nothing.
     const bare = await derive();
     expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
@@ -502,6 +514,7 @@ describe("deriveContextProviderWraps", () => {
     expect([...bare.keys()].some((k) => k.endsWith("::DialogShell"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::Palette"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::Greeting"))).toBe(false);
+    expect([...bare.keys()].some((k) => k.endsWith("::Crumb"))).toBe(false);
     // And the shim modules are claimed for writing only when a map references
     // them — one per (library, package): query, router and intl, same tmp root.
     expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(3);
