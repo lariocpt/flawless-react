@@ -555,8 +555,8 @@ async function analyseOne(
       // up mocked anyway — an async stub rendered as a JSX child silently
       // suspends the whole tree.
       const returns: Record<string, unknown> = { ...base.importedReturns };
-      for (const { i } of add) {
-        const m = extra.importedNames?.[i] ?? extra.names[i];
+      for (const { n, i } of add) {
+        const m = extra.importedNames?.[i] ?? extra.names[i] ?? n;
         const r = extra.importedReturns?.[m];
         if (r !== undefined && returns[m] === undefined) returns[m] = r;
       }
@@ -566,7 +566,7 @@ async function analyseOne(
         names: [...base.names, ...add.map(({ n }) => n)],
         importedNames: [
           ...(base.importedNames ?? base.names),
-          ...add.map(({ i }) => extra.importedNames?.[i] ?? extra.names[i]),
+          ...add.map(({ n, i }) => extra.importedNames?.[i] ?? extra.names[i] ?? n),
         ],
         mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
         ...(base.dataExports || extra.dataExports
