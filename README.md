@@ -398,18 +398,22 @@ Anything that could not be derived is left as a `TODO(flawless)` marker rather t
 
 ## Agent skills
 
-The repo ships a skill per feature under `.agents/skills/` — `flawless-react` for
-the whole tool, `flawless-unit-browser`, `flawless-e2e-load`, `flawless-findings`,
-`flawless-regen`, `flawless-api`, `flawless-expo` — and Claude Code, Codex, Cursor
-and OpenCode all read that directory. A skill is what stops an agent guessing at
-this tool: how the browser plane differs from the unit plane, which findings are
-suppressible, what a `--changed` run does and does not rewrite.
+The repo ships **14 skills** under `.agents/skills/`, one per feature area:
+`flawless-react` is the umbrella and router, and the rest go a level deeper —
+`flawless-nextjs`, `flawless-unit-browser`, `flawless-perf-harness`,
+`flawless-perf-static`, `flawless-a11y`, `flawless-react-rules`,
+`flawless-findings`, `flawless-e2e`, `flawless-load`, `flawless-api-fixtures`,
+`flawless-regen`, `flawless-api`, `flawless-expo`. Claude Code, Codex, Cursor and
+OpenCode all read that directory. A skill is what stops an agent guessing at this
+tool: how the browser plane differs from the unit plane, why a perf budget warns
+instead of failing, which findings are suppressible, what a `--changed` run does
+and does not rewrite.
 
 ```bash
 flawless-react skills list            # what is installed, in both scopes
 flawless-react skills install         # pick them in a menu
 flawless-react skills install --all   # every skill, no menu (CI, scripts)
-flawless-react skills install --select flawless-react,flawless-e2e-load
+flawless-react skills install --select flawless-react,flawless-e2e
 flawless-react skills install --global  # into ~/.agents/skills, every project
 ```
 
@@ -419,8 +423,8 @@ it gets a link per skill and never a directory of things it was not asked to loa
 That is why the install reports two counts:
 
 ```
-✔ installed 3, up-to-date 4 → /repo/.agents/skills
-  linked 3 into /repo/.claude/skills for Claude Code
+✔ installed 14 → /repo/.agents/skills
+  linked 14 into /repo/.claude/skills for Claude Code
 ```
 
 Three rules worth knowing. **The install never overwrites**: a `SKILL.md` you have

@@ -12,13 +12,28 @@
 // cannot quietly roll back a SKILL.md you just changed here.
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
+import flawlessA11y from "../../.agents/skills/flawless-a11y/SKILL.md" with { type: "text" };
 import flawlessApi from "../../.agents/skills/flawless-api/SKILL.md" with { type: "text" };
-import flawlessE2ELoad from "../../.agents/skills/flawless-e2e-load/SKILL.md" with { type: "text" };
+import flawlessApiFixtures from "../../.agents/skills/flawless-api-fixtures/SKILL.md" with {
+  type: "text",
+};
+import flawlessE2E from "../../.agents/skills/flawless-e2e/SKILL.md" with { type: "text" };
 import flawlessExpo from "../../.agents/skills/flawless-expo/SKILL.md" with { type: "text" };
 import flawlessFindings from "../../.agents/skills/flawless-findings/SKILL.md" with {
   type: "text",
 };
+import flawlessLoad from "../../.agents/skills/flawless-load/SKILL.md" with { type: "text" };
+import flawlessNextjs from "../../.agents/skills/flawless-nextjs/SKILL.md" with { type: "text" };
+import flawlessPerfHarness from "../../.agents/skills/flawless-perf-harness/SKILL.md" with {
+  type: "text",
+};
+import flawlessPerfStatic from "../../.agents/skills/flawless-perf-static/SKILL.md" with {
+  type: "text",
+};
 import flawlessReact from "../../.agents/skills/flawless-react/SKILL.md" with { type: "text" };
+import flawlessReactRules from "../../.agents/skills/flawless-react-rules/SKILL.md" with {
+  type: "text",
+};
 import flawlessRegen from "../../.agents/skills/flawless-regen/SKILL.md" with { type: "text" };
 import flawlessUnitBrowser from "../../.agents/skills/flawless-unit-browser/SKILL.md" with {
   type: "text",
@@ -38,12 +53,19 @@ export interface EmbeddedSkill {
  */
 const CONTENT: Record<(typeof SKILL_CHOICES)[number], string> = {
   "flawless-react": flawlessReact,
+  "flawless-nextjs": flawlessNextjs,
   "flawless-unit-browser": flawlessUnitBrowser,
-  "flawless-e2e-load": flawlessE2ELoad,
+  "flawless-perf-harness": flawlessPerfHarness,
+  "flawless-perf-static": flawlessPerfStatic,
+  "flawless-a11y": flawlessA11y,
+  "flawless-react-rules": flawlessReactRules,
   "flawless-findings": flawlessFindings,
+  "flawless-e2e": flawlessE2E,
+  "flawless-load": flawlessLoad,
+  "flawless-api-fixtures": flawlessApiFixtures,
   "flawless-regen": flawlessRegen,
-  "flawless-expo": flawlessExpo,
   "flawless-api": flawlessApi,
+  "flawless-expo": flawlessExpo,
 };
 
 /** Order is display order: the umbrella first, since it is the router. */

@@ -46,10 +46,19 @@ const corpus = (): string[] => [...proseFiles(), ...websiteProseFiles()];
 // by checking nothing at all, which is the failure mode the whole suite exists
 // to refuse. Set just under today's real counts.
 const MIN_INVOCATIONS: Record<string, number> = {
-  "README.md": 6,
+  "README.md": 10,
   "docs/extending.md": 1,
   ".agents/skills/flawless-react/SKILL.md": 2,
   ".agents/skills/flawless-regen/SKILL.md": 1,
+  ".agents/skills/flawless-nextjs/SKILL.md": 1,
+  ".agents/skills/flawless-perf-harness/SKILL.md": 1,
+  ".agents/skills/flawless-perf-static/SKILL.md": 1,
+  ".agents/skills/flawless-a11y/SKILL.md": 1,
+  ".agents/skills/flawless-react-rules/SKILL.md": 1,
+  ".agents/skills/flawless-findings/SKILL.md": 1,
+  ".agents/skills/flawless-e2e/SKILL.md": 1,
+  ".agents/skills/flawless-load/SKILL.md": 1,
+  ".agents/skills/flawless-api-fixtures/SKILL.md": 1,
 };
 
 describe("documented invocations parse against the live CLI", () => {
