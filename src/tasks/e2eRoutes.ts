@@ -197,7 +197,8 @@ function packageManagerFor(dir: string): string {
       typeof pkg.packageManager === "string"
         ? pkg.packageManager.match(/^(npm|pnpm|yarn|bun)/)
         : null;
-    if (m) return m[1];
+    const tool = m?.[1];
+    if (tool) return tool;
   } catch {
     // no package.json: fall through to lockfiles
   }

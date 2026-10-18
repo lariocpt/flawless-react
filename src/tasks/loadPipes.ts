@@ -35,22 +35,23 @@ export const loadPipes: Task = {
       };
     }
 
+    // Bound after the guard: `ctx.nextjs` narrows for this body but not inside
+    // the closures below, where the property could have moved.
+    const nextjs = ctx.nextjs;
     const loadDir = path.join(ctx.outDir, "load");
     await mkdir(loadDir, { recursive: true });
     const written: string[] = [];
 
-    const routerRoot = findRouterRoot(ctx.nextjs.root);
+    const routerRoot = findRouterRoot(nextjs.root);
     // Fallback for default Next.js mode where the entry glob is components/**,
     // so ctx.trees contains no page files. Discover pages directly so load
     // pipes still emit route targets.
     let trees = ctx.trees;
-    const hasPage = trees.some((t) =>
-      pageFileToRoute(t.entry.filePath, ctx.nextjs.router, routerRoot),
-    );
+    const hasPage = trees.some((t) => pageFileToRoute(t.entry.filePath, nextjs.router, routerRoot));
     if (!hasPage) {
       const pageGlob = new Bun.Glob("**/page.{tsx,jsx,ts,js}");
       for await (const file of pageGlob.scan({ cwd: routerRoot, absolute: true })) {
-        const route = pageFileToRoute(file, ctx.nextjs.router, routerRoot);
+        const route = pageFileToRoute(file, nextjs.router, routerRoot);
         if (!route) continue;
         const tree: ComponentTree = {
           entry: {
@@ -67,7 +68,7 @@ export const loadPipes: Task = {
         trees = [...trees, tree];
       }
     }
-    const targets = collectTargets(trees, ctx.nextjs.router, routerRoot);
+    const targets = collectTargets(trees, nextjs.router, routerRoot);
 
     // Every id these pipes reference gets a slot in params.json, including the
     // API-route ones the e2e task never sees (/api/buildings/[buildingId] beside
@@ -88,7 +89,7 @@ export const loadPipes: Task = {
     let keptPipes = false;
     let pipesText: string;
     if (!existsSync(pipesPath)) {
-      pipesText = renderPipes(targets, ctx.outDir, ctx.nextjs.root, filled);
+      pipesText = renderPipes(targets, ctx.outDir, nextjs.root, filled);
       await Bun.write(pipesPath, pipesText);
       written.push(pipesPath);
     } else if (ctx.force) {
@@ -99,7 +100,7 @@ export const loadPipes: Task = {
         await Bun.file(pipesPath).text(),
         targets,
         ctx.outDir,
-        ctx.nextjs.root,
+        nextjs.root,
         filled,
       );
       await Bun.write(pipesPath, pipesText);
@@ -115,12 +116,12 @@ export const loadPipes: Task = {
     // which a write-once file only manages because "absent" is the common case.
     const setupPath = path.join(loadDir, "routes.setup.ts");
     if (!existsSync(setupPath)) {
-      await Bun.write(setupPath, renderLoadSetup(targets, outDirRel(ctx.outDir, ctx.nextjs.root)));
+      await Bun.write(setupPath, renderLoadSetup(targets, outDirRel(ctx.outDir, nextjs.root)));
       written.push(setupPath);
     }
 
     const envPath = path.join(loadDir, "env.sh");
-    await Bun.write(envPath, loadEnvScript(outDirRel(ctx.outDir, ctx.nextjs.root)));
+    await Bun.write(envPath, loadEnvScript(outDirRel(ctx.outDir, nextjs.root)));
     written.push(envPath);
 
     // Regenerated under --force, unlike routes.pipes beside it: this README is
@@ -133,7 +134,7 @@ export const loadPipes: Task = {
       written.push(readmePath);
     }
 
-    const crustPresent = Bun.which("crust") !== null || hasLocalCrust(ctx.nextjs.root);
+    const crustPresent = Bun.which("crust") !== null || hasLocalCrust(nextjs.root);
     const tally = countPipes(pipesText);
     return {
       id: "load",
