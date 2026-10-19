@@ -197,7 +197,14 @@ import { type ReactNode, useState } from "react";`,
     // <Link> calls no hook at all — "You should not use <Link> outside a
     // <Router>" is what the mount says for it.
     modules: ["react-router"],
-    components: ["Link", "NavLink"],
+    // `Outlet` and `Navigate` join `Link` here on measurement, not on the
+    // library's surface list: tonkeeper/ton-console's Layout and LayoutSolid
+    // render <Outlet /> and died with `Cannot destructure property 'basename'
+    // of useContext(...) as it is null` — the same missing RouterContext, from
+    // a tag the walk could always see. Under MemoryRouter an <Outlet /> with
+    // no routes renders nothing, which is the honest shape of a unit test: the
+    // layout is what the spec mounts, the routed child is not in it.
+    components: ["Link", "NavLink", "Navigate", "Outlet"],
     hooks: [
       "useHref",
       "useLinkClickHandler",
