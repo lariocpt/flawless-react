@@ -1,3 +1,4 @@
+import type { ComponentTree } from "../types.ts";
 import type { ImportBinding } from "./parseFile.ts";
 
 /**
@@ -51,6 +52,29 @@ export function detectHostDialect(imports: Map<string, ImportBinding>): HostDial
     if (NATIVE_DIALECT_SPECIFIER.test(binding.specifier)) return "native";
   }
   return "dom";
+}
+
+/**
+ * Whether the component graph under `tree` renders ANY React Native source —
+ * the root's own file, or any component below it.
+ *
+ * This is the question a DOM plane has to answer. A spec imports the component,
+ * so the whole graph below it loads: one `<View>` anywhere in it drags
+ * `react-native` into the module graph, and vitest dies at COLLECT — its source
+ * is Flow and Metro-targeted, so vite cannot parse it, let alone mount it
+ * (`SyntaxError: Unexpected token 'typeof'`). Not a failing test: no test.
+ *
+ * The root's own dialect is what bites in practice — in a bare-RN app nearly
+ * every source file imports react-native directly, which is how ospfranco/sol
+ * measured — but the WALK is what makes the answer correct rather than lucky:
+ * a DOM-shaped shell that imports a native child loads react-native too, and
+ * emitting a spec for the shell hands back exactly the crash this avoids. The
+ * other direction is harmless to skip, since nothing under a native page can
+ * mount either.
+ */
+export function rendersNativeSource(tree: ComponentTree): boolean {
+  if (tree.entry.hostDialect === "native") return true;
+  return tree.children.some(rendersNativeSource);
 }
 
 /** Exported for the test that pins which specifiers count. */

@@ -125,6 +125,18 @@ export function hostEligibility(info: ComponentInfo): HostEligibility {
         "render() branches on a condition this analysis could not decide — no render to profile",
     };
   }
+  // React Native source. The host imports the component, so the host's own
+  // module graph gains react-native — whose shipped source is Flow and
+  // Metro-targeted, so vite cannot parse it, let alone mount it (measured on
+  // ospfranco/sol: `SyntaxError: Unexpected token 'typeof'` at collect, zero
+  // tests). The evidence is the file's dialect, read off its imports, which is
+  // the same evidence the native plane is chosen by — see nativeDialect.ts.
+  if (info.hostDialect === "native") {
+    return {
+      eligible: false,
+      reason: "React Native source — react-native cannot load in a browser host",
+    };
+  }
   const mode = info.renderMode ?? (info.isAsync ? "rsc" : "client");
   switch (mode) {
     case "rsc":

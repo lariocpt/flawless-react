@@ -8,13 +8,18 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { Glob } from "bun";
 import { domOnlyResolver, makeHostTagResolver } from "../src/analyse/hostTag.ts";
-import { analyseFile } from "../src/analyse/index.ts";
+import { analyse, analyseFile } from "../src/analyse/index.ts";
 import {
   nativeFillKind,
   requiredNativeProviders,
   stringsAllowedIn,
 } from "../src/analyse/nativeContentModel.ts";
-import { detectHostDialect, isNativeSpecifier } from "../src/analyse/nativeDialect.ts";
+import {
+  detectHostDialect,
+  type HostDialect,
+  isNativeSpecifier,
+  rendersNativeSource,
+} from "../src/analyse/nativeDialect.ts";
 import {
   NATIVE_TAG_TO_ROLE,
   nativeAcceptsChildrenByName,
@@ -26,6 +31,7 @@ import {
 } from "../src/analyse/nativeProps.ts";
 import { parseFile } from "../src/analyse/parseFile.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
+import type { ComponentTree } from "../src/types.ts";
 
 const FIXTURES = path.resolve(__dirname, "fixtures");
 const EXPOAPP = path.join(FIXTURES, "expoapp");
@@ -59,6 +65,33 @@ describe("host dialect — decided per file, from its own imports", () => {
       "native",
     );
     expect(detectHostDialect(await importsOf(path.join(EXPOAPP, "app/login.tsx")))).toBe("native");
+  });
+
+  test("a tree is native-source when ANY component under it is", async () => {
+    // The DOM plane's question is not what a root file imports — it is what a
+    // SPEC loads, and importing a component loads everything below it. One
+    // <View> anywhere puts react-native in the graph, and vitest cannot parse
+    // RN's source at all, so the spec dies at COLLECT rather than at assert.
+    const node = (dialect: HostDialect, children: ComponentTree[] = []): ComponentTree =>
+      ({
+        entry:
+          dialect === "native"
+            ? { componentName: "Screen", hostDialect: "native" as const }
+            : { componentName: "Shell" },
+        children,
+      }) as unknown as ComponentTree;
+    expect(rendersNativeSource(node("dom"))).toBe(false);
+    expect(rendersNativeSource(node("dom", [node("dom"), node("native")]))).toBe(true);
+    expect(rendersNativeSource(node("dom", [node("dom", [node("native")])]))).toBe(true);
+    // And the analyser actually POPULATES the field the rule keys on: hand-built
+    // trees cannot witness that link, and without it the whole rule is dead code.
+    const screen = await analyse({
+      entry: path.join(EXPOAPP, "app/(tabs)/index.tsx"),
+      depth: 3,
+      includeChildren: true,
+    });
+    expect(screen.entry.hostDialect).toBe("native");
+    expect(rendersNativeSource(screen)).toBe(true);
   });
 
   test.each([
