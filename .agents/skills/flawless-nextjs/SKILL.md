@@ -76,9 +76,14 @@ Rules the shim table follows:
 - `next/script` gets an inert in-place stand-in: it renders **nothing** without
   Next's router context (it injects its tag through a side effect), which otherwise
   looks like a broken component. `next/head` is deliberately **not** stubbed.
-- `LIBRARY_SHIMS` covers the third-party packages known to be unmountable outside a
-  browser (react-hook-form is in it). A shim fixes the mount, not the component: an
-  API misuse the analyser cannot see stays a red spec, and an honest one.
+- `LIBRARY_SHIMS` covers the third-party packages whose context the mount needs
+  (react-query, react-router, react-hook-form and react-intl are in it). The
+  requirement is detected two ways: the hooks a component calls — through project
+  wrappers, across files — and the library's **components** it renders, because
+  `<FormattedMessage>` calls no hook and throws for the missing provider all the
+  same. One library can also be installed under two module names, and both count.
+  A shim fixes the mount, not the component: an API misuse the analyser cannot
+  see stays a red spec, and an honest one.
 - `server-only` is handled by an emitted `server-only-stub.ts` at the suite root,
   because the real package throws on import by design.
 
