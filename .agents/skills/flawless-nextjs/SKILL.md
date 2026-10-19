@@ -78,10 +78,14 @@ Rules the shim table follows:
   looks like a broken component. `next/head` is deliberately **not** stubbed.
 - `LIBRARY_SHIMS` covers the third-party packages whose context the mount needs
   (react-query, react-router, react-hook-form and react-intl are in it). The
-  requirement is detected two ways: the hooks a component calls — through project
-  wrappers, across files — and the library's **components** it renders, because
-  `<FormattedMessage>` calls no hook and throws for the missing provider all the
-  same. One library can also be installed under two module names, and both count.
+  requirement is detected from what the component **mounts**: the hooks it calls
+  — through project wrappers, across files — and the library's **components** it
+  renders, because `<FormattedMessage>` calls no hook and throws for the missing
+  provider all the same. A component handed through a prop counts as rendered
+  (`as={Link}`, `component={Link}`, `slots={{ root: Link }}`, `render`), since no
+  JSX tag ever names it; an HTML tag string (`as="a"`) and the app's own
+  components do not. One library can also be installed under two module names,
+  and both count.
   A shim fixes the mount, not the component: an API misuse the analyser cannot
   see stays a red spec, and an honest one.
 - `server-only` is handled by an emitted `server-only-stub.ts` at the suite root,
