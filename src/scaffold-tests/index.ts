@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { detectAppReact, mergePackageJson } from "../packageJson.ts";
+import { detectAppReact, mergePackageJson, repairReactPin } from "../packageJson.ts";
 import { PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
@@ -280,9 +280,10 @@ async function writeSuitePackageJson(
     await writeFile(pkgPath, generated);
     return;
   }
+  const pin = detectAppReact(outDir);
   const merged = repairRtlPin(
-    mergePackageJson(await readFile(pkgPath, "utf8"), generated),
-    detectAppReact(outDir),
+    repairReactPin(mergePackageJson(await readFile(pkgPath, "utf8"), generated), pin),
+    pin,
   );
   // The merge lets an existing file win on every key — except in nextjs
   // mode, where the loader switch is the TOOL's key (see suitePackageJson):

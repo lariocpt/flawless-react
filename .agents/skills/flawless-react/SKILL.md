@@ -119,8 +119,15 @@ The app's React major (`detectAppReact` in the root `package.json`) is the
 single switch. At or above 18 the host mounts through `createRoot`; below 18
 it falls back to legacy `ReactDOM.render`, document roots render with
 `renderToStaticMarkup`, and promise-valued props are not passed. The suite's
-`react`/`react-dom` are pinned to the app's version (two React copies is the
-classic red-suite cause), and Testing Library follows the app: React ≤17 gets
+`react`/`react-dom` are pinned to the version the app has INSTALLED, exactly:
+`detectAppReact` reads `node_modules/react` first and the declared range only as
+a fallback, because a caret is a floor and `^19.2.0` installs whatever is
+newest. Two React copies is the classic red-suite cause, and a pair that merely
+drifts is just as fatal — one patch off dies at load on react-dom's guard
+(`Incompatible React versions`), one major off on `Cannot read properties of
+undefined (reading 'ReactCurrentOwner')`. A stale or loose pin left in an
+existing suite manifest is rewritten by the next run (`repairReactPin`).
+Testing Library follows the app: React ≤17 gets
 `@testing-library/react@^12.1.5` + `@testing-library/dom@^8.20.1` — 13/14
 peer-require react ^18 and 14 hard-requires the `react-dom/client` entry that
 does not exist in 17. A stale 13+ range left by an older run is repaired by

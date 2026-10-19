@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
+import { detectAppReact, mergePackageJson, repairReactPin } from "../src/packageJson.ts";
 import { renderSuite } from "../src/scaffold/templates.ts";
 import { repairRtlPin, suitePackageJson } from "../src/scaffold-tests/index.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
@@ -122,6 +123,127 @@ describe("suite manifest per React major", () => {
     // Undefined pin (no detectable app react): nothing to branch on.
     const manifest = JSON.stringify({ devDependencies: { "@testing-library/react": "^14.0.0" } });
     expect(repairRtlPin(manifest, undefined)).toBe(manifest);
+  });
+});
+
+describe("the suite's React stays the app's React across a manifest merge", () => {
+  test("a stale major from an older generation is brought back to the app's", () => {
+    // bradgarropy.com: its suite was written before the app pin was read, so
+    // the merge kept OUR OWN ^18.3.0 under an app declaring 19.2.x (react in
+    // devDependencies, 19.2.8 installed). Two Reacts, and 90 of its 93 spec
+    // files died at collect with "Cannot read properties of undefined (reading
+    // 'ReactCurrentOwner')" — the signature the pin exists to prevent.
+    const manifest = JSON.stringify({
+      dependencies: { react: "^18.3.0", "react-dom": "^18.3.0", "react-scan": "^0.4.3" },
+    });
+    const fixed = JSON.parse(repairReactPin(manifest, { react: "19.2.0", reactDom: "19.2.0" }));
+    // Exact, not a caret: `^19.2.0` is a floor, and the floor is how the suite
+    // ends up with a different patch than the app tree it renders beside.
+    expect(fixed.dependencies.react).toBe("19.2.0");
+    expect(fixed.dependencies["react-dom"]).toBe("19.2.0");
+    // Only the keys that disagree move; the rest of the file is the merge's
+    // business, not this repair's.
+    expect(fixed.dependencies["react-scan"]).toBe("^0.4.3");
+  });
+
+  test("a same-major drift is a disagreement too; an exact pin and an unreadable range are not", () => {
+    // The guard react-dom runs at load time compares VERSIONS, not majors:
+    // an app tree on 19.2.8 beside a suite that installed 19.3.1 from `^19.2.0`
+    // dies every spec file on "Incompatible React versions" — the same 91-of-93
+    // collapse as the stale major, one patch later.
+    const drifted = JSON.stringify({
+      dependencies: { react: "^19.2.0", "react-dom": "~19.2.0" },
+    });
+    const fixed = JSON.parse(repairReactPin(drifted, { react: "19.2.8", reactDom: "19.2.8" }));
+    expect(fixed.dependencies.react).toBe("19.2.8");
+    expect(fixed.dependencies["react-dom"]).toBe("19.2.8");
+    // Already exact, and no app pin at all, are both leave-alone cases.
+    const exact = JSON.stringify({
+      dependencies: { react: "18.3.1", "react-dom": "18.3.1" },
+      devDependencies: { "@types/react": "^18.0.0" },
+    });
+    expect(repairReactPin(exact, { react: "18.3.1", reactDom: "18.3.1" })).toBe(exact);
+    expect(repairReactPin(exact, undefined)).toBe(exact);
+    // A range whose major cannot be read (workspace protocol, dist-tags) is
+    // not a disagreement, it is an unreadable preference — guessing at it is
+    // how a repair becomes a break.
+    const odd = JSON.stringify({ dependencies: { react: "catalog:", "react-dom": "latest" } });
+    expect(repairReactPin(odd, { react: "19.2.0", reactDom: "19.2.0" })).toBe(odd);
+  });
+
+  test("@types follow the runtime they describe", () => {
+    const manifest = JSON.stringify({
+      dependencies: { react: "^18.3.0" },
+      devDependencies: {
+        "@types/react": "^18.0.0",
+        "@types/react-dom": "^18.0.0",
+        vitest: "^2.1.0",
+      },
+    });
+    const fixed = JSON.parse(repairReactPin(manifest, { react: "19.2.0", reactDom: "19.2.0" }));
+    expect(fixed.devDependencies["@types/react"]).toBe("^19.0.0");
+    expect(fixed.devDependencies["@types/react-dom"]).toBe("^19.0.0");
+    expect(fixed.devDependencies.vitest).toBe("^2.1.0");
+  });
+
+  test("through the real merge path: a regenerated suite manifest carries the app's React", async () => {
+    // The two writers of <suite>/package.json merge into what the other left,
+    // and the merge lets existing pins win — so the repair has to hold at the
+    // call site, not only in isolation.
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-rpin-"));
+    const suiteDir = path.join(base, "flawless");
+    mkdirSync(suiteDir);
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({
+        dependencies: { "react-dom": "^19.2.0" },
+        devDependencies: { react: "^19.2.0" },
+      }),
+    );
+    const stale = JSON.stringify({
+      dependencies: { react: "^18.3.0", "react-dom": "^18.3.0" },
+      scripts: { "test:something-of-mine": "echo mine" },
+    });
+    const merged = repairReactPin(
+      mergePackageJson(stale, suitePackageJson(suiteDir, false)),
+      detectAppReact(suiteDir),
+    );
+    expect(JSON.parse(merged).dependencies.react).toBe("19.2.0");
+    expect(JSON.parse(merged).dependencies["react-dom"]).toBe("19.2.0");
+    // The merge's own promises survive the repair untouched.
+    expect(JSON.parse(merged).scripts["test:something-of-mine"]).toBe("echo mine");
+  });
+
+  test("the app's INSTALLED React outranks its declared range", async () => {
+    // `^19.2.0` is what bradgarropy.com declares; 19.2.8 is what sits in its
+    // node_modules and what its components import. Pinning the declaration
+    // would put a different patch in the suite and trip the same load-time
+    // guard, so the pair that the graph actually shares is the one to read.
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-installed-"));
+    // detectAppReact starts from the directory ABOVE what it is handed, since
+    // callers pass a file or a suite directory. Hand it a suite directory.
+    const suiteDir = path.join(base, "flawless");
+    mkdirSync(suiteDir);
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({ dependencies: { react: "^19.2.0", "react-dom": "^19.2.0" } }),
+    );
+    expect(detectAppReact(suiteDir)).toEqual({ react: "19.2.0", reactDom: "19.2.0" });
+    for (const [name, version] of [
+      ["react", "19.2.8"],
+      ["react-dom", "19.2.8"],
+    ] as const) {
+      mkdirSync(path.join(base, "node_modules", name), { recursive: true });
+      writeFileSync(
+        path.join(base, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version }),
+      );
+    }
+    expect(detectAppReact(suiteDir)).toEqual({ react: "19.2.8", reactDom: "19.2.8" });
+    // Both or neither: a half-readable installed pair would author the very
+    // mismatch this exists to prevent, so the declared range keeps charge.
+    rmSync(path.join(base, "node_modules", "react-dom", "package.json"));
+    expect(detectAppReact(suiteDir)).toEqual({ react: "19.2.0", reactDom: "19.2.0" });
   });
 });
 

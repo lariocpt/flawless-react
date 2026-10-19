@@ -43,7 +43,16 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
         const reactDom = resolveCatalog(all["react-dom"], "react-dom", dir, pkg);
         const v = bareVersion(react);
         const dv = bareVersion(reactDom);
-        if (v && dv) return { react: v, reactDom: dv };
+        // The versions the graph will ACTUALLY share are the installed ones. A
+        // declared range is a floor: `^19.2.0` installs whatever is newest, so
+        // a suite pinned from the declaration and an app tree holding the copy
+        // it installed last month are two versions — and react-dom refuses to
+        // load when the pair it sees disagrees ("Incompatible React versions",
+        // every spec file dead at collect: 91 of 93 on bradgarropy.com, whose
+        // app declares ^19.2.0 and has 19.2.8 installed). Prefer the installed
+        // pair, both or neither, so the two never drift from each other.
+        const installed = installedReactPair(dir);
+        if (v && dv) return installed ?? { react: v, reactDom: dv };
       } catch {
         /* unparseable: keep walking */
       }
@@ -53,6 +62,31 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
     dir = up;
   }
   return undefined;
+}
+
+/**
+ * The exact react + react-dom versions physically installed under a package
+ * root, as the app's own code sees them. Both copies or neither: returning one
+ * installed version beside one declared-range version is how a mismatched pair
+ * gets authored. Symlinked (pnpm) and hoisted-away (workspace root) layouts are
+ * handled by reading through the link and by returning undefined when the
+ * package's own tree carries no copy, which leaves the declared range in charge.
+ */
+function installedReactPair(dir: string): { react: string; reactDom: string } | undefined {
+  const read = (name: string): string | undefined => {
+    try {
+      const raw = JSON.parse(
+        readFileSync(path.join(dir, "node_modules", name, "package.json"), "utf8"),
+      ) as { name?: string; version?: string };
+      // Not the package the path points at (a stray link): treat it as absent.
+      return raw.name === name && typeof raw.version === "string" ? raw.version : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const react = read("react");
+  const reactDom = read("react-dom");
+  return react && reactDom ? { react, reactDom } : undefined;
 }
 
 /**
@@ -225,6 +259,64 @@ export function mergePackageJson(existingSource: string, generated: string): str
     if (Object.keys(pnpmBlock).length === 0) delete merged.pnpm;
   }
   return stringifyLike(existingSource, merged);
+}
+
+/**
+ * Bring a suite manifest's React back to the app's React, exactly.
+ *
+ * The merge lets an existing pin win, which is right for a range the project
+ * chose and wrong for this key: the suite's react IS the copy the app's
+ * component code runs against, and the pair must be the SAME VERSION as the one
+ * the app tree carries. A caret is a floor, not a version — `^19.2.0` installs
+ * the newest 19.x — so a stale suite manifest pairs its own fresh install with
+ * the app's older one and react-dom's load-time guard kills the whole plane:
+ * `Cannot read properties of undefined (reading 'ReactCurrentOwner')` for a
+ * stale major (90 of 93 files on bradgarropy.com), `Incompatible React
+ * versions: react 19.2.8, react-dom 19.3.1` for one that merely drifted patch
+ * (91 of 93 there too; the same suite reads 44 passed once the pair matches).
+ *
+ * So any react/react-dom value that does not name the app's version exactly is
+ * rewritten to it, and only when the app actually declares a React. Ranges
+ * whose major cannot be read (`catalog:`, `latest`, `workspace:`) are left
+ * alone: an unreadable preference is not a disagreement, and guessing at one is
+ * how a repair becomes a break. `@types/*` follow the major of the runtime they
+ * describe, since a types release need not track a patch.
+ */
+export function repairReactPin(
+  merged: string,
+  pin: { react: string; reactDom: string } | undefined,
+): string {
+  if (!pin) return merged;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(merged) as Record<string, unknown>;
+  } catch {
+    return merged;
+  }
+  const majorOf = (range: string): string | undefined => /^\D*(\d+)/.exec(range)?.[1];
+  let changed = false;
+  for (const field of ["dependencies", "devDependencies"] as const) {
+    const block = parsed[field] as Record<string, string> | undefined;
+    if (!block) continue;
+    for (const [dep, want] of [
+      ["react", pin.react],
+      ["react-dom", pin.reactDom],
+      ["@types/react", pin.react],
+      ["@types/react-dom", pin.reactDom],
+    ] as const) {
+      const have = block[dep];
+      if (!have) continue;
+      // An unreadable major (`catalog:`, `latest`, `workspace:*`) is not a
+      // disagreement, it is an unreadable preference — leave it.
+      if (majorOf(have) === undefined) continue;
+      const types = dep.startsWith("@types/");
+      // The runtime must be the SAME version; types only need the same major.
+      if (types ? majorOf(have) === majorOf(want) : have === want) continue;
+      block[dep] = types ? `^${majorOf(want)}.0.0` : want;
+      changed = true;
+    }
+  }
+  return changed ? stringifyLike(merged, parsed) : merged;
 }
 
 /**
