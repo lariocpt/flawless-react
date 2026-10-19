@@ -291,11 +291,12 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   fails with `Cannot read properties of null (reading 'useEffect')`.
 - **`setup.ts`** — `@testing-library/jest-dom`, the jsdom gaps real component
   stacks hit (`matchMedia`, `ResizeObserver`, `IntersectionObserver`,
-  `scrollIntoView`), MSW wiring when `--api` was used, and an in-memory `Storage`
-  fallback. That last one matters on Node ≥ 22, which defines a `localStorage`
-  global that is inert without `--localstorage-file`; persistence middleware
-  (zustand `persist`, redux-persist) is otherwise handed `undefined` and throws
-  on its first write.
+  `scrollIntoView`, and the `AbortSignal.any` static jsdom has never
+  implemented while Node has had it since 20.3), MSW wiring when `--api` was
+  used, and an in-memory `Storage` fallback. That last one matters on Node ≥ 22,
+  which defines a `localStorage` global that is inert without
+  `--localstorage-file`; persistence middleware (zustand `persist`,
+  redux-persist) is otherwise handed `undefined` and throws on its first write.
 - **`<Component>.test.tsx`** — one per exported component. What it contains
   depends on what the analyser could prove:
 

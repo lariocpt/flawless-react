@@ -911,6 +911,26 @@ describe("renderUnitBrowser setup.ts", () => {
     expect(setup).toContain('typeof window.sessionStorage?.setItem !== "function"');
     expect(setup).toContain('Object.defineProperty(window, "localStorage"');
   });
+
+  test("supplies the AbortSignal.any that jsdom does not implement", () => {
+    const setup = contentOf(
+      renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 }),
+      "setup.ts",
+    );
+    // jsdom 25.0.1 implements AbortSignal.abort and .timeout but NOT .any, and
+    // Node has had .any since 20.3 — so this plane was the only place a library
+    // composing abort signals died for a reason unrelated to the component:
+    // choyiny/saasmail's 19 unhandled rejections reading
+    // `AbortSignal.any is not a function` were all @mcp-b/webmcp-ts-sdk, and
+    // after this shim that string appears zero times in the same run.
+    expect(setup).toContain('typeof __abortSignal.any !== "function"');
+    expect(setup).toContain('Object.defineProperty(AbortSignal, "any"');
+    // The contract in three lines: the first abort wins with its own reason, and
+    // the composed signal's own abort tears the listeners back down so nothing
+    // outlives the mount that asked for it.
+    expect(setup).toContain("controller.abort(signal.reason)");
+    expect(setup).toContain("signal: controller.signal");
+  });
 });
 
 describe("renderUnitBrowser document-root components", () => {

@@ -1177,6 +1177,41 @@ if (typeof window !== "undefined") {
       configurable: true,
     });
   }
+
+  // jsdom has never implemented the static \`AbortSignal.any\` — measured on
+  // 25.0.1, the version this suite pins: \`abort\` and \`timeout\` are there,
+  // \`any\` is not — while Node has had it since 20.3. So this plane is the only
+  // place a library that composes abort signals dies for a reason that has
+  // nothing to do with the component under test: saasmail's 19 unhandled
+  // rejections reading \`AbortSignal.any is not a function\` were all
+  // @mcp-b/webmcp-ts-sdk composing its registration signal with the caller's.
+  // Composing signals fakes no backend and answers no request, so this is the
+  // missing standard API rather than a stubbed dependency: the first abort wins
+  // with its own reason, exactly as specified, built from what jsdom provides.
+  // Node's own copy is left alone, and a future jsdom that ships this makes it a
+  // no-op.
+  const __abortSignal =
+    typeof AbortSignal === "undefined" ? undefined : (AbortSignal as unknown as Record<string, unknown>);
+  if (__abortSignal && typeof __abortSignal.any !== "function") {
+    Object.defineProperty(AbortSignal, "any", {
+      configurable: true,
+      writable: true,
+      value: (iterable: Iterable<AbortSignal>): AbortSignal => {
+        const controller = new AbortController();
+        for (const signal of iterable) {
+          if (signal.aborted) {
+            controller.abort(signal.reason);
+            break;
+          }
+          signal.addEventListener("abort", () => controller.abort(signal.reason), {
+            once: true,
+            signal: controller.signal,
+          });
+        }
+        return controller.signal;
+      },
+    });
+  }
 }
  // Global next/navigation mock: covers provider wrappers and third-party
  // libs (Clerk, TanStack Router, etc.) that import next/navigation
