@@ -245,6 +245,50 @@ describe("the suite's React stays the app's React across a manifest merge", () =
     rmSync(path.join(base, "node_modules", "react-dom", "package.json"));
     expect(detectAppReact(suiteDir)).toEqual({ react: "19.2.0", reactDom: "19.2.0" });
   });
+
+  test("a peer-only app is detected from its installed copy", () => {
+    // lightswind-ui-library declares react ONLY as a peer — `"react":
+    // "^18.0.0 || ^19.0.0"` — so no version is declared at all and the walk
+    // used to fall through to the emitter's React-18 default while the app tree
+    // ran 19.3.0. Two Reacts, 401 of 401 spec files dead at collect.
+    const base = path.join(tmpdir(), "flawless-peeronly");
+    mkdirSync(path.join(base, "flawless"), { recursive: true });
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({
+        peerDependencies: { react: "^18.0.0 || ^19.0.0", "react-dom": "^18.0.0 || ^19.0.0" },
+        devDependencies: { "@types/react": "^18.2.64" },
+      }),
+    );
+    for (const name of ["react", "react-dom"] as const) {
+      mkdirSync(path.join(base, "node_modules", name), { recursive: true });
+      writeFileSync(
+        path.join(base, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version: "19.3.0" }),
+      );
+    }
+    expect(detectAppReact(path.join(base, "flawless"))).toEqual({
+      react: "19.3.0",
+      reactDom: "19.3.0",
+    });
+    // Scope of the fallback: an installed copy that is merely NEARER must not
+    // out-vote a version a package actually declares — monorepo roots carry a
+    // react of their own for their tooling.
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({ devDependencies: { react: "17.0.2", "react-dom": "17.0.2" } }),
+    );
+    rmSync(path.join(base, "node_modules", "react", "package.json"));
+    rmSync(path.join(base, "node_modules", "react-dom", "package.json"));
+    const deep = path.join(base, "packages", "app", "flawless");
+    mkdirSync(deep, { recursive: true });
+    mkdirSync(path.join(base, "packages", "app", "node_modules", "react"), { recursive: true });
+    writeFileSync(
+      path.join(base, "packages", "app", "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.3.0" }),
+    );
+    expect(detectAppReact(deep)).toEqual({ react: "17.0.2", reactDom: "17.0.2" });
+  });
 });
 
 describe("perf host main.tsx per React major", () => {

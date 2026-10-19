@@ -28,8 +28,20 @@ interface Pkg {
  */
 export function detectAppReact(fromDir: string): { react: string; reactDom: string } | undefined {
   let dir = path.dirname(path.resolve(fromDir));
+  // The nearest installed pair seen on the way, used only when NO manifest on
+  // the walk declares a version. A library whose react is a peer dependency
+  // declares a disjunction — `"react": "^18.0.0 || ^19.0.0"`, which is
+  // lightswind-ui-library's whole declaration — and no single version answers
+  // it. Its node_modules does, and without that fallback the manifest-less
+  // declaration fell through to the emitter's React-18 default while the app
+  // tree ran 19.3.0: two Reacts, every spec dead at collect. Scoped to the
+  // nothing-declares case on purpose — an ancestor that carries react for its
+  // own tooling must not out-vote a version the package declares.
+  let nearestInstalled: { react: string; reactDom: string } | undefined;
   for (let hop = 0; hop < 8; hop++) {
     const pkgPath = path.join(dir, "package.json");
+    const installed = installedReactPair(dir);
+    nearestInstalled ??= installed;
     if (existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
@@ -51,7 +63,6 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
         // every spec file dead at collect: 91 of 93 on bradgarropy.com, whose
         // app declares ^19.2.0 and has 19.2.8 installed). Prefer the installed
         // pair, both or neither, so the two never drift from each other.
-        const installed = installedReactPair(dir);
         if (v && dv) return installed ?? { react: v, reactDom: dv };
       } catch {
         /* unparseable: keep walking */
@@ -61,7 +72,7 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
     if (up === dir) break;
     dir = up;
   }
-  return undefined;
+  return nearestInstalled;
 }
 
 /**
