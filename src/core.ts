@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { findUnresolvableImports } from "./analyse/bootability.ts";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
 import { deriveContextProviderWraps, libraryProviderShimsFor } from "./analyse/providerWraps.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
@@ -740,12 +741,38 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     await writeInlineSummaries(trees, results, outDir);
   }
   await writeSummaryJson(outDir, results);
+  // A suite whose specs cannot even be collected should say so at generation
+  // time: the vitest log for that run is 401 lines of "failed (0 test)" with
+  // the reason buried after them (see analyse/bootability.ts). Only when this
+  // run writes specs — a `perf-static`-only run collects nothing, and telling
+  // it that an import would fail at collect would be a claim about a run it
+  // did not make.
+  const unresolvable = taskIds.includes("unit-browser")
+    ? findUnresolvableImports(
+        trees,
+        // The suite's own node_modules (the test stack lives there) and the
+        // project root; each importing file's own directory is added inside.
+        nextCtx ? [outDir, nextCtx.root] : [outDir],
+      )
+    : [];
+  if (unresolvable.length > 0) {
+    const shown = unresolvable
+      .slice(0, 3)
+      .map((b) => b.specifier)
+      .join(", ");
+    warn(
+      `${unresolvable.length} imported package(s) are not installed where the suite resolves them ` +
+        `(${shown}${unresolvable.length > 3 ? ", …" : ""}) — specs importing those fail at ` +
+        `collect, before any test runs. REPORT.md lists them.`,
+    );
+  }
   const reportPath = await writeReportMarkdown({
     trees,
     results,
     outDir,
     projectRoot: nextCtx?.root,
     unparseable,
+    unresolvable,
     keptScripts,
     allTaskIds: TASKS.map((t) => t.id),
     // Only in Next.js mode, where there is a project root that both the command

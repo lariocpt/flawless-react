@@ -36,6 +36,9 @@ Regenerated every run: it describes the **last run**, not the suite on disk.
 - The components table accounts for every component in exactly one render-mode row
   (client / rsc / compound-part / document-root / null), split by mountable or not.
 - "Not covered, and why" names each gap. **A file count is not coverage.**
+- "Imports that will not resolve" appears only on a run that wrote specs, and only
+  when an analysed import names a package nothing on disk answers for. It is why
+  those files fail at collect: **a file that never collected reports no tests.**
 - The task table records what that run wrote, with a Status column saying where
   perf-harness sat in the suite lifecycle (generated / refreshed / kept).
 - Its hand-work table names the files only you can finish — `e2e/global-setup.ts`
