@@ -4,7 +4,7 @@ import path from "node:path";
 import { rendersNativeSource } from "../analyse/nativeDialect.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { appPackageRoot } from "../packageJson.ts";
-import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
+import { findOrphanUnitSpecs, scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
 import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { AliasEntry, MultiRootAlias, ReactExportShim } from "../scaffold-tests/templates.ts";
@@ -56,6 +56,21 @@ export const unitAndBrowser: Task = {
     }
 
     const projectRoot = ctx.nextjs?.root;
+    // Paths relative to where the user reads the summary from, capped so one
+    // big app can't turn the summary line into a wall of text.
+    const rel = (p: string): string => path.relative(projectRoot ?? process.cwd(), p) || p;
+    const listKept = (paths: string[]): string => {
+      const shown = paths.slice(0, 10).map(rel).join(", ");
+      return paths.length > 10 ? `${shown}, +${paths.length - 10} more` : shown;
+    };
+    // An orphan means the same thing at both exits of this task, so it is named
+    // the same way at both: the runner WILL execute this file and no component
+    // backs it any more. Named, never removed — a suite-dir spec carries no
+    // stamp, so nothing proves it is not hand work. See findOrphanUnitSpecs.
+    const orphanNote = (orphans: string[]): string =>
+      orphans.length > 0
+        ? ` (${orphans.length} unit spec(s) with no component behind them — kept, delete to drop: ${listKept(orphans)})`
+        : "";
     // React Native source is not DOM-plane material. A spec imports the
     // component, so its WHOLE graph loads, and anywhere in a native graph sits
     // react-native: Flow source vite cannot parse, so the spec dies at collect
@@ -73,6 +88,9 @@ export const unitAndBrowser: Task = {
       nativeTrees.length === 0 ? ctx.trees : ctx.trees.filter((t) => !rendersNativeSource(t));
     if (trees.length === 0) {
       const who = flattenTrees(ctx.trees);
+      // The exit that strands them: specs written by an earlier run are still
+      // in `unit/`, and this run will not overwrite a single one of them.
+      const orphans = await findOrphanUnitSpecs(ctx.outDir, new Set());
       return {
         id: "unit-browser",
         ok: true,
@@ -80,7 +98,8 @@ export const unitAndBrowser: Task = {
         findings: [],
         summary:
           `no unit specs: all ${who.length} component(s) render React Native source, which ` +
-          `no DOM plane can load (the native plane is --expo, Expo projects only)`,
+          `no DOM plane can load (the native plane is --expo, Expo projects only)` +
+          orphanNote(orphans),
       };
     }
     // Alias / react-pin anchor. A Next app is anchored at the app root; a
@@ -162,7 +181,7 @@ export const unitAndBrowser: Task = {
       providerWraps: ctx.providerWraps,
       todos,
     };
-    const { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept } =
+    const { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept, orphanUnitSpecs } =
       await scaffoldUnitBrowser(scaffoldOptions);
     // Tallying happened while rendering, but a kept colocated spec's render
     // was discarded — its markers were never written this run, and may name
@@ -184,13 +203,6 @@ export const unitAndBrowser: Task = {
       skipped.length > 0
         ? ` (${skipped.length} colocated spec(s) kept — rerun with --force to regenerate)`
         : "";
-    // Paths relative to where the user reads the summary from, capped so one
-    // big app can't turn the summary line into a wall of text.
-    const rel = (p: string): string => path.relative(projectRoot ?? process.cwd(), p) || p;
-    const listKept = (paths: string[]): string => {
-      const shown = paths.slice(0, 10).map(rel).join(", ");
-      return paths.length > 10 ? `${shown}, +${paths.length - 10} more` : shown;
-    };
     const editedNote =
       keptEdited.length > 0
         ? ` (${keptEdited.length} hand-edited or reformatted colocated spec(s) kept — delete to regenerate: ${listKept(keptEdited)})`
@@ -222,7 +234,7 @@ export const unitAndBrowser: Task = {
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit tests for ${names.length} component(s)${nativeNote}${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${shimNote}${browserNote}: ${names.join(", ")}`,
+      summary: `unit tests for ${names.length} component(s)${nativeNote}${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${orphanNote(orphanUnitSpecs)}${shimNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
     };
   },

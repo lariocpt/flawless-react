@@ -48,6 +48,8 @@ export interface ScaffoldUnitBrowserResult {
   staleRemoved: string[];
   /** Browser specs whose component left the mountable set, kept because a human may have worked in them. */
   staleKept: StaleBrowserSpec[];
+  /** Unit specs the runner will pick up with no component behind them. Named, never removed — see findOrphanUnitSpecs. */
+  orphanUnitSpecs: string[];
 }
 
 export async function scaffoldUnitBrowser(
@@ -139,6 +141,13 @@ export async function scaffoldUnitBrowser(
     }
   }
 
+  // Unit specs the suite will still run with no component behind them. Naming
+  // them, never deleting them — see findOrphanUnitSpecs for why.
+  const orphanUnitSpecs = await findOrphanUnitSpecs(
+    outDir,
+    new Set(files.filter((f) => f.relPath.startsWith("unit/")).map((f) => f.relPath)),
+  );
+
   if (!opts.skipInnerPackageJson) {
     await writeSuitePackageJson(
       outDir,
@@ -158,7 +167,49 @@ export async function scaffoldUnitBrowser(
       written.push(tsPath);
     }
   }
-  return { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept };
+  return { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept, orphanUnitSpecs };
+}
+
+/**
+ * Unit specs the suite will still run, with no component behind them.
+ *
+ * Report-only, and the reason is provenance. In-outDir specs are identified by
+ * being rewritten every run and therefore carry NO stamp (see the write loop),
+ * which makes a hand-hardened spec byte-identical to an orphan one. The tool can
+ * name those files; it cannot prove any of them is safe to delete — and
+ * deleting a suite spec because an analysis stopped pointing at it is how
+ * coverage disappears quietly.
+ *
+ * Naming is still worth having, because an orphan is not coverage: it is a red
+ * import at the start of every run. Components get orphaned by refactors, by
+ * renames, and now by the React Native rule (nativeDialect.ts), which can strand
+ * a whole directory of specs at once.
+ *
+ * Recursive to match the glob the suite emits over its own `unit/` directory, and keyed
+ * on the writer's own relPath (`unit/<spec>.test.tsx`), so what is reported is exactly
+ * what the runner will pick up.
+ */
+export async function findOrphanUnitSpecs(
+  outDir: string,
+  rendered: Set<string>,
+): Promise<string[]> {
+  const dir = path.join(outDir, "unit");
+  if (!existsSync(dir)) return [];
+  const orphans: string[] = [];
+  const walk = async (at: string, rel: string): Promise<void> => {
+    for (const entry of await readdir(at, { withFileTypes: true })) {
+      const childRel = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        await walk(path.join(at, entry.name), childRel);
+        continue;
+      }
+      if (!/\.test\.(ts|tsx)$/.test(entry.name)) continue;
+      if (rendered.has(childRel)) continue;
+      orphans.push(path.join(at, entry.name));
+    }
+  };
+  await walk(dir, "unit");
+  return orphans.sort();
 }
 
 /** A stale browser spec the writer refused to remove, and why. */
