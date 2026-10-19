@@ -289,6 +289,74 @@ describe("the suite's React stays the app's React across a manifest merge", () =
     );
     expect(detectAppReact(deep)).toEqual({ react: "17.0.2", reactDom: "17.0.2" });
   });
+
+  test("an app with a react and NO react-dom still fixes the version", async () => {
+    // ospfranco/sol: `"react": "19.1.4"`, no react-dom in the manifest and no
+    // react-dom installed anywhere either — it renders through a native layer.
+    // The both-or-neither rule read NOTHING there, so its suite manifest kept
+    // the emitter's React-18 default under a React-19.1.4 app, which is the
+    // mismatch this file exists to prevent. The suite is what supplies a
+    // renderer, and the only version that cannot drift beside the app's react
+    // is that same version.
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-sodoreact-"));
+    const suiteDir = path.join(base, "flawless");
+    mkdirSync(suiteDir, { recursive: true });
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({ dependencies: { react: "19.1.4" } }),
+    );
+    mkdirSync(path.join(base, "node_modules", "react"), { recursive: true });
+    writeFileSync(
+      path.join(base, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", version: "19.1.4" }),
+    );
+    expect(detectAppReact(suiteDir)).toEqual({ react: "19.1.4", reactDom: "19.1.4" });
+    // And it reaches the manifest the merge left stale, which is the point: on
+    // that app a run carrying the repair had already rewritten the manifest and
+    // left `"react": "^18.3.0"` exactly where it was.
+    const stale = JSON.stringify({ dependencies: { react: "^18.3.0", "react-dom": "^18.3.0" } });
+    const fixed = JSON.parse(
+      repairReactPin(
+        mergePackageJson(stale, suitePackageJson(suiteDir, false)),
+        detectAppReact(suiteDir),
+      ),
+    );
+    expect(fixed.dependencies.react).toBe("19.1.4");
+    expect(fixed.dependencies["react-dom"]).toBe("19.1.4");
+  });
+
+  test("a react declared alone answers when nothing is installed to read", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-solodecl-"));
+    mkdirSync(path.join(base, "flawless"), { recursive: true });
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({ devDependencies: { react: "19.0.0" } }),
+    );
+    expect(detectAppReact(path.join(base, "flawless"))).toEqual({
+      react: "19.0.0",
+      reactDom: "19.0.0",
+    });
+  });
+
+  test("the app's own react copy outranks a farther ancestor's installed pair", async () => {
+    // Same scoping rule as the declaration above it: an ancestor that carries
+    // react for its own tooling must not out-vote the copy the app's imports
+    // actually land on. Here the app has react alone and the root has a pair.
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-solocloser-"));
+    for (const [dir, name, version] of [
+      ["packages/app", "react", "19.1.4"],
+      [".", "react", "18.3.1"],
+      [".", "react-dom", "18.3.1"],
+    ] as const) {
+      const at = path.join(base, dir, "node_modules", name);
+      mkdirSync(at, { recursive: true });
+      writeFileSync(path.join(at, "package.json"), JSON.stringify({ name, version }));
+    }
+    expect(detectAppReact(path.join(base, "packages/app", "flawless"))).toEqual({
+      react: "19.1.4",
+      reactDom: "19.1.4",
+    });
+  });
 });
 
 describe("perf host main.tsx per React major", () => {

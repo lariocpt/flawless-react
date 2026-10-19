@@ -28,20 +28,35 @@ interface Pkg {
  */
 export function detectAppReact(fromDir: string): { react: string; reactDom: string } | undefined {
   let dir = path.dirname(path.resolve(fromDir));
-  // The nearest installed pair seen on the way, used only when NO manifest on
-  // the walk declares a version. A library whose react is a peer dependency
-  // declares a disjunction — `"react": "^18.0.0 || ^19.0.0"`, which is
-  // lightswind-ui-library's whole declaration — and no single version answers
-  // it. Its node_modules does, and without that fallback the manifest-less
-  // declaration fell through to the emitter's React-18 default while the app
-  // tree ran 19.3.0: two Reacts, every spec dead at collect. Scoped to the
-  // nothing-declares case on purpose — an ancestor that carries react for its
-  // own tooling must not out-vote a version the package declares.
-  let nearestInstalled: { react: string; reactDom: string } | undefined;
+  // Nothing on the walk declared BOTH halves, so the answer has to be read off
+  // what is there. Three one-sided readings qualify, and each is remembered
+  // with the hop it was seen at:
+  //   0. a full installed pair — the versions the graph actually shares;
+  //   1. one installed half alone — the copy the app's own imports land on;
+  //   2. a manifest declaring react alone — an app with no DOM renderer at all
+  //      (ospfranco/sol: `"react": "19.1.4"`, no react-dom in the file, and no
+  //      react-dom installed anywhere either — a Tauri app rendering elsewhere).
+  //      Nothing in its tree renders to DOM, so the SUITE is what supplies a
+  //      renderer, and the only version that cannot drift is the react it does
+  //      pin. Missing this left sol's suite on the React-18 default under a
+  //      React-19.1.4 app — the exact mismatch this whole file exists to stop.
+  // A library whose react is a peer dependency declares a disjunction —
+  // `"react": "^18.0.0 || ^19.0.0"`, lightswind-ui-library's whole declaration —
+  // and no single version answers it: only reading 0 or 1 can speak for it.
+  // Nearest wins, then the fullest reading at that hop, because an ancestor
+  // that carries react for its own tooling must not out-vote the app.
+  const partial: { react: string; reactDom: string; hop: number; rank: number }[] = [];
   for (let hop = 0; hop < 8; hop++) {
     const pkgPath = path.join(dir, "package.json");
-    const installed = installedReactPair(dir);
-    nearestInstalled ??= installed;
+    const reactInstalled = installedVersionAt(dir, "react");
+    const reactDomInstalled = installedVersionAt(dir, "react-dom");
+    const installed =
+      reactInstalled && reactDomInstalled
+        ? { react: reactInstalled, reactDom: reactDomInstalled }
+        : undefined;
+    if (installed) partial.push({ ...installed, hop, rank: 0 });
+    else if (reactInstalled)
+      partial.push({ react: reactInstalled, reactDom: reactInstalled, hop, rank: 1 });
     if (existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
@@ -64,6 +79,7 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
         // app declares ^19.2.0 and has 19.2.8 installed). Prefer the installed
         // pair, both or neither, so the two never drift from each other.
         if (v && dv) return installed ?? { react: v, reactDom: dv };
+        if (v && !dv) partial.push({ react: v, reactDom: v, hop, rank: 2 });
       } catch {
         /* unparseable: keep walking */
       }
@@ -72,32 +88,25 @@ export function detectAppReact(fromDir: string): { react: string; reactDom: stri
     if (up === dir) break;
     dir = up;
   }
-  return nearestInstalled;
+  partial.sort((a, b) => a.hop - b.hop || a.rank - b.rank);
+  const answer = partial[0];
+  return answer ? { react: answer.react, reactDom: answer.reactDom } : undefined;
 }
 
 /**
- * The exact react + react-dom versions physically installed under a package
- * root, as the app's own code sees them. Both copies or neither: returning one
- * installed version beside one declared-range version is how a mismatched pair
- * gets authored. Symlinked (pnpm) and hoisted-away (workspace root) layouts are
- * handled by reading through the link and by returning undefined when the
- * package's own tree carries no copy, which leaves the declared range in charge.
+ * The exact version physically installed under a package root, reading through
+ * a pnpm symlink and returning undefined when that tree carries no copy.
  */
-function installedReactPair(dir: string): { react: string; reactDom: string } | undefined {
-  const read = (name: string): string | undefined => {
-    try {
-      const raw = JSON.parse(
-        readFileSync(path.join(dir, "node_modules", name, "package.json"), "utf8"),
-      ) as { name?: string; version?: string };
-      // Not the package the path points at (a stray link): treat it as absent.
-      return raw.name === name && typeof raw.version === "string" ? raw.version : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  const react = read("react");
-  const reactDom = read("react-dom");
-  return react && reactDom ? { react, reactDom } : undefined;
+function installedVersionAt(dir: string, name: string): string | undefined {
+  try {
+    const raw = JSON.parse(
+      readFileSync(path.join(dir, "node_modules", name, "package.json"), "utf8"),
+    ) as { name?: string; version?: string };
+    // Not the package the path points at (a stray link): treat it as absent.
+    return raw.name === name && typeof raw.version === "string" ? raw.version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
