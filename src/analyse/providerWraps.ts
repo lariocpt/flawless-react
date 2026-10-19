@@ -299,6 +299,17 @@ function packageRootOf(file: string): string {
   }
 }
 
+/**
+ * Every bare module specifier the harness answers with a provider shim — the
+ * canonical name plus its alias modules (`react-router` beside
+ * `react-router-dom`). Exported for the bootability report: a shimmed module
+ * needs no package on disk, so calling it "not installed" would be a false
+ * alarm about a suite that mounts fine.
+ */
+export function providerShimModules(): string[] {
+  return LIBRARY_SHIMS.flatMap((spec) => [spec.module, ...(spec.modules ?? [])]);
+}
+
 /** One shim per (library, importing package) pair the analysis can reach. */
 export function libraryProviderShimsFor(componentFiles: string[]): LibraryProviderShim[] {
   const roots = new Set<string>();

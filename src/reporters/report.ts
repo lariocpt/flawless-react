@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { UnresolvableImport } from "../analyse/bootability.ts";
 import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
 import type { ComponentTree, TaskId, TaskResult, TodoKind } from "../types.ts";
 import { VERSION } from "../version.ts";
@@ -30,6 +31,12 @@ export interface ReportInput {
   projectRoot?: string;
   /** Files the analyser could not read a component out of. */
   unparseable?: UnparseableFile[];
+  /**
+   * Packages the analysed sources import that the suite cannot resolve, so the
+   * specs that import them will fail at collect (see analyse/bootability.ts).
+   * The section renders only when something is in here.
+   */
+  unresolvable?: UnresolvableImport[];
   /**
    * A command that reproduces this run.
    *
@@ -298,6 +305,34 @@ export function renderReportMarkdown(input: ReportInput): string {
       }
       lines.push("");
     }
+  }
+
+  // --- bootability ---------------------------------------------------------
+  // Vitest resolves a spec's imports at COLLECT time, so a package the suite
+  // cannot find takes the whole file down before one test runs. Without this
+  // section the run reads as "N files failed, no tests" and nothing says why.
+  const broken = input.unresolvable ?? [];
+  if (broken.length > 0) {
+    const affected = broken.reduce((n, b) => n + b.count, 0);
+    lines.push("## Imports that will not resolve", "");
+    lines.push(
+      `${broken.length} package(s) the analysed sources import are installed nowhere the suite`,
+      `resolves from, and ${affected} component(s) import them. Vitest resolves imports while it`,
+      "collects a spec file, so each of those files fails before a single test runs:",
+      "`Failed to resolve import`. Install the package, or leave those components out of the",
+      "pattern. Not listed here: modules this suite stubs (`next/*`, the provider shims,",
+      "auth libraries), `import type` specifiers, and assets vite loads by extension.",
+      "",
+      "| Module | Components | Examples |",
+      "| --- | --- | --- |",
+    );
+    for (const b of broken.slice(0, 25)) {
+      const shown = b.examples.map((n) => `\`${n}\``).join(", ");
+      const more = b.count > b.examples.length ? `, …` : "";
+      lines.push(`| \`${b.specifier}\` | ${b.count} | ${shown}${more} |`);
+    }
+    if (broken.length > 25) lines.push(`| … | | ${broken.length - 25} more module(s) |`);
+    lines.push("");
   }
 
   // --- skips ---------------------------------------------------------------
