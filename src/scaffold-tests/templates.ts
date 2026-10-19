@@ -230,7 +230,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
     ).map((shim) => ({
       relPath: path.relative(opts.outDir, shim.filePath),
       absPath: shim.filePath,
-      content: libraryShimSource(shim.module, shim.componentName),
+      content: libraryShimSource(shim.module, shim.componentName, shim.filePath),
     })),
   ];
   if (withBrowser) {

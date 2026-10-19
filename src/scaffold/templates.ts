@@ -152,7 +152,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
     files.push({
       relPath: path.relative(opts.outDir, shim.filePath),
       absPath: shim.filePath,
-      content: libraryShimSource(shim.module, shim.componentName),
+      content: libraryShimSource(shim.module, shim.componentName, shim.filePath),
     });
   }
   if (!opts.nextjsHost) {

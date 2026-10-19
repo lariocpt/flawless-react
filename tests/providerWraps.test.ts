@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyseFile } from "../src/analyse/index.ts";
@@ -7,6 +7,7 @@ import {
   deriveContextProviderWraps,
   type LibraryProviderShim,
   libraryProviderShimsFor,
+  libraryShimSource,
   providerKey,
   referencedLibraryShims,
 } from "../src/analyse/providerWraps.ts";
@@ -528,6 +529,82 @@ describe("deriveContextProviderWraps", () => {
     expect(sidebar.endsWith(providerKey({ filePath: "", componentName: "SidebarTrigger" }))).toBe(
       true,
     );
+  });
+});
+
+describe("the library a generated shim imports from", () => {
+  // The shim file is written at the IMPORTING package's root, so the bare
+  // import inside it resolves through that package — and the canonical name is
+  // what most apps import, not what every app has. remix-run/remix-store is the
+  // measurement: react-router@7.18.2 installed, react-router-dom absent from
+  // both node_modules and package.json, and the generated flawless-router.tsx
+  // died with `Failed to resolve import "react-router-dom"`. That is not one
+  // skipped wrap: every spec that imports the shim fails to load, router or not.
+  const dirs: string[] = [];
+  afterEach(() => {
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /** A package root with `installed` copied in, and the shim's own path in it. */
+  function shimFileIn(installed: string[]): string {
+    const root = mkdtempSync(path.join(os.tmpdir(), "provwraps-shimimport-"));
+    dirs.push(root);
+    for (const name of installed) {
+      mkdirSync(path.join(root, "node_modules", name), { recursive: true });
+      writeFileSync(
+        path.join(root, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version: "7.0.0" }),
+      );
+    }
+    // The shim lives one level down, so resolving it walks up the way the real
+    // import does: `<pkg>/.flawless/`, then `<pkg>/node_modules`.
+    return path.join(root, ".flawless", "flawless-router.tsx");
+  }
+
+  test("an app that has only the alias module imports the alias", () => {
+    const src = libraryShimSource(
+      "react-router-dom",
+      "FlawlessRouterProvider",
+      shimFileIn(["react-router"]),
+    );
+    expect(src).toContain('import { MemoryRouter } from "react-router";');
+    // Not merely added: the unresolvable name is gone, which is the whole point.
+    expect(src).not.toContain("react-router-dom");
+  });
+
+  test("an app that has both keeps the canonical name", () => {
+    // saleor-dashboard carries react-router-dom AND react-router at 5.3.4, and
+    // 146 of its files import the former — the fix must not move that app.
+    const src = libraryShimSource(
+      "react-router-dom",
+      "FlawlessRouterProvider",
+      shimFileIn(["react-router", "react-router-dom"]),
+    );
+    expect(src).toContain('import { MemoryRouter } from "react-router-dom";');
+  });
+
+  test("an app with neither keeps the canonical name, loud failure and all", () => {
+    // Nothing resolves: the shim's import is then exactly as broken as the
+    // library's absence is, and an unresolvable import is the honest signal.
+    const src = libraryShimSource("react-router-dom", "FlawlessRouterProvider", shimFileIn([]));
+    expect(src).toContain('import { MemoryRouter } from "react-router-dom";');
+  });
+
+  test("a shim with no alias module is untouched by the substitution", () => {
+    // The placeholder is only in the router's imports today; the others name
+    // their one package and must render exactly as they did.
+    const src = libraryShimSource(
+      "@tanstack/react-query",
+      "FlawlessQueryClientProvider",
+      shimFileIn([]),
+    );
+    expect(src).toContain(
+      'import { QueryClient, QueryClientProvider } from "@tanstack/react-query";',
+    );
+    expect(src).not.toContain("{{module}}");
   });
 });
 
