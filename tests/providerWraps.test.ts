@@ -336,6 +336,17 @@ export function Anchor() {
   return <Typography slots={{ root: Link }}>x</Typography>;
 }
 `,
+  // The layout shape: <Outlet /> is a tag, so the walk always saw it — the
+  // shim's component list simply did not name it. tonkeeper/ton-console's
+  // Layout and LayoutSolid both render it, and both died at mount with the
+  // same missing-RouterContext error a bare <Link> gives.
+  "layout.tsx": `
+import { Outlet } from 'react-router-dom';
+import { Flex } from '@chakra-ui/react';
+export function Layout() {
+  return <Flex direction="column"><Outlet /></Flex>;
+}
+`,
   // The negatives. `as="a"` names an HTML tag and `as={Card}` names a project
   // component: neither is a provider-gated library import, so neither may ask
   // for a provider it has no business needing.
@@ -546,6 +557,9 @@ describe("deriveContextProviderWraps", () => {
     // the same provider even though no tag names it.
     expect(names(refsof(shimmed, "::Cta"))).toEqual(["FlawlessRouterProvider"]);
     expect(names(refsof(shimmed, "::Anchor"))).toEqual(["FlawlessRouterProvider"]);
+    // A tag the walk always saw but the shim's list never named: <Outlet /> is
+    // as router-gated as <Link>, and a layout that renders one crashed.
+    expect(names(refsof(shimmed, "::Layout"))).toEqual(["FlawlessRouterProvider"]);
     // Without shims the derivation is unchanged: the hook pairs with nothing.
     const bare = await derive();
     expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
@@ -555,6 +569,7 @@ describe("deriveContextProviderWraps", () => {
     expect([...bare.keys()].some((k) => k.endsWith("::Greeting"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::Crumb"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::Cta"))).toBe(false);
+    expect([...bare.keys()].some((k) => k.endsWith("::Layout"))).toBe(false);
     // And the negatives never ask, shimmed or not: an HTML tag name in `as`,
     // and a project component, are not provider-gated library imports.
     for (const map of [shimmed, bare]) {
