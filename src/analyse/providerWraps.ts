@@ -79,6 +79,13 @@ const provKey = (ref: ProviderRef): string => `${ref.filePath}::${ref.componentN
 const isInternalSpecifier = (s: string): boolean =>
   s.startsWith(".") || s.startsWith("@/") || s.startsWith("~/");
 
+/** Every bare module specifier that carries a shim's provider-gated surface:
+ *  the canonical `module` plus any alias that re-exports the same thing. */
+const shimModules = (spec: { module: string; modules?: string[] }): string[] => [
+  spec.module,
+  ...(spec.modules ?? []),
+];
+
 /**
  * Providers the project cannot be expected to import: the context lives in a
  * node_modules library, and its hooks throw when no library provider sits
@@ -94,7 +101,26 @@ const isInternalSpecifier = (s: string): boolean =>
  */
 interface LibraryShimSpec {
   module: string;
+  /**
+   * Other bare module specifiers that carry the SAME provider-gated surface:
+   * `react-router-dom` re-exports the `react-router` core (v5 and v6 do that,
+   * v7 moved it and left the old name as the alias), so the same hook or
+   * component can arrive under either name and needs the same provider. The
+   * generated wrap still imports from `module`, the canonical one, because a
+   * package that imports either almost always depends on both — an app that
+   * really has only the alias gets an unresolvable import, which is a louder
+   * failure than a silent no-wrap.
+   */
+  modules?: string[];
   hooks: string[];
+  /**
+   * Provider-gated COMPONENTS, the same requirement seen from the other side:
+   * a file that renders `<FormattedMessage>` calls no hook of the library at
+   * all, and the mount throws exactly the same "needs to exist in the
+   * component tree". saleor-dashboard is the evidence — 1038 files import
+   * react-intl and most of them only ever render the component.
+   */
+  components?: string[];
   componentName: string;
   fileBase: string;
   /** Imports for the generated module (the React types included). */
@@ -136,6 +162,14 @@ import { type ReactNode, useState } from "react";`,
     // useNavigate and the mount dies with "useNavigate() may be used only in
     // the context of a <Router>". MemoryRouter is the standard test context.
     module: "react-router-dom",
+    // The same surface is also exported by `react-router` itself: v5 and v6
+    // re-export the core through react-router-dom, v7 moved it and left the old
+    // name as the alias. saleor-dashboard writes both (146 files against
+    // react-router-dom, 48 against react-router), and a component that renders
+    // <Link> calls no hook at all — "You should not use <Link> outside a
+    // <Router>" is what the mount says for it.
+    modules: ["react-router"],
+    components: ["Link", "NavLink"],
     hooks: [
       "useHref",
       "useLinkClickHandler",
@@ -198,13 +232,51 @@ import { FormProvider, useForm } from "react-hook-form";`,
   const methods = useForm();
   return <FormProvider {...methods}>{children}</FormProvider>;`,
   },
+  {
+    // The dominant failure class when a suite first meets a react-intl app:
+    // "[React Intl] Could not find required `intl` object. <IntlProvider>
+    // needs to exist in the component tree" — 715 of saleor-dashboard's 1171
+    // failing spec files, and the same shape anywhere the app formats copy
+    // through the library. An IntlProvider with a locale and no message table
+    // resolves every message back to its own `defaultMessage`, which is the
+    // literal text the source wrote and the specs assert on: so the wrap makes
+    // the mount work WITHOUT inventing a translation, and an assertion that
+    // still fails is failing on the component, not on a missing context.
+    // `useIntl().formatMessage` reads the same empty table for the same reason.
+    module: "react-intl",
+    hooks: ["useIntl", "useCreateIntl", "useFormatters"],
+    components: [
+      "FormattedMessage",
+      "FormattedDate",
+      "FormattedNumber",
+      "FormattedTime",
+      "FormattedPlural",
+      "FormattedList",
+      "FormattedListParts",
+      "FormattedRelativeTime",
+      "FormattedHTMLMessage",
+    ],
+    componentName: "FlawlessIntlProvider",
+    fileBase: "flawless-intl.tsx",
+    imports: `import type { ReactNode } from "react";
+import { IntlProvider } from "react-intl";`,
+    body: `  // "en" is not a claim about the app's locales, it is the locale of the
+  // strings the source itself wrote. Nothing is fetched, so nothing can hang a
+  // spec; onError is left alone because a genuinely missing message is a real
+  // finding and should still print.
+  return <IntlProvider locale="en">{children}</IntlProvider>;`,
+  },
 ];
 
 export interface LibraryProviderShim {
   /** Bare module specifier whose hooks need the wrap. */
   module: string;
+  /** Alias module specifiers for the same surface (see LibraryShimSpec). */
+  modules?: string[];
   /** Module-side hook names that require the provider above them. */
   hooks: string[];
+  /** Module-side component names that require it too (see LibraryShimSpec). */
+  components?: string[];
   /** The generated component to wrap with. */
   componentName: string;
   /** Absolute path of the module that exports componentName. */
@@ -236,7 +308,9 @@ export function libraryProviderShimsFor(componentFiles: string[]): LibraryProvid
     for (const root of roots) {
       out.push({
         module: spec.module,
+        modules: spec.modules,
         hooks: spec.hooks,
+        components: spec.components,
         componentName: spec.componentName,
         filePath: path.join(root, ".flawless", spec.fileBase),
       });
@@ -395,6 +469,11 @@ interface CtxFacts {
    *  two-level wrappers — useMcpServerDialogState → useMcpServerDetailQuery
    *  → useQuery — still reach the library. */
   callsByHook: Map<string, Set<string>>;
+  /** Component name → bare JSX tag names that component's body renders. The
+   *  library shim table reads it for the components a file IMPORTS: rendering
+   *  a provider-gated component requires the provider exactly like calling its
+   *  hook does, and calls are all the scan above can see. */
+  tagsByFn: Map<string, Set<string>>;
 }
 
 function ctxFactsOf(parsed: ParsedFile): CtxFacts {
@@ -450,7 +529,7 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
           const b = parsed.imports.get(fn);
           if (b && !b.isTypeOnly) {
             for (const s of LIBRARY_SHIMS) {
-              if (s.module === b.specifier && s.hooks.includes(b.importedName ?? fn)) {
+              if (shimModules(s).includes(b.specifier) && s.hooks.includes(b.importedName ?? fn)) {
                 libs.add(s.module);
               }
             }
@@ -556,7 +635,26 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
   }
   const libsByHook = new Map<string, Set<string>>();
   for (const [hook, libs] of readLibs) if (libs.size > 0) libsByHook.set(hook, libs);
-  return { providerByHook, readsRaw, suppliesRaw, libsByHook, callsByHook: readCalls };
+  // The JSX tags each of this file's components renders, keyed by component
+  // name — the same requirement, seen where the hook scan above is blind: a
+  // component that renders <FormattedMessage> calls no hook of the library at
+  // all. Only a bare tag is recorded, because that is what an import binding
+  // names; `Namespace.Member` is namespaceFacts' business below.
+  const tagsByFn = new Map<string, Set<string>>();
+  for (const u of parsed.components) {
+    if (!u.bodyNode) continue;
+    const tags = new Set<string>();
+    const visitTags = (n: ts.Node): void => {
+      if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+        const { base, member } = tagNameParts(n.tagName);
+        if (base && !member) tags.add(base);
+      }
+      ts.forEachChild(n, visitTags);
+    };
+    visitTags(u.bodyNode);
+    tagsByFn.set(u.componentName, tags);
+  }
+  return { providerByHook, readsRaw, suppliesRaw, libsByHook, callsByHook: readCalls, tagsByFn };
 }
 
 export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
@@ -909,7 +1007,8 @@ export async function deriveContextProviderWraps(
         if (parsed) await walkLibs(sourceFile, moduleSide);
         const shim = shims?.(c).find(
           (s) =>
-            libs.has(s.module) && (hookSpec === s.module ? s.hooks.includes(moduleSide) : true),
+            shimModules(s).some((m) => libs.has(m)) &&
+            (shimModules(s).includes(hookSpec ?? "") ? s.hooks.includes(moduleSide) : true),
         );
         if (shim) {
           addReq(compKey, {
@@ -917,6 +1016,30 @@ export async function deriveContextProviderWraps(
             filePath: shim.filePath,
             exportKind: "named",
           });
+        }
+      }
+    }
+    // The library COMPONENT ladder: rendering a provider-gated component asks
+    // for that library's provider exactly like calling its hook does. This was
+    // the gap saleor-dashboard fell into — components that render
+    // <FormattedMessage> and never name `useIntl`, so the hook walk above found
+    // nothing to key on and the mount died on the missing provider.
+    const own = await parseOnce(c.info.filePath);
+    const ownTags = own ? ctxOnce(own).tagsByFn.get(c.info.componentName) : undefined;
+    if (own && ownTags) {
+      for (const s of shims?.(c) ?? []) {
+        if (!s.components || s.components.length === 0) continue;
+        if (reqs.get(compKey)?.has(`${s.filePath}::${s.componentName}`)) continue;
+        for (const tag of ownTags) {
+          const b = own.imports.get(tag);
+          if (!b || b.isTypeOnly || !shimModules(s).includes(b.specifier)) continue;
+          if (!s.components.includes(b.importedName ?? tag)) continue;
+          addReq(compKey, {
+            componentName: s.componentName,
+            filePath: s.filePath,
+            exportKind: "named",
+          });
+          break;
         }
       }
     }
