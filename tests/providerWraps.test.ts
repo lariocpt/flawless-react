@@ -316,6 +316,39 @@ export function Crumb() {
   return <Link to="/x">x</Link>;
 }
 `,
+  // Chakra's (and styled-components') polymorphic `as` is a render that no JSX
+  // tag names: <Button as={Link}> mounts react-router-dom's Link and dies at
+  // the missing router exactly like a bare <Link> would. tonkeeper/ton-console:
+  // 7 files write it, and every spec of those components failed with
+  // `Cannot destructure property 'basename' of useContext(...) as it is null`.
+  "cta.tsx": `
+import { Link } from 'react-router-dom';
+import { Button } from '@chakra-ui/react';
+export function Cta() {
+  return <Button as={Link} to="/x">x</Button>;
+}
+`,
+  // MUI's slot maps put the component one level inside an object literal.
+  "mui-anchor.tsx": `
+import { Link } from 'react-router-dom';
+import { Typography } from '@mui/material';
+export function Anchor() {
+  return <Typography slots={{ root: Link }}>x</Typography>;
+}
+`,
+  // The negatives. `as="a"` names an HTML tag and `as={Card}` names a project
+  // component: neither is a provider-gated library import, so neither may ask
+  // for a provider it has no business needing.
+  "plain.tsx": `
+import { Button } from '@chakra-ui/react';
+const Card = () => <div />;
+export function Plain() {
+  return <Button as="a" href="/x">x</Button>;
+}
+export function Composed() {
+  return <Button as={Card}>x</Button>;
+}
+`,
 };
 
 async function derive(
@@ -508,6 +541,11 @@ describe("deriveContextProviderWraps", () => {
     // The alias module, arriving as a rendered component rather than a call:
     // the same router wrap, because it is the same provider.
     expect(names(refsof(shimmed, "::Crumb"))).toEqual(["FlawlessRouterProvider"]);
+    // A component handed through a prop is rendered too: `as={Link}` and a
+    // `slots={{ root: Link }}` map mount the library's component, so they owe
+    // the same provider even though no tag names it.
+    expect(names(refsof(shimmed, "::Cta"))).toEqual(["FlawlessRouterProvider"]);
+    expect(names(refsof(shimmed, "::Anchor"))).toEqual(["FlawlessRouterProvider"]);
     // Without shims the derivation is unchanged: the hook pairs with nothing.
     const bare = await derive();
     expect([...bare.keys()].some((k) => k.endsWith("::PostList"))).toBe(false);
@@ -516,6 +554,13 @@ describe("deriveContextProviderWraps", () => {
     expect([...bare.keys()].some((k) => k.endsWith("::Palette"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::Greeting"))).toBe(false);
     expect([...bare.keys()].some((k) => k.endsWith("::Crumb"))).toBe(false);
+    expect([...bare.keys()].some((k) => k.endsWith("::Cta"))).toBe(false);
+    // And the negatives never ask, shimmed or not: an HTML tag name in `as`,
+    // and a project component, are not provider-gated library imports.
+    for (const map of [shimmed, bare]) {
+      expect([...map.keys()].some((k) => k.endsWith("::Plain"))).toBe(false);
+      expect([...map.keys()].some((k) => k.endsWith("::Composed"))).toBe(false);
+    }
     // And the shim modules are claimed for writing only when a map references
     // them — one per (library, package): query, router and intl, same tmp root.
     expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(3);

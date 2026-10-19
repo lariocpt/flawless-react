@@ -46,6 +46,30 @@ import {
 import { ModuleResolver } from "./resolveModule.ts";
 import type { SourceFileCache } from "./sourceCache.ts";
 
+/**
+ * Props whose value is a component the render tree mounts. Chakra and
+ * styled-components use `as`, MUI uses `component` plus the `components` /
+ * `slots` object maps, Radix-adjacent APIs use `fallback`, and the general form
+ * is `render`. `<Button as={Link}>` renders `<Link>`: no JSX tag ever names it,
+ * so the tag walk below is blind to it and the provider requirement vanishes.
+ *
+ * Measured on tonkeeper/ton-console: 7 files write `as={Link}` with Link from
+ * react-router-dom, and every spec of those components died at mount with
+ * `Cannot destructure property 'basename' of useContext(...) as it is null`
+ * from react-router-dom's own `LinkWithRef` — 18 failures, the component never
+ * having written a `<Link>` to blame.
+ */
+const COMPONENT_PASSING_PROPS = new Set([
+  "as",
+  "asComponent",
+  "component",
+  "components",
+  "slots",
+  "fallback",
+  "fallbackAs",
+  "render",
+]);
+
 /** React's own hooks — none of them names a provider. */
 const CORE_HOOKS = new Set([
   "useCallback",
@@ -695,16 +719,36 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
   // The JSX tags each of this file's components renders, keyed by component
   // name — the same requirement, seen where the hook scan above is blind: a
   // component that renders <FormattedMessage> calls no hook of the library at
-  // all. Only a bare tag is recorded, because that is what an import binding
-  // names; `Namespace.Member` is namespaceFacts' business below.
+  // all. A bare tag is recorded because that is what an import binding names,
+  // and so is a component handed through a prop (`as={Link}`, `slots={{ root:
+  // Link }}`) — same mount, same provider, no tag. `Namespace.Member` stays
+  // namespaceFacts' business.
   const tagsByFn = new Map<string, Set<string>>();
   for (const u of parsed.components) {
     if (!u.bodyNode) continue;
     const tags = new Set<string>();
+    const passedByProp = (expr: ts.Expression): void => {
+      if (ts.isIdentifier(expr)) {
+        tags.add(expr.text);
+        return;
+      }
+      if (ts.isObjectLiteralExpression(expr)) {
+        for (const prop of expr.properties) {
+          if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.initializer)) {
+            tags.add(prop.initializer.text);
+          }
+        }
+      }
+    };
     const visitTags = (n: ts.Node): void => {
       if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
         const { base, member } = tagNameParts(n.tagName);
         if (base && !member) tags.add(base);
+      } else if (ts.isJsxAttribute(n) && ts.isIdentifier(n.name)) {
+        if (COMPONENT_PASSING_PROPS.has(n.name.text) && n.initializer) {
+          const expr = ts.isJsxExpression(n.initializer) ? n.initializer.expression : n.initializer;
+          if (expr) passedByProp(expr);
+        }
       }
       ts.forEachChild(n, visitTags);
     };
