@@ -153,6 +153,46 @@ describe("unit-browser task", () => {
     }
   });
 
+  test("React Native components get no DOM spec, and the summary says why", async () => {
+    // The bare-RN dogfood (ospfranco/sol) is the reason this test exists: 16
+    // specs emitted, 16 collect failures — `SyntaxError: Unexpected token
+    // 'typeof'` from react-native's Flow source — and zero tests ever ran. A
+    // suite that cannot report anything is worse than no suite, and the native
+    // plane is --expo, which refuses a non-Expo project by design.
+    const outDir = tmp("unit-native");
+    const screen = await analyse({
+      entry: path.join(FIXTURES, "expoapp", "app", "(tabs)", "index.tsx"),
+      depth: 3,
+      includeChildren: true,
+    });
+    const result = await task("unit-browser").run(ctxOf({ outDir, trees: [screen] }));
+
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(result.outputs).toEqual([]);
+    expect(result.summary).toContain("React Native");
+    expect(existsSync(path.join(outDir, "unit"))).toBe(false);
+  });
+
+  test("a DOM component is still tested when a sibling tree is React Native", async () => {
+    // The exclusion is per tree, not per run: a monorepo swept in one pass has
+    // apps/web and apps/mobile in it, and refusing everything would be the same
+    // mistake in the other direction. Named, never silent.
+    const outDir = tmp("unit-mixed");
+    const screen = await analyse({
+      entry: path.join(FIXTURES, "expoapp", "app", "(tabs)", "index.tsx"),
+      depth: 3,
+      includeChildren: true,
+    });
+    const result = await task("unit-browser").run(
+      ctxOf({ outDir, trees: [await toolbarTree(), screen] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.outputs).toContain(path.join(outDir, "unit", "Toolbar.test.tsx"));
+    expect(result.summary).toContain("React Native component(s) skipped");
+  });
+
   test("no analysed components → ok false with an error", async () => {
     const outDir = tmp("unit-empty");
     const result = await task("unit-browser").run(ctxOf({ outDir, trees: [] }));

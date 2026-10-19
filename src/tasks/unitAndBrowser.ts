@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { rendersNativeSource } from "../analyse/nativeDialect.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { appPackageRoot } from "../packageJson.ts";
 import { scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
@@ -55,6 +56,33 @@ export const unitAndBrowser: Task = {
     }
 
     const projectRoot = ctx.nextjs?.root;
+    // React Native source is not DOM-plane material. A spec imports the
+    // component, so its WHOLE graph loads, and anywhere in a native graph sits
+    // react-native: Flow source vite cannot parse, so the spec dies at collect
+    // with `SyntaxError: Unexpected token 'typeof'` and the run ends
+    // `Test Files  no tests`. Measured on ospfranco/sol, a bare-RN app: 16
+    // specs, 16 collect failures, zero tests ever ran — a suite that cannot
+    // report anything is not a suite. The tool's native plane is `--expo`, and
+    // `--expo` refuses a non-Expo project by design, so there is no plane to
+    // emit for these and a NAMED skip is the honest answer. The perf side of the
+    // same rule lives in hostEligibility, which the host registry, the profile
+    // specs and REPORT.md all read, so the app is excluded the same way in all
+    // three rather than crashing in one and lying in the other two.
+    const nativeTrees = ctx.trees.filter(rendersNativeSource);
+    const trees =
+      nativeTrees.length === 0 ? ctx.trees : ctx.trees.filter((t) => !rendersNativeSource(t));
+    if (trees.length === 0) {
+      const who = flattenTrees(ctx.trees);
+      return {
+        id: "unit-browser",
+        ok: true,
+        outputs: [],
+        findings: [],
+        summary:
+          `no unit specs: all ${who.length} component(s) render React Native source, which ` +
+          `no DOM plane can load (the native plane is --expo, Expo projects only)`,
+      };
+    }
     // Alias / react-pin anchor. A Next app is anchored at the app root; a
     // plain vite project has no such marker, but its tsconfig sits right next
     // to the analysed sources — anchor at each source directory and let
@@ -63,7 +91,7 @@ export const unitAndBrowser: Task = {
     // imports failed to resolve and the suite crashed on dual React.
     const aliasRoots = ctx.nextjs
       ? [ctx.nextjs.root]
-      : [...new Set(flattenTrees(ctx.trees).map((c) => path.dirname(c.info.filePath)))];
+      : [...new Set(flattenTrees(trees).map((c) => path.dirname(c.info.filePath)))];
     // Browser specs drive the perf-harness host; emitting them without it
     // would hand the user a suite that cannot start.
     const browserSpecs =
@@ -99,13 +127,13 @@ export const unitAndBrowser: Task = {
     // Next's bundled copy proves to exist. Undefined for every app whose
     // imports the core already answers.
     const reactShim = detectCanaryReactExports(
-      flattenTrees(ctx.trees).map((c) => c.info.filePath),
+      flattenTrees(trees).map((c) => c.info.filePath),
       nearestReactNodeModules(pinFrom) ??
         (pinFallback ? nearestReactNodeModules(pinFallback) : undefined),
     );
     const scaffoldOptions = {
       browserSpecs,
-      trees: ctx.trees,
+      trees,
       outDir: ctx.outDir,
       variants: ctx.variants,
       mswSetup: ctx.nextjs !== undefined,
@@ -144,7 +172,14 @@ export const unitAndBrowser: Task = {
     // flattenTrees, not a raw walk: the same component appears in as many trees
     // as there are pages rendering it, and counting the walk reported "unit
     // tests for 606 component(s)" against an app the report itself says has 181.
-    const names = flattenTrees(ctx.trees).map((c) => c.info.componentName);
+    const names = flattenTrees(trees).map((c) => c.info.componentName);
+    // Named, not silent: the count the user expected to see is in this line
+    // WITH the reason it is smaller, the same rule the auth-skip and kept-spec
+    // notes follow.
+    const nativeNote =
+      nativeTrees.length > 0
+        ? ` (${flattenTrees(nativeTrees).length} React Native component(s) skipped — no DOM plane can load react-native)`
+        : "";
     const skippedNote =
       skipped.length > 0
         ? ` (${skipped.length} colocated spec(s) kept — rerun with --force to regenerate)`
@@ -187,7 +222,7 @@ export const unitAndBrowser: Task = {
       ok: true,
       outputs: written,
       findings: [],
-      summary: `unit tests for ${names.length} component(s)${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${shimNote}${browserNote}: ${names.join(", ")}`,
+      summary: `unit tests for ${names.length} component(s)${nativeNote}${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${shimNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
     };
   },

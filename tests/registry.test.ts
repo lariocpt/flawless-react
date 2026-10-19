@@ -72,12 +72,28 @@ describe("hostEligibility", () => {
       [{ renderMode: "compound-part" }, /compound part|Root/],
       [{ renderMode: "document-root" }, /document root/],
       [{ renderMode: "null" }, /renders null/],
+      [{ hostDialect: "native" }, /React Native/],
     ];
     for (const [extra, reason] of cases) {
       const verdict = hostEligibility(comp("X", extra));
       expect(verdict.eligible).toBe(false);
       expect(verdict.reason ?? "").toMatch(reason);
     }
+  });
+
+  test("React Native source is excluded, because the host cannot even parse it", () => {
+    // The host IMPORTS the component, so an RN component puts react-native in
+    // the host's own module graph — Flow source Metro transpiles and vite does
+    // not. Measured on ospfranco/sol: `SyntaxError: Unexpected token 'typeof'`,
+    // and on the perf plane that is a red spec for every component in the app.
+    const verdict = hostEligibility(
+      comp("Screen", { renderMode: "client", hostDialect: "native" }),
+    );
+    expect(verdict.eligible).toBe(false);
+    expect(verdict.reason).toContain("browser host");
+    // A DOM-dialect component is NOT excluded by this rule: the dialect is
+    // per-file evidence, and a web app is the overwhelming majority of runs.
+    expect(hostEligibility(comp("Widget", { renderMode: "client" })).eligible).toBe(true);
   });
 
   test("a namespace-shaped server-action import does not exclude the component", () => {
