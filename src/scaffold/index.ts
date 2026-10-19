@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { mergePackageJson } from "../packageJson.ts";
+import { detectAppReact, mergePackageJson, repairReactPin } from "../packageJson.ts";
 import { classifyStamped } from "../scaffold-tests/stamp.ts";
 import type { ComponentTree, ScaffoldOptions } from "../types.ts";
 import { extractRoutes, loadApiSpec } from "./openapi.ts";
@@ -129,7 +129,13 @@ export async function scaffold(
     }
     await mkdir(path.dirname(abs), { recursive: true });
     if (f.relPath === "package.json" && existsSync(abs)) {
-      await Bun.write(abs, mergePackageJson(await Bun.file(abs).text(), f.content));
+      await Bun.write(
+        abs,
+        repairReactPin(
+          mergePackageJson(await Bun.file(abs).text(), f.content),
+          detectAppReact(outDir),
+        ),
+      );
       written.push(abs);
       continue;
     }

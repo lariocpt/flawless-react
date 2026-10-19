@@ -95,9 +95,14 @@ single switch for the whole suite.
 - **≥18** mounts through `createRoot`; **<18** falls back to legacy `ReactDOM.render`,
   document roots render with `renderToStaticMarkup`, and promise-valued props are not
   passed at all.
-- The suite's `react` / `react-dom` are **pinned to the app's version** — two React
-  copies is the classic red-suite cause, and its signature is
-  `Cannot read properties of null (reading 'useState')`.
+- The suite's `react` / `react-dom` are **pinned to the version the app has installed, exactly** —
+  `detectAppReact` reads `node_modules/react` before the declared range, because a caret is a
+  floor and `^19.2.0` installs whatever is newest. Two React copies is the classic red-suite
+  cause, with signature `Cannot read properties of null (reading 'useState')`; a pair that
+  merely drifts is just as fatal — one patch off dies at load on `Incompatible React
+  versions`, one major off on `Cannot read properties of undefined (reading
+  'ReactCurrentOwner')`. The next run rewrites a stale or loose pin it finds in an existing
+  suite manifest (`repairReactPin`).
 - Testing Library follows the app: React ≤17 gets `@testing-library/react@^12.1.5`
   with `@testing-library/dom@^8.20.1`, because 13/14 peer-require React ^18 and 14
   hard-requires the `react-dom/client` entry that does not exist in 17. A stale 13+
