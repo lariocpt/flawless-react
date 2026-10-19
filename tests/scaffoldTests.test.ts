@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   ensurePnpmSuiteSettings,
+  findOrphanUnitSpecs,
   scaffoldUnitBrowser,
   suitePackageJson,
 } from "../src/scaffold-tests/index.ts";
@@ -670,5 +671,46 @@ describe("ensurePnpmSuiteSettings", () => {
     expect(body).toContain("packages: []");
     expect(body).toMatch(/onlyBuiltDependencies:\n\s+- esbuild\n\s+- msw\n/);
     expect(body).toMatch(/allowBuilds:\n\s+esbuild: true\n\s+msw: true\n/);
+  });
+});
+
+describe("findOrphanUnitSpecs", () => {
+  test("names exactly what the runner will still execute, at any depth", async () => {
+    // The emitted include is `unit/**/*.test.{ts,tsx}`, so "what the suite runs"
+    // is that glob over the directory — NOT what this run analysed. A spec an
+    // earlier run left behind is executed, and a spec that names a component
+    // that no longer exists fails at import forever.
+    const out = tmpRoot();
+    mkdirSync(path.join(out, "unit", "routes"), { recursive: true });
+    writeFileSync(path.join(out, "unit", "Live.test.tsx"), "x");
+    writeFileSync(path.join(out, "unit", "Gone.test.tsx"), "x");
+    // Not matched by the glob, so not the user's problem to clean: a helper,
+    // and a spec naming convention this suite does not run.
+    writeFileSync(path.join(out, "unit", "helpers.ts"), "x");
+    writeFileSync(path.join(out, "unit", "routes", "Deep.spec.ts"), "x");
+    writeFileSync(path.join(out, "unit", "routes", "Deep.test.ts"), "x");
+
+    const orphans = await findOrphanUnitSpecs(out, new Set(["unit/Live.test.tsx"]));
+    expect(orphans).toEqual([
+      path.join(out, "unit", "Gone.test.tsx"),
+      path.join(out, "unit", "routes", "Deep.test.ts"),
+    ]);
+  });
+
+  test("an absent unit dir is nothing to report, not a failure", async () => {
+    // The common case: a first run, or a colocate suite that has no unit/ dir.
+    expect(await findOrphanUnitSpecs(tmpRoot(), new Set())).toEqual([]);
+  });
+
+  test("it reports without deleting — an in-outDir spec cannot prove it is tool output", async () => {
+    // Suite-dir specs are identified by being rewritten every run, so they carry
+    // no provenance stamp: a hand-hardened spec and an orphan one are the same
+    // bytes. Anything this function did to a file would be deleting work.
+    const out = tmpRoot();
+    mkdirSync(path.join(out, "unit"), { recursive: true });
+    const orphan = path.join(out, "unit", "Gone.test.tsx");
+    writeFileSync(orphan, "// hardened by hand over a week\n");
+    await findOrphanUnitSpecs(out, new Set());
+    expect(existsSync(orphan)).toBe(true);
   });
 });

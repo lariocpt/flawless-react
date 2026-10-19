@@ -193,6 +193,58 @@ describe("unit-browser task", () => {
     expect(result.summary).toContain("React Native component(s) skipped");
   });
 
+  test("a unit spec with no component behind it is named, and kept", async () => {
+    // The runner takes `unit/**/*.test.tsx` from the DIRECTORY, not from what
+    // this run analysed, so a spec an earlier run left behind still executes —
+    // against a component that may be renamed, refactored, or gone. Reported,
+    // never deleted: an in-outDir spec carries no stamp, so a hand-hardened one
+    // is byte-identical to an orphan, and silently dropping specs is how a
+    // suite's coverage evaporates without anyone deciding to.
+    const outDir = tmp("unit-orphan");
+    const tree = await analyse({
+      entry: path.join(FIXTURES, "Dashboard.tsx"),
+      depth: 3,
+      includeChildren: true,
+    });
+    await task("unit-browser").run(ctxOf({ outDir, trees: [tree] }));
+    mkdirSync(path.join(outDir, "unit"), { recursive: true });
+    const ghost = path.join(outDir, "unit", "Ghost.test.tsx");
+    writeFileSync(
+      ghost,
+      'import { expect, test } from "vitest";\ntest("gone", () => expect(1).toBe(1));\n',
+    );
+
+    const result = await task("unit-browser").run(ctxOf({ outDir, trees: [tree] }));
+
+    expect(result.summary).toContain("1 unit spec(s) with no component behind them");
+    expect(result.summary).toContain(path.join("unit", "Ghost.test.tsx"));
+    expect(existsSync(ghost)).toBe(true);
+  });
+
+  test("the React Native exit names the specs it strands", async () => {
+    // That exit writes nothing at all, which is right — but it also means an
+    // older suite's unit specs stay exactly where they are, and the runner will
+    // still pick them up. The one case where a run emits less than it removed.
+    const outDir = tmp("unit-native-strand");
+    mkdirSync(path.join(outDir, "unit"), { recursive: true });
+    const stranded = path.join(outDir, "unit", "OldScreen.test.tsx");
+    writeFileSync(
+      stranded,
+      'import { expect, test } from "vitest";\ntest("x", () => expect(1).toBe(1));\n',
+    );
+    const screen = await analyse({
+      entry: path.join(FIXTURES, "expoapp", "app", "login.tsx"),
+      depth: 3,
+      includeChildren: true,
+    });
+
+    const result = await task("unit-browser").run(ctxOf({ outDir, trees: [screen] }));
+
+    expect(result.summary).toContain("React Native source");
+    expect(result.summary).toContain("1 unit spec(s) with no component behind them");
+    expect(existsSync(stranded)).toBe(true);
+  });
+
   test("no analysed components → ok false with an error", async () => {
     const outDir = tmp("unit-empty");
     const result = await task("unit-browser").run(ctxOf({ outDir, trees: [] }));
