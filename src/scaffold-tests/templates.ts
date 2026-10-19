@@ -617,6 +617,16 @@ const multiRootPlugin = {
   name: "flawless-multiroot-tsconfig-paths",
   enforce: "pre",
   resolveId(spec: string, importer?: string) {
+    // A tsconfig \`paths\` key never matches these, and a catch-all \`"*"\` entry
+    // must not either: rewriting vite's own \`/@vite/env\` into \`<src>/@vite/env\`
+    // is how a run dies before a single spec loads.
+    if (
+      spec.startsWith(".") ||
+      spec.startsWith("/") ||
+      spec.charCodeAt(0) === 0 ||
+      /^[a-zA-Z0-9+.-]+:/.test(spec)
+    )
+      return null;
     for (const m of multiRootPaths) {
       if (!spec.startsWith(m.prefix)) continue;
       const rest = spec.slice(m.prefix.length);

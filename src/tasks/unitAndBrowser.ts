@@ -229,7 +229,16 @@ function computeResolveAliases(
   }
   for (const [prefix, dirs] of targets) {
     const only = dirs[0];
-    if (dirs.length === 1 && only !== undefined)
+    // An EMPTY prefix is a tsconfig catch-all — `"*": ["./src/*"]`, which is how
+    // React Native's shared tsconfig maps imports (ospfranco/sol). As a vite
+    // `resolve.alias` it is `{ find: /^/, replacement: <src>/ }`, and `^` matches
+    // EVERY id: vite's own `/@vite/env`, `/@id/…`, a relative `./Foo`, all
+    // rewritten into `src/`. The run then dies before one spec loads — sol: 16
+    // "Failed to load url /@vite/env" errors and `Test Files  no tests`. The
+    // importer-aware plugin below is the safe spelling of the same mapping: it
+    // probes for the file and answers null when there is nothing there, so
+    // `react` and `/@vite/env` fall through to normal resolution untouched.
+    if (dirs.length === 1 && only !== undefined && prefix !== "")
       entries.push({ find: prefix, replacement: only, prefix: true });
     else multiRoot.push({ prefix, dirs });
   }

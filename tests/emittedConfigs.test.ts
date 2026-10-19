@@ -323,6 +323,47 @@ describe("the emitted vitest config resolves to files that exist", () => {
     );
     expect(resolveId?.("@/nope", path.join(app, "src", "Toolbar.tsx"))).toBeNull();
   });
+
+  test("a tsconfig catch-all `*` is never a match-everything vite alias", async () => {
+    // React Native's shared tsconfig maps bare imports with a catch-all —
+    // `"*": ["./src/*"]`, which is ospfranco/sol's whole paths block. As a
+    // `resolve.alias` entry that is `{ find: /^/, replacement: <src>/ }`, and
+    // `^` matches EVERY id: vite's own `/@vite/env`, a relative `./Foo`, all
+    // rewritten into `src/`. The app's run died before a single spec loaded —
+    // 16 `Failed to load url /@vite/env` errors and `Test Files  no tests`.
+    const root = projectWithStubs();
+    writeFileSync(
+      path.join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "*": ["./src/*"] } } }),
+    );
+    const tree = await toolbarInside(root);
+    writeFileSync(path.join(root, "src", "greeting.ts"), "export const hi = 1;");
+    const outDir = path.join(root, ".flawless");
+    await run("unit-browser" as TaskId, ctxOf({ outDir, trees: [tree] }));
+
+    const cfg = await load(path.join(outDir, "vitest.config.mts"));
+    const resolve = cfg.resolve as { alias?: Array<{ find: RegExp | string }> };
+    expect(
+      (resolve.alias ?? []).find((a) => a.find instanceof RegExp && a.find.source === "^"),
+      "the catch-all left resolve.alias entirely",
+    ).toBeUndefined();
+    type Plug = { name: string; resolveId?: (s: string, i?: string) => string | null };
+    const plugin = ((cfg.plugins as unknown[]).flat(Infinity) as Plug[]).find(
+      (p) => p && p.name === "flawless-multiroot-tsconfig-paths",
+    );
+    const resolveId = plugin?.resolveId;
+    expect(resolveId, "the catch-all resolves through the probing plugin instead").toBeDefined();
+    // The mapping still answers the id it was written for, because the plugin
+    // probes for the file rather than assuming it.
+    const importer = path.join(root, "src", "Toolbar.tsx");
+    expect(resolveId?.("greeting", importer)).toBe(path.join(root, "src", "greeting.ts"));
+    // And it answers NOTHING for the ids a tsconfig `paths` key never matches,
+    // which is the whole reason this route is safe where the alias was fatal.
+    expect(resolveId?.("/@vite/env", importer)).toBeNull();
+    expect(resolveId?.("node:fs", importer)).toBeNull();
+    expect(resolveId?.("./greeting", importer)).toBeNull();
+    expect(resolveId?.("react", importer)).toBeNull();
+  });
 });
 
 describe("the emitted playwright configs select the specs the same run wrote", () => {
