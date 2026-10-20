@@ -734,3 +734,189 @@ export function SearchForm() {
     expect([...wraps.keys()].some((k) => k.endsWith("::SearchForm"))).toBe(false);
   });
 });
+
+describe("the data router wrap", () => {
+  // code-forge-io/react-router-devtools and remix-run/remix-store, measured: the
+  // components under test ARE route modules, and their `useLoaderData` /
+  // `useFetcher` / `useMatches` calls invariant out under MemoryRouter — 110 and
+  // 28 spec failures of "`…` must be used within a data router". No wrap short
+  // of a data router can mount them. The other half of the finding is the gate:
+  // `createMemoryRouter` is 6.4-and-later, and a wrap importing a name the
+  // installed library never exported takes down every spec that reads the file.
+  const dirs: string[] = [];
+  afterEach(() => {
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /** A package root carrying `installed` as name → version (undefined version
+   *  is a package.json that names none), with `files` written into it. */
+  async function deriveRouter(
+    installed: Record<string, string | undefined>,
+    files: Record<string, string>,
+  ): Promise<Map<string, ProviderRef[]>> {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "provwraps-router-"));
+    dirs.push(dir);
+    for (const [name, version] of Object.entries(installed)) {
+      const pkg = path.join(dir, "node_modules", name);
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name, version }));
+    }
+    const cache = new SourceFileCache();
+    const trees: ComponentTree[] = [];
+    for (const [name, content] of Object.entries(files)) {
+      const file = path.join(dir, name);
+      writeFileSync(file, content);
+      trees.push(
+        ...(await analyseFile(
+          { entry: file, depth: 3, includeChildren: true, roots: "exported" },
+          { cache, resolver: new ModuleResolver() },
+        ).catch(() => [])),
+      );
+    }
+    return await deriveContextProviderWraps(trees, cache, (c) =>
+      libraryProviderShimsFor([c.info.filePath]),
+    );
+  }
+
+  /** The component that is a route module: data off the router, nothing else. */
+  const ROUTE_VIEW = {
+    "route-view.tsx": `
+import { useLoaderData } from 'react-router';
+export function RouteView() {
+  const d = useLoaderData() as { title?: string } | undefined;
+  return <div>{d?.title}</div>;
+}
+`,
+  };
+
+  /** Where a generated shim's own file lives, so resolution walks up the way
+   *  the real import does: `<pkg>/.flawless/`, then `<pkg>/node_modules`. */
+  function shimFileIn(installed: Record<string, string | undefined>): string {
+    const root = mkdtempSync(path.join(os.tmpdir(), "provwraps-dataimport-"));
+    dirs.push(root);
+    for (const [name, version] of Object.entries(installed)) {
+      const pkg = path.join(root, "node_modules", name);
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name, version }));
+    }
+    return path.join(root, ".flawless", "flawless-data-router.tsx");
+  }
+
+  test("a data-router hook gets the data router", async () => {
+    const wraps = await deriveRouter({ "react-router": "7.9.3" }, ROUTE_VIEW);
+    const refs = refsof(wraps, "::RouteView");
+    expect(names(refs)).toEqual(["FlawlessDataRouterProvider"]);
+    expect(refs[0]?.filePath.endsWith(".flawless/flawless-data-router.tsx")).toBe(true);
+  });
+
+  test("useMatches asks for the data router too", async () => {
+    // It sat in the MemoryRouter shim's hook list, where the library has never
+    // served it: v6.4 introduced useMatches with the data router, and 7 specs
+    // of react-router-devtools named it in the same error the others did.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3", "react-router-dom": "7.9.3" },
+      {
+        "tabs.tsx": `
+import { useMatches } from 'react-router-dom';
+export function Tabs() {
+  return <div>{useMatches().length}</div>;
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::Tabs"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("the data router supersedes the MemoryRouter wrap", async () => {
+    // The data router serves useNavigate as well, so the pair would only be a
+    // shadowed context on the stack: one provider, and it is the capable one.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3" },
+      {
+        "route-both.tsx": `
+import { useLoaderData, useNavigate } from 'react-router';
+export function RouteBoth() {
+  const d = useLoaderData() as string | undefined;
+  const nav = useNavigate();
+  return <button onClick={() => nav('/x')}>{d}</button>;
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::RouteBoth"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("a navigation-only component keeps MemoryRouter", async () => {
+    // The wrap that nakama was measured with must not move for want of the new
+    // one: useNavigate is served by MemoryRouter, and switching it would change
+    // the error boundary underneath a suite that passes today.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3" },
+      {
+        "palette.tsx": `
+import { useNavigate } from 'react-router';
+export function Palette() {
+  const nav = useNavigate();
+  return <button onClick={() => nav('/x')}>go</button>;
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::Palette"))).toEqual(["FlawlessRouterProvider"]);
+  });
+
+  test("a library older than the data APIs is not offered the wrap", async () => {
+    // saleor-dashboard's pair is react-router-dom/react-router at 5.3.4: no
+    // createMemoryRouter exists there, so the file would not even import. The
+    // data-hook caller then asks for nothing (the library's own error stays the
+    // signal) while the navigation caller keeps the wrap that works for it.
+    const old = await deriveRouter(
+      { "react-router": "5.3.4", "react-router-dom": "5.3.4" },
+      {
+        ...ROUTE_VIEW,
+        "palette.tsx": `
+import { useNavigate } from 'react-router-dom';
+export function Palette() {
+  const nav = useNavigate();
+  return <button onClick={() => nav('/x')}>go</button>;
+}
+`,
+      },
+    );
+    expect([...old.keys()].some((k) => k.endsWith("::RouteView"))).toBe(false);
+    expect(names(refsof(old, "::Palette"))).toEqual(["FlawlessRouterProvider"]);
+    // The boundary itself: 6.4.0 is where createMemoryRouter shipped.
+    const before = await deriveRouter({ "react-router": "6.3.1" }, ROUTE_VIEW);
+    expect([...before.keys()].some((k) => k.endsWith("::RouteView"))).toBe(false);
+    const at = await deriveRouter({ "react-router": "6.4.0" }, ROUTE_VIEW);
+    expect(names(refsof(at, "::RouteView"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("a version the tool cannot read does not refuse the wrap", async () => {
+    // Refusing here would trade a capable library for an unreadable
+    // package.json, and the suite would lose wraps it needs. The failure mode
+    // of accepting is the library's own missing export, loudly, for one file.
+    const wraps = await deriveRouter({ "react-router": undefined }, ROUTE_VIEW);
+    expect(names(refsof(wraps, "::RouteView"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("the generated wrap rethrows instead of rendering an error page", () => {
+    const src = libraryShimSource(
+      "react-router-dom",
+      "FlawlessDataRouterProvider",
+      shimFileIn({ "react-router": "7.9.3" }),
+    );
+    expect(src).toContain(
+      'import { createMemoryRouter, RouterProvider, useRouteError } from "react-router";',
+    );
+    expect(src).toContain("function FlawlessRouteError(): never {");
+    expect(src).toContain("throw useRouteError();");
+    expect(src).toContain("errorElement: <FlawlessRouteError />");
+    expect(src).toContain("export function FlawlessDataRouterProvider(");
+    // Not merely added: the unresolvable alias is gone, as for the memory wrap.
+    expect(src).not.toContain("react-router-dom");
+  });
+});
