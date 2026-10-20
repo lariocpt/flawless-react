@@ -109,6 +109,62 @@ function installedVersionAt(dir: string, name: string): string | undefined {
   }
 }
 
+/** A package's version as installed directly in `nmDir` (a node_modules dir). */
+function versionInNodeModules(nmDir: string, name: string): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(path.join(nmDir, name, "package.json"), "utf8")) as {
+      name?: string;
+      version?: string;
+    };
+    return raw.name === name && typeof raw.version === "string" ? raw.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The React the suite's own install has to match.
+ *
+ * Two derivations had to be made one. `detectAppReact` walks UP from the suite
+ * and reads the pair the app declares and installs; the emitted vitest config
+ * anchors its `react` aliases on the copy the SOURCES resolve —
+ * `nearestReactNodeModules` over the source roots, which walks DOWN. In a
+ * workspace the two can answer different questions:
+ * code-forge-io/react-router-devtools has no react at its root at all, so the
+ * pin fell through to the `^18.3.0` default while the alias pointed at the
+ * `docs` package's linked React 19.2.7. Whatever the manifest names, the app's
+ * copy wins at runtime, and React 18's `react-dom/test-utils` reading React
+ * 19's renamed internals kills every spec at collect — `Cannot read properties
+ * of undefined (reading 'ReactCurrentOwner')`, 180 files contributing zero
+ * tests. The suite's install, meanwhile, is the copy RTL and the harness load.
+ *
+ * So take the pin from the copy the aliases anchor on. The guard is what keeps
+ * this surgical: an app with no react anywhere in its tree anchors on the
+ * SUITE's own node_modules, and there the anchor is only the install about to
+ * happen — `detectAppReact` stays the answer, so an app that never had an
+ * app-tree React behaves exactly as it did before.
+ */
+export function appReactPin(
+  fromDir: string,
+  anchorNmDir?: string,
+): { react: string; reactDom: string } | undefined {
+  if (anchorNmDir) {
+    const nm = path.resolve(anchorNmDir);
+    const suite = path.resolve(fromDir);
+    // The anchor is the APP's copy only while it sits outside the suite. When
+    // it is the suite's own node_modules (or below it) there is no second
+    // copy to agree with — that tree is this install, about to be written —
+    // so detectAppReact stays the answer.
+    if (nm !== suite && !nm.startsWith(`${suite}${path.sep}`)) {
+      const react = versionInNodeModules(nm, "react");
+      // A copy carrying react alone still answers the question the alias asks:
+      // it is the copy every leg of the graph will load, so it is the pair.
+      if (react) return { react, reactDom: versionInNodeModules(nm, "react-dom") ?? react };
+    }
+  }
+  return detectAppReact(fromDir);
+}
+
 /**
  * The app's React MAJOR (17, 18, 19 …) — the switch that picks the test
  * stack. React 17 has no `react-dom/client`, no `createRoot`, and no
