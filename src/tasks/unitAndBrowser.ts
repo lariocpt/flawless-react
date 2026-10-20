@@ -4,7 +4,11 @@ import path from "node:path";
 import { rendersNativeSource } from "../analyse/nativeDialect.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { appPackageRoot } from "../packageJson.ts";
-import { findOrphanUnitSpecs, scaffoldUnitBrowser } from "../scaffold-tests/index.ts";
+import {
+  findOrphanUnitSpecs,
+  type ScaffoldUnitBrowserOptions,
+  scaffoldUnitBrowser,
+} from "../scaffold-tests/index.ts";
 import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
 import type { AliasEntry, MultiRootAlias, ReactExportShim } from "../scaffold-tests/templates.ts";
@@ -150,7 +154,13 @@ export const unitAndBrowser: Task = {
       nearestReactNodeModules(pinFrom) ??
         (pinFallback ? nearestReactNodeModules(pinFallback) : undefined),
     );
-    const scaffoldOptions = {
+    // Annotated, not inferred: the object is passed to scaffoldUnitBrowser as a
+    // variable, and TypeScript checks a variable's shape against a parameter
+    // only for what the TYPE declares — a field this literal invents, or one the
+    // scaffolder stops reading, is invisible. This is the hole that let the
+    // manifest's reactPinDir anchor exist at runtime while the scaffolder's own
+    // options type did not name it.
+    const scaffoldOptions: ScaffoldUnitBrowserOptions = {
       browserSpecs,
       trees,
       outDir: ctx.outDir,
