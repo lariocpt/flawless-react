@@ -4,16 +4,30 @@ import path from "node:path";
 import { appReactPin, mergePackageJson, repairReactPin } from "../packageJson.ts";
 import { PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
-import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
 import { classifyStamped, stamp } from "./stamp.ts";
-import { type AliasEntry, type ReactExportShim, renderUnitBrowser } from "./templates.ts";
+import { renderUnitBrowser, type UnitBrowserRenderOptions } from "./templates.ts";
 
-export interface ScaffoldUnitBrowserOptions {
-  trees: ComponentTree[];
-  outDir: string;
-  variants: number;
+/**
+ * Everything the unit-browser scaffolder takes.
+ *
+ * It EXTENDS the renderer's options instead of re-declaring a subset, because
+ * the two types describe ONE object: `scaffoldUnitBrowser` hands this same
+ * options value to `renderUnitBrowser` unchanged. A hand-copied subset is a
+ * silently shrinking contract — `unitAndBrowser.ts` builds the options in a
+ * variable and sets `multiRootAliases`, `appEnvRoot` and `todos` on it, and
+ * TypeScript accepts that even while this type does not name them, because
+ * excess-property checks run on object literals and not on variables. That is
+ * how the emitted manifest lost its `reactPinDir` anchor: the field was live at
+ * runtime, read by the config, and absent from the type the caller supposedly
+ * satisfied.
+ *
+ * What remains here is only what the scaffolder itself has an opinion about.
+ * Every other field — providers, aliases, the React pin and its anchor,
+ * colocation, the todo counter, the app's env root — is documented once, on
+ * UnitBrowserRenderOptions.
+ */
+export interface ScaffoldUnitBrowserOptions extends UnitBrowserRenderOptions {
   skipInnerPackageJson?: boolean;
-  mswSetup?: boolean;
   /**
    * The run is a Next.js suite living under the app. The manifest is emitted
    * there too (a self-contained install needs it), but WITHOUT its "type"
@@ -22,22 +36,8 @@ export interface ScaffoldUnitBrowserOptions {
    * a package.json placed above them decides how Playwright loads them.
    */
   nextjs?: boolean;
-  provider?: string;
-  resolveAliases?: AliasEntry[];
-  /** The single-React anchor — see UnitBrowserRenderOptions.reactPinDir. The
-   *  manifest's react pin is read off THIS copy, not re-derived from the
-   *  manifest walk, or the config and the pin answer with two different ones. */
-  reactPinDir?: string;
-  /** Emitted alongside the config when set; see ReactExportShim in templates.ts. */
-  reactShim?: ReactExportShim;
-  colocate?: boolean;
   /** Overwrite existing colocated specs (in-outDir files are always rewritten). */
   force?: boolean;
-  apiRoutes?: NextjsApiRoute[];
-  /** Emit Playwright browser specs (they need the perf-harness host). */
-  browserSpecs?: boolean;
-  /** Derived context providers to mount around each unit render; see UnitBrowserRenderOptions. */
-  providerWraps?: Map<string, ProviderRef[]>;
 }
 
 export interface ScaffoldUnitBrowserResult {
