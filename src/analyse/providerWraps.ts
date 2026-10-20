@@ -32,7 +32,7 @@
  * and the dogfood failure then names it.
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
@@ -147,12 +147,34 @@ interface LibraryShimSpec {
   componentName: string;
   fileBase: string;
   /**
+   * Provider component names this shim makes redundant. The data router serves
+   * every hook and tag the MemoryRouter wrap exists for, so a component that
+   * calls `useNavigate` AND `useLoaderData` gets one provider rather than two
+   * nested ones — the outer would only be shadowed by the inner.
+   */
+  supersedes?: string[];
+  /**
+   * Oldest installed version of the resolved module this shim may be emitted
+   * against, as `[major, minor]`. A wrap that imports a name the installed
+   * library never exported does not skip itself politely: the unresolved import
+   * kills every spec that imports the file. A version that cannot be read is
+   * accepted — refusing a capable library over an unreadable package.json is
+   * the worse bet.
+   */
+  minVersion?: readonly [number, number];
+  /**
    * Imports for the generated module (the React types included). `{{module}}`
    * is replaced with the specifier the provider is actually imported from —
    * which for a module with alias names is not always `module`. See
    * shimImportModule.
    */
   imports: string;
+  /**
+   * Module-level declarations emitted between the imports and the exported
+   * provider, for a shim whose body needs a helper of its own. Blank lines are
+   * added by the template.
+   */
+  helpers?: string;
   /** Component body: mounts the library's real provider. */
   body: string;
 }
@@ -209,7 +231,6 @@ import { type ReactNode, useState } from "react";`,
       "useHref",
       "useLinkClickHandler",
       "useLocation",
-      "useMatches",
       "useNavigate",
       "useOutlet",
       "useOutletContext",
@@ -223,10 +244,81 @@ import { type ReactNode, useState } from "react";`,
 import { MemoryRouter } from "{{module}}";`,
     body: `  // An in-memory router rooted at "/": navigation hooks work, nothing moves
   // a real history, and no spec leaks location state into the next.
-  // Data-router hooks (useFetcher, useSubmit, useBlocker) are deliberately
-  // absent — MemoryRouter cannot serve them, and wrapping would trade one
-  // throw for another.
+  // The data-router hooks (useLoaderData, useFetcher, useSubmit …) are NOT
+  // served from here — MemoryRouter leaves DataRouterContext empty and they
+  // throw for it. They get FlawlessDataRouterProvider below instead.
   return <MemoryRouter>{children}</MemoryRouter>;`,
+  },
+  {
+    // The same router from the other side of 6.4. These hooks read the DATA
+    // router and `invariant` out under MemoryRouter — "`useLoaderData` must be
+    // used within a data router" — 110 failures across 26 spec files of
+    // code-forge-io/react-router-devtools and 28 across 11 of
+    // remix-run/remix-store: both apps' components ARE route modules, and no
+    // wrap short of a data router can mount them. The names are read off
+    // react-router 7.9.3's own useDataRouterContext/useDataRouterState call
+    // sites, minus `useNavigate`, which MemoryRouter does serve (nakama is the
+    // proof) — plus `useRouterState`, whose invariant fires as its unstable
+    // alias.
+    //
+    // No `components` yet. `<Await>` is a data-router component — measured on
+    // remix-run/remix-store's Footer and ProductGrid, where it falls into its
+    // fetch implementation and the mount dies naming `useFetcher` — and
+    // `ScrollRestoration` is one by the library's own invariant. Neither is
+    // wired: the component ladder is its own change, and `<Await>` also wants a
+    // `resolve` prop this generator cannot invent.
+    module: "react-router-dom",
+    modules: ["react-router"],
+    // The library's data APIs (`createMemoryRouter`, `RouterProvider`) ship
+    // from 6.4; on 5.x or 6.0-6.3 this wrap is not offered and those hooks keep
+    // failing with the honest message the library itself writes.
+    minVersion: [6, 4],
+    hooks: [
+      "unstable_useRouterState",
+      "useActionData",
+      "useBlocker",
+      "useFetcher",
+      "useFetchers",
+      "useLoaderData",
+      "useMatches",
+      "useNavigation",
+      "useRevalidator",
+      "useRouteError",
+      "useRouteLoaderData",
+      "useRouterState",
+      "useScrollRestoration",
+      "useSubmit",
+      "useViewTransitionState",
+    ],
+    supersedes: ["FlawlessRouterProvider"],
+    componentName: "FlawlessDataRouterProvider",
+    fileBase: "flawless-data-router.tsx",
+    imports: `import type { ReactNode } from "react";
+import { createMemoryRouter, RouterProvider, useRouteError } from "{{module}}";`,
+    helpers: `/** Rethrows instead of rendering: see the provider below for why. */
+function FlawlessRouteError(): never {
+  throw useRouteError();
+}`,
+    body: `  // An in-memory DATA router rooted at "/". The hooks above read loader and
+  // action data off it and get NOTHING — undefined, not invented data — which
+  // is the honest unit shape: the route module mounts, its data does not exist.
+  //
+  // RouterProvider wraps the tree in its own error boundary, and its default
+  // error UI is <h2>Unexpected Application Error!</h2><h3>…</h3>. Measured: that
+  // markup is what a throwing component leaves behind even with
+  // \`errorElement: null\`, so a spec asserting a heading would pass against the
+  // router's error page. Rethrowing the route error makes React walk past the
+  // boundary and out of render(), so a crash fails its own spec with its own
+  // error, exactly as it does under MemoryRouter.
+  //
+  // Built per render rather than memoised so \`children\` stays current for a
+  // caller that re-renders the wrap; unit specs mount once, and a fresh router
+  // per mount is what MemoryRouter does internally too.
+  const router = createMemoryRouter(
+    [{ path: "*", element: <>{children}</>, errorElement: <FlawlessRouteError /> }],
+    { initialEntries: ["/"] },
+  );
+  return <RouterProvider router={router} />;`,
   },
   {
     // Form-through-context: useFormContext / useController / useWatch /
@@ -303,6 +395,15 @@ import { IntlProvider } from "react-intl";`,
   },
 ];
 
+/**
+ * Provider name → the provider that makes it redundant, read off the shim
+ * table. Applied where a component's requirements are finalised, so the rule
+ * survives the transitive walk that produced the pair.
+ */
+const SUPERSEDED_BY: Map<string, string> = new Map(
+  LIBRARY_SHIMS.flatMap((s) => (s.supersedes ?? []).map((n) => [n, s.componentName] as const)),
+);
+
 export interface LibraryProviderShim {
   /** Bare module specifier whose hooks need the wrap. */
   module: string;
@@ -352,13 +453,20 @@ export function libraryProviderShimsFor(componentFiles: string[]): LibraryProvid
   const out: LibraryProviderShim[] = [];
   for (const spec of LIBRARY_SHIMS) {
     for (const root of roots) {
+      const filePath = path.join(root, ".flawless", spec.fileBase);
+      // A library too old for this shim's surface is not a wrap to skip: the
+      // file would import a name the installed package never exported, and one
+      // unresolved import takes down every spec that reads the shim. Refusing
+      // to OFFER the shim keeps such a component on whichever wrap the library
+      // can serve — and on the library's own honest error for the rest.
+      if (!shimAvailableAt(spec, filePath)) continue;
       out.push({
         module: spec.module,
         modules: spec.modules,
         hooks: spec.hooks,
         components: spec.components,
         componentName: spec.componentName,
-        filePath: path.join(root, ".flawless", spec.fileBase),
+        filePath,
       });
     }
   }
@@ -382,7 +490,8 @@ export function referencedLibraryShims(
 }
 
 /**
- * Which specifier the generated shim imports its provider from.
+ * Which specifier the generated shim imports its provider from, and what
+ * version of it the importing package will actually get.
  *
  * The canonical name is what most apps import, not what every app HAS. The
  * router shim says `react-router-dom`, and an app on react-router v7 has only
@@ -402,19 +511,62 @@ export function referencedLibraryShims(
  * Resolution walks up from the shim file's own directory because that is the
  * walk the import performs at runtime: `<pkg>/.flawless/`, then
  * `<pkg>/node_modules`, then out through a workspace.
+ *
+ * `min` is the same question asked one level finer. Two apps of the same family
+ * can carry different capabilities (react-router-dom 5.x has no
+ * `createMemoryRouter`; 6.4 introduced it), and an alias that is too old is
+ * skipped for the next candidate rather than emitted as a broken import.
  */
-function shimImportModule(spec: LibraryShimSpec, fromShimFile: string): string {
+function shimImportModule(
+  spec: LibraryShimSpec,
+  fromShimFile: string,
+  min: readonly [number, number] | undefined = spec.minVersion,
+): { module: string; version?: string } {
   const fromDir = path.dirname(fromShimFile);
+  let firstResolved: { module: string; version?: string } | undefined;
   for (const candidate of shimModules(spec)) {
     let dir = path.resolve(fromDir);
     for (;;) {
-      if (existsSync(path.join(dir, "node_modules", candidate, "package.json"))) return candidate;
+      const packageJson = path.join(dir, "node_modules", candidate, "package.json");
+      if (existsSync(packageJson)) {
+        const found = { module: candidate, version: installedVersion(packageJson) };
+        firstResolved ??= found;
+        if (min === undefined || meetsMinimum(found.version, min)) return found;
+        break;
+      }
       const parent = path.dirname(dir);
       if (parent === dir) break;
       dir = parent;
     }
   }
-  return spec.module;
+  return firstResolved ?? { module: spec.module };
+}
+
+/** The version a package.json names, or undefined when it cannot be read. */
+function installedVersion(packageJson: string): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(packageJson, "utf8")) as { version?: unknown };
+    return typeof raw.version === "string" ? raw.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `[major, minor]` of an installed version; a range or a non-version is none. */
+function meetsMinimum(version: string | undefined, min: readonly [number, number]): boolean {
+  // Unreadable is accepted, not refused: see LibraryShimSpec.minVersion.
+  if (version === undefined) return true;
+  const got = /^\D*(\d+)(?:\.(\d+))?/.exec(version);
+  if (!got) return true;
+  const [major, minor] = [Number(got[1]), Number(got[2] ?? 0)];
+  return major > min[0] || (major === min[0] && minor >= min[1]);
+}
+
+/** Whether this shim may be emitted for a package root at all: false only on
+ *  positive evidence that the library the shim imports is too old for it. */
+function shimAvailableAt(spec: LibraryShimSpec, shimFilePath: string): boolean {
+  if (spec.minVersion === undefined) return true;
+  return meetsMinimum(shimImportModule(spec, shimFilePath).version, spec.minVersion);
 }
 
 /** Source for the generated module: the real library provider, mounted fresh
@@ -427,11 +579,14 @@ export function libraryShimSource(
 ): string {
   const spec = LIBRARY_SHIMS.find((s) => s.module === module && s.componentName === componentName);
   if (!spec) return "";
-  const from = shimFilePath ? shimImportModule(spec, shimFilePath) : spec.module;
+  const from = shimFilePath ? shimImportModule(spec, shimFilePath).module : spec.module;
+  const prelude = [spec.imports.replaceAll("{{module}}", from), spec.helpers]
+    .filter(Boolean)
+    .join("\n\n");
   return `// Generated by flawless-react. Do not edit: regenerations overwrite it.
 // The provider lives here, inside the importing package, because a bare
 // import of ${from} only resolves through this package's node_modules.
-${spec.imports.replaceAll("{{module}}", from)}
+${prelude}
 
 export function ${componentName}({ children }: { children?: ReactNode }) {
 ${spec.body}
@@ -1196,10 +1351,19 @@ export async function deriveContextProviderWraps(
 
   const out = new Map<string, ProviderRef[]>();
   for (const [compKey, m] of reqs) {
-    if (m.size > 0) {
+    const refs = [...m.values()];
+    // One provider can make another redundant (LibraryShimSpec.supersedes): the
+    // data router already serves every hook and tag MemoryRouter does, so a
+    // component needing both gets one wrap, not a shadowed one inside the other.
+    const present = new Set(refs.map((r) => r.componentName));
+    const kept = refs.filter((r) => {
+      const by = SUPERSEDED_BY.get(r.componentName);
+      return by === undefined || !present.has(by);
+    });
+    if (kept.length > 0) {
       out.set(
         compKey,
-        [...m.values()].sort((a, b) => (a.componentName < b.componentName ? -1 : 1)),
+        kept.sort((a, b) => (a.componentName < b.componentName ? -1 : 1)),
       );
     }
   }
