@@ -65,10 +65,13 @@ curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- flawless-react
 One caveat worth knowing before you pick it: the binary is self-contained Bun, but it cannot
 carry biome inside itself. `perf-harness`, `unit-browser` and `perf-static` work anywhere;
 `react-rules` — and `a11y` on the web path — shell out to biome and will look for it in the
-project you are scanning (`node_modules/.bin/biome`) and then on `PATH`. (`a11y` under
-`--expo` is the tool's own native analyser and needs no biome.) Any React codebase that already
-lints with biome satisfies that for free — otherwise `bun add -d @biomejs/biome` in that
-project, or use the source package.
+project you are scanning (`node_modules/.bin/biome`), every ancestor workspace root, and then
+on `PATH`. It has to be **biome 2**: those sweeps write a biome 2 linter config and read its
+JSON reporter, so a candidate of another major is walked past in favour of one that can read
+it, and if none can, the task fails naming the version and path it refused rather than
+reporting a sweep it never made. (`a11y` under `--expo` is the tool's own native analyser and
+needs no biome.) Any React codebase that already lints with biome 2 satisfies that for free —
+otherwise `bun add -d @biomejs/biome` in that project, or use the source package.
 
 ## Quickstart
 

@@ -33,6 +33,16 @@ package's `node_modules`, every ancestor (so a hoisted workspace root counts) an
 binary the message is explicit: install `@biomejs/biome` in the project you are
 scanning, or put biome on `PATH`.
 
+**And it has to be biome 2.** The sweep writes a biome 2 linter config and parses
+its JSON reporter, so a candidate whose `--version` names another major is walked
+past in favour of one that can read it — which is how a repo that hoists a 1.x
+still gets a sweep from a 2 on `PATH` — and if none can, the task fails naming the
+version and path it refused. A 1.x biome does answer, and what it prints is a
+different document (`location.path` is an object, `message` an array of markup
+runs), so its output cannot be read as findings. A source or npm install answers
+with its own pinned 2 first and never sees the repo's biome: only the compiled
+binary resolves into the scanned project.
+
 ## Native: the analyser, and its denominator
 
 Biome's a11y rules are all HTML/ARIA. Over 31 React Native files carrying 82

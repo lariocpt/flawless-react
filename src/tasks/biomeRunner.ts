@@ -61,16 +61,87 @@ export function biomeCandidates(from: string = process.cwd()): string[] {
   ];
 }
 
-function resolveBiomeBin(): string | null {
-  for (const c of biomeCandidates()) if (existsSync(c)) return c;
-  // 3. Anything on PATH — a global install, or a distro package.
+/** The biome major whose linter config `runBiome` writes and whose JSON reporter
+ *  it parses. Not a preference — the config below is spelled for it. */
+const CONFIG_BIOME_MAJOR = "2";
+
+/** The resolver's answer: a usable biome, or the one it refused, or nothing. */
+export type BiomeBin = { bin: string } | { tooOld: { bin: string; version: string } };
+
+/**
+ * The first biome that can read the config these sweeps write.
+ *
+ * The ladder walks up from the ANALYSED project, and a compiled binary resolves
+ * there (its own pinned biome lives inside the artifact, not on disk), so what
+ * it finds is whatever the user's repo happens to depend on. On
+ * code-forge-io/react-router-devtools that is a hoisted biome 1.9.4 — and the
+ * sweep died there on `The "paths[0]" property must be of type string, got
+ * object`: biome 1.x reports `location.path` as an object (`{ file: <relative> }`)
+ * and `message` as an array of console-markup runs, while the parser reads both
+ * as strings. a11y and react-rules reported `files:0 findings:0` on that shape —
+ * not clean, dead, and only in the shipped artifact, because a source install
+ * answers with our own pinned 2.x first and never sees the repo's biome.
+ *
+ * So ask each candidate its version and keep walking. A version that cannot be
+ * read (a stub, a wrapper, a build whose `--version` output we do not
+ * recognise) is accepted as before: only a biome PROVEN to be another major is
+ * refused, and the refusal names it. Walking past the refusal is what lets a
+ * 2.x further up the tree win over a 1.x nearer the scanned package.
+ */
+export function pickBiome(candidates: string[]): BiomeBin | null {
+  let tooOld: { bin: string; version: string } | undefined;
+  for (const bin of candidates) {
+    if (!existsSync(bin)) continue;
+    const version = biomeVersion(bin);
+    if (version && version.split(".")[0] !== CONFIG_BIOME_MAJOR) {
+      tooOld ??= { bin, version };
+      continue;
+    }
+    return { bin };
+  }
+  return tooOld ? { tooOld } : null;
+}
+
+/** Every place a biome might be, resolution order: ours, the project's, its
+ *  ancestors, then PATH. */
+export function biomeLadder(from: string = process.cwd()): string[] {
+  const list = biomeCandidates(from);
   try {
     const onPath = Bun.which("biome");
-    if (onPath) return onPath;
+    if (onPath && !list.includes(onPath)) list.push(onPath);
   } catch {
     // Bun.which is unavailable under plain Node; the candidates above are the answer there.
   }
-  return null;
+  return list;
+}
+
+/** What a refused biome means to the person running the sweep. Exported so the
+ *  wording — the version, the path, and the fix — is pinned by a test. */
+export function biomeUnusableMessage(found: { bin: string; version: string }): string {
+  return (
+    `biome ${found.version} at ${found.bin} is not the biome major these sweeps are written ` +
+    `for: they write a biome ${CONFIG_BIOME_MAJOR}.x linter config and parse its JSON ` +
+    `reporter, and biome ${found.version} spells both differently — its output cannot be ` +
+    "read as this task's findings. This is a hard failure, not a clean bill of health.\n" +
+    `  Fix: bun add -d @biomejs/biome@^${CONFIG_BIOME_MAJOR} in the project being scanned, ` +
+    `or put a matching biome on PATH. A source or npm install of flawless-react uses its ` +
+    `own pinned biome ${CONFIG_BIOME_MAJOR}.x and is unaffected.`
+  );
+}
+
+/** `Version: 2.5.1` → "2.5.1"; null when the binary will not say, or says
+ *  something we cannot read as a version. */
+function biomeVersion(bin: string): string | null {
+  try {
+    const out = Bun.spawnSync({ cmd: [bin, "--version"], stdout: "pipe", stderr: "pipe" });
+    return /(\d+\.\d+\.\d+)/.exec(out.stdout?.toString() ?? "")?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveBiomeBin(): BiomeBin | null {
+  return pickBiome(biomeLadder());
 }
 
 /** `<dir>/node_modules/.bin/<bin>` for dir and every ancestor, nearest first. */
@@ -87,8 +158,8 @@ export function nodeModulesBinCandidates(from: string, bin: string): string[] {
 
 export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
   if (opts.files.length === 0) return [];
-  const biomeBin = resolveBiomeBin();
-  if (!biomeBin) {
+  const found = resolveBiomeBin();
+  if (!found) {
     throw new Error(
       "biome executable not found. Looked in this package's node_modules, in " +
         `${path.join(process.cwd(), "node_modules", ".bin", "biome")} and every ancestor ` +
@@ -98,6 +169,8 @@ export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
         "(bun add -d @biomejs/biome) or put it on PATH.",
     );
   }
+  if ("tooOld" in found) throw new Error(biomeUnusableMessage(found.tooOld));
+  const biomeBin = found.bin;
 
   const tmp = await mkdtemp(path.join(tmpdir(), "fhr-biome-"));
   const configPath = path.join(tmp, "biome.json");

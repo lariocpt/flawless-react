@@ -1,9 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyse } from "../src/analyse/index.ts";
-import { biomeCandidates, nodeModulesBinCandidates } from "../src/tasks/biomeRunner.ts";
+import {
+  biomeCandidates,
+  biomeUnusableMessage,
+  nodeModulesBinCandidates,
+  pickBiome,
+} from "../src/tasks/biomeRunner.ts";
 import {
   dedupeTreeFiles,
   findingsByComponent,
@@ -450,5 +463,63 @@ describe("biome executable resolution", () => {
     expect(candidates).toContain(own);
     expect(existsSync(own)).toBe(false);
     expect(candidates.indexOf(own)).toBeLessThan(candidates.indexOf(path.join(hoisted, "biome")));
+  });
+});
+
+describe("pickBiome: a biome that cannot read the sweep's config is refused, not crashed on", () => {
+  /** A fake biome at its own project root: answers --version with `version`
+   *  (null = nothing that reads as a version) and anything else with the 2.x
+   *  reporter JSON the runner parses. */
+  function fakeBiome(version: string | null): string {
+    const root = mkdtempSync(path.join(os.tmpdir(), "flawless-biome-major-"));
+    created.push(root);
+    const bin = path.join(root, "node_modules", ".bin", "biome");
+    mkdirSync(path.dirname(bin), { recursive: true });
+    writeFileSync(
+      bin,
+      "#!/bin/sh\n" +
+        (version === null
+          ? ""
+          : `if [ "$1" = "--version" ]; then echo "Version: ${version}"; exit 0; fi\n`) +
+        "echo '{\"diagnostics\":[]}'\n",
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  test("a 1.x biome is refused, and named with its version and path", () => {
+    // The react-router-devtools shape: the compiled binary walks the scanned
+    // repo and finds a hoisted biome 1.9.4, then dies parsing a diagnostic
+    // shape it was not written for. Refusing is the fix; naming it is the fix.
+    const bin = fakeBiome("1.9.4");
+    expect(pickBiome([bin])).toEqual({ tooOld: { bin, version: "1.9.4" } });
+  });
+
+  test("a 2.x further down the ladder wins over a 1.x offered first", () => {
+    const older = fakeBiome("1.9.4");
+    const current = fakeBiome("2.5.1");
+    expect(pickBiome([older, current])).toEqual({ bin: current });
+  });
+
+  test("a candidate whose version cannot be read is accepted, as before", () => {
+    // Only a biome PROVEN to be another major is refused. The stubs the other
+    // suites here write answer nothing recognisable, and a distro wrapper could
+    // too — rejecting those would take the sweeps away from someone who could
+    // have run them.
+    const bin = fakeBiome(null);
+    expect(pickBiome([bin])).toEqual({ bin });
+  });
+
+  test("an empty ladder is still a null, not a refusal", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "flawless-biome-none-"));
+    created.push(root);
+    expect(pickBiome([path.join(root, "node_modules", ".bin", "biome")])).toBeNull();
+  });
+
+  test("the refusal names the biome, the fix, and that it is not a clean result", () => {
+    const text = biomeUnusableMessage({ bin: "/app/node_modules/.bin/biome", version: "1.9.4" });
+    expect(text).toContain("biome 1.9.4 at /app/node_modules/.bin/biome");
+    expect(text).toContain("@biomejs/biome@^2");
+    expect(text).toContain("not a clean bill of health");
   });
 });
