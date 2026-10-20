@@ -121,9 +121,14 @@ it falls back to legacy `ReactDOM.render`, document roots render with
 `renderToStaticMarkup`, and promise-valued props are not passed. The suite's
 `react`/`react-dom` are pinned to the version the app has INSTALLED, exactly:
 `detectAppReact` reads `node_modules/react` before the declared range, because a
-caret is a floor and `^19.2.0` installs whatever is newest. Where no manifest
-declares a version at all — a library whose react is a peer, `"^18.0.0 ||
-^19.0.0"`, declares no version — the nearest installed pair is used instead,
+caret is a floor and `^19.2.0` installs whatever is newest. Where the analysed
+sources resolve a different copy than that walk finds — a workspace whose root
+declares no react while a sibling package holds one — `appReactPin` reads the
+pin off the copy the emitted `react` aliases anchor on instead, because the pin
+and the alias have to name the same physical copy or one plane ends up with two
+React copies. Where no manifest declares a version at all — a library whose
+react is a peer, `"^18.0.0 || ^19.0.0"`, declares no version — the nearest
+installed pair is used instead,
 scoped so an ancestor's tooling react never out-votes a real declaration. Two
 React copies is the classic red-suite cause, and a pair that merely drifts is
 just as fatal — one patch off dies at load on react-dom's guard

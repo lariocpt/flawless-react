@@ -4,7 +4,12 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
-import { detectAppReact, mergePackageJson, repairReactPin } from "../src/packageJson.ts";
+import {
+  appReactPin,
+  detectAppReact,
+  mergePackageJson,
+  repairReactPin,
+} from "../src/packageJson.ts";
 import { renderSuite } from "../src/scaffold/templates.ts";
 import { repairRtlPin, suitePackageJson } from "../src/scaffold-tests/index.ts";
 import { renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
@@ -123,6 +128,103 @@ describe("suite manifest per React major", () => {
     // Undefined pin (no detectable app react): nothing to branch on.
     const manifest = JSON.stringify({ devDependencies: { "@testing-library/react": "^14.0.0" } });
     expect(repairRtlPin(manifest, undefined)).toBe(manifest);
+  });
+});
+
+describe("appReactPin: the pin IS the copy the config anchors its react aliases on", () => {
+  // code-forge-io/react-router-devtools, the app #97 was filed against: no
+  // react at the workspace root, so the pin walk found nothing and answered
+  // the ^18.3.0 default, while the copy the SOURCES resolve — what the
+  // emitted aliases point at — is a linked React 19.2.7 in the sibling `docs`
+  // package. The pin walked UP and answered 18; the alias walked DOWN and
+  // answered 19. React 18's react-dom/test-utils then read React 19's renamed
+  // internals: "Cannot read properties of undefined (reading
+  // 'ReactCurrentOwner')", 180 spec files collecting zero tests.
+  async function dualWorkspace(withReactDom = true) {
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-dual-"));
+    writeFileSync(path.join(base, "package.json"), JSON.stringify({ name: "root-workspace" }));
+    const anchor = path.join(base, "docs", "node_modules");
+    const installed: Array<readonly [string, string]> = [["react", "19.2.7"]];
+    if (withReactDom) installed.push(["react-dom", "19.2.7"]);
+    for (const [name, version] of installed) {
+      mkdirSync(path.join(anchor, name), { recursive: true });
+      writeFileSync(path.join(anchor, name, "package.json"), JSON.stringify({ name, version }));
+    }
+    const suiteDir = path.join(base, ".flawless");
+    mkdirSync(suiteDir);
+    return { base, suiteDir, anchor };
+  }
+
+  test("the anchor copy answers when the walk finds nothing", async () => {
+    const { suiteDir, anchor } = await dualWorkspace();
+    expect(appReactPin(suiteDir, anchor)).toEqual({ react: "19.2.7", reactDom: "19.2.7" });
+    // Without the anchor the old derivation still answers "no app react" —
+    // callers that have no anchor change nothing.
+    expect(appReactPin(suiteDir)).toBeUndefined();
+  });
+
+  test("so the manifest written from it carries the harness that matches", async () => {
+    const { suiteDir, anchor } = await dualWorkspace();
+    const pkg = JSON.parse(suitePackageJson(suiteDir, false, false, false, anchor));
+    expect(pkg.dependencies.react).toBe("19.2.7");
+    expect(pkg.dependencies["react-dom"]).toBe("19.2.7");
+    // @types follow the runtime they describe, and the harness follows the
+    // major: an RTL 14/15 against a React 19 react is the other half of the
+    // split this app was paid in.
+    expect(pkg.devDependencies["@types/react"]).toBe("^19.0.0");
+    expect(pkg.devDependencies["@testing-library/react"]).toBe("^16.0.0");
+    // The same call with no anchor keeps the pre-fix answer, so the apps that
+    // were never in this situation do not move.
+    expect(JSON.parse(suitePackageJson(suiteDir, false)).dependencies.react).toBe("^18.3.0");
+  });
+
+  test("and an existing suite manifest is repaired to it through the real merge", async () => {
+    // What writeSuitePackageJson does: the merge lets the existing ^18.3.0
+    // win, and the repair is what notices it disagrees with the copy the
+    // aliases point at.
+    const { suiteDir, anchor } = await dualWorkspace();
+    const existing = JSON.stringify({
+      dependencies: { react: "^18.3.0", "react-dom": "^18.3.0" },
+      scripts: { "test:something-of-mine": "echo mine" },
+    });
+    const pin = appReactPin(suiteDir, anchor);
+    const merged = JSON.parse(
+      repairReactPin(
+        mergePackageJson(existing, suitePackageJson(suiteDir, false, false, false, anchor)),
+        pin,
+      ),
+    );
+    expect(merged.dependencies.react).toBe("19.2.7");
+    expect(merged.dependencies["react-dom"]).toBe("19.2.7");
+    expect(merged.scripts["test:something-of-mine"]).toBe("echo mine");
+  });
+
+  test("an anchor that is the suite's own install is not a second copy", async () => {
+    const { suiteDir } = await dualWorkspace();
+    // computeResolveAliases answers with the suite itself when the app tree
+    // holds no react: that tree is THIS install, about to happen, so the walk
+    // stays in charge instead of reading a version nobody installed yet.
+    expect(appReactPin(suiteDir, path.join(suiteDir, "node_modules"))).toBeUndefined();
+    expect(appReactPin(suiteDir, suiteDir)).toBeUndefined();
+  });
+
+  test("a copy carrying react alone still answers the question the alias asks", async () => {
+    const { suiteDir, anchor } = await dualWorkspace(false);
+    expect(appReactPin(suiteDir, anchor)).toEqual({ react: "19.2.7", reactDom: "19.2.7" });
+  });
+
+  test("an anchor holding no react leaves the walk in charge", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "flawless-dual-none-"));
+    writeFileSync(
+      path.join(base, "package.json"),
+      JSON.stringify({ dependencies: { react: "^19.2.0", "react-dom": "^19.2.0" } }),
+    );
+    const suiteDir = path.join(base, ".flawless");
+    mkdirSync(suiteDir);
+    expect(appReactPin(suiteDir, path.join(base, "packages", "empty", "node_modules"))).toEqual({
+      react: "19.2.0",
+      reactDom: "19.2.0",
+    });
   });
 });
 

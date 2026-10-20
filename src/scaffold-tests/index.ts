@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { detectAppReact, mergePackageJson, repairReactPin } from "../packageJson.ts";
+import { appReactPin, mergePackageJson, repairReactPin } from "../packageJson.ts";
 import { PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, NextjsApiRoute, ProviderRef } from "../types.ts";
@@ -24,6 +24,10 @@ export interface ScaffoldUnitBrowserOptions {
   nextjs?: boolean;
   provider?: string;
   resolveAliases?: AliasEntry[];
+  /** The single-React anchor — see UnitBrowserRenderOptions.reactPinDir. The
+   *  manifest's react pin is read off THIS copy, not re-derived from the
+   *  manifest walk, or the config and the pin answer with two different ones. */
+  reactPinDir?: string;
   /** Emitted alongside the config when set; see ReactExportShim in templates.ts. */
   reactShim?: ReactExportShim;
   colocate?: boolean;
@@ -154,6 +158,7 @@ export async function scaffoldUnitBrowser(
       opts.browserSpecs !== false,
       Boolean(opts.mswSetup),
       Boolean(opts.nextjs),
+      opts.reactPinDir,
     );
     written.push(path.join(outDir, "package.json"));
     if (await ensurePnpmSuiteSettings(path.join(outDir, "pnpm-workspace.yaml"))) {
@@ -238,11 +243,15 @@ export function suitePackageJson(
   withBrowser: boolean,
   msw = false,
   nextjs = false,
+  reactPinDir?: string,
 ): string {
   // The suite's react IS the copy every plane renders with (aliases + host
   // resolution point at the suite's node_modules), so it must be the
-  // version the app's component code was written against. See detectAppReact.
-  const pin = detectAppReact(outDir);
+  // version the app's component code was written against — and it must be the
+  // SAME copy the config's react aliases anchor on, or the two derivations
+  // disagree and one plane ends up with two Reacts. See detectAppReact /
+  // appReactPin.
+  const pin = appReactPin(outDir, reactPinDir);
   const typesPin = pin ? `^${pin.react.split(".")[0]}.0.0` : "^18.3.0";
   // RTL majors split at React 18: 13+ peer-require react ^18 and their
   // dist/pure.js hard-requires the react-dom 18 client entry (a canary
@@ -324,14 +333,16 @@ async function writeSuitePackageJson(
   withBrowser: boolean,
   msw: boolean,
   nextjs = false,
+  reactPinDir?: string,
 ): Promise<void> {
   const pkgPath = path.join(outDir, "package.json");
-  const generated = suitePackageJson(outDir, withBrowser, msw, nextjs);
+  const generated = suitePackageJson(outDir, withBrowser, msw, nextjs, reactPinDir);
   if (!existsSync(pkgPath)) {
     await writeFile(pkgPath, generated);
     return;
   }
-  const pin = detectAppReact(outDir);
+  // Same anchor as the emitted config's react aliases (see appReactPin).
+  const pin = appReactPin(outDir, reactPinDir);
   const merged = repairRtlPin(
     repairReactPin(mergePackageJson(await readFile(pkgPath, "utf8"), generated), pin),
     pin,

@@ -101,7 +101,10 @@ single switch for the whole suite.
   passed at all.
 - The suite's `react` / `react-dom` are **pinned to the version the app has installed, exactly** —
   `detectAppReact` reads `node_modules/react` before the declared range, because a caret is a
-  floor and `^19.2.0` installs whatever is newest. Two React copies is the classic red-suite
+  floor and `^19.2.0` installs whatever is newest. Where the sources resolve a different copy than
+  that walk finds, `appReactPin` reads the pin off the copy the emitted `react` aliases anchor on:
+  the pin and the alias must name one physical copy or the plane renders with two Reacts.
+  Two React copies is the classic red-suite
   cause, with signature `Cannot read properties of null (reading 'useState')`; a pair that
   merely drifts is just as fatal — one patch off dies at load on `Incompatible React
   versions`, one major off on `Cannot read properties of undefined (reading
