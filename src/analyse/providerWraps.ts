@@ -261,18 +261,19 @@ import { MemoryRouter } from "{{module}}";`,
     // proof) — plus `useRouterState`, whose invariant fires as its unstable
     // alias.
     //
-    // No `components`, and the two candidates are now probed rather than
-    // assumed (remix-store's own suite, both wraps, react-router 7.18.2).
-    // `<Await>` given the `resolve` a generated spec actually passes — none —
-    // mounts under MemoryRouter, so it is NOT gated on a data router. The
-    // remix-store `useFetcher` deaths that looked like it come from
-    // useLoadMoreProducts in app/routes/resources/load-more-products.tsx: a
-    // component-less route module, issue #106. `<ScrollRestoration>` IS gated,
-    // the probe throwing `useMatches must be used within a data router` under
-    // MemoryRouter and mounting under this one — but nothing in the corpus
-    // reaches it through a spec: it lives in each app's root `Layout`, and the
-    // root components that do get specs render only `<Outlet/>`. So it stays
-    // out until a spec dies for it, and adding it is then one string.
+    // The component side of the same split, probed rather than assumed — each
+    // tag rendered alone under both wraps in remix-store's own suite:
+    //   PROBE Form:              memory=useSubmit must be used within a data router
+    //   PROBE ScrollRestoration: memory=useMatches must be used within a data router
+    //   PROBE Link / Outlet:     memory=<no throw> (they stay above)
+    // `<Form>` is what killed unit/Welcome.test.tsx and the custom-server
+    // Home of code-forge-io/react-router-devtools: the tag is a router
+    // component, the file never names a data hook, so the hook walk found
+    // nothing to key on. `<Await>` was also probed and is NOT gated — given
+    // the `resolve` a generated spec actually passes (none) it mounts under
+    // MemoryRouter; the remix-store `useFetcher` deaths that looked like it
+    // were a wrapper-reached data hook, fixed separately.
+    components: ["Form", "ScrollRestoration"],
     module: "react-router-dom",
     modules: ["react-router"],
     // The library's data APIs (`createMemoryRouter`, `RouterProvider`) ship
