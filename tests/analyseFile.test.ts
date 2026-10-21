@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { analyse, analyseFile } from "../src/analyse/index.ts";
+import { defaultExportComponentName } from "../src/analyse/parseFile.ts";
 import { ModuleResolver } from "../src/analyse/resolveModule.ts";
 import { SourceFileCache } from "../src/analyse/sourceCache.ts";
 import { DEFAULT_EXCLUDES, expandGlob } from "../src/core.ts";
@@ -504,5 +505,70 @@ export function Parent() {
     });
     const childNames = (trees[0]?.children ?? []).map((c) => c.entry.componentName);
     expect(childNames).toEqual(["Modal"]);
+  });
+});
+
+describe("a barrel that hands a default export along", () => {
+  // `export { default as Card } from './card'` is how nearly every design-system
+  // barrel re-exports, and it was the shape the child edge never survived: the
+  // far file declares nothing named "default", it answers with the name its
+  // default export carries.
+  const files: Record<string, string> = {
+    "ui/modal.tsx": `import { memo } from 'react';
+
+const Modal = memo(() => <div>modal</div>);
+
+export default Modal;
+`,
+    "ui/index.ts": `export { default as Modal } from './modal';
+export * from './absent';
+`,
+    "entry.tsx": `import { Modal } from './ui';
+
+export function Parent() {
+  return <Modal />;
+}
+`,
+  };
+
+  function writeDefault(): string {
+    const dir = tmp();
+    for (const [name, content] of Object.entries(files)) {
+      const file = path.join(dir, name);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, content);
+    }
+    return dir;
+  }
+
+  test("the child lands on the component the file calls itself", async () => {
+    const dir = writeDefault();
+    const trees = await analyseFile({
+      entry: path.join(dir, "entry.tsx"),
+      depth: 2,
+      includeChildren: true,
+      roots: "exported",
+    });
+    const children = (trees[0]?.children ?? []).map((c) => c.entry.componentName);
+    expect(children).toEqual(["Modal"]);
+  });
+
+  test("defaultExportComponentName answers only for a component default", () => {
+    const dir = tmp();
+    const cases: Array<[string, string]> = [
+      ["export default function Foo() { return null; }", "Foo"],
+      ["const Bar = () => null;\nexport default Bar;", "Bar"],
+      ["export default memo(() => null);", "default"],
+      ["export default { open: true };", ""],
+      ["export const baz = 1;", ""],
+    ];
+    const cache = new SourceFileCache();
+    cases.forEach(([source, answer], i) => {
+      // A fresh file per case: SourceFileCache keys on the path, and overwriting
+      // one path in place would hand back the first case's parse.
+      const file = path.join(dir, `case-${i}.tsx`);
+      writeFileSync(file, source);
+      expect(defaultExportComponentName(file, cache)).toBe(answer === "" ? undefined : answer);
+    });
   });
 });

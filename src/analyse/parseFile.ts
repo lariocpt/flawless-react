@@ -872,3 +872,42 @@ export function declaresComponentName(abs: string, name: string, cache: SourceFi
   }
   return false;
 }
+
+/**
+ * The name this file's DEFAULT export answers under, or undefined when it has
+ * no default export or answers with a value that is not a component (an object
+ * literal, a string). `export { default as Card } from './card'` hands the
+ * default export along, and the chain needs to know what to call it on the far
+ * side: `export default function Foo` and `export default Foo` answer "Foo",
+ * while an anonymous one (`export default memo(...)`) answers "default" —
+ * which is what the caller looks up, and the file's own component is then
+ * picked by the usual route.
+ */
+export function defaultExportComponentName(
+  abs: string,
+  cache: SourceFileCache,
+): string | undefined {
+  const source = cache.get(abs);
+  if (!source) return undefined;
+  for (const stmt of source.statements) {
+    // `export default function Foo` parses as a FunctionDeclaration carrying
+    // BOTH the export and default keywords — not as an ExportAssignment — so it
+    // must be read off the modifiers or it is invisible here.
+    if (
+      (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+      (stmt.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+    ) {
+      return stmt.name?.text ?? "default";
+    }
+    if (!ts.isExportAssignment(stmt) || stmt.isExportEquals) continue;
+    const e = stmt.expression;
+    if (ts.isFunctionDeclaration(e) || ts.isClassDeclaration(e)) return e.name?.text ?? "default";
+    if (ts.isIdentifier(e)) return e.text;
+    // A call (memo, forwardRef, HOC) or a function expression is a component
+    // the file never named. Anything else — an object, a string, an array — is
+    // not one, and the walk should not stop here for it.
+    if (ts.isCallExpression(e) || ts.isNewExpression(e)) return "default";
+    if (ts.isArrowFunction(e) || ts.isFunctionExpression(e)) return "default";
+  }
+  return undefined;
+}

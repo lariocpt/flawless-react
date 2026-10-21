@@ -30,7 +30,7 @@ import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
 import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
-import { declaresComponentName, parseFile } from "./parseFile.ts";
+import { declaresComponentName, defaultExportComponentName, parseFile } from "./parseFile.ts";
 import { isPureLocalModule } from "./pureModule.ts";
 import { followHandoff, reexportTableOf } from "./reexportTable.ts";
 import { buildComponentScope } from "./refs.ts";
@@ -523,11 +523,28 @@ async function analyseOne(
       // is answered off a statement walk, with no component detection at all.
       if (!table.named.has(exportedName) && table.stars.length === 0) return undefined;
       if (declaresComponentName(file, exportedName, cache)) return undefined;
-      return followHandoff(file, exportedName, {
+      const held = await followHandoff(file, exportedName, {
         read: (f) => cache.get(f),
         resolve: (specifier, from) => resolver.resolve(specifier, from),
-        declares: (f, name) => declaresComponentName(f, name, cache),
+        // A hand-off of `default` is answered by the far file's own default
+        // export, never by a declaration literally named "default".
+        declares: (f, name) =>
+          name === "default"
+            ? defaultExportComponentName(f, cache) !== undefined
+            : declaresComponentName(f, name, cache),
       });
+      if (!held) return undefined;
+      // `export { default as Card } from './card'` is the shape nearly every
+      // design-system barrel uses, and the far side answers for the module's
+      // DEFAULT export: what the tree wants is the name that export carries at
+      // home, so the spec renders the component the file calls itself.
+      return {
+        file: held.file,
+        name:
+          held.name === "default"
+            ? (defaultExportComponentName(held.file, cache) ?? held.name)
+            : held.name,
+      };
     };
     for (const ref of refs) {
       // The hand-off, tried FIRST. A Feature-Sliced component is imported from
