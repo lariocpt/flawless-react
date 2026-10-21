@@ -261,12 +261,18 @@ import { MemoryRouter } from "{{module}}";`,
     // proof) — plus `useRouterState`, whose invariant fires as its unstable
     // alias.
     //
-    // No `components` yet. `<Await>` is a data-router component — measured on
-    // remix-run/remix-store's Footer and ProductGrid, where it falls into its
-    // fetch implementation and the mount dies naming `useFetcher` — and
-    // `ScrollRestoration` is one by the library's own invariant. Neither is
-    // wired: the component ladder is its own change, and `<Await>` also wants a
-    // `resolve` prop this generator cannot invent.
+    // No `components`, and the two candidates are now probed rather than
+    // assumed (remix-store's own suite, both wraps, react-router 7.18.2).
+    // `<Await>` given the `resolve` a generated spec actually passes — none —
+    // mounts under MemoryRouter, so it is NOT gated on a data router. The
+    // remix-store `useFetcher` deaths that looked like it come from
+    // useLoadMoreProducts in app/routes/resources/load-more-products.tsx: a
+    // component-less route module, issue #106. `<ScrollRestoration>` IS gated,
+    // the probe throwing `useMatches must be used within a data router` under
+    // MemoryRouter and mounting under this one — but nothing in the corpus
+    // reaches it through a spec: it lives in each app's root `Layout`, and the
+    // root components that do get specs render only `<Outlet/>`. So it stays
+    // out until a spec dies for it, and adding it is then one string.
     module: "react-router-dom",
     modules: ["react-router"],
     // The library's data APIs (`createMemoryRouter`, `RouterProvider`) ship
