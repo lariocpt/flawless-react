@@ -49,3 +49,60 @@ export function reexportTableOf(sourceFile: ts.SourceFile): ReexportTable {
   // instead of allocating a map per parse.
   return named.size === 0 && stars.length === 0 ? EMPTY : { named, stars };
 }
+
+/** What `followHandoff` needs from its caller: read a file's syntax tree,
+ *  resolve a specifier the way the importer would, and say whether a file
+ *  declares a name. A component and a hook are found by different lookups, so
+ *  the caller decides. */
+export interface HandoffReader {
+  read: (file: string) => Promise<ts.SourceFile | undefined> | ts.SourceFile | undefined;
+  resolve: (specifier: string, fromFile: string) => string | undefined;
+  declares: (file: string, name: string) => Promise<boolean> | boolean;
+}
+
+/**
+ * Follow `name` from `file` through its hand-offs to the module that DECLARES
+ * it — the caller checks its own file first, this answers only for the hop.
+ *
+ * Named hand-offs are exact, so they go first and a star is consulted only when
+ * no named hop carries the name. A hop whose module does not resolve, or whose
+ * target does not answer for the name, ends that hop rather than the search:
+ * `export * from './ui'` pointing at nothing must not lose the sibling that
+ * does hold it. The seen-set makes a barrel cycle cost one visit.
+ */
+export async function followHandoff(
+  file: string,
+  name: string,
+  reader: HandoffReader,
+): Promise<{ file: string; name: string } | undefined> {
+  const seen = new Set<string>();
+  const search = async (
+    file: string,
+    name: string,
+  ): Promise<{ file: string; name: string } | undefined> => {
+    const key = `${file}::${name}`;
+    if (seen.has(key)) return undefined;
+    seen.add(key);
+    const source = await reader.read(file);
+    if (!source) return undefined;
+    const table = reexportTableOf(source);
+    const hops = table.named.get(name) ?? [];
+    for (const hop of hops) {
+      const target = reader.resolve(hop.specifier, file);
+      if (!target) continue;
+      if (await reader.declares(target, hop.imported)) return { file: target, name: hop.imported };
+      const deeper = await search(target, hop.imported);
+      if (deeper) return deeper;
+    }
+    if (hops.length > 0) return undefined;
+    for (const spec of table.stars) {
+      const target = reader.resolve(spec, file);
+      if (!target) continue;
+      if (await reader.declares(target, name)) return { file: target, name };
+      const deeper = await search(target, name);
+      if (deeper) return deeper;
+    }
+    return undefined;
+  };
+  return search(file, name);
+}

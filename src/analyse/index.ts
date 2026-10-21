@@ -30,8 +30,9 @@ import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
 import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
-import { parseFile } from "./parseFile.ts";
+import { declaresComponentName, parseFile } from "./parseFile.ts";
 import { isPureLocalModule } from "./pureModule.ts";
+import { followHandoff, reexportTableOf } from "./reexportTable.ts";
 import { buildComponentScope } from "./refs.ts";
 import { initialRenderExpression, makeEnv } from "./renderPath.ts";
 import {
@@ -478,28 +479,80 @@ async function analyseOne(
       unit.componentName,
     );
     children = [];
-    for (const ref of refs) {
-      const tentativeKey = `${ref.absPath}::${ref.exportedName ?? "*"}`;
-      if (visited.has(tentativeKey)) continue;
-      visited.add(tentativeKey);
+    const childAt = async (
+      file: string,
+      exportedName: string | undefined,
+      localTag: string,
+    ): Promise<ComponentTree | undefined> => {
+      const key = `${file}::${exportedName ?? "*"}`;
+      if (visited.has(key)) return undefined;
+      visited.add(key);
       try {
         const childTree = await analyseOne(
-          ref.absPath,
+          file,
           depth + 1,
           opts,
           visited,
-          ref.absPath,
+          file,
           resolver,
-          ref.exportedName,
+          exportedName,
           cache,
         );
-        childTree.entry.localTag = ref.localName;
-        children.push(childTree);
+        childTree.entry.localTag = localTag;
+        return childTree;
       } catch (err) {
         // Skip children we can't parse (no React component inside, etc.); record nothing —
         // the user can re-run with --depth tuned, or edit the generated suite.
         if (!(err instanceof Error && err.message.includes("could not locate a React component"))) {
           throw err;
+        }
+        return undefined;
+      }
+    };
+    const throughHandoff = async (
+      file: string,
+      exportedName: string | undefined,
+    ): Promise<{ file: string; name: string } | undefined> => {
+      // A default import asks for the file's own primary component, so there is
+      // no name to look up.
+      if (!exportedName) return undefined;
+      const source = cache.get(file);
+      if (!source) return undefined;
+      const table = reexportTableOf(source);
+      // The cheap gate: a file that hands nothing along — nearly every file —
+      // is answered off a statement walk, with no component detection at all.
+      if (!table.named.has(exportedName) && table.stars.length === 0) return undefined;
+      if (declaresComponentName(file, exportedName, cache)) return undefined;
+      return followHandoff(file, exportedName, {
+        read: (f) => cache.get(f),
+        resolve: (specifier, from) => resolver.resolve(specifier, from),
+        declares: (f, name) => declaresComponentName(f, name, cache),
+      });
+    };
+    for (const ref of refs) {
+      // The hand-off, tried FIRST. A Feature-Sliced component is imported from
+      // its slice's index, and an index hands the name along instead of
+      // declaring it — so the direct read either died there (no component in
+      // the file at all) or, worse, silently bound analyseOne's first-component
+      // fallback and made the parent a child of whatever the barrel happened to
+      // declare first. ton-console's EmptyApiKeys renders <CreateApiKeyModal>
+      // from '../index', and its spec mounted without the QueryClientProvider
+      // that modal calls through. Both dead ends cost the tree the child edge,
+      // and the transitive provider pass has nothing to inherit without it.
+      const held = await throughHandoff(ref.absPath, ref.exportedName);
+      const attempts = held
+        ? [
+            { file: held.file, name: held.name },
+            { file: ref.absPath, name: ref.exportedName },
+          ]
+        : [{ file: ref.absPath, name: ref.exportedName }];
+      for (const attempt of attempts) {
+        const tree = await childAt(attempt.file, attempt.name, ref.localName);
+        // The direct read stays as the fallback: a hand-off that leads nowhere
+        // must not lose the edge the old binding produced.
+        if (tree) {
+          children.push(tree);
+          break;
         }
       }
     }
