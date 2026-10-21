@@ -1256,6 +1256,13 @@ export async function deriveContextProviderWraps(
         // useMcpServerDialogState → useMcpServerDetailQuery → useQuery, and
         // the component never names the library at all.
         const libs = new Set<string>(hookSpec ? [hookSpec] : []);
+        // Which LIBRARY hooks the wrapper chain actually calls. Two shims can
+        // share a module — react-router's MemoryRouter wrap and its data wrap
+        // are the same specifier — so "the chain reached a shimmed module"
+        // cannot pick between them: the table's order did, and the first entry
+        // won. VersionDropdown asked for MemoryRouter while dying of
+        // useRouteLoaderData.
+        const libHooks = new Set<string>();
         const seenHooks = new Set<string>();
         const walkLibs = async (file: string, name: string): Promise<void> => {
           const key = `${file}::${name}`;
@@ -1269,16 +1276,35 @@ export async function deriveContextProviderWraps(
             if (called === name) continue;
             const b = p.imports.get(called);
             if (!b || b.isTypeOnly) continue;
+            const side = b.importedName ?? called;
+            for (const s of LIBRARY_SHIMS) {
+              if (shimModules(s).includes(b.specifier) && s.hooks.includes(side)) {
+                libHooks.add(side);
+              }
+            }
             const target = resolver.resolve(b.specifier, file);
-            if (target) await walkLibs(target, b.importedName ?? called);
+            if (target) await walkLibs(target, side);
           }
         };
         if (parsed) await walkLibs(sourceFile, moduleSide);
-        const shim = shims?.(c).find(
+        const candidates = (shims?.(c) ?? []).filter(
           (s) =>
             shimModules(s).some((m) => libs.has(m)) &&
-            (shimModules(s).includes(hookSpec ?? "") ? s.hooks.includes(moduleSide) : true),
+            (shimModules(s).includes(hookSpec ?? "")
+              ? s.hooks.includes(moduleSide)
+              : libHooks.size === 0 || s.hooks.some((h) => libHooks.has(h))),
         );
+        // Of the shims that fit, the one that makes another redundant wins: a
+        // wrapper calling useNavigate AND useLoaderData needs the data router,
+        // which serves navigation too, not a wrap the mount will shadow.
+        const shim =
+          candidates.find(
+            (s) =>
+              !candidates.some(
+                (other) =>
+                  other !== s && SUPERSEDED_BY.get(s.componentName) === other.componentName,
+              ),
+          ) ?? candidates[0];
         if (shim) {
           addReq(compKey, {
             componentName: shim.componentName,
