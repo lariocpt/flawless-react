@@ -92,15 +92,19 @@ Rules the shim table follows:
   the newer one.** react-router is that case: `MemoryRouter` serves
   `useNavigate` / `useLocation` / `<Outlet>`, while the data hooks
   (`useLoaderData`, `useFetcher`, `useMatches` …) invariant out under it and get
-  `createMemoryRouter` + `RouterProvider` instead. A component needing both gets
-  the data wrap alone (`supersedes`: the data router serves the navigation
-  surface too, so nesting only shadows). It is offered only when the react-router
-  that actually resolves is **≥ 6.4**, the release that added `createMemoryRouter`
-  — an import the installed library never exported takes down every spec that
-  reads the file, so on 5.x those hooks keep failing with the message the library
-  writes. And because `RouterProvider` renders a real error *page* when the mount
-  throws, the wrap's `errorElement` **rethrows**: a crashing component fails its
-  own spec with its own error.
+  `createMemoryRouter` + `RouterProvider` instead. Tags split the same way, and
+  each was probed alone under both wraps rather than read off the docs: `<Form>`
+  throws `useSubmit` and `<ScrollRestoration>` throws `useMatches` under
+  `MemoryRouter`, while `<Link>` and `<Outlet>` mount there and stay. A component
+  needing both gets the data wrap alone (`supersedes`: the data router serves the
+  navigation surface too, so nesting only shadows) — whether it reached them
+  directly, through its own hooks, or through a tag. It is offered only when the
+  react-router that actually resolves is **≥ 6.4**, the release that added
+  `createMemoryRouter` — an import the installed library never exported takes down
+  every spec that reads the file, so on 5.x those hooks keep failing with the
+  message the library writes. And because `RouterProvider` renders a real error
+  *page* when the mount throws, the wrap's `errorElement` **rethrows**: a crashing
+  component fails its own spec with its own error.
 - `server-only` is handled by an emitted `server-only-stub.ts` at the suite root,
   because the real package throws on import by design.
 

@@ -925,6 +925,105 @@ export function BackButton() {
     expect(names(refsof(wraps, "::BackButton"))).toEqual(["FlawlessRouterProvider"]);
   });
 
+  test("a router component only the data router serves asks for the data wrap", async () => {
+    // unit/Welcome.test.tsx of code-forge-io/react-router-devtools: the file
+    // renders <Form> and names no data hook at all, so only the component
+    // ladder can ask for the wrap. Each tag probed alone under both wraps:
+    // <Form> throws useSubmit and <ScrollRestoration> throws useMatches under
+    // MemoryRouter, while <Link>/<Outlet> mount and stay on the memory wrap.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3", "react-router-dom": "7.9.3" },
+      {
+        "welcome.tsx": `
+import { Form } from 'react-router';
+export function Welcome() {
+  return <Form><button type="submit">go</button></Form>;
+}
+`,
+        "shell.tsx": `
+import { ScrollRestoration } from 'react-router';
+export function Shell() {
+  return <div><ScrollRestoration /></div>;
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::Welcome"))).toEqual(["FlawlessDataRouterProvider"]);
+    expect(names(refsof(wraps, "::Shell"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("the component ladder supersedes MemoryRouter rather than nesting it", async () => {
+    // A banner rendering <Link> and <Form> fires both ladders. Two providers
+    // would only shadow: the inner MemoryRouter answers the navigation hooks
+    // and the mount dies on the form anyway.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3", "react-router-dom": "7.9.3" },
+      {
+        "banner.tsx": `
+import { Form, Link } from 'react-router';
+export function Banner() {
+  return (
+    <div>
+      <Link to="/a">a</Link>
+      <Form><button type="submit">go</button></Form>
+    </div>
+  );
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::Banner"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("a library too old for the data APIs is not offered the wrap by a tag either", async () => {
+    // The capability gate covers the component ladder: emitting a file whose
+    // createMemoryRouter import cannot resolve takes down every spec that
+    // reads it, which is worse than the failure it prevents.
+    const wraps = await deriveRouter(
+      { "react-router": "5.3.4", "react-router-dom": "5.3.4" },
+      {
+        "welcome.tsx": `
+import { Form } from 'react-router-dom';
+export function Welcome() {
+  return <Form><button type="submit">go</button></Form>;
+}
+`,
+      },
+    );
+    expect([...wraps.keys()].some((k) => k.endsWith("::Welcome"))).toBe(false);
+  });
+
+  test("the tag ladder only fires on the router's own binding", async () => {
+    // "Form", "Link" and "Outlet" are the most overused component names in
+    // React. The ladder reads the import binding, not the tag, so a project
+    // form and an antd form ask for no router at all — otherwise the shim
+    // would wrap half the corpus on a coincidence of spelling.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3", "react-router-dom": "7.9.3" },
+      {
+        "form.tsx": `
+export function Form({ children }: { children?: React.ReactNode }) {
+  return <form>{children}</form>;
+}
+`,
+        "checkout.tsx": `
+import { Form } from './form';
+import { Form as AntForm, Link } from 'antd';
+export function Checkout() {
+  return (
+    <div>
+      <Form><button type="submit">go</button></Form>
+      <AntForm />
+      <Link>docs</Link>
+    </div>
+  );
+}
+`,
+      },
+    );
+    expect([...wraps.keys()].some((k) => k.endsWith("::Checkout"))).toBe(false);
+  });
+
   test("a library older than the data APIs is not offered the wrap", async () => {
     // saleor-dashboard's pair is react-router-dom/react-router at 5.3.4: no
     // createMemoryRouter exists there, so the file would not even import. The
