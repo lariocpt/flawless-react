@@ -868,6 +868,63 @@ export function Palette() {
     expect(names(refsof(wraps, "::Palette"))).toEqual(["FlawlessRouterProvider"]);
   });
 
+  test("a project hook reaching a data hook picks the data router, not MemoryRouter", async () => {
+    // VersionDropdown of code-forge-io/react-router-devtools: it imports
+    // useNavigate itself and reaches useRouteLoaderData only through
+    // useCurrentVersion in docs/app/utils/version-resolvers.ts. Both router
+    // shims are the same module, and the wrapper case used to ask only "is this
+    // a shimmed module?" — so the table's first entry won, MemoryRouter was
+    // wrapped, and the spec still died naming useRouteLoaderData (14 of them in
+    // that app, 10 more in remix-store).
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3", "react-router-dom": "7.9.3" },
+      {
+        "version-resolvers.ts": `
+import { useRouteLoaderData } from 'react-router';
+export function useCurrentVersion() {
+  return (useRouteLoaderData('root') as { version?: string } | undefined)?.version;
+}
+`,
+        "versions-dropdown.tsx": `
+import { useNavigate } from 'react-router';
+import { useCurrentVersion } from './version-resolvers';
+export function VersionDropdown() {
+  const navigate = useNavigate();
+  const version = useCurrentVersion();
+  return <button onClick={() => navigate('/x')}>{version}</button>;
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::VersionDropdown"))).toEqual(["FlawlessDataRouterProvider"]);
+  });
+
+  test("a project hook reaching only navigation hooks keeps MemoryRouter", async () => {
+    // The mirror case: the wrapper must not drag a component onto the data
+    // router because its module imports the router at all. nakama-shaped
+    // components mount under MemoryRouter today and stay there.
+    const wraps = await deriveRouter(
+      { "react-router": "7.9.3", "react-router-dom": "7.9.3" },
+      {
+        "use-go-home.ts": `
+import { useNavigate } from 'react-router';
+export function useGoHome() {
+  const navigate = useNavigate();
+  return () => navigate('/');
+}
+`,
+        "back-button.tsx": `
+import { useGoHome } from './use-go-home';
+export function BackButton() {
+  const goHome = useGoHome();
+  return <button onClick={goHome}>home</button>;
+}
+`,
+      },
+    );
+    expect(names(refsof(wraps, "::BackButton"))).toEqual(["FlawlessRouterProvider"]);
+  });
+
   test("a library older than the data APIs is not offered the wrap", async () => {
     // saleor-dashboard's pair is react-router-dom/react-router at 5.3.4: no
     // createMemoryRouter exists there, so the file would not even import. The
