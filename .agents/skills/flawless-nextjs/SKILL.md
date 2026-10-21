@@ -105,6 +105,19 @@ Rules the shim table follows:
   message the library writes. And because `RouterProvider` renders a real error
   *page* when the mount throws, the wrap's `errorElement` **rethrows**: a crashing
   component fails its own spec with its own error.
+- **A Feature-Sliced barrel declares nothing, so both walks follow the
+  hand-off.** `entities/rates/index.ts` is `export * from './model'` and that
+  model index is `export { useRateQuery } from './queries'`, so neither the hook a
+  component imports nor the library it calls three files away is named by any
+  import the component makes. A JSX child tag is the same problem: `<CreateApiKeyModal>`
+  imported from `'../index'` left the child edge at the barrel, so what the modal
+  needs was inherited by nobody and the parent's spec mounted bare. The named hop
+  is exact, so it goes first; `export *` only says "ask the target", so it is
+  consulted when no named hop carries the name; a hop whose module does not
+  resolve ends that hop rather than the search; and a cycle costs one visit.
+  `export * as ns from`, `export type { T } from` and a file's own
+  `export { localName }` are NOT hand-offs of the target's name, while a name
+  imported and handed back out with a module-less `export { … }` is.
 - `server-only` is handled by an emitted `server-only-stub.ts` at the suite root,
   because the real package throws on import by design.
 

@@ -848,3 +848,27 @@ function classComponentUnit(
     pos: posOf(stmt, sf),
   };
 }
+
+/**
+ * Whether this file DECLARES a component under `name`, read off the top-level
+ * declarations without running the detection above. It answers only the
+ * question a re-export hop asks: is the name I was handed this file's own, or
+ * one it hands along? A component named any other way (a member of an object,
+ * an import passed straight back out) answers no, and that is the safe side —
+ * the search then finds no module that declares the name and the child edge
+ * stays exactly where it was.
+ */
+export function declaresComponentName(abs: string, name: string, cache: SourceFileCache): boolean {
+  const source = cache.get(abs);
+  if (!source) return false;
+  for (const stmt of source.statements) {
+    if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) {
+      if (stmt.name?.text === name) return true;
+    } else if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && d.name.text === name) return true;
+      }
+    }
+  }
+  return false;
+}

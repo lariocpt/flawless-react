@@ -26,6 +26,12 @@
  *    <Sidebar> does, and the error surfaces at AppSidebar's mount. Whatever a
  *    component renders, it must also satisfy.
  *
+ * A hand-off is invisible to all three: in a Feature-Sliced app the file a
+ * component imports is `export * from './model'`, so the hook it names, and the
+ * library that hook calls three files away, sit in a module the import never
+ * mentions. Derive follows the re-export table (see reexportTable) whenever the
+ * imported file does not declare the hook itself.
+ *
  * The provider may be no analysed component at all (the layout-only case), so
  * its file is PARSED here for the export shape — non-async and exported is the
  * whole gate; a provider that cannot mount bare takes down the wraps it guards,
@@ -43,6 +49,7 @@ import {
   type ParsedFile,
   parseFile,
 } from "./parseFile.ts";
+import { reexportTableOf } from "./reexportTable.ts";
 import { ModuleResolver } from "./resolveModule.ts";
 import type { SourceFileCache } from "./sourceCache.ts";
 
@@ -760,36 +767,10 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
   };
   for (const stmt of parsed.sourceFile.statements) collect(stmt);
 
-  // Re-export tables. A Feature-Sliced `entities/*/index.ts` declares nothing:
-  // it is `export * from './model'`, and that model barrel is
-  // `export { useRateQuery } from './queries'`. Derive needs both forms — the
-  // named one is exact, the star one only says "ask the target" — because the
-  // hook a component imports is rarely declared in the file it imports it from.
+  // The file's own hooks, as opposed to the ones it hands along: the barrel
+  // walk hops only when a name is not declared here.
   const declaredHooks = new Set(bodies.keys());
-  const reexportedHooks = new Map<string, { specifier: string; imported: string }[]>();
-  const starSpecifiers: string[] = [];
-  for (const stmt of parsed.sourceFile.statements) {
-    if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly) continue;
-    const ref = stmt.moduleSpecifier;
-    if (!ref || !ts.isStringLiteral(ref)) continue;
-    const clause = stmt.exportClause;
-    // `export * from './m'` is the clauseless form in this parser; the
-    // NamespaceExport with an empty name is the same thing in the other one.
-    if (!clause || (ts.isNamespaceExport(clause) && !clause.name.text)) {
-      if (!starSpecifiers.includes(ref.text)) starSpecifiers.push(ref.text);
-      continue;
-    }
-    // `export * as ns from './m'` exposes the namespace, not the hook name.
-    if (!ts.isNamedExports(clause)) continue;
-    for (const spec of clause.elements) {
-      const exported = spec.name.text;
-      if (!/^use[A-Z]/.test(exported)) continue;
-      const hop = { specifier: ref.text, imported: spec.propertyName?.text ?? exported };
-      const arr = reexportedHooks.get(exported);
-      if (arr) arr.push(hop);
-      else reexportedHooks.set(exported, [hop]);
-    }
-  }
+  const { named: reexportedHooks, stars: starSpecifiers } = reexportTableOf(parsed.sourceFile);
 
   const direct = new Map<string, { ctx: Set<string>; calls: Set<string>; libs: Set<string> }>();
   for (const [hook, body] of bodies) {

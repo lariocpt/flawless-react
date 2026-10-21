@@ -390,3 +390,119 @@ describe("input that TypeScript cannot parse cleanly", () => {
     expect(trees[0]?.entry.componentName).toBe("X");
   });
 });
+
+describe("a child the slice index hands along", () => {
+  // A Feature-Sliced app (tonkeeper/ton-console) imports a sibling from the
+  // slice's index, and an index declares nothing — it hands the name along. The
+  // child edge died at the barrel, so nothing downstream could see what the
+  // child needs: EmptyApiKeys' spec mounted without the QueryClientProvider
+  // that <CreateApiKeyModal> calls through.
+  const SLICE = {
+    "ui/modal.tsx": `export function CreateApiKeyModal() {
+  return <div>create</div>;
+}
+`,
+    "ui/index.ts": `export * from './modal';
+export * from './absent';
+`,
+    "index.ts": `export * from './ui';
+`,
+    "ui/empty.tsx": `import { CreateApiKeyModal } from '../index';
+
+export function EmptyApiKeys() {
+  return (
+    <div>
+      <CreateApiKeyModal />
+    </div>
+  );
+}
+`,
+  };
+
+  function writeSlice(): string {
+    const dir = tmp();
+    for (const [name, content] of Object.entries(SLICE)) {
+      const file = path.join(dir, name);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, content);
+    }
+    return dir;
+  }
+
+  test("the tree carries the child found through the barrel", async () => {
+    const dir = writeSlice();
+    const trees = await analyseFile({
+      entry: path.join(dir, "ui/empty.tsx"),
+      depth: 2,
+      includeChildren: true,
+      roots: "exported",
+    });
+    expect(trees).toHaveLength(1);
+    const child = trees[0]?.children[0];
+    expect(child?.entry.componentName).toBe("CreateApiKeyModal");
+    // The tag as the parent wrote it survives the hop: the spec renders the
+    // child the parent renders, whatever file ended up holding it.
+    expect(child?.entry.localTag).toBe("CreateApiKeyModal");
+  });
+
+  test("a name no module declares leaves no edge and no crash", async () => {
+    const dir = writeSlice();
+    writeFileSync(
+      path.join(dir, "ui/stranger.tsx"),
+      `import { NotThere } from '../index';
+
+export function Stranger() {
+  return <NotThere />;
+}
+`,
+    );
+    const trees = await analyseFile({
+      entry: path.join(dir, "ui/stranger.tsx"),
+      depth: 2,
+      includeChildren: true,
+      roots: "exported",
+    });
+    expect(trees[0]?.children ?? []).toEqual([]);
+  });
+});
+
+describe("a hand-off that outranks the barrel's own component", () => {
+  // The dead end that hid the wrong edge: an index that declares a component of
+  // its own AND hands the name along. Nothing matched the name, so analyseOne's
+  // first-component fallback silently made the parent a child of THAT, and the
+  // real child was never looked for.
+  const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-analysefile-"));
+  const files: Record<string, string> = {
+    "ui/modal.tsx": `export function Modal() {
+  return <div>modal</div>;
+}
+`,
+    "ui/index.ts": `export function IndexBanner() {
+  return <div>banner</div>;
+}
+export * from './modal';
+`,
+    "entry.tsx": `import { Modal } from './ui';
+
+export function Parent() {
+  return <Modal />;
+}
+`,
+  };
+  for (const [name, content] of Object.entries(files)) {
+    const file = path.join(dir, name);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, content);
+  }
+
+  test("the child is the one the parent named, not the first one exported", async () => {
+    const trees = await analyseFile({
+      entry: path.join(dir, "entry.tsx"),
+      depth: 2,
+      includeChildren: true,
+      roots: "exported",
+    });
+    const childNames = (trees[0]?.children ?? []).map((c) => c.entry.componentName);
+    expect(childNames).toEqual(["Modal"]);
+  });
+});
