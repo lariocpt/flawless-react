@@ -47,6 +47,20 @@ describe("reexportTableOf", () => {
     expect(t.named.size).toBe(0);
   });
 
+  test("a name imported and handed back out is a hand-off", () => {
+    // ESM counts this as an export of THIS module, and it is how a package
+    // republishes a component it does not own. The clause carries no module
+    // specifier, so the module has to be read off the import instead.
+    const t = tableOf("import { Card } from './card';\nexport { Card };");
+    expect(t.stars).toEqual([]);
+    expect(t.named.get("Card")).toEqual([{ specifier: "./card", imported: "Card" }]);
+  });
+
+  test("the import's own alias is the hand-off's module-side name", () => {
+    const t = tableOf("import { Card as Panel } from './card';\nexport { Panel };");
+    expect(t.named.get("Panel")).toEqual([{ specifier: "./card", imported: "Card" }]);
+  });
+
   test("a file with no hand-offs has an empty table", () => {
     const t = tableOf("export const value = 1;\nexport default function C() { return null; }");
     expect(t.stars).toEqual([]);
@@ -122,6 +136,17 @@ describe("followHandoff", () => {
   test("a name no module declares is no answer", async () => {
     const { dir, reader } = tree(SLICE);
     expect(await followHandoff(path.join(dir, "index.ts"), "Absent", reader)).toBeUndefined();
+  });
+
+  test("a barrel that imports the name and hands it back out still leads", async () => {
+    const { dir, reader } = tree({
+      ...SLICE,
+      // No `from` on the export line: the module is only on the import.
+      "model/index.ts":
+        "import { CreateApiKeyModal } from './queries';\nexport { CreateApiKeyModal };",
+    });
+    const held = await followHandoff(path.join(dir, "index.ts"), "CreateApiKeyModal", reader);
+    expect(held?.file).toBe(path.join(dir, "model/queries.tsx"));
   });
 
   test("a barrel cycle terminates", async () => {

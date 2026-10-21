@@ -9,7 +9,9 @@ import ts from "typescript";
  */
 export interface ReexportTable {
   /** `export { useX, useY as useZ } from './m'`: the EXPORTED name → the module
-   *  it came from and the name that module uses (`useY` for `useZ`). */
+   *  it came from and the name that module uses (`useY` for `useZ`). The same
+   *  entry is recorded for a name the file imported and handed back out with a
+   *  module-less `export { … }`. */
   named: Map<string, { specifier: string; imported: string }[]>;
   /** The bare `export * from './m'` specifiers, which carry every name. */
   stars: string[];
@@ -20,7 +22,8 @@ const EMPTY: ReexportTable = { named: new Map(), stars: [] };
 /**
  * Read a source file's hand-offs. Forms that are NOT a hand-off of one of the
  * target's names: `export * as ns from './m'`, which exposes the namespace
- * rather than a member, and `export type { T } from './m'`, which is erased.
+ * rather than a member, `export type { T } from './m'`, which is erased, and
+ * `export { useLocal }` of a name the file declares, which is its own.
  * The bare star is the clauseless form in this parser (typescript 5.9.3,
  * probed); a NamespaceExport with an empty name is the same thing written the
  * other way, so both are read as a star.
@@ -28,21 +31,58 @@ const EMPTY: ReexportTable = { named: new Map(), stars: [] };
 export function reexportTableOf(sourceFile: ts.SourceFile): ReexportTable {
   const named = new Map<string, { specifier: string; imported: string }[]>();
   const stars: string[] = [];
+  const add = (exported: string, hop: { specifier: string; imported: string }) => {
+    const arr = named.get(exported);
+    if (arr) arr.push(hop);
+    else named.set(exported, [hop]);
+  };
+  // The local name → where it came from, read only if the file has a
+  // module-less `export { … }` clause to answer for.
+  let imported: Map<string, { specifier: string; imported: string }> | undefined;
+  const importedBindings = () => {
+    if (!imported) {
+      imported = new Map();
+      for (const stmt of sourceFile.statements) {
+        if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+        const bindings = stmt.importClause?.namedBindings;
+        if (!bindings || !ts.isNamedImports(bindings)) continue;
+        for (const el of bindings.elements) {
+          imported.set(el.name.text, {
+            specifier: stmt.moduleSpecifier.text,
+            imported: (el.propertyName ?? el.name).text,
+          });
+        }
+      }
+    }
+    return imported;
+  };
   for (const stmt of sourceFile.statements) {
     if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly) continue;
     const ref = stmt.moduleSpecifier;
-    if (!ref || !ts.isStringLiteral(ref)) continue;
     const clause = stmt.exportClause;
+    if (!ref) {
+      // `import { Card } from './card'; export { Card }` — ESM counts that as an
+      // export of this module, and it is how a package republishes a component
+      // it does not own. Only a name the file IMPORTED is a hand-off.
+      if (!clause || !ts.isNamedExports(clause)) continue;
+      const byLocal = importedBindings();
+      for (const spec of clause.elements) {
+        const hop = byLocal.get((spec.propertyName ?? spec.name).text);
+        if (hop) add(spec.name.text, hop);
+      }
+      continue;
+    }
+    if (!ts.isStringLiteral(ref)) continue;
     if (!clause || (ts.isNamespaceExport(clause) && !clause.name.text)) {
       if (!stars.includes(ref.text)) stars.push(ref.text);
       continue;
     }
     if (!ts.isNamedExports(clause)) continue;
     for (const spec of clause.elements) {
-      const hop = { specifier: ref.text, imported: spec.propertyName?.text ?? spec.name.text };
-      const arr = named.get(spec.name.text);
-      if (arr) arr.push(hop);
-      else named.set(spec.name.text, [hop]);
+      add(spec.name.text, {
+        specifier: ref.text,
+        imported: spec.propertyName?.text ?? spec.name.text,
+      });
     }
   }
   // A file with no hand-offs — which is most files — shares one empty table
