@@ -724,6 +724,14 @@ interface CtxFacts {
    *  a provider-gated component requires the provider exactly like calling its
    *  hook does, and calls are all the scan above can see. */
   tagsByFn: Map<string, Set<string>>;
+  /** Hook names this file declares, as opposed to handing along. */
+  declaredHooks: Set<string>;
+  /** `export { useX, useY as useZ } from './m'`: the exported name → the module
+   *  it came from and the name that module uses. Re-export barrels are how a
+   *  Feature-Sliced app hands a hook to the component that imports its index. */
+  reexportedHooks: Map<string, { specifier: string; imported: string }[]>;
+  /** The bare `export * from './m'` specifiers, which carry every name. */
+  starSpecifiers: string[];
 }
 
 function ctxFactsOf(parsed: ParsedFile): CtxFacts {
@@ -751,6 +759,37 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
     ts.forEachChild(n, collect);
   };
   for (const stmt of parsed.sourceFile.statements) collect(stmt);
+
+  // Re-export tables. A Feature-Sliced `entities/*/index.ts` declares nothing:
+  // it is `export * from './model'`, and that model barrel is
+  // `export { useRateQuery } from './queries'`. Derive needs both forms — the
+  // named one is exact, the star one only says "ask the target" — because the
+  // hook a component imports is rarely declared in the file it imports it from.
+  const declaredHooks = new Set(bodies.keys());
+  const reexportedHooks = new Map<string, { specifier: string; imported: string }[]>();
+  const starSpecifiers: string[] = [];
+  for (const stmt of parsed.sourceFile.statements) {
+    if (!ts.isExportDeclaration(stmt) || stmt.isTypeOnly) continue;
+    const ref = stmt.moduleSpecifier;
+    if (!ref || !ts.isStringLiteral(ref)) continue;
+    const clause = stmt.exportClause;
+    // `export * from './m'` is the clauseless form in this parser; the
+    // NamespaceExport with an empty name is the same thing in the other one.
+    if (!clause || (ts.isNamespaceExport(clause) && !clause.name.text)) {
+      if (!starSpecifiers.includes(ref.text)) starSpecifiers.push(ref.text);
+      continue;
+    }
+    // `export * as ns from './m'` exposes the namespace, not the hook name.
+    if (!ts.isNamedExports(clause)) continue;
+    for (const spec of clause.elements) {
+      const exported = spec.name.text;
+      if (!/^use[A-Z]/.test(exported)) continue;
+      const hop = { specifier: ref.text, imported: spec.propertyName?.text ?? exported };
+      const arr = reexportedHooks.get(exported);
+      if (arr) arr.push(hop);
+      else reexportedHooks.set(exported, [hop]);
+    }
+  }
 
   const direct = new Map<string, { ctx: Set<string>; calls: Set<string>; libs: Set<string> }>();
   for (const [hook, body] of bodies) {
@@ -924,7 +963,17 @@ function ctxFactsOf(parsed: ParsedFile): CtxFacts {
     visitTags(u.bodyNode);
     tagsByFn.set(u.componentName, tags);
   }
-  return { providerByHook, readsRaw, suppliesRaw, libsByHook, callsByHook: readCalls, tagsByFn };
+  return {
+    providerByHook,
+    readsRaw,
+    suppliesRaw,
+    libsByHook,
+    callsByHook: readCalls,
+    tagsByFn,
+    declaredHooks,
+    reexportedHooks,
+    starSpecifiers,
+  };
 }
 
 export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
@@ -1285,6 +1334,29 @@ export async function deriveContextProviderWraps(
             }
             const target = resolver.resolve(b.specifier, file);
             if (target) await walkLibs(target, side);
+          }
+          // The barrel hop. A re-export table declares nothing, so a chain that
+          // reaches one ends there — and in a Feature-Sliced app almost every
+          // import reaches one. ton-console's CurrencyRate imports useRateQuery
+          // from `src/entities/rates`, which is `export * from './model'`,
+          // whose index is `export { useRateQuery } from './queries'`, and
+          // queries.ts is where useQuery is called. The chain stopped at the
+          // first barrel and the component got no provider: 87
+          // `No QueryClient set` failures in that one app. The named form is
+          // exact so it goes first; `export *` only says "ask the target", so
+          // it is tried when no named hop carries the name. Precision survives
+          // the fan-out either way, because libs are only ever recorded from a
+          // file that DECLARES the hook.
+          if (f.declaredHooks.has(name)) return;
+          const hops = f.reexportedHooks.get(name) ?? [];
+          for (const hop of hops) {
+            const target = resolver.resolve(hop.specifier, file);
+            if (target) await walkLibs(target, hop.imported);
+          }
+          if (hops.length > 0) return;
+          for (const spec of f.starSpecifiers) {
+            const target = resolver.resolve(spec, file);
+            if (target) await walkLibs(target, name);
           }
         };
         if (parsed) await walkLibs(sourceFile, moduleSide);

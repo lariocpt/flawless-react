@@ -1076,3 +1076,95 @@ export function Palette() {
     expect(src).not.toContain("react-router-dom");
   });
 });
+
+describe("a hook behind a re-export barrel", () => {
+  // A Feature-Sliced app (tonkeeper/ton-console) hands hooks along instead of
+  // exporting them: a component imports the slice's index, the index is
+  // `export * from './model'`, and the model index is
+  // `export { useRateQuery } from './queries'`. The walk could only follow an
+  // import binding the file itself has, and `imports.get("useRateQuery")` is
+  // null in a file whose whole body is a star — so the chain stopped at the
+  // first barrel and 87 specs of that one app mounted with no provider and
+  // died of `No QueryClient set`.
+  async function deriveBarrel(files: Record<string, string>): Promise<Map<string, ProviderRef[]>> {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "provwraps-barrel-"));
+    try {
+      const cache = new SourceFileCache();
+      const trees: ComponentTree[] = [];
+      for (const [name, content] of Object.entries(files)) {
+        const file = path.join(dir, name);
+        writeFileSync(file, content);
+        trees.push(
+          ...(await analyseFile(
+            { entry: file, depth: 3, includeChildren: true, roots: "exported" },
+            { cache, resolver: new ModuleResolver() },
+          ).catch(() => [])),
+        );
+      }
+      return await deriveContextProviderWraps(trees, cache, (c) =>
+        libraryProviderShimsFor([c.info.filePath]),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const SLICE = {
+    "queries.ts": `
+import { useQuery } from '@tanstack/react-query';
+export function useRateQuery() { return useQuery({ queryKey: ['rate'], queryFn: () => 1 }); }
+`,
+    // The two hand-off forms a real slice uses, in one file, plus a star into
+    // a module that does not exist on disk: a dead star must end a hop, not
+    // the walk.
+    "model.ts": `
+export { useRateQuery, useRateQuery as useCurrentRate } from './queries';
+export * from './interfaces';
+`,
+    "index.ts": `
+export * from './model';
+export * from './ui';
+`,
+    "rate.tsx": `
+import { useRateQuery } from './index';
+export function CurrencyRate() {
+  const q = useRateQuery();
+  return <div>{String(q)}</div>;
+}
+`,
+    "label.tsx": `
+import { useCurrentRate } from './index';
+export function RateLabel() {
+  const q = useCurrentRate();
+  return <span>{String(q)}</span>;
+}
+`,
+    "stranger.tsx": `
+import { useNobody } from './index';
+export function Stranger() {
+  const q = useNobody();
+  return <div>{String(q)}</div>;
+}
+`,
+  };
+
+  test("the star hop and the named hop together reach the library", async () => {
+    const wraps = await deriveBarrel(SLICE);
+    expect(names(refsof(wraps, "::CurrencyRate"))).toEqual(["FlawlessQueryClientProvider"]);
+  });
+
+  test("a named re-export's alias is followed under the module's own name", async () => {
+    // `export { useRateQuery as useCurrentRate }`: the component knows only the
+    // alias, and the far end only answers for the name it declares.
+    const wraps = await deriveBarrel(SLICE);
+    expect(names(refsof(wraps, "::RateLabel"))).toEqual(["FlawlessQueryClientProvider"]);
+  });
+
+  test("a name no module declares asks for nothing", async () => {
+    // The star hop fans out, so precision has to come from the far end: a
+    // library is recorded only where the hook is DECLARED. An unresolvable name
+    // still mounts bare rather than picking up whatever a slice calls.
+    const wraps = await deriveBarrel(SLICE);
+    expect([...wraps.keys()].some((k) => k.endsWith("::Stranger"))).toBe(false);
+  });
+});
