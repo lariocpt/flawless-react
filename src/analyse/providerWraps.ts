@@ -1133,6 +1133,67 @@ export function namespaceFacts(parsed: ParsedFile): NamespaceFacts {
   return { consumers, provider };
 }
 
+/**
+ * Order a component's wrap list OUTERmost-first so the nest is correct. The
+ * emitter opens refs in list order and closes them in reverse, so refs[0] is
+ * the outermost. A provider's own body runs between its open and close, so
+ * every provider ITS requirements name must sit OUTSIDE it: if X requires Y,
+ * Y precedes X. The closure that feeds the list already makes it closed under
+ * requirements, so a required Y is always present to order against. Ties keep
+ * the historical alphabetical order, so a list whose providers owe nothing to
+ * one another renders byte-identical to before; a requirement cycle (no valid
+ * nest — the app is broken at that mount) falls back to that same order and
+ * fails red, which is the honest answer.
+ */
+function orderOutermostFirst(
+  refs: ProviderRef[],
+  reqs: Map<string, Map<string, ProviderRef>>,
+): ProviderRef[] {
+  const byName = [...refs].sort((a, b) =>
+    a.componentName < b.componentName ? -1 : a.componentName > b.componentName ? 1 : 0,
+  );
+  if (refs.length < 2) return byName;
+  const pos = new Map(refs.map((r, i) => [provKey(r), i]));
+  const inList = (k: string) => pos.has(k);
+  // indeg[X] = how many in-list providers X requires (each must come before X).
+  const indeg = new Map<string, number>();
+  const dependents = new Map<string, string[]>(); // Y -> [X that require Y]
+  for (const r of refs) indeg.set(provKey(r), 0);
+  for (const r of refs) {
+    const k = provKey(r);
+    for (const y of reqs.get(k)?.keys() ?? []) {
+      if (!inList(y)) continue;
+      indeg.set(k, (indeg.get(k) ?? 0) + 1);
+      let arr = dependents.get(y);
+      if (!arr) {
+        arr = [];
+        dependents.set(y, arr);
+      }
+      arr.push(k);
+    }
+  }
+  const out: ProviderRef[] = [];
+  const nextReady = (): ProviderRef | undefined => {
+    const avail = refs
+      .filter((r) => (indeg.get(provKey(r)) ?? 0) === 0 && !out.includes(r))
+      .sort((a, b) =>
+        a.componentName < b.componentName ? -1 : a.componentName > b.componentName ? 1 : 0,
+      );
+    return avail[0];
+  };
+  while (out.length < refs.length) {
+    const next = nextReady();
+    if (next === undefined) break; // a requirement cycle: no valid nest
+    out.push(next);
+    const k = provKey(next);
+    for (const d of dependents.get(k) ?? []) {
+      indeg.set(d, (indeg.get(d) ?? 1) - 1);
+    }
+  }
+  if (out.length < refs.length) return byName; // cycle: fall back to alphabetical
+  return out;
+}
+
 /** `${filePath}::${componentName}` → providers to mount around that component. */
 export async function deriveContextProviderWraps(
   trees: ComponentTree[],
@@ -1398,9 +1459,13 @@ export async function deriveContextProviderWraps(
     }
   }
 
-  // Transitive requirement: the analysis trees record what renders what, and a
-  // mount fails at the ancestor whose untouched leaf threw. Iterate to a
-  // fixpoint — provider cycles converge because self-references drop.
+  // Transitive requirement: a mount fails at the ancestor whose untouched leaf
+  // threw, so what a mount must satisfy reaches past its own body. Two ways in:
+  // the analysis trees record what RENDERS what (a leaf's providers owed by its
+  // ancestor), and a provider that is itself wrapped OWES its own requirements
+  // to whoever mounts it. Both are monotonic merges by provider identity, so
+  // one fixpoint over both closes the graph — cycles converge because
+  // self-references drop.
   const edges = new Map<string, Set<string>>();
   const walk = (t: ComponentTree): void => {
     const pk = providerKey(t.entry);
@@ -1418,26 +1483,103 @@ export async function deriveContextProviderWraps(
     }
   };
   for (const t of trees) walk(t);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [pk, kids] of edges) {
-      for (const ck of kids) {
-        const kid = reqs.get(ck);
-        if (!kid) continue;
-        for (const [key, ref] of kid) {
-          const mine = reqs.get(pk);
-          if (key === pk || mine?.has(key)) continue;
-          addReq(pk, ref);
-          changed = true;
+  // The closure runs as a WORKLIST, not a level pass: a wrapped provider may
+  // owe several hops further (it renders a child, that child wraps another
+  // provider, …), and a level pass moves only one hop — on ton-console's page
+  // trees that is thousands of passes before the graph settles. Instead: the
+  // queue seeds with every component that already owes something and its
+  // render parents, and every time a component's requirements GROW, the
+  // components that owe it — the ones that render it, and the ones that now
+  // wrap it (a wrapped provider's new requirement is owed by its wrapper too)
+  // — take a turn. Each (component, provider) pair is added once, so the work
+  // is linear in the number of pairs, and a cycle is paid for once as well.
+  const owedTo = new Map<string, Set<string>>(); // key -> components that render it
+  for (const [pk, kids] of edges) {
+    for (const ck of kids) {
+      let s = owedTo.get(ck);
+      if (!s) {
+        s = new Set();
+        owedTo.set(ck, s);
+      }
+      s.add(pk);
+    }
+  }
+  const queue: string[] = [];
+  const queued = new Set<string>();
+  const enqueue = (k: string) => {
+    if (!queued.has(k)) {
+      queued.add(k);
+      queue.push(k);
+    }
+  };
+  // Seed: every component that OWES something. A component with requirements
+  // owes them to whoever renders it (the render edges recorded above), and it
+  // owes its wrapped providers' requirements to itself. A component with no
+  // requirements of its own is seeded only when a dependency grows.
+  for (const pk of reqs.keys()) {
+    enqueue(pk);
+    for (const owner of owedTo.get(pk) ?? []) enqueue(owner);
+  }
+  let qi = 0;
+  while (qi < queue.length) {
+    const pk = queue[qi];
+    qi += 1;
+    if (pk === undefined) continue;
+    queued.delete(pk);
+    // A render parent can be queued before it owes anything of its own, so
+    // the map may not exist yet — create it the way addReq does, and let the
+    // empty case fall out in `out` below.
+    let mine = reqs.get(pk);
+    if (!mine) {
+      mine = new Map();
+      reqs.set(pk, mine);
+    }
+    // What pk owes: the components it RENDERS (the tree edges above) and the
+    // providers it WRAPS — its own requirements. The second is the rule a
+    // wrapper owes its payload: ProjectProvider mounts INSIDE the component,
+    // and its body calls useUserQuery -> useQuery, so the component's spec
+    // needs the QueryClientProvider that ProjectProvider's own spec has. A
+    // shim ref names a generated file no component analysis carries, so its
+    // "own requirements" look up empty and it is a no-op.
+    const deps = new Set<string>(edges.get(pk) ?? []);
+    for (const key of mine.keys()) deps.add(key);
+    deps.delete(pk);
+    const added: string[] = [];
+    for (const dk of deps) {
+      const dep = reqs.get(dk);
+      if (!dep) continue;
+      for (const [key, ref] of dep) {
+        // A dependency that wraps pk itself is a cycle: addReq would no-op
+        // the self-pair, but recording it as a new wrap edge re-enqueues pk
+        // forever. Self-references drop, as they always have.
+        if (key === pk || mine.has(key)) continue;
+        addReq(pk, ref);
+        added.push(key);
+        // pk now WRAPS key: record it, or pk's dependents never learn that
+        // pk owes key's requirements.
+        let owed = owedTo.get(key);
+        if (!owed) {
+          owed = new Set();
+          owedTo.set(key, owed);
         }
+        owed.add(pk);
       }
     }
+    if (added.length === 0) continue;
+    // pk must pull each newly wrapped provider's OWN requirements, and every
+    // component that renders pk (or now wraps it) must pull pk's new ones.
+    enqueue(pk);
+    for (const owner of owedTo.get(pk) ?? []) enqueue(owner);
   }
 
   const out = new Map<string, ProviderRef[]>();
   for (const [compKey, m] of reqs) {
-    const refs = [...m.values()];
+    // The closure completed the SET; the nest needs an ORDER. A provider's
+    // body runs between its own open and close, so everything its requirements
+    // name must sit OUTSIDE it: if X requires Y, Y precedes X. Untied, the
+    // historical alphabetical order stands, so a spec whose providers owe
+    // nothing to each other renders exactly as it did.
+    const refs = orderOutermostFirst([...m.values()], reqs);
     // One provider can make another redundant (LibraryShimSpec.supersedes): the
     // data router already serves every hook and tag MemoryRouter does, so a
     // component needing both gets one wrap, not a shadowed one inside the other.
@@ -1447,10 +1589,7 @@ export async function deriveContextProviderWraps(
       return by === undefined || !present.has(by);
     });
     if (kept.length > 0) {
-      out.set(
-        compKey,
-        kept.sort((a, b) => (a.componentName < b.componentName ? -1 : 1)),
-      );
+      out.set(compKey, kept);
     }
   }
   return out;

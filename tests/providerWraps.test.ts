@@ -288,6 +288,57 @@ export function DialogShell() {
   return <div onClick={() => s.setOpen(true)}>{s.open ? 'open' : 'closed'}</div>;
 }
 `,
+  // ton-console's shape: the provider's OWN body calls the library hook, so the
+  // provider is not mountable bare in a spec — its requirements are owed by
+  // whoever mounts it, and they must nest OUTSIDE the provider.
+  "project-context.tsx": `
+import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
+export function useProject(): string {
+  return 'p';
+}
+export function ProjectProvider({ children }: { children?: React.ReactNode }) {
+  const { data = '' } = useQuery({ queryKey: ['project'], queryFn: () => Promise.resolve('p') });
+  return <span>{data}{children}</span>;
+}
+`,
+  "project-user.tsx": `
+import { useProject } from './project-context';
+export function ProjectUser() {
+  return <span>{useProject()}</span>;
+}
+`,
+  // The ordering half: AppProvider (A) calls useZeta, so its requirement is
+  // ZetaProvider (Z). A letter sort puts A first — nesting ZetaProvider INSIDE
+  // AppProvider — and AppProvider's body dies of the missing Zeta context.
+  "zeta-context.tsx": `
+import * as React from 'react';
+const ZetaContext = React.createContext<number | null>(null);
+export function useZeta(): number {
+  const v = React.useContext(ZetaContext);
+  if (v === null) throw new Error('useZeta must be used within ZetaProvider');
+  return v;
+}
+export function ZetaProvider({ children }: { children?: React.ReactNode }) {
+  return <ZetaContext.Provider value={7}>{children}</ZetaContext.Provider>;
+}
+`,
+  "app-context.tsx": `
+import * as React from 'react';
+import { useZeta } from './zeta-context';
+export function useApp(): number {
+  return 1;
+}
+export function AppProvider({ children }: { children?: React.ReactNode }) {
+  return <span>{useZeta()}{children}</span>;
+}
+`,
+  "app-user.tsx": `
+import { useApp } from './app-context';
+export function AppUser() {
+  return <span>{useApp()}</span>;
+}
+`,
   // The nakama SPA shape: the router context belongs to router-dom itself,
   // and CommandPalette-style components die at mount without it.
   "palette.tsx": `
@@ -580,6 +631,36 @@ describe("deriveContextProviderWraps", () => {
     // them — one per (library, package): query, router and intl, same tmp root.
     expect(referencedLibraryShims(shimmed, [path.join(tmp, "post-list.tsx")])).toHaveLength(3);
     expect(referencedLibraryShims(bare, [path.join(tmp, "post-list.tsx")])).toHaveLength(0);
+  });
+
+  test("a wrapped provider owes its own requirements to its wrapper", async () => {
+    // ton-console: ApplyQueryParams mounts ProjectProvider (its child calls
+    // useProject), and ProjectProvider's body calls useQuery — so the wrapper's
+    // spec needs the QueryClientProvider that ProjectProvider's own spec has.
+    let shimmed = new Map<string, ProviderRef[]>();
+    await derive(
+      (c) => libraryProviderShimsFor([c.info.filePath]),
+      (_dir, w) => {
+        shimmed = w;
+      },
+    );
+    expect(names(refsof(shimmed, "::ProjectProvider"))).toEqual(["FlawlessQueryClientProvider"]);
+    // The wrapper owes both: the provider it calls for, and what that provider
+    // itself needs. Order is pinned too: the shim OUTSIDE, because
+    // ProjectProvider's body runs between the provider's own open and close.
+    expect(names(refsof(shimmed, "::ProjectUser"))).toEqual([
+      "FlawlessQueryClientProvider",
+      "ProjectProvider",
+    ]);
+  });
+
+  test("a requirement nests outside its provider, not in letter order", async () => {
+    // AppProvider (A) requires ZetaProvider (Z). Alphabetical would open A
+    // first and Zeta second — nesting Zeta INSIDE AppProvider — and
+    // AppProvider's own body would die of the missing Zeta context at mount.
+    const wraps = await derive();
+    expect(names(refsof(wraps, "::AppProvider"))).toEqual(["ZetaProvider"]);
+    expect(names(refsof(wraps, "::AppUser"))).toEqual(["ZetaProvider", "AppProvider"]);
   });
 
   test("providerKey matches the map keys the hostRegistry consumes", async () => {
