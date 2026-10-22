@@ -1389,6 +1389,16 @@ export async function deriveContextProviderWraps(
           // it is tried when no named hop carries the name. Precision survives
           // the fan-out either way, because libs are only ever recorded from a
           // file that DECLARES the hook.
+          //
+          // One shape the hop cannot carry: a barrel handing the LIBRARY itself
+          // along — `export { useQuery } from '@tanstack/react-query'`, or the
+          // star form. The specifier is bare and the resolver refuses it on
+          // purpose (node_modules is never walked), so the chain ends with the
+          // library unrecorded and the component unwrapped. Measured against
+          // every corpus app (2026-10-22): the only such barrels are zudoku's,
+          // in a package its sweep does not cover — documented as the family's
+          // last hole in issue #117, not fixed without a witness to exercise
+          // it.
           if (f.declaredHooks.has(name)) return;
           const hops = f.reexportedHooks.get(name) ?? [];
           for (const hop of hops) {
