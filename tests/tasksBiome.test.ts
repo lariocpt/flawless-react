@@ -16,6 +16,7 @@ import {
   biomeUnusableMessage,
   nodeModulesBinCandidates,
   pickBiome,
+  stableFindingOrder,
 } from "../src/tasks/biomeRunner.ts";
 import {
   dedupeTreeFiles,
@@ -145,6 +146,49 @@ describe("groupFindingsByFile", () => {
 
   test("no findings yields an empty map", () => {
     expect(groupFindingsByFile([]).size).toBe(0);
+  });
+});
+
+describe("stableFindingOrder", () => {
+  const mk = (
+    file: string,
+    line: number,
+    column: number,
+    rule: string,
+    severity: "error" | "warn",
+    message: string,
+    source: TaskId = "react-rules",
+  ): Finding => ({ rule, severity, file, line, column, message, source });
+
+  test("orders by file, line, column, rule, severity, message", () => {
+    const a = mk("/p/b.tsx", 2, 1, "lint/correctness/useExhaustiveDependencies", "error", "dep a");
+    const b = mk("/p/a.tsx", 9, 4, "lint/suspicious/noDoubleEquals", "warn", "no ==");
+    const c = mk("/p/a.tsx", 3, 1, "lint/correctness/useJsxKeyInIterable", "error", "key");
+    const d = mk("/p/a.tsx", 3, 2, "lint/correctness/useJsxKeyInIterable", "error", "key2");
+    const e = mk("/p/a.tsx", 3, 1, "lint/correctness/useJsxKeyInIterable", "warn", "key");
+    expect(stableFindingOrder([a, c, b, d, e]).map((f) => f.message)).toEqual([
+      "key",
+      "key",
+      "key2",
+      "no ==",
+      "dep a",
+    ]);
+  });
+
+  test("identical diagnostics serialize identically in any input order", () => {
+    const x = mk("/p/a.tsx", 1, 1, "lint/correctness/useIsNan", "error", "msg");
+    const y = mk("/p/a.tsx", 1, 1, "lint/correctness/useIsNan", "error", "msg");
+    expect(JSON.stringify(stableFindingOrder([x, y]))).toBe(
+      JSON.stringify(stableFindingOrder([y, x])),
+    );
+  });
+
+  test("does not mutate the input array", () => {
+    const a = mk("/p/b.tsx", 2, 1, "r1", "error", "a");
+    const b = mk("/p/a.tsx", 9, 4, "r2", "warn", "b");
+    const input = [a, b];
+    stableFindingOrder(input);
+    expect(input.map((f) => f.message)).toEqual(["a", "b"]);
   });
 });
 
