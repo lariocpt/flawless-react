@@ -48,6 +48,17 @@ and let the second idea be its own change.
   An edit that reported success and never landed is worse than no edit, and the only
   witness is the next `git diff`.
 
+## Measure with the newest code
+
+Corpus dogfood runs regenerate apps with a compiled binary. Any change to the
+tool's source makes a staged binary stale: rebuild from the exact tree being
+measured (`bun build --compile --minify --outfile /tmp/opencode/fl-bintest-<tree>
+src/bin.ts`) and use only that binary for the next regen. A before/after delta
+keeps both runs on the same binary lineage — the control is the same tree minus
+the change, built the same way. A number measured on a binary built from an
+older tree is a measurement problem, not a code problem: redo it before
+believing it.
+
 ## Never commit
 
 - `CURRENT_WORK.md` — handoff notes, excluded via `.git/info/exclude`.
