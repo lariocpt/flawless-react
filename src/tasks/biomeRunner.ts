@@ -231,7 +231,33 @@ export async function runBiome(opts: RunBiomeOptions): Promise<Finding[]> {
       source: opts.source,
     });
   }
-  return findings;
+  return stableFindingOrder(findings);
+}
+
+/**
+ * Biome emits its JSON diagnostics in worker-completion order, not source
+ * order: five identical `biome lint` runs over the same 120 files returned
+ * the same 365 diagnostics in five different orders (same-file and
+ * cross-file swaps both observed). Every report this feeds — the aggregate
+ * `findingsByFile` object and each per-component report — is written to disk
+ * and must be byte-identical across runs or a second regen churns the suite
+ * on pure ordering. Normalise here, at the one choke point both biome-backed
+ * tasks pass through, so every downstream writer inherits the determinism.
+ * (file, line, column, rule, severity, message, source) is a total order for
+ * JSON purposes: two diagnostics that tie on every key are identical objects,
+ * so their mutual order cannot change a byte of output.
+ */
+export function stableFindingOrder(findings: Finding[]): Finding[] {
+  return [...findings].sort((a, b) => {
+    if (a.file !== b.file) return a.file < b.file ? -1 : 1;
+    if (a.line !== b.line) return a.line - b.line;
+    if (a.column !== b.column) return a.column - b.column;
+    if (a.rule !== b.rule) return a.rule < b.rule ? -1 : 1;
+    if (a.severity !== b.severity) return a.severity < b.severity ? -1 : 1;
+    if (a.message !== b.message) return a.message < b.message ? -1 : 1;
+    if (a.source !== b.source) return a.source < b.source ? -1 : 1;
+    return 0;
+  });
 }
 
 function findMatchingBraceEnd(s: string, openIdx: number): number {
