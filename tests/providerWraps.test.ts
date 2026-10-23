@@ -816,6 +816,162 @@ export function SearchForm() {
   });
 });
 
+describe("the app's own wrapper for a bare-module hook", () => {
+  // saleor/saleor-dashboard's `useTheme`, measured: the hook comes from an
+  // installed package (`@saleor/macaw-ui-next` — node_modules, never parsed),
+  // and the provider the mount needs is the APP's own exported wrapper, which
+  // renders the library's provider imported from that very module. The context
+  // object lives in the library, so the context join above has no key to join
+  // on; the pairing the project files can supply is the convention name plus
+  // the same-module binding the wrapper renders.
+  async function deriveTheme(files: Record<string, string>): Promise<Map<string, ProviderRef[]>> {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "provwraps-bareconv-"));
+    try {
+      const cache = new SourceFileCache();
+      const trees: ComponentTree[] = [];
+      // Every file on disk before any analysis: resolution of a sibling import
+      // needs the sibling to exist, and a write-then-analyse loop would resolve
+      // against whatever had been written so far.
+      for (const [name, content] of Object.entries(files)) {
+        writeFileSync(path.join(dir, name), content);
+      }
+      for (const name of Object.keys(files)) {
+        const file = path.join(dir, name);
+        trees.push(
+          ...(await analyseFile(
+            { entry: file, depth: 3, includeChildren: true, roots: "exported" },
+            { cache, resolver: new ModuleResolver() },
+          ).catch(() => [])),
+        );
+      }
+      return await deriveContextProviderWraps(trees, cache);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const WIDGET = `
+import * as React from 'react';
+import { useTheme } from '@acme/uikit';
+export function Widget() {
+  const { theme } = useTheme();
+  return <span>{String(theme)}</span>;
+}
+`;
+
+  test("a bare-module hook asks for the app's convention-named wrapper", async () => {
+    const wraps = await deriveTheme({
+      "widget.tsx": WIDGET,
+      "theme-provider.tsx": `
+import * as React from 'react';
+import { ThemeProvider as KitThemeProvider } from '@acme/uikit';
+export function ThemeProvider({ children }: { children?: React.ReactNode }) {
+  return <KitThemeProvider>{children}</KitThemeProvider>;
+}
+`,
+    });
+    const refs = refsof(wraps, "::Widget");
+    expect(names(refs)).toEqual(["ThemeProvider"]);
+    expect(refs[0]?.filePath.endsWith("theme-provider.tsx")).toBe(true);
+    expect(refs[0]?.exportKind).toBe("named");
+  });
+
+  test("a same-named wrapper built from a DIFFERENT module does not catch the hook", async () => {
+    const wraps = await deriveTheme({
+      "widget.tsx": WIDGET,
+      "theme-provider.tsx": `
+import * as React from 'react';
+import { ThemeProvider as OtherProvider } from '@other/kit';
+export function ThemeProvider({ children }: { children?: React.ReactNode }) {
+  return <OtherProvider>{children}</OtherProvider>;
+}
+`,
+    });
+    expect([...wraps.keys()].some((k) => k.endsWith("::Widget"))).toBe(false);
+  });
+
+  test("importing from the hook's module without rendering a binding is not a supplier", async () => {
+    const wraps = await deriveTheme({
+      "widget.tsx": WIDGET,
+      "theme-provider.tsx": `
+import * as React from 'react';
+import { useTheme as kitUseTheme } from '@acme/uikit';
+export function ThemeProvider({ children }: { children?: React.ReactNode }) {
+  const theme = kitUseTheme();
+  return <span>{String(theme)}</span>;
+}
+`,
+    });
+    expect([...wraps.keys()].some((k) => k.endsWith("::Widget"))).toBe(false);
+  });
+
+  test("a project wrapper that calls a bare-module hook still asks for the app's wrapper", async () => {
+    // saleor's `SaleorLogo`: the component's own import resolves (
+    // `@dashboard/theme` → the app's theme module), so the outer bare-module
+    // fallback cannot fire — but the wrapper's body calls the library hook
+    // under an alias (`useTheme as useMacawTheme` from `@saleor/macaw-ui-
+    // next`), and the walk must ask for the convention provider at that bare
+    // module, keyed by the MODULE-side name.
+    const wraps = await deriveTheme({
+      "widget.tsx": `
+import * as React from 'react';
+import { useTheme } from './theme';
+export function Widget() {
+  const { theme } = useTheme();
+  return <span>{String(theme)}</span>;
+}
+`,
+      "theme.ts": `
+import { useTheme as useKitTheme } from '@acme/uikit';
+export const useTheme = () => {
+  const { theme } = useKitTheme();
+  return { theme };
+};
+`,
+      "theme-provider.tsx": `
+import * as React from 'react';
+import { ThemeProvider as KitThemeProvider } from '@acme/uikit';
+export function ThemeProvider({ children }: { children?: React.ReactNode }) {
+  return <KitThemeProvider>{children}</KitThemeProvider>;
+}
+`,
+    });
+    const refs = refsof(wraps, "::Widget");
+    expect(names(refs)).toEqual(["ThemeProvider"]);
+    expect(refs[0]?.filePath.endsWith("theme-provider.tsx")).toBe(true);
+  });
+
+  test("a wrapper whose bare-module call names no convention provider stays unwrapped", async () => {
+    // The wrapper's library hook comes from a module the app's ThemeProvider
+    // does not render: the same-named component must not catch it.
+    const wraps = await deriveTheme({
+      "widget.tsx": `
+import * as React from 'react';
+import { useTheme } from './theme';
+export function Widget() {
+  const { theme } = useTheme();
+  return <span>{String(theme)}</span>;
+}
+`,
+      "theme.ts": `
+import { useTheme as useKitTheme } from '@other/kit';
+export const useTheme = () => {
+  const { theme } = useKitTheme();
+  return { theme };
+};
+`,
+      "theme-provider.tsx": `
+import * as React from 'react';
+import { ThemeProvider as KitThemeProvider } from '@acme/uikit';
+export function ThemeProvider({ children }: { children?: React.ReactNode }) {
+  return <KitThemeProvider>{children}</KitThemeProvider>;
+}
+`,
+    });
+    expect([...wraps.keys()].some((k) => k.endsWith("::Widget"))).toBe(false);
+  });
+});
+
 describe("the data router wrap", () => {
   // code-forge-io/react-router-devtools and remix-run/remix-store, measured: the
   // components under test ARE route modules, and their `useLoaderData` /
