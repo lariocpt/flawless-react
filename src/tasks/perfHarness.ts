@@ -12,7 +12,7 @@ export const perfHarness: Task = {
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
     // Wave 4 was measured and DECLINED, not deferred (2026-09-12, census in
-    // docs/reviews/backlog.md B-16 + docs/reviews/2026-09-expo-probes.md): on
+    // docs/archive/backlog-completed-2026-10.md B-16 + docs/archive/2026-09-expo-probes.md): on
     // an expo-router app the component population is route screens, the host
     // cannot mount anything that needs a navigator (renderRouter is
     // jest-bound), and the profile click scenarios are onClick-only — so the
@@ -22,13 +22,13 @@ export const perfHarness: Task = {
     // with a real components/ directory of non-route, navigator-free
     // components. The one opening — a Metro-served real-app perf lane, using
     // wave 6's infrastructure — is mapped and probe-gated in
-    // docs/reviews/wave4-metro-perf-plan.md; it stays declined until a probe
+    // docs/archive/wave4-metro-perf-plan.md; it stays declined until a probe
     // clears, because on a React-Compiler app the only honest signal is nulled.
     if (ctx.expo) {
       return expoNotImplemented(
         "perf-harness",
         "measured-and-declined 2026-09-12 — ~0 host-mountable components on an " +
-          "all-route-screens app; docs/reviews/backlog.md B-16 records the evidence " +
+          "all-route-screens app; docs/archive/backlog-completed-2026-10.md B-16 records the evidence " +
           "and the revisit condition",
       );
     }

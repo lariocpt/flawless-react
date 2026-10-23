@@ -1306,7 +1306,7 @@ export interface ExpoContext {
    * `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
    * `perf/no-memoisation-with-children` name work it has already done. On the
    * dogfood app that is 136 of 168 findings — 81% of the task's entire output
-   * (docs/reviews/2026-08-expo-probes.md).
+   * (docs/archive/2026-08-expo-probes.md).
    */
   reactCompiler: boolean;
   /** NativeWind is wired through babel (`jsxImportSource: "nativewind"`). */

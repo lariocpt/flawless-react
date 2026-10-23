@@ -103,9 +103,9 @@ export function commandLines(markdown: string): string[] {
 /**
  * Every prose file this project ships: the README, the docs, and the skills.
  *
- * docs/reviews/ is deliberately absent. Those are dated ledgers describing what
- * was true at the time — linting them against today's code would demand that
- * history be rewritten whenever a finding is fixed.
+ * docs/reviews/ and docs/archive/ are deliberately absent. Those are dated
+ * ledgers describing what was true at the time — linting them against today's
+ * code would demand that history be rewritten whenever a finding is fixed.
  *
  * The skills are read from `.agents/skills`, the canonical root. `.claude/skills`
  * holds a per-skill symlink into it for agents that only look there, and is not

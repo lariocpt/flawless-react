@@ -219,7 +219,7 @@ Three contracts to rely on:
 against `expo start --web`. The Next.js flavour's machinery carries over
 (params.json ids, write-once global-setup with the hand-work tally, `landing`
 overrides, `GET <route>` describe titles for `--changed` narrowing); the Expo facts
-baked in, each measured first (`docs/reviews/2026-09-expo-probes.md`):
+baked in, each measured first (`docs/archive/2026-09-expo-probes.md`):
 
 - Metro's statuses are REAL — unknown routes 404, per-route rendered HTML — so the
   status assertion keeps teeth on a dev server.
@@ -259,7 +259,7 @@ a dead session. Mutations are excluded (a POST load-test writes junk into the DB
 refuses as **measured-and-declined, not deferred**: on an expo-router app the
 population is route screens, which the browser host cannot mount (navigator hooks;
 renderRouter is jest-bound), so the measured ceiling on the dogfood app was ~0 of
-32 components — the refusal points at `docs/reviews/backlog.md` B-16 and the probes
+32 components — the refusal points at `docs/archive/backlog-completed-2026-10.md` B-16 and the probes
 ledger, and the revisit condition is an adopter with a real `components/` directory
 of non-route components. And one runner reads differently rather than refusing:
 

@@ -72,7 +72,7 @@ The same conservatism that protects the report shapes the specs: everything
 On a project with `experiments.reactCompiler: true` (read off disk under `--expo`),
 memoisation is the compiler's job: measured on one native app, **136 of 168
 perf-static findings were the three memoisation rules**
-(`docs/reviews/2026-08-expo-probes.md`). The tool surfaces them anyway and leaves
+(`docs/archive/2026-08-expo-probes.md`). The tool surfaces them anyway and leaves
 the judgement to you — it deliberately does not suppress them, because the flag
 being set is not the same as the compiler being enabled for that package.
 

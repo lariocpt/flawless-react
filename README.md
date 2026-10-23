@@ -135,7 +135,7 @@ flawless reads the project off disk — Expo SDK major, the expo-router `app/` r
 | `a11y` | **runs** — the native accessibility analyser (six rules over the parsed tree; see below) |
 | `e2e` | **runs** — route specs against `expo start --web` (see below) |
 | `load` | **runs** — API-only crust pipes for the GET endpoints the screens reach through the app's fetch wrapper (see below) |
-| `perf-harness` | **refuses** — measured and declined, not deferred: on an expo-router app the population is route screens, which the browser host cannot mount (they need a navigator), so the measured ceiling on the dogfood app was ~0 of 32 components. The refusal points at the recorded evidence ([`docs/reviews/2026-09-expo-probes.md`](docs/reviews/2026-09-expo-probes.md)); the revisit condition is an adopter with a real `components/` directory of non-route components |
+| `perf-harness` | **refuses** — measured and declined, not deferred: on an expo-router app the population is route screens, which the browser host cannot mount (they need a navigator), so the measured ceiling on the dogfood app was ~0 of 32 components. The refusal points at the recorded evidence ([`docs/archive/2026-09-expo-probes.md`](docs/archive/2026-09-expo-probes.md)); the revisit condition is an adopter with a real `components/` directory of non-route components |
 
 ### The native unit plane
 
@@ -173,7 +173,7 @@ Two structural properties matter more than the rule list. **The denominator**: t
 
 ### Route e2e against Expo web
 
-`--expo --tasks e2e` emits one Playwright spec per expo-router route, run against `expo start --web` — Metro under SDK 54's static output serves **per-route rendered HTML with real status semantics** (an unknown path answers 404), all of it measured before the wave was built ([`docs/reviews/2026-09-expo-probes.md`](docs/reviews/2026-09-expo-probes.md)).
+`--expo --tasks e2e` emits one Playwright spec per expo-router route, run against `expo start --web` — Metro under SDK 54's static output serves **per-route rendered HTML with real status semantics** (an unknown path answers 404), all of it measured before the wave was built ([`docs/archive/2026-09-expo-probes.md`](docs/archive/2026-09-expo-probes.md)).
 
 The machinery is the Next.js flavour's — the same `params.json` id fixture (expo-router's `[param]` templates are byte-compatible), the same write-once `global-setup.ts` with the hand-work tally, the same `--grep`-able `GET <route>` titles for `--changed` narrowing — plus three Expo-specific facts baked in:
 
@@ -193,7 +193,7 @@ A refusal is a failed `TaskResult`, not a thrown error: it lands in `results[]`,
 
 Refusing is deliberate. Emitting the DOM suite for a React Native project would produce specs that run, pass, and touch nothing: `container.querySelector("Pressable")` matches no element, and `getByRole("button")` finds nothing because React Native has no implicit roles. A green suite that tested nothing is the one outcome this tool must never produce.
 
-Two things measured on a real Expo app before any of this was written, both recorded in [`docs/reviews/2026-08-expo-probes.md`](docs/reviews/2026-08-expo-probes.md):
+Two things measured on a real Expo app before any of this was written, both recorded in [`docs/archive/2026-08-expo-probes.md`](docs/archive/2026-08-expo-probes.md):
 
 - **The `a11y` task was vacuously green on React Native.** Zero findings across 31 files carrying 82 `<Pressable>` elements with no `testID`, `accessibilityLabel` or `accessibilityRole` between them — while the same sweep found 3/3 on this repo's own offender fixture. All 29 rules are HTML/ARIA rules, and React Native has no `<img>`, `<a>` or `<button>`. It needed a different engine, not a different config — the native analyser above is that engine.
 - **The React Compiler changes what `perf-static` should say.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag and surfaces these findings for you to weigh; the tool deliberately does not suppress them for you.

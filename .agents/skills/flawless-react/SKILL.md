@@ -170,7 +170,7 @@ A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `-
 
 **Do not work around a refusal by dropping `--expo`.** The DOM suite pointed at React Native emits specs that run, pass, and touch nothing — `container.querySelector("Pressable")` matches no element, and `getByRole("button")` finds nothing because React Native has no implicit roles.
 
-Two things worth knowing before reading a native run's output, both measured (`docs/reviews/2026-08-expo-probes.md`):
+Two things worth knowing before reading a native run's output, both measured (`docs/archive/2026-08-expo-probes.md`):
 
 - **`a11y` on native is the tool's own analyser, and its zero carries a denominator.** Biome's 29 rules are HTML/ARIA and returned zero over 31 RN files with 82 unlabelled `<Pressable>`s (3/3 on the DOM offender fixture), so the task refused until wave 5 shipped the native engine. Its summary always says how many press targets / text inputs / icons were examined — a native zero WITHOUT that denominator is a bug, not a clean bill.
 - **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag and surfaces the findings for you to weigh; the tool deliberately does not suppress them.

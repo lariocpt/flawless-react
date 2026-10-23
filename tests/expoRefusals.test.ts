@@ -155,7 +155,9 @@ describe("--expo: what refuses, and how", () => {
     // its entry, a wave that dies names its grave.
     const { blob } = await run(["--tasks", REFUSING.join(",")], "refuse-all");
     for (const r of blob.results) {
-      expect(r.error).toMatch(/wave \d+ — |measured-and-declined .* docs\/reviews\/backlog\.md/);
+      expect(r.error).toMatch(
+        /wave \d+ — |measured-and-declined .* docs\/archive\/backlog-completed-2026-10\.md/,
+      );
     }
     expect(blob.results).toHaveLength(REFUSING.length);
   }, 120_000);

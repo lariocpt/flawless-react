@@ -334,7 +334,7 @@ describe("what the analyser now sees in React Native source", () => {
   test("classNameFlow is false on native, however many classNames the source has", async () => {
     // NativeWind compiles className into a `style` through BABEL at build time.
     // The string reaches neither the jest-expo tree nor the react-native-web DOM
-    // (measured: docs/reviews/2026-08-expo-probes.md, P1), so asserting it lands
+    // (measured: docs/archive/2026-08-expo-probes.md, P1), so asserting it lands
     // somewhere is a test that can never pass.
     const info = (await analyse("app/(tabs)/index.tsx"))[0]?.entry;
     expect(info?.classNameFlow).toBe(false);
