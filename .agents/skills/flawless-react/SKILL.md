@@ -100,7 +100,11 @@ suite — put the values you supply (a seeded auth state, a theme) in
 `provider.fixtures.ts` beside it, which is never regenerated under any flag.
 Pass `--provider <file>` to override — that is also the way to supply a context
 the derived wrapper dropped, since editing `provider.tsx` does not survive
-`--force`.
+`--force`. In plain (non-Next) mode there is no derived `provider.tsx` at all:
+every render is wrapped in a per-component nest derived from hook-call,
+namespace-compound and transitive evidence — the app's own providers,
+convention matches for bare-module hooks, and generated shims for library
+contexts — and `--provider` sits outside that nest.
 
 **API fixtures.** Static route walking only sees `app/api/**/route.ts`, which
 is useless for catch-all APIs (Hono, tRPC). Pass `--api openapi.json` (or

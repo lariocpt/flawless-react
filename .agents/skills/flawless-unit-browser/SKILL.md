@@ -24,6 +24,19 @@ chain around `{children}`. That file is regenerated; the values you supply live
 in `flawless/provider.fixtures.ts`, which is written once and never again —
 not even with `--force`.
 
+Plain (non-Next) mode has no `provider.tsx`: the wraps are derived per render
+instead. Each spec imports its nest under `__Prov`-prefixed bindings — the
+app's own providers found by hook call, namespace compound and transitive
+requirement, convention matches for bare-module hooks (`useTheme` → the
+exported `ThemeProvider` that renders that module's binding), and generated
+shims for library contexts (`FlawlessQueryClientProvider`,
+`FlawlessRouterProvider`/`FlawlessDataRouterProvider`, `FlawlessFormProvider`,
+`FlawlessIntlProvider`). A mount failing on "useX must be used within a
+XProvider" in plain mode means the derivation could not see the provider:
+check that it is exported under the convention name and renders a binding from
+the hook's own module; if the app side cannot be fixed, mount it with
+`--provider`, which renders outside the derived nest.
+
 The single highest-value hardening move: fill `initialState` (or whatever the
 layout passed) with a REAL seeded shape instead of the emitted empty cast.
 Mirror the app's seed data so every unit spec mounts the way the app actually
