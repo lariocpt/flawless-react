@@ -315,6 +315,43 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   renderTarget()).not.toThrow()` instead of a claim that something appeared —
   `if (toasts.length === 0) return null` backed by a store hook may legitimately
   render nothing.
+- **Derived provider wraps.** Under a real layout a component mounts inside its
+  theme, router, query and app-context providers; mounted bare it answers
+  `useSidebar must be used within a SidebarProvider` instead of findings. So
+  every render opens with a derived nest — in the unit specs and in the perf
+  host's registry alike — imported under a `__Prov` prefix so it can never
+  collide with a spec's own imports. Three derivations, strongest evidence
+  first: a **hook call** (`useSidebar` → the `SidebarProvider` exported by the
+  file the hook's import resolves to, or by the component's own file — and only
+  that file's provider counts, so an unrelated `FooProvider` elsewhere never
+  catches an unrelated `useFoo` caller), a **namespace compound**
+  (`CommandInput` renders `CommandPrimitive.Input` and needs the same file's
+  `<Command>` mounted around it), and a **transitive requirement** (`AppSidebar`
+  never calls `useSidebar` — its `<Sidebar>` child does, and whatever a
+  component renders, it must satisfy too). A hook arriving from a bare module —
+  node_modules, or a barrel the analyser never follows — has no project file to
+  join on, so it pairs by convention instead: an exported component named after
+  the hook (`useTheme` → `ThemeProvider`) that renders a binding imported from
+  the hook's own module. All three conjuncts or no wrap: a `ThemeProvider`
+  rendering some other kit's provider must not catch a hook from a different
+  one. Library contexts the app cannot supply get generated shims:
+
+  | What the component uses | Generated wrap |
+  | --- | --- |
+  | `@tanstack/react-query` hooks | `FlawlessQueryClientProvider` — a fresh `QueryClient` per mount, `retry: false` |
+  | `react-router(-dom)` hooks, `<Link>` / `<NavLink>` / `<Navigate>` / `<Outlet>` | `FlawlessRouterProvider` — a `MemoryRouter` |
+  | data-router hooks (`useLoaderData`…), `<Form>`, `<ScrollRestoration>` | `FlawlessDataRouterProvider` — `createMemoryRouter` + `RouterProvider`; supersedes the `MemoryRouter` wrap, needs router ≥ 6.4 |
+  | `react-hook-form` (`useController`, `useFieldArray`, `useFormState`, `useWatch`, `useFormContext`) | `FlawlessFormProvider` — an empty form, fresh per mount |
+  | `react-intl` hooks, `<FormattedMessage>` / `<FormattedDate>` / … | `FlawlessIntlProvider` — `locale="en"`, nothing fetched |
+
+  The nest opens outermost-first: a provider that itself requires another sits
+  outside it, ties keep alphabetical order, and a true requirement cycle —
+  which means the app is broken at that mount — falls back to alphabetical and
+  fails red rather than guessing. Shim files live at the root of the importing
+  package (the only place their own bare library import can resolve) and are
+  tool-owned: rewritten every run. Your `--provider` wrapper sits outside the
+  whole derived nest; the extending guide covers what to do when a wrap is
+  missing or wrong.
 
 - Server components get a different template: the component is awaited rather
   than mounted, `render()` sits inside the same `try` as the call, `notFound()` /

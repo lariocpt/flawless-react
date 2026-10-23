@@ -337,7 +337,12 @@ After `bun install && bun run test`, the console shows lines like:
 
 ## Working with stores and APIs
 
-If your component reads from a Redux/Jotai/React Query/Context store, wrap it once and pass the wrapper to `--provider`:
+A lot of the wrapping is already derived per mount — each spec opens with the
+providers its component needs, including generated shims for the common
+library contexts (the generated-suite guide walks the whole wrap story). If
+your component reads from a Redux/Jotai store, or a context the derivation
+cannot reach, wrap it once and pass the wrapper to `--provider`, which renders
+outside the derived nest:
 
 ```tsx
 // src/providers/AppProvider.tsx
@@ -496,7 +501,7 @@ First time you run a generated suite, you may need `bunx playwright install chro
 The host bundle didn't load. Check the Playwright stderr — `bun host/server.ts` should print `host listening on http://127.0.0.1:5173`. If it doesn't, `cd` into the suite and run `bun host/server.ts` directly to surface the build error. A spec that fails with `ReferenceError: <name> is not defined` while the host build printed *no* error is the same failure in disguise: a resolve plugin answered a bare specifier it should have left alone, and the module was silently replaced by one lacking that export.
 
 **Component reads `useSelector` / `useContext` / etc. and throws "could not find … in the context"**
-Pass `--provider <file>` pointing at a `.tsx` that default-exports a wrapper component including your Redux Provider, QueryClientProvider, ThemeProvider, etc. The host will wrap every mounted component in it. Under `--nextjs` the auto-derived wrapper skips any provider layer whose module directly imports an auth library (`@clerk/*`, `next-auth`): the unit and browser planes replace those libraries with a signed-out stub, so a provider that gates its children on a session renders *nothing* and every spec silently inherits the blank screen — while the stub already satisfies the context reads auth-consuming components make. Supply your own `--provider` if you want that layer mounted under test.
+Most of these contexts are already wrapped by the derived nest (router, intl, query client, and your app's own convention-named providers); if the mount still throws, the provider is one the derivation cannot see. Pass `--provider <file>` pointing at a `.tsx` that default-exports a wrapper component including your Redux Provider, QueryClientProvider, ThemeProvider, etc. — it renders outside the derived nest, and both the host and the unit specs get it. Under `--nextjs` the auto-derived wrapper skips any provider layer whose module directly imports an auth library (`@clerk/*`, `next-auth`): the unit and browser planes replace those libraries with a signed-out stub, so a provider that gates its children on a session renders *nothing* and every spec silently inherits the blank screen — while the stub already satisfies the context reads auth-consuming components make. Supply your own `--provider` if you want that layer mounted under test.
 
 **A module throws at import time under the suite ("… URL is required")**
 Something reads an env var at module scope. The suite's Vitest config loads the app's `.env.test.local`, `.env.test`, `.env.local`, `.env`, and `.env.example` — in that order, first value wins, and `.env.example` rides last because template repos ship only the example and its placeholder values exist precisely to satisfy module-scope construction. Keys already in the environment beat all of them: export an override to redirect the suite.

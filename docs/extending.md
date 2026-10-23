@@ -10,7 +10,9 @@ Commit it. Run linters and formatters over it. Add it to CI. Pin its dependencie
 
 ## Mount components inside a provider
 
-A component that depends on a context provider (theme, router, query client, store) won't render correctly when mounted bare. Edit `host/main.tsx` to wrap the registry render site:
+Most of this is derived for you. Every mount — unit spec and perf host alike — opens with a nest of providers built from hook-call, namespace-compound and transitive-requirement evidence: your app's own context providers, convention matches (`useTheme` → the exported `ThemeProvider` that renders the same module's binding), and generated shims for library contexts (`@tanstack/react-query`, `react-router-dom` — including the data router, `react-hook-form`, `react-intl`). The file-by-file story, with the shim table, is in the generated-suite guide.
+
+Manual wrapping stays for what derivation cannot see: a provider no analysed file imports and whose name breaks the convention, a store that needs runtime values no static derivation would invent, or a wrapper you want forced around everything. To wrap every perf-host mount, edit `host/main.tsx` at the registry render site — unit specs take the same wrapper through `--provider`, which renders it outside the derived nest:
 
 ```tsx
 import { ThemeProvider } from "your-theme";
