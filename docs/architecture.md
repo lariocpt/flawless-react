@@ -358,6 +358,18 @@ the output dir:
   with `auth` as their reason, and a component that reads a library context
   nobody supplies gets a generated provider from `analyse/providerWraps.ts`.
   Refreshed by `--force`; the fixtures file beside it is not.
+- **Context provider wraps** — `analyse/providerWraps.ts` feeds both mount
+  planes the providers they cannot see: route layouts import the app's context
+  providers, and route files are not analysed entries. Each mount opens with a
+  derived nest built from three evidence classes (hook call, namespace
+  compound, transitive requirement), following the re-export table through
+  barrels. A hook arriving from a bare module has no context object to join
+  on, so it pairs by convention instead — an exported `XProvider` rendering a
+  binding from `useX`'s own module, three conjuncts or nothing. Library
+  contexts the app cannot supply get generated shims (query client, router —
+  the data-router wrap supersedes the `MemoryRouter` one — forms, intl). The
+  wrap list is closed under requirements and ordered outermost-first; the
+  user's `--provider` rides outside the whole nest.
 - **Style adoption** — `scaffold/adoptStyle.ts` reformats everything written
   with the host project's own biome or prettier, and JSON merges preserve the
   file's existing indentation. Generation should read as an additive diff, not
