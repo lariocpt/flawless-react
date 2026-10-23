@@ -13,7 +13,7 @@ import { paramsHelper, writeParams } from "./e2eRoutes.ts";
  * platform, the wave-3/wave-5 shape).
  *
  * The design leans on facts measured against the real stack on 2026-09-12
- * (docs/reviews/2026-09-expo-probes.md):
+ * (docs/archive/2026-09-expo-probes.md):
  *
  *   - Metro under SDK 54's `web.output: "static"` serves PER-ROUTE rendered
  *     HTML with real status semantics — an unknown path answers 404, a dynamic
@@ -349,7 +349,7 @@ test.describe("GET ${route.urlPath}", () => {
     const resp = await page.goto(ROUTE);
     expect(resp, "navigation returned a response").toBeTruthy();
     // Metro's statuses are real: unknown routes 404, served routes 200 —
-    // measured, not assumed (docs/reviews/2026-09-expo-probes.md).
+    // measured, not assumed (docs/archive/2026-09-expo-probes.md).
     expect(resp?.status(), "no 5xx").toBeLessThan(500);
     await page.waitForLoadState("networkidle");
     await assertOnRoute(page);

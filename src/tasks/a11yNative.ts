@@ -39,7 +39,7 @@ export const A11Y_REPORT = "a11y.json";
  *   - ZERO FALSE POSITIVES over completeness. Every rule stands down where the
  *     source is not readable (a dynamic accessibilityLabel, a spread) — a miss
  *     costs coverage, a guess costs a false finding. The declined rules and the
- *     evidence live in docs/reviews/backlog.md's B-16 row.
+ *     evidence live in docs/archive/backlog-completed-2026-10.md's B-16 row.
  */
 export const NATIVE_A11Y_RULES = [
   "a11y/unnamed-control",

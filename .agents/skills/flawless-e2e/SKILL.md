@@ -133,7 +133,7 @@ origin with a **cookie** via the setup stub's request-context login + storageSta
   the app falls back to whatever its source hardcodes — on one dogfooded LAN, a
   production container.
 - Metro's statuses are REAL (unknown routes 404, per-route HTML — measured in
-  `docs/reviews/2026-09-expo-probes.md`), so a 404 is a routing bug, not harness
+  `docs/archive/2026-09-expo-probes.md`), so a 404 is a routing bug, not harness
   noise.
 - Each spec carries a third test, the **copy witness** (`getByText` on the screen's
   longest analysis-proven literal), because an auth wall rendered in place keeps the

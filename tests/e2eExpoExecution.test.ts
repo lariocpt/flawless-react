@@ -10,7 +10,7 @@ import { runCore } from "../src/core.ts";
  * tests/e2eExecution.test.ts proves for the Next.js flavour.
  *
  * The stand-in server reproduces what was MEASURED against real Metro + the
- * real dogfood app on 2026-09-12 (docs/reviews/2026-09-expo-probes.md), not a
+ * real dogfood app on 2026-09-12 (docs/archive/2026-09-expo-probes.md), not a
  * guess about a SPA:
  *
  *   - every served route answers 200 with per-route HTML; unknown paths 404

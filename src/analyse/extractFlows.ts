@@ -36,7 +36,7 @@ export function extractFlows(
     // NativeWind compiles className into a `style` at BUILD time, through babel.
     // The string does not survive to the rendered tree under jest-expo, and
     // react-native-web consumes it without forwarding anything either (measured:
-    // docs/reviews/2026-08-expo-probes.md, P1). So "a className passed in will
+    // docs/archive/2026-08-expo-probes.md, P1). So "a className passed in will
     // land on some element" is both unfalsifiable AND unsatisfiable on native,
     // and asserting it would be a test that can never pass.
     //
