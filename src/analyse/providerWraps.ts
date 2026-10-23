@@ -1265,6 +1265,38 @@ export async function deriveContextProviderWraps(
     }
   }
 
+  // The convention index, for hooks that arrive from a BARE module. When a
+  // component's hook comes from node_modules (never parsed) the context join
+  // above has no key: the context object the hook reads lives in the library,
+  // so no project file mentions it. What project files DO mention is the
+  // app's own wrapper — saleor's `useTheme` comes from `@saleor/macaw-ui-next`,
+  // and the app's exported `ThemeProvider` (src/theme/provider.tsx) renders
+  // macaw's `ThemeProvider`, imported from that very module. Index every
+  // exported component by (name, module of a binding its body renders): the
+  // convention name plus the same-module binding is the pairing the context
+  // object would have supplied. All three conjuncts — exported, named per the
+  // hook's convention, rendering a binding from the hook's own module — or
+  // nothing; a `ThemeProvider` that renders some other kit's provider must
+  // not catch a hook from a different one.
+  const conventionSuppliers = new Map<string, { file: string; componentName: string }[]>();
+  for (const file of new Set(flat.map((c) => c.info.filePath))) {
+    const parsed = await parseOnce(file);
+    if (!parsed) continue;
+    const facts = ctxOnce(parsed);
+    for (const u of parsed.components) {
+      if (u.exportKind === "none") continue;
+      for (const tag of facts.tagsByFn.get(u.componentName) ?? []) {
+        const b = parsed.imports.get(tag);
+        if (!b || b.isTypeOnly || b.specifier.startsWith(".") || b.specifier.startsWith("/"))
+          continue;
+        const key = `${u.componentName}::${b.specifier}`;
+        const arr = conventionSuppliers.get(key);
+        if (arr) arr.push({ file, componentName: u.componentName });
+        else conventionSuppliers.set(key, [{ file, componentName: u.componentName }]);
+      }
+    }
+  }
+
   // compKey → provKey → ref. A Map, not a Set: the closure below merges along
   // component edges and the dedupe is by provider identity.
   const reqs = new Map<string, Map<string, ProviderRef>>();
@@ -1332,6 +1364,30 @@ export async function deriveContextProviderWraps(
             if (unit) break;
           }
         }
+        // The bare-module convention. The hook's own module is in node_modules
+        // (never parsed), so neither lookup above can see the pairing: the
+        // context object lives in the library. The app's wrapper, however, is
+        // project code — an exported component named per the hook's convention
+        // that renders a binding imported from the very module the hook came
+        // from (saleor's `useTheme` ← `@saleor/macaw-ui-next`, supplied by
+        // the app's own `ThemeProvider` around macaw's).
+        if (
+          !unit &&
+          hookSpec &&
+          sourceFile === c.info.filePath &&
+          !hookSpec.startsWith(".") &&
+          !hookSpec.startsWith("/")
+        ) {
+          for (const sup of conventionSuppliers.get(`${candidate}::${hookSpec}`) ?? []) {
+            const supParsed = await parseOnce(sup.file);
+            const u = supParsed?.components.find((x) => x.componentName === sup.componentName);
+            if (u && u.exportKind !== "none" && !u.isAsync && providerMountsBare(u)) {
+              unit = u;
+              providerFile = sup.file;
+              break;
+            }
+          }
+        }
       }
       if (unit && unit.exportKind !== "none" && !unit.isAsync && providerMountsBare(unit)) {
         addReq(compKey, {
@@ -1356,6 +1412,13 @@ export async function deriveContextProviderWraps(
         // useRouteLoaderData.
         const libHooks = new Set<string>();
         const seenHooks = new Set<string>();
+        // Convention providers the chain reached through a BARE module: a
+        // wrapper that calls a library hook has no file to walk, but the app
+        // may still ship the convention provider for it (SaleorLogo ←
+        // `@dashboard/theme` ← useMacawTheme ← `@saleor/macaw-ui-next`,
+        // supplied by the app's own ThemeProvider).
+        const convRefs: { file: string; componentName: string }[] = [];
+        const convSeen = new Set<string>();
         const walkLibs = async (file: string, name: string): Promise<void> => {
           const key = `${file}::${name}`;
           if (seenHooks.has(key)) return;
@@ -1375,7 +1438,28 @@ export async function deriveContextProviderWraps(
               }
             }
             const target = resolver.resolve(b.specifier, file);
-            if (target) await walkLibs(target, side);
+            if (target) {
+              await walkLibs(target, side);
+            } else if (
+              /^use[A-Z]/.test(side) &&
+              !b.specifier.startsWith(".") &&
+              !b.specifier.startsWith("/")
+            ) {
+              // The call dies at a bare LIBRARY module — node_modules is never
+              // walked — but the app's own wrapper for it, if it exists, is
+              // project code indexed by (convention name, that very module).
+              // The key uses the MODULE-side name: `import { useTheme as
+              // useMacawTheme }` asks for ThemeProvider, not MacawThemeProvider.
+              for (const sup of conventionSuppliers.get(
+                `${side.slice(3)}Provider::${b.specifier}`,
+              ) ?? []) {
+                const ck = `${sup.file}::${sup.componentName}`;
+                if (!convSeen.has(ck)) {
+                  convSeen.add(ck);
+                  convRefs.push(sup);
+                }
+              }
+            }
           }
           // The barrel hop. A re-export table declares nothing, so a chain that
           // reaches one ends there — and in a Feature-Sliced app almost every
@@ -1436,6 +1520,18 @@ export async function deriveContextProviderWraps(
             filePath: shim.filePath,
             exportKind: "named",
           });
+        }
+        for (const sup of convRefs) {
+          const supParsed = await parseOnce(sup.file);
+          const u = supParsed?.components.find((x) => x.componentName === sup.componentName);
+          if (u && u.exportKind !== "none" && !u.isAsync && providerMountsBare(u)) {
+            addReq(compKey, {
+              componentName: u.componentName,
+              filePath: sup.file,
+              exportKind: u.exportKind,
+              exportedAs: u.exportedAs,
+            });
+          }
         }
       }
     }
