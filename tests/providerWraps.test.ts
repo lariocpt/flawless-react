@@ -1405,3 +1405,109 @@ export function Stranger() {
     expect([...wraps.keys()].some((k) => k.endsWith("::Stranger"))).toBe(false);
   });
 });
+
+describe("a dynamic element rendered from a project hook", () => {
+  // code-forge-io/react-router-devtools' ContentPanel: `const { Component }
+  // = useTabs()` and `{Component && <Component />}`, where useTabs selects
+  // from a registry of `{ id, component: () => <PageTab /> }`. The tag is
+  // dynamic, so no render edge exists and PageTab's data router never reaches
+  // the spec that mounts it — "useMatches must be used within a data router"
+  // at PageTab.tsx. The rule owes the registry's values like rendered
+  // children; the slice below is that shape in miniature, with one entry
+  // arrow-wrapped and one a plain identifier.
+  const dirs: string[] = [];
+  afterEach(() => {
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  async function deriveDyn(files: Record<string, string>): Promise<Map<string, ProviderRef[]>> {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "provwraps-dyn-"));
+    dirs.push(dir);
+    const cache = new SourceFileCache();
+    const trees: ComponentTree[] = [];
+    for (const [name, content] of Object.entries(files)) {
+      const file = path.join(dir, name);
+      writeFileSync(file, content);
+      trees.push(
+        ...(await analyseFile(
+          { entry: file, depth: 3, includeChildren: true, roots: "exported" },
+          { cache, resolver: new ModuleResolver() },
+        ).catch(() => [])),
+      );
+    }
+    return await deriveContextProviderWraps(trees, cache);
+  }
+
+  const SLICE = {
+    "needs.tsx": `
+import * as React from 'react';
+const NeedsContext = React.createContext<{ tick: number } | null>(null);
+export function useNeeds() {
+  const ctx = React.useContext(NeedsContext);
+  if (!ctx) throw new Error('useNeeds must be used within a NeedsProvider');
+  return ctx;
+}
+export function NeedsProvider({ children }: { children?: React.ReactNode }) {
+  return <NeedsContext.Provider value={{ tick: 1 }}>{children}</NeedsContext.Provider>;
+}
+`,
+    "alpha.tsx": `
+import { useNeeds } from './needs';
+export function Alpha() {
+  const { tick } = useNeeds();
+  return <div>{tick}</div>;
+}
+`,
+    "beta.tsx": `
+export function Beta() {
+  return <div>beta</div>;
+}
+`,
+    "registry.tsx": `
+import { Alpha } from './alpha';
+import { Beta } from './beta';
+export const registry = [
+  { id: 'a', component: () => <Alpha /> },
+  { id: 'b', component: Beta },
+] as const;
+`,
+    "pick.ts": `
+import { registry } from './registry';
+export const usePick = () => {
+  const tab = registry.find((t) => t.id === 'a');
+  return { Component: tab?.component };
+};
+`,
+    "panel.tsx": `
+import { usePick } from './pick';
+export function Panel() {
+  const { Component } = usePick();
+  return <div>{Component && <Component />}</div>;
+}
+export function Picker() {
+  const pick = usePick();
+  return <div>{pick.Component ? 'one' : 'none'}</div>;
+}
+`,
+  };
+
+  test("a rendered hook value owes the registry's components", async () => {
+    const wraps = await deriveDyn(SLICE);
+    const refs = refsof(wraps, "::Panel");
+    // Alpha is the registry value that needs NeedsProvider; Beta is the value
+    // that needs nothing, so the owed set is exactly Alpha's requirement.
+    expect(names(refs)).toEqual(["NeedsProvider"]);
+    expect(refs[0]?.filePath.endsWith("needs.tsx")).toBe(true);
+  });
+
+  test("a hook value only read, never rendered, owes nothing", async () => {
+    // The inertness pin: Picker calls usePick but never renders Component —
+    // a member read is not a tag — so the synthetic edge does not fire and
+    // Panel's requirement does not leak into a sibling that merely reads it.
+    const wraps = await deriveDyn(SLICE);
+    expect([...wraps.keys()].some((k) => k.endsWith("::Picker"))).toBe(false);
+  });
+});
