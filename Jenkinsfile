@@ -73,7 +73,7 @@ pipeline {
                     # skipped zsh case in CI is how the env.sh bug survived the first time.
                     # --add-host: sibling containers cannot resolve LAN DNS, and
                     # tests/crustGate.test.ts (FR-021) needs the crust binary that the apps
-                    # plane on this host serves. FLAWLESS_CI_BROWSER=1 arms the one gated
+                    # plane serves. FLAWLESS_CI_BROWSER=1 arms the one gated
                     # real-browser case (FR-022).
                     # FLAWLESS_CI_NATIVE arms tests/nativeExecution.test.ts, which generates
                     # an Expo suite, really installs jest-expo + RNTL into it, and runs jest.
@@ -91,7 +91,13 @@ pipeline {
                     # local checkout, and which stage a build died in was itself a race.
                     # Verified on 1.4.3: eight concurrent cold-cache installs of the nextapp
                     # fixture all clean, and the whole suite with zero extraction errors.
-                    CID=$(docker create -w /w --add-host apps.in.drlario.org:host-gateway \\
+                    # host-gateway died with the move: the apps plane now answers from its
+                    # own box, so pin the container to the IPv4 the agent itself resolves —
+                    # IPv4 because a bridge container has no route to the tailnet ULA the
+                    # AAAA gives, and builds 138/139 died on the crust fetch after 0 ms.
+                    APPS_IP=$(getent ahostsv4 apps.in.drlario.org | awk \'NR==1{print $1}\')
+                    test -n "$APPS_IP" || { echo "apps.in.drlario.org has no IPv4 answer here"; exit 1; }
+                    CID=$(docker create -w /w --add-host apps.in.drlario.org:$APPS_IP \\
                         -e FLAWLESS_CI_BROWSER=1 -e FLAWLESS_CI_NATIVE=1 oven/bun:1.4 sh -c '
                         set -eu
                         cd /w
