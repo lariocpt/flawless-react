@@ -361,9 +361,16 @@ the output dir:
 - **Context provider wraps** — `analyse/providerWraps.ts` feeds both mount
   planes the providers they cannot see: route layouts import the app's context
   providers, and route files are not analysed entries. Each mount opens with a
-  derived nest built from three evidence classes (hook call, namespace
-  compound, transitive requirement), following the re-export table through
-  barrels. A hook arriving from a bare module has no context object to join
+  derived nest built from four evidence classes (hook call, namespace
+  compound, transitive requirement, and a dynamic render — an uppercase tag the
+  body binds from a project hook's return, which owes every component that
+  hook's values can name: the hook body's own JSX plus one import hop into each
+  value identifier's top-level definition, depth 2 inside a definition, 16
+  components, merged into the render-edge worklist before the closure so the
+  closure treats it as the render it is), following the re-export table through
+  barrels — though the dynamic hop itself ends at a barrel that only re-exports,
+  since a re-export table declares nothing to walk. A hook arriving from a bare
+  module has no context object to join
   on, so it pairs by convention instead — an exported `XProvider` rendering a
   binding from `useX`'s own module, three conjuncts or nothing. Library
   contexts the app cannot supply get generated shims (query client, router —
