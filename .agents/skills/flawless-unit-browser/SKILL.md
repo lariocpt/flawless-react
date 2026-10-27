@@ -26,8 +26,11 @@ not even with `--force`.
 
 Plain (non-Next) mode has no `provider.tsx`: the wraps are derived per render
 instead. Each spec imports its nest under `__Prov`-prefixed bindings — the
-app's own providers found by hook call, namespace compound and transitive
-requirement, convention matches for bare-module hooks (`useTheme` → the
+app's own providers found by hook call, namespace compound, transitive
+requirement and dynamic render (a `<Component />` whose tag a project hook
+handed back: `const { Component } = useTabs()` — the component owes what the
+hook's values can hand out, the hook body's own JSX plus one import hop into
+the registry it selects from), convention matches for bare-module hooks (`useTheme` → the
 exported `ThemeProvider` that renders that module's binding), and generated
 shims for library contexts (`FlawlessQueryClientProvider`,
 `FlawlessRouterProvider`/`FlawlessDataRouterProvider`, `FlawlessFormProvider`,

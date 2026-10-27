@@ -102,7 +102,9 @@ Pass `--provider <file>` to override — that is also the way to supply a contex
 the derived wrapper dropped, since editing `provider.tsx` does not survive
 `--force`. In plain (non-Next) mode there is no derived `provider.tsx` at all:
 every render is wrapped in a per-component nest derived from hook-call,
-namespace-compound and transitive evidence — the app's own providers,
+namespace-compound, transitive-requirement and dynamic-render evidence (a
+dynamic `<Tag />` bound from a project hook's return owes what that hook's
+values can hand out) — the app's own providers,
 convention matches for bare-module hooks, and generated shims for library
 contexts — and `--provider` sits outside that nest.
 

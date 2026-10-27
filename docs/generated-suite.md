@@ -320,21 +320,50 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   `useSidebar must be used within a SidebarProvider` instead of findings. So
   every render opens with a derived nest — in the unit specs and in the perf
   host's registry alike — imported under a `__Prov` prefix so it can never
-  collide with a spec's own imports. Three derivations, strongest evidence
+  collide with a spec's own imports. Four derivations, strongest evidence
   first: a **hook call** (`useSidebar` → the `SidebarProvider` exported by the
   file the hook's import resolves to, or by the component's own file — and only
   that file's provider counts, so an unrelated `FooProvider` elsewhere never
   catches an unrelated `useFoo` caller), a **namespace compound**
   (`CommandInput` renders `CommandPrimitive.Input` and needs the same file's
-  `<Command>` mounted around it), and a **transitive requirement** (`AppSidebar`
+  `<Command>` mounted around it), a **transitive requirement** (`AppSidebar`
   never calls `useSidebar` — its `<Sidebar>` child does, and whatever a
-  component renders, it must satisfy too). A hook arriving from a bare module —
-  node_modules, or a barrel the analyser never follows — has no project file to
-  join on, so it pairs by convention instead: an exported component named after
-  the hook (`useTheme` → `ThemeProvider`) that renders a binding imported from
-  the hook's own module. All three conjuncts or no wrap: a `ThemeProvider`
-  rendering some other kit's provider must not catch a hook from a different
-  one. Library contexts the app cannot supply get generated shims:
+  component renders, it must satisfy too), and a **dynamic render** (the tag
+  itself is a value a project hook handed back — `{Component && <Component />}`
+  after `const { Component } = useTabs()` — so there is no import for the
+  analysis to walk and no child edge to close over). A hook arriving from a
+  bare module — node_modules, or a barrel that hands the library itself along
+  instead of the project file behind it, the same walk-ending table the dynamic
+  hop stops at — has no project file to join on, so it pairs by convention
+  instead: an exported component named after the hook (`useTheme` →
+  `ThemeProvider`) that renders a binding imported from the hook's own module.
+  All three conjuncts or no wrap: a `ThemeProvider` rendering some other kit's
+  provider must not catch a hook from a different one.
+
+  The dynamic render is bounded on purpose: the component owes what the walk can
+  name, and nothing more. The tag must be an uppercase name bound by shorthand
+  or plain destructuring (`const { Component } = useTabs()`, or the whole return
+  held as `const Tab = useTabs()`) from a `useX()` call that is not a core
+  hook — an alias, a default, or a member-expression tag is declined rather than
+  guessed, a prop of the same
+  shape stays the spec's business, and a value that is only *read*
+  (`pick.Component ? … : null`) is not a tag. The hook resolves to a project
+  file or sits beside the component; the renderables are the hook body's own JSX
+  tags plus ONE import hop into the top-level definition of each value
+  identifier the body holds — the registry it selects from, where an array or
+  object member steps in, an arrow body steps into its return, and
+  `as const` / `satisfies` / parens unwrap for free, to sixteen components. Two
+  ways the walk stops short and the shape stays a hole, in the same family: a
+  registry that reaches a barrel which only *re-exports* it ends the hop there
+  (a re-export table declares nothing to walk), and past the budget the walk
+  simply drops out. The edges merge into the render-edge worklist *before* the
+  closure, so ordering, supersedence and cycle handling treat them as what they
+  are — renders, not a special case. Which is how devtools' `ContentPanel` comes
+  to mount `useTabs()`' chosen tab inside the data router `PageTab` needs, and
+  "useMatches must be used within a data router" stops being the last router
+  error in the corpus.
+
+  Library contexts the app cannot supply get generated shims:
 
   | What the component uses | Generated wrap |
   | --- | --- |
