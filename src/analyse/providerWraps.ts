@@ -1221,6 +1221,10 @@ export async function deriveContextProviderWraps(
     }
     return p;
   };
+  // Synthetic render edges (the dynamic-render rule below): component key →
+  // the components a project-hook value hands it. Merged into `edges` before
+  // the closure so the worklist closes them like any render edge.
+  const synthEdges = new Map<string, Set<string>>();
   const nsCache = new Map<string, NamespaceFacts>();
   const nsOnce = async (file: string) => {
     let f = nsCache.get(file);
@@ -1247,6 +1251,194 @@ export async function deriveContextProviderWraps(
   // — the context object is the join key, so resolve each mention to a
   // (module, exported-name) pair and index every component that renders one.
   const resolver = new ModuleResolver();
+
+  // Dynamic render from a project hook. devtools' ContentPanel does
+  // `const { Component } = useTabs()` and renders `<Component />`: the tag is
+  // an identifier the body binds from a project hook's return, so walkChildren
+  // has no import to resolve, no render edge exists, and the closure has
+  // nothing to close — the registry values include PageTab, whose own spec
+  // gets its data router while the spec that mounts it through the dynamic
+  // element dies on useMatches. The rule: every component the hook's values
+  // can hand out is owed by the component exactly like a statically rendered
+  // child.
+  //
+  // Bounded on purpose: the hook's file, then one import hop inside it, depth
+  // two inside a definition (an array of objects whose value is an arrow
+  // returning JSX — the registry shape), sixteen components. Past the budget
+  // the walk drops out and the shape stays a hole, the way the barrel hands
+  // issue #117 documents.
+  const dynCache = new Map<string, Promise<{ file: string; componentName: string }[]>>();
+  /** Every descendant of `node`, depth first: the public compiler API walks
+   *  one level only, and the rule below needs the whole hook and component
+   *  bodies. */
+  const eachDescendant = (node: ts.Node, visit: (n: ts.Node) => void): void => {
+    ts.forEachChild(node, (child) => {
+      visit(child);
+      eachDescendant(child, visit);
+    });
+  };
+  /** The hook's body node in `sf`: a function declaration or a const arrow,
+   *  the two shapes ctxFactsOf's local-hook collection matches. */
+  const hookBodyOf = (sf: ts.SourceFile, name: string): ts.Node | undefined => {
+    for (const stmt of sf.statements) {
+      if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === name && stmt.body) return stmt.body;
+      if (!ts.isVariableStatement(stmt)) continue;
+      for (const d of stmt.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || d.name.text !== name) continue;
+        let init = d.initializer;
+        while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+        if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)))
+          return init.body ?? init;
+      }
+    }
+    return undefined;
+  };
+  /** The (file, name) a component mention in `p` names: a local declaration
+   *  first, then one value-import hop (the registry shape: the tab file
+   *  renders <PageTab /> imported from its own module). A mention that is
+   *  neither resolves to nothing. */
+  const componentRefOf = async (
+    p: ParsedFile,
+    name: string,
+  ): Promise<{ file: string; componentName: string } | undefined> => {
+    if (p.components.some((u) => u.componentName === name))
+      return { file: p.filePath, componentName: name };
+    const b = p.imports.get(name);
+    if (!b || b.isTypeOnly) return undefined;
+    const target = resolver.resolve(b.specifier, p.filePath);
+    if (!target) return undefined;
+    const tp = await parseOnce(target);
+    const exported = b.importedName ?? name;
+    if (tp?.components.some((u) => u.componentName === exported))
+      return { file: target, componentName: exported };
+    return undefined;
+  };
+  /** Follow one definition initializer for component mentions, on a depth
+   *  budget: array and object members step in, arrow/function bodies do not,
+   *  and a JSX tag or plain identifier is collected wherever it appears
+   *  within budget. `add` resolves the mention to a (file, name). */
+  const collectAsync = async (
+    node: ts.Node | undefined,
+    file: ParsedFile,
+    depth: number,
+    add: (name: string, inFile: ParsedFile) => Promise<void>,
+  ): Promise<void> => {
+    if (!node || depth < 0) return;
+    // `as const` / `satisfies` / parens name the same value one layer down —
+    // devtools' registry is `[...] as const` — so unwrap without paying depth.
+    if (
+      ts.isAsExpression(node) ||
+      ts.isSatisfiesExpression(node) ||
+      ts.isParenthesizedExpression(node)
+    )
+      return collectAsync(node.expression, file, depth, add);
+    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const tag = ts.isJsxElement(node) ? node.openingElement.tagName : node.tagName;
+      if (ts.isIdentifier(tag) && /^[A-Z]/.test(tag.text)) await add(tag.text, file);
+      return;
+    }
+    if (ts.isArrayLiteralExpression(node)) {
+      for (const el of node.elements) await collectAsync(el, file, depth - 1, add);
+      return;
+    }
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const prop of node.properties) {
+        // A shorthand property's initializer IS its name: { component: X }
+        // and { component: X } both name the same mention.
+        const value = ts.isPropertyAssignment(prop)
+          ? prop.initializer
+          : ts.isShorthandPropertyAssignment(prop)
+            ? prop.name
+            : undefined;
+        if (value) await collectAsync(value, file, depth - 1, add);
+      }
+      return;
+    }
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      await collectAsync(node.body, file, depth, add);
+      return;
+    }
+    if (ts.isBlock(node)) {
+      for (const stmt of node.statements) {
+        if (ts.isReturnStatement(stmt) && stmt.expression)
+          await collectAsync(stmt.expression, file, depth, add);
+      }
+      return;
+    }
+    if (ts.isIdentifier(node) && /^[A-Z]/.test(node.text)) await add(node.text, file);
+  };
+  /** The components a hook's values can hand out, keyed by (file, hook
+   *  name): the hook body's own JSX, plus the definitions its value
+   *  identifiers import — the registry the hook selects from. Cached: a hook
+   *  shared by several components parses once, and the slice bounds the
+   *  fan-out a pathological registry could otherwise give the edges. */
+  const dynamicRenderablesOf = async (
+    file: string,
+    hookName: string,
+  ): Promise<{ file: string; componentName: string }[]> => {
+    const key = `${file}::${hookName}`;
+    let p = dynCache.get(key);
+    if (!p) {
+      p = (async () => {
+        const parsed = await parseOnce(file);
+        if (!parsed) return [];
+        const body = hookBodyOf(parsed.sourceFile, hookName);
+        if (!body) return [];
+        const found = new Map<string, { file: string; componentName: string }>();
+        const add = async (name: string, inFile: ParsedFile): Promise<void> => {
+          const r = await componentRefOf(inFile, name);
+          if (r) found.set(`${r.file}::${r.componentName}`, r);
+        };
+        eachDescendant(body, (n) => {
+          const tag =
+            ts.isJsxElement(n) && ts.isIdentifier(n.openingElement.tagName)
+              ? n.openingElement.tagName
+              : ts.isJsxSelfClosingElement(n) && ts.isIdentifier(n.tagName)
+                ? n.tagName
+                : undefined;
+          if (tag && /^[A-Z]/.test(tag.text)) void add(tag.text, parsed);
+        });
+        // The value identifiers the body holds: the registry the hook selects
+        // from, one file hop into each imported definition. A hop is paid per
+        // TARGET file — the import table maps local names, and two names from
+        // one module are the same hop.
+        const hopped = new Set<string>();
+        const hopTargets = new Map<string, string>();
+        eachDescendant(body, (n) => {
+          if (!ts.isIdentifier(n)) return;
+          const b = parsed.imports.get(n.text);
+          if (!b || b.isTypeOnly) return;
+          const target = resolver.resolve(b.specifier, parsed.filePath);
+          if (!target || hopped.has(target)) return;
+          hopped.add(target);
+          hopTargets.set(target, b.importedName ?? n.text);
+        });
+        for (const [target, name] of hopTargets) {
+          const tp = await parseOnce(target);
+          if (!tp) continue;
+          // The top-level definition of the imported name; a barrel that only
+          // re-exports it declares nothing and ends the walk.
+          let def: ts.Node | undefined;
+          for (const stmt of tp.sourceFile.statements) {
+            if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === name && stmt.body)
+              def = stmt.body;
+            else if (ts.isVariableStatement(stmt)) {
+              for (const d of stmt.declarationList.declarations) {
+                if (ts.isIdentifier(d.name) && d.name.text === name && d.initializer)
+                  def = d.initializer;
+              }
+            }
+            if (def) break;
+          }
+          if (def) await collectAsync(def, tp, 2, add);
+        }
+        return [...found.values()].slice(0, 16);
+      })();
+      dynCache.set(key, p);
+    }
+    return p;
+  };
+
   const ctxKeyOf = (file: string, ref: RawCtxRef): string | undefined => {
     if (!ref.module) return `${file}::${ref.name}`;
     const resolved = resolver.resolve(ref.module, file);
@@ -1559,6 +1751,77 @@ export async function deriveContextProviderWraps(
         }
       }
     }
+    // Dynamic render from a project hook: <Component /> whose tag the body
+    // binds by destructuring a project hook's return. devtools' ContentPanel
+    // gets useTabs' chosen tab this way, and the registry's values are then
+    // owed exactly like statically rendered children — with the edge, PageTab's
+    // data router reaches the spec that mounts it through the dynamic element.
+    // Only shorthand/plain bindings count: an alias or a default is a shape
+    // the rule declines rather than guesses at, and a prop of the same shape
+    // stays the spec's business.
+    if (own) {
+      const unit = own.components.find((u) => u.componentName === c.info.componentName);
+      const body = unit?.bodyNode;
+      if (body) {
+        const boundToHook = new Map<string, string>(); // bound name -> hook local name
+        eachDescendant(body, (m) => {
+          if (!ts.isVariableDeclaration(m) || !m.initializer) return;
+          const init = ts.isAwaitExpression(m.initializer)
+            ? m.initializer.expression
+            : m.initializer;
+          if (
+            !ts.isCallExpression(init) ||
+            !ts.isIdentifier(init.expression) ||
+            !/^use[A-Z]/.test(init.expression.text) ||
+            CORE_HOOKS.has(init.expression.text)
+          )
+            return;
+          const hookLocal = init.expression.text;
+          if (ts.isObjectBindingPattern(m.name)) {
+            for (const el of m.name.elements) {
+              if (
+                ts.isIdentifier(el.name) &&
+                !el.propertyName &&
+                !el.initializer &&
+                /^[A-Z]/.test(el.name.text)
+              )
+                boundToHook.set(el.name.text, hookLocal);
+            }
+          } else if (ts.isIdentifier(m.name) && /^[A-Z]/.test(m.name.text)) {
+            boundToHook.set(m.name.text, hookLocal);
+          }
+        });
+        if (boundToHook.size > 0) {
+          const rendered = new Set<string>();
+          eachDescendant(body, (n) => {
+            const tag = ts.isJsxOpeningElement(n)
+              ? n.tagName
+              : ts.isJsxSelfClosingElement(n)
+                ? n.tagName
+                : undefined;
+            if (tag && ts.isIdentifier(tag) && /^[A-Z]/.test(tag.text)) rendered.add(tag.text);
+          });
+          for (const tag of rendered) {
+            const hookLocal = boundToHook.get(tag);
+            if (!hookLocal) continue;
+            let sourceFile: string | undefined;
+            const b = own.imports.get(hookLocal);
+            if (b && !b.isTypeOnly) {
+              sourceFile = resolver.resolve(b.specifier, own.filePath);
+              if (!sourceFile) continue; // bare module — no project body to walk
+            } else sourceFile = own.filePath; // co-located with the component
+            for (const r of await dynamicRenderablesOf(sourceFile, hookLocal)) {
+              let s = synthEdges.get(compKey);
+              if (!s) {
+                s = new Set();
+                synthEdges.set(compKey, s);
+              }
+              s.add(`${r.file}::${r.componentName}`);
+            }
+          }
+        }
+      }
+    }
     const ns = await nsOnce(c.info.filePath);
     if (ns.provider && ns.consumers.has(c.info.componentName)) {
       addReq(compKey, ns.provider);
@@ -1589,6 +1852,18 @@ export async function deriveContextProviderWraps(
     }
   };
   for (const t of trees) walk(t);
+  // The dynamic-render rule above recorded render edges the analysis trees
+  // cannot see — a dynamic tag has no import to resolve and no static tag to
+  // walk. Merged in before the worklist, the closure closes them like any
+  // render edge: ordering, supersedence and cycle handling stay untouched.
+  for (const [pk, kids] of synthEdges) {
+    let s = edges.get(pk);
+    if (!s) {
+      s = new Set();
+      edges.set(pk, s);
+    }
+    for (const ck of kids) s.add(ck);
+  }
   // The closure runs as a WORKLIST, not a level pass: a wrapped provider may
   // owe several hops further (it renders a child, that child wraps another
   // provider, …), and a level pass moves only one hop — on ton-console's page
