@@ -172,8 +172,26 @@ function isInstalled(
 }
 
 /**
- * The bare packages the analysed components import that are installed nowhere
- * the suite will resolve them.
+ * Whether a component gets a spec of its own.
+ *
+ * `exportKind: "none"` is a same-file secondary — the module never exports it, so
+ * no spec can import it and the scaffolder writes none. TWO places read that fact
+ * through this one predicate: the scaffolder's spec targets and
+ * `findUnresolvableImports` below. They must not disagree, because the warning is
+ * a promise about a spec — naming an unresolvable import in a component that gets
+ * no spec promises a collect failure that cannot happen. (Witness,
+ * react-router-devtools: the run warned `clsx` for the unexported `Icon` in
+ * `plugins/icon-library/icon-library.tsx`, whose file the host cannot import
+ * either — and the plane has no clsx failure, because there is no clsx-importing
+ * spec to fail.)
+ */
+export function hasSpec(info: { exportKind?: "default" | "named" | "none" }): boolean {
+  return info.exportKind !== "none";
+}
+
+/**
+ * The bare packages the components that GET A SPEC import, installed nowhere the
+ * suite will resolve them.
  *
  * Resolution is per IMPORTER, because that is what vite does: the walk-up
  * starts at the file holding the import, so a package installed by a nested
@@ -208,6 +226,10 @@ export function findUnresolvableImports(
 
   const bySpec = new Map<string, { pkg: string; names: Set<string> }>();
   for (const { info } of flattenTrees(trees)) {
+    // Only what will have a spec: see hasSpec. An unexported component's import
+    // is a fact about the app, not about this run — no spec imports it, so no
+    // spec fails collecting it.
+    if (!hasSpec(info)) continue;
     const fromDirs = [path.dirname(info.filePath), ...extraDirs];
     for (const mi of info.moduleImports ?? []) {
       // `import type` is erased before vite sees it; a side-effect import has

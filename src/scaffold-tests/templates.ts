@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { type AuthStub, authShimVitestBlock, collectAuthStubs } from "../analyse/authShims.ts";
+import { hasSpec } from "../analyse/bootability.ts";
 import {
   libraryShimSource,
   providerKey,
@@ -241,7 +242,9 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   // spec to write. These reach `flat` only as children of an exported parent,
   // and emitting `import { X }` for them yields undefined -> "Element type is
   // invalid" at render time. Their behaviour is covered through that parent.
-  const specTargets = flat.filter((c) => c.info.exportKind !== "none");
+  // hasSpec is the SAME predicate findUnresolvableImports reads: the collect
+  // warning is a promise about these files, so the two may not disagree.
+  const specTargets = flat.filter((c) => hasSpec(c.info));
 
   const perFile = new Map<string, number>();
   for (const c of specTargets)
