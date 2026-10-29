@@ -931,6 +931,34 @@ describe("renderUnitBrowser setup.ts", () => {
     expect(setup).toContain("controller.abort(signal.reason)");
     expect(setup).toContain("signal: controller.signal");
   });
+
+  test("substitutes a recording 2d canvas context for jsdom's throw", () => {
+    const setup = contentOf(
+      renderUnitBrowser({ trees: [tree(comp("Widget"))], outDir: OUT, variants: 3 }),
+      "setup.ts",
+    );
+    // jsdom has no canvas backend: getContext() logs `Not implemented` and
+    // throws, so a component that touches a canvas at mount takes its whole spec
+    // file down with it (issue #98: 27 of eyeix/meilisearch-ui's spec files
+    // reported ZERO tests for exactly this reason).
+    expect(setup).toContain('Object.defineProperty(__canvasProto, "getContext"');
+    // A RECORDING context, the shape #98 asks for: the mount survives and a spec
+    // can assert THAT it drew. What it drew is not claimed — no pixels here.
+    expect(setup).toContain("__flawlessDraws");
+    // 2d only. A fake GPU would let a shader component run to a result nobody
+    // measured, so the rest answer the real browser's "not available".
+    expect(setup).toContain('if (type === "2d") return __make2d(this);');
+    expect(setup).toContain("__canvasProto.__flawlessRealGetContext = __realGetContext");
+    // Installed by jsdom's own user-agent marker, NOT by probing the real
+    // getContext: jsdom logs before it throws, so a probe puts one alarming
+    // stderr block in every file of a healthy run (measured: 50 files, 50 lines).
+    expect(setup).toContain('String(navigator.userAgent ?? "").toLowerCase().includes("jsdom")');
+    // Pinned as the full expression on purpose: an earlier revision wrote this as
+    // a regex literal, the template ate its backslash, and every spec in the
+    // emitted suite died on "ReferenceError: i is not defined". The emitted-file
+    // type-check harness (emittedTypes.test.ts) catches that class with TS2304 —
+    // this pin stops the fix being tidied back into the hazard.
+  });
 });
 
 describe("renderUnitBrowser document-root components", () => {
