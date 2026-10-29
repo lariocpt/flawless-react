@@ -1215,6 +1215,154 @@ if (typeof window !== "undefined") {
       },
     });
   }
+
+  // jsdom has no canvas backend: \`HTMLCanvasElement.prototype.getContext\`
+  // exists and THROWS \`Error: Not implemented: … (without installing the canvas
+  // npm package)\` on every call. Any component that touches a canvas at mount —
+  // a chart, a sparkline, a signature pad, a cropper, an avatar ring — dies in
+  // the unit plane for a reason that has nothing to do with the component: 45
+  // failures across two corpus apps (issue #98, meilisearch-ui 27 and
+  // claw-empire 18), none of them the app's fault.
+  //
+  // What goes in its place is the shape #98 asks for: a RECORDING 2D context.
+  // Every documented 2d method exists and does nothing but count itself; state
+  // properties are kept and read back; measureText answers with a fixed-advance
+  // width and getImageData with zeroed pixels of the size asked for. So the
+  // mount survives and a spec can assert THAT the component drew —
+  // canvas.getContext("2d").__flawlessDraws(), the array a context pushes
+  // method names onto, with \`flawlessDrawCount\` for the common "did it paint"
+  // question. What is NOT claimed is WHAT it drew: there are no pixels, no
+  // compositing and no font metrics here, and a spec asserting a rendered colour
+  // or glyph would be a lie this stub must not make possible.
+  //
+  // \`webgl\`/\`webgl2\` answer null instead of a fake on purpose: "no GPU context"
+  // is a state real browsers hand out daily and apps already branch on, while a
+  // fake GPU would let a shader component run to a result nobody measured. A
+  // component that cannot live without WebGL fails, and that failure is about
+  // the app — which is the line this whole family keeps: supply the standard API
+  // the environment lacks, invent nothing a component is awaiting.
+  //
+  // Installed only where the platform has nothing. The browser plane renders in
+  // Chromium, where the real backend answers and this block never runs.
+  //
+  // The environment is identified by jsdom's own user-agent marker rather than
+  // by calling getContext to see whether it works: jsdom logs \`Not implemented\`
+  // to its virtual console BEFORE it throws, so a probe puts one alarming stderr
+  // block in every spec file of a healthy run (measured: 50 files, 50 lines).
+  // A suite that overrides its user-agent therefore keeps jsdom's throw — a miss
+  // the run inherits today anyway, never a wrong claim. The function being
+  // replaced stays reachable as \`__flawlessRealGetContext\`. Detection is a plain
+  // string test: a regex literal does not survive this template's escaping.
+  const __isJsdom =
+    typeof navigator !== "undefined" &&
+    String(navigator.userAgent ?? "").toLowerCase().includes("jsdom");
+  const __canvasProto: any =
+    typeof HTMLCanvasElement === "undefined" ? undefined : HTMLCanvasElement.prototype;
+  if (__isJsdom && __canvasProto) {
+    const __realGetContext = __canvasProto.getContext;
+      // The documented 2d surface that has no interesting return value. Methods
+      // with one (measureText, getImageData, gradients, the point tests) are
+      // written out below, and anything NOT on this list reads back undefined
+      // rather than becoming a no-op function — inventing an API is how a stub
+      // teaches an app that a browser it does not have exists.
+    const __drawMethods = [
+      "clearRect", "fillRect", "strokeRect", "reset",
+      "beginPath", "closePath", "moveTo", "lineTo", "bezierCurveTo",
+      "quadraticCurveTo", "arc", "arcTo", "ellipse", "rect", "roundRect",
+      "fill", "stroke", "clip", "fillText", "strokeText", "drawImage",
+      "save", "restore", "translate", "rotate", "scale", "transform",
+      "setTransform", "resetTransform", "setLineDash", "drawFocusIfNeeded",
+      "scrollPathIntoView", "putImageData", "transferFromImageBitmap",
+    ];
+    const __make2d = (canvas: unknown): any => {
+      const draws: string[] = [];
+      const ctx: any = {
+        canvas,
+        __flawlessDraws: draws,
+        get flawlessDrawCount() {
+          return draws.length;
+        },
+        fillStyle: "#000000",
+        strokeStyle: "#000000",
+        lineWidth: 1,
+        lineCap: "butt",
+        lineJoin: "miter",
+        miterLimit: 10,
+        lineDashOffset: 0,
+        font: "10px sans-serif",
+        textAlign: "start",
+        textBaseline: "alphabetic",
+        direction: "inherit",
+        globalAlpha: 1,
+        globalCompositeOperation: "source-over",
+        shadowOffsetX: 0,
+        shadowOffsetY: 0,
+        shadowBlur: 0,
+        shadowColor: "rgba(0, 0, 0, 0)",
+        imageSmoothingEnabled: true,
+        imageSmoothingQuality: "low",
+        filter: "none",
+        measureText: (text: unknown) => {
+          // A fixed advance, not a font metric: enough for layout that reads
+          // a width, nothing a glyph claim could rest on.
+          const width = String(text ?? "").length * 6;
+          return {
+            width,
+            actualBoundingBoxLeft: 0,
+            actualBoundingBoxRight: width,
+            actualBoundingBoxAscent: 8,
+            actualBoundingBoxDescent: 2,
+            fontBoundingBoxAscent: 8,
+            fontBoundingBoxDescent: 2,
+          };
+        },
+        getImageData: (_x: number, _y: number, w: number, h: number) => ({
+          data: new Uint8ClampedArray(Math.max(0, Math.trunc(w * h * 4))),
+          width: w,
+          height: h,
+          colorSpace: "srgb",
+        }),
+        createImageData: (w: number, h: number) => ({
+          data: new Uint8ClampedArray(Math.max(0, Math.trunc(w * h * 4))),
+          width: w,
+          height: h,
+          colorSpace: "srgb",
+        }),
+        getLineDash: () => [],
+        getContextAttributes: () => ({
+          alpha: true,
+          colorSpace: "srgb",
+          desynchronized: false,
+          willReadFrequently: false,
+        }),
+        createLinearGradient: () => ({ addColorStop: () => {} }),
+        createRadialGradient: () => ({ addColorStop: () => {} }),
+        createConicGradient: () => ({ addColorStop: () => {} }),
+        createPattern: () => ({ setTransform: () => {} }),
+        isPointInPath: () => false,
+        isPointInStroke: () => false,
+      };
+      for (const name of __drawMethods) {
+        ctx[name] = (...args: unknown[]) => {
+          void args;
+          draws.push(name);
+        };
+      }
+      return ctx;
+    };
+    Object.defineProperty(__canvasProto, "getContext", {
+      configurable: true,
+      writable: true,
+      value(this: unknown, type?: string) {
+        if (type === "2d") return __make2d(this);
+        // Everything else — webgl, webgl2, bitmaprenderer — is the real
+        // browser's "not available" answer, not a substitute.
+        return null;
+      },
+    });
+    // Nothing is lost on the way in: the replaced function stays reachable.
+    __canvasProto.__flawlessRealGetContext = __realGetContext;
+  }
 }
  // Global next/navigation mock: covers provider wrappers and third-party
  // libs (Clerk, TanStack Router, etc.) that import next/navigation

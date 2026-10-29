@@ -291,12 +291,19 @@ A short user-facing README for the *generated* suite, separate from this repo's 
   fails with `Cannot read properties of null (reading 'useEffect')`.
 - **`setup.ts`** — `@testing-library/jest-dom`, the jsdom gaps real component
   stacks hit (`matchMedia`, `ResizeObserver`, `IntersectionObserver`,
-  `scrollIntoView`, and the `AbortSignal.any` static jsdom has never
-  implemented while Node has had it since 20.3), MSW wiring when `--api` was
-  used, and an in-memory `Storage` fallback. That last one matters on Node ≥ 22,
-  which defines a `localStorage` global that is inert without
-  `--localstorage-file`; persistence middleware (zustand `persist`,
+  `scrollIntoView`, the `AbortSignal.any` static jsdom has never implemented
+  while Node has had it since 20.3, and `HTMLCanvasElement.getContext`), MSW
+  wiring when `--api` was used, and an in-memory `Storage` fallback. That last
+  one matters on Node ≥ 22, which defines a `localStorage` global that is inert
+  without `--localstorage-file`; persistence middleware (zustand `persist`,
   redux-persist) is otherwise handed `undefined` and throws on its first write.
+  `getContext` is answered with a **recording** 2D context, because jsdom logs
+  `Not implemented` and throws: a chart, sparkline or signature pad used to take
+  its whole spec file down with it (#98 — 27 of one witness app's 50 spec files
+  reported zero tests, none of it the app's fault). Every documented 2d method
+  exists and counts itself into `canvas.getContext("2d").__flawlessDraws()`, so a
+  spec can assert THAT the component drew; nothing here claims WHAT it drew —
+  there are no pixels — and `webgl`/`webgl2` answer `null` rather than a fake GPU.
 - **`<Component>.test.tsx`** — one per exported component. What it contains
   depends on what the analyser could prove:
 
