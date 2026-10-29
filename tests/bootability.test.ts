@@ -99,6 +99,25 @@ describe("what will not resolve when the suite collects", () => {
     ]);
   });
 
+  test("a component that gets no spec is never promised a collect failure", async () => {
+    const base = await fixture();
+    const from = path.join(base, "src", "components");
+    // A same-file secondary: the scaffolder writes no spec for it (hasSpec), so
+    // naming its import promises a spec failing to collect that will never exist.
+    // This is the react-router-devtools `clsx` shape exactly — the run warned it,
+    // the plane had no such failure, and REPORT itself called the component
+    // unimportable.
+    const secondary = tree("Icon", path.join(from, "icon-library.tsx"), ["clsx"]);
+    secondary.entry.exportKind = "none";
+    expect(findUnresolvableImports([secondary], [from, base])).toEqual([]);
+    // The suppression is scoped to no-spec files: an exported component with the
+    // same missing package is still named, because THAT spec really will fail.
+    const exported = tree("Card", path.join(from, "Card.tsx"), ["clsx"]);
+    expect(findUnresolvableImports([secondary, exported], [from, base])).toEqual([
+      { specifier: "clsx", pkg: "clsx", count: 1, examples: ["Card"] },
+    ]);
+  });
+
   test("scoped packages are read one level deep, in both directions", async () => {
     const base = await fixture();
     const from = path.join(base, "src", "components");
