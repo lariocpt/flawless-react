@@ -638,6 +638,16 @@ async function analyseOne(
           ...(base.importedNames ?? base.names),
           ...add.map(({ n, i }) => extra.importedNames?.[i] ?? extra.names[i] ?? n),
         ],
+        // A `type` specifier stays a `type` specifier whatever merges it: the
+        // name is erased at compile time either way, so losing this list in the
+        // merge would put the runtime-binding lie back.
+        ...(base.typeOnlyNames || extra.typeOnlyNames
+          ? {
+              typeOnlyNames: [
+                ...new Set([...(base.typeOnlyNames ?? []), ...(extra.typeOnlyNames ?? [])]),
+              ],
+            }
+          : {}),
         mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
         ...(base.dataExports || extra.dataExports
           ? {
