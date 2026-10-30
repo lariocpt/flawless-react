@@ -1193,6 +1193,14 @@ export interface RunContext {
    * `nextjs` — a project is one or the other, and passing both is a UsageError.
    */
   expo?: ExpoContext;
+  /**
+   * Whether the React Compiler runs, read off the project's own configs. Set by
+   * `runCore` in every mode — web mode has no other route to this fact, and
+   * `perf-static`'s memo-family rules are exactly the work the compiler does by
+   * itself. Absent only for a hand-built context, and a task must then say it
+   * did not check rather than assume either way.
+   */
+  reactCompiler?: ReactCompilerProbe;
   /** Emit unit specs next to the analysed source files instead of <outDir>/unit. */
   colocate?: boolean;
   /** Every task id selected for this run, so tasks can honour cross-task deps. */
@@ -1266,6 +1274,32 @@ export interface CliArgs {
 }
 
 export type NextjsRouter = "app" | "pages";
+
+/**
+ * Whether the React Compiler runs for a project, as `detectReactCompiler` reads
+ * it off disk — three states because a boolean would let `perf-static` suppress
+ * the memo-family rules on a guess.
+ *
+ * - `on`           — a config spells it on. The three memo-family rules name
+ *                    work the compiler does by itself and are suppressed.
+ * - `off`          — a config was READ and does not turn it on. Rules run.
+ * - `undetermined` — nothing readable. Rules run, and the task says the memo
+ *                    findings may be pre-compiled noise. Never silent.
+ */
+export type ReactCompilerState = "on" | "off" | "undetermined";
+
+export interface ReactCompilerProbe {
+  state: ReactCompilerState;
+  /**
+   * What the answer rests on, spelled the way a person would write it in the
+   * config: `app.json experiments.reactCompiler`, `next.config.ts reactCompiler`,
+   * `babel.config.js babel-plugin-react-compiler`. For `off` and `undetermined`
+   * it names what was read instead, so the state is checkable whichever way it
+   * fell — an evidence line that exists only on a suppression is a footnote to
+   * one outcome, not evidence.
+   */
+  evidence: string;
+}
 
 export interface NextjsApiRoute {
   path: string;

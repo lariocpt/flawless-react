@@ -23,6 +23,7 @@ import {
   isUsableUnitProvider,
 } from "./nextjs/providerWrapper.ts";
 import { appReactMajor } from "./packageJson.ts";
+import { configRootFor, detectReactCompiler } from "./reactCompiler.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
@@ -276,7 +277,6 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     log(
       `expo: ${expoCtx.root} (sdk=${expoCtx.sdkMajor ?? "unknown"}` +
         `, expo-router=${expoCtx.routerMajor ?? "none"}` +
-        `, react-compiler=${expoCtx.reactCompiler}` +
         `, nativewind=${expoCtx.nativewind}` +
         `, web-port=${expoCtx.webPort})`,
     );
@@ -367,6 +367,17 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
 
   outDir = path.resolve(outDir ?? path.join(process.cwd(), ".flawless"));
 
+  // Read once, here, for every mode. `perf-static`'s three memo-family rules
+  // name work the React Compiler does by itself, and web mode had no route to
+  // this fact at all — so the dogfood app's web side reported 127 findings
+  // recommending the compiler's own output be written by hand. It is logged in
+  // every state, including `off`: a task that quietly changes what it reports
+  // because of a flag nobody saw read is the same lie wearing a quieter outfit.
+  const reactCompiler = detectReactCompiler(
+    expoCtx?.root ?? nextCtx?.root ?? configRootFor(outDir),
+  );
+  log(`react-compiler=${reactCompiler.state} (${reactCompiler.evidence})`);
+
   const files = await expandGlob(pattern, {
     ...(opts.exclude ? { exclude: opts.exclude } : {}),
     ...(opts.useDefaultExcludes === undefined
@@ -444,6 +455,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     inlineSummary: opts.inlineSummary ?? true,
     nextjs: nextCtx,
     ...(expoCtx ? { expo: expoCtx } : {}),
+    reactCompiler,
     colocate: opts.colocate ?? false,
     selectedTasks: taskIds,
     // Changed-mode reaches the tasks so perf-harness can keep an existing

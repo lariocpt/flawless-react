@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { detectReactCompiler } from "../reactCompiler.ts";
 import { type ExpoContext, UsageError } from "../types.ts";
 
 /**
@@ -33,6 +34,9 @@ export async function detectExpo(root: string): Promise<ExpoContext> {
   };
 
   const routerRoot = detectRouterRoot(abs, deps);
+  // One probe for every mode (src/reactCompiler.ts), so the web and expo answers
+  // cannot drift and `perf-static` reads one fact. The boolean is all ExpoContext
+  // has ever carried; the evidence beside it reaches tasks on RunContext.
   return {
     root: abs,
     routerRoot,
@@ -41,7 +45,7 @@ export async function detectExpo(root: string): Promise<ExpoContext> {
       deps["expo-router"],
       path.join(abs, "node_modules", "expo-router", "package.json"),
     ),
-    reactCompiler: detectReactCompiler(abs),
+    reactCompiler: detectReactCompiler(abs).state === "on",
     nativewind: detectNativewind(abs),
     webPort: expoWebPort(pkg?.scripts as Record<string, string> | undefined),
   };
@@ -87,26 +91,6 @@ function detectRouterRoot(dir: string, deps: Record<string, string>): string | u
     if (isDir(candidate)) return candidate;
   }
   return undefined;
-}
-
-/**
- * The React Compiler is on for this project.
- *
- * Two independent spellings, because a project may use either: Expo's own
- * `experiments.reactCompiler` in app.json, or the babel plugin directly. Read
- * as text for the babel config — executing a project's babel config to ask it a
- * question is not something a static analyser should do.
- */
-function detectReactCompiler(dir: string): boolean {
-  const appJson = readJson(path.join(dir, "app.json"));
-  const experiments = (appJson?.expo as { experiments?: Record<string, unknown> } | undefined)
-    ?.experiments;
-  if (experiments?.reactCompiler === true) return true;
-  return configMentions(
-    dir,
-    ["babel.config.js", "babel.config.cjs", "babel.config.mjs"],
-    ["babel-plugin-react-compiler", "reactCompiler"],
-  );
 }
 
 /** NativeWind is wired through babel — the only route by which `className` works. */
