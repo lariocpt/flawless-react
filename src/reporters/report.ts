@@ -192,6 +192,31 @@ export function renderReportMarkdown(input: ReportInput): string {
   }
   lines.push("");
 
+  // --- what the React Compiler did for this run -----------------------------
+  // The Tasks table row says "12 finding(s)". Whether that 12 was once 148 is a
+  // fact about the compiler, and it is not in the table — so a reader of the
+  // committed file cannot tell a suppressed zero from an honest one. Same
+  // principle as the native-a11y denominator: a zero has to say what kind of
+  // zero it is. Rendered only for the two states that change what the number
+  // means or could have changed (see compilerNote in tasks/staticPerfAnalysis.ts).
+  const compiler = input.results.find((r) => r.reactCompiler !== undefined)?.reactCompiler;
+  if (compiler && compiler.state !== "off") {
+    const suppressed = compiler.suppressed ?? [];
+    const suppressedFindings = suppressed.reduce((n, s) => n + s.count, 0);
+    lines.push(
+      compiler.state === "on"
+        ? `> \`perf-static\`: ${suppressed.length} memo rule(s) suppressed — React Compiler ` +
+            `detected (\`${compiler.evidence}\`), so ${suppressedFindings} finding(s) of work ` +
+            "it does by itself were not reported. A zero from `unstable-child-prop`, " +
+            "`missing-memo-leaf` or `no-memoisation-with-children` here means the compiler " +
+            "memoises it, not that nothing was found."
+        : "> `perf-static`: React Compiler state undetermined " +
+            `(\`${compiler.evidence}\`) — all nine rules ran, and the memo-family findings ` +
+            "above may be pre-compiled noise on a compiler-on app.",
+      "",
+    );
+  }
+
   // --- hand-work remaining --------------------------------------------------
   // The one adoption-cost number the component table cannot show: how many
   // TODO(flawless) markers the emitters planted, and of what kind. Counted at

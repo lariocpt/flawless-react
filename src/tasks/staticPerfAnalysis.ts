@@ -6,6 +6,7 @@ import type {
   ComponentTree,
   EffectFeatures,
   Finding,
+  ReactCompilerProbe,
   RunContext,
   SourcePosition,
   Task,
@@ -51,6 +52,33 @@ interface PerfReport {
   findings: Finding[];
 }
 
+/** One rule and how many findings of it the compiler made redundant. */
+interface SuppressedTally {
+  rule: string;
+  count: number;
+}
+
+/**
+ * The three rules whose advice the React Compiler implements by itself.
+ *
+ * It memoises props and JSX at the call site, so "a new reference on every
+ * render" is false post-compilation and a hand-written `memo()` wrapper is work
+ * the build already did — the React docs go further and call adding one contrary
+ * to guidance. The other six rules are untouched by it: correct dependency
+ * arrays are what the compiler RELIES on, effects run per render whatever got
+ * memoised, and `set-state-in-render` is a correctness bug, not a scale.
+ *
+ * Bail-outs are deliberately not modelled. A component that violates the Rules
+ * of React is not compiled — but the react-rules task owns that detection, and
+ * these flags are global, so perf-static treats compiler state as global instead
+ * of second-guessing per-file compilation success.
+ */
+const MEMO_FAMILY_RULES: readonly string[] = [
+  "perf/no-memoisation-with-children",
+  "perf/unstable-child-prop",
+  "perf/missing-memo-leaf",
+];
+
 export const staticPerfAnalysis: Task = {
   id: "perf-static",
   label: "Static React perf analysis",
@@ -59,26 +87,104 @@ export const staticPerfAnalysis: Task = {
   async run(ctx: RunContext): Promise<TaskResult> {
     const reportsDir = path.join(ctx.outDir, "reports");
     await mkdir(reportsDir, { recursive: true });
+
+    // Absent only on a hand-built context (a task run outside runCore). Say the
+    // run did not look rather than assuming either way — `undetermined` runs
+    // every rule, which is the safe direction, and says so.
+    const compiler: ReactCompilerProbe = ctx.reactCompiler ?? {
+      state: "undetermined",
+      evidence: "this run did not read the project's configs",
+    };
+    const suppress = compiler.state === "on" ? MEMO_FAMILY_RULES : [];
+
     const allFindings: Finding[] = [];
     const written: string[] = [];
+    const total = new Map<string, number>(suppress.map((rule) => [rule, 0]));
 
     for (const tree of ctx.trees) {
       const report = analyseTree(tree);
-      for (const finding of report.findings) allFindings.push(finding);
+      const kept: Finding[] = [];
+      const here = new Map<string, number>();
+      for (const finding of report.findings) {
+        if (!suppress.includes(finding.rule)) {
+          kept.push(finding);
+          continue;
+        }
+        here.set(finding.rule, (here.get(finding.rule) ?? 0) + 1);
+      }
+      for (const [rule, n] of here) total.set(rule, (total.get(rule) ?? 0) + n);
+      for (const finding of kept) allFindings.push(finding);
+
       const out = path.join(reportsDir, `${report.component}.perf-static.json`);
-      await Bun.write(out, `${JSON.stringify(report, null, 2)}\n`);
+      // The state rides along with every report file, because the number it
+      // explains is in there: a zero memo-finding count written by a compiler-on
+      // run means "the compiler does this", and a reader with only the file has
+      // no other way to tell that from "this component renders no children".
+      await Bun.write(
+        out,
+        `${JSON.stringify(
+          {
+            component: report.component,
+            file: report.file,
+            findings: kept,
+            reactCompiler: compiler,
+            ...(here.size > 0 ? { suppressed: tally(here) } : {}),
+          },
+          null,
+          2,
+        )}\n`,
+      );
       written.push(out);
     }
 
+    const suppressed = tally(total);
     return {
       id: "perf-static",
       ok: true,
       outputs: written,
       findings: allFindings,
-      summary: `static perf analysis: ${allFindings.length} finding(s) across ${ctx.trees.length} root(s)`,
+      summary:
+        `static perf analysis: ${allFindings.length} finding(s) across ` +
+        `${ctx.trees.length} root(s)` +
+        compilerNote(compiler, suppressed),
+      reactCompiler: {
+        state: compiler.state,
+        evidence: compiler.evidence,
+        ...(suppress.length > 0 ? { suppressed } : {}),
+      },
     };
   },
 };
+
+/** Sorted so two runs of one tree diff clean, and a rule is never dropped. */
+function tally(counts: Map<string, number>): SuppressedTally[] {
+  return [...counts.entries()]
+    .map(([rule, count]) => ({ rule, count }))
+    .sort((a, b) => (a.rule < b.rule ? -1 : 1));
+}
+
+/**
+ * The one honest line for the two states that change what the number means.
+ *
+ * `off` says nothing: nothing was suppressed, and a task summary that reports
+ * the absence of its own special case on every run teaches nobody anything.
+ * `on` is suppression, and suppression is never silent. `undetermined` is the
+ * one a reader could otherwise mistake for a checked `off` — the memo findings
+ * it printed may be work a compiler-on build already did.
+ */
+function compilerNote(compiler: ReactCompilerProbe, suppressed: SuppressedTally[]): string {
+  if (compiler.state === "on") {
+    const findings = suppressed.reduce((n, s) => n + s.count, 0);
+    return (
+      ` — ${suppressed.length} memo rule(s) suppressed, ${findings} finding(s) the ` +
+      `React Compiler already memoises (${compiler.evidence})`
+    );
+  }
+  if (compiler.state === "undetermined") {
+    return " — react-compiler state undetermined; memo-family findings may be pre-compiled noise on a compiler-on app";
+  }
+  return "";
+}
 
 export function analyseTree(tree: ComponentTree): PerfReport {
   const findings: Finding[] = [];

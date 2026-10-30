@@ -1174,6 +1174,20 @@ export interface TaskResult {
    * widened by it.
    */
   handWork?: TodoTally[];
+  /**
+   * What `perf-static` knew about the React Compiler, and what it therefore did
+   * not report. Set in EVERY state, because the states are the difference
+   * between "the compiler memoises this", "nothing was found" and "we could not
+   * tell" — and a zero that hides which of the three it was is the vacuous green
+   * this tool refuses to print.
+   *
+   * `suppressed` is present only when rules were actually suppressed, so its
+   * absence never means "suppressed nothing": read `state` for that.
+   */
+  reactCompiler?: ReactCompilerProbe & {
+    /** Memo-family findings the compiler makes redundant, per rule. */
+    suppressed?: { rule: string; count: number }[];
+  };
 }
 
 export interface RunContext {
@@ -1350,15 +1364,18 @@ export interface ExpoContext {
   /** expo-router major, same rule. */
   routerMajor: number | undefined;
   /**
-   * The project compiles with the React Compiler (app.json's
-   * `experiments.reactCompiler`, or babel-plugin-react-compiler in the babel
-   * config).
+   * The project compiles with the React Compiler, as `detectReactCompiler` reads
+   * it (src/reactCompiler.ts) — app.json's `experiments.reactCompiler`, a
+   * `reactCompiler: true` config flag, or the babel plugin. The bare boolean is
+   * all this context has ever carried; the state AND the config that proved it
+   * travel on `RunContext.reactCompiler`, which is what tasks read.
    *
    * Load-bearing for perf-static: the compiler memoises automatically, so
    * `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
    * `perf/no-memoisation-with-children` name work it has already done. On the
    * dogfood app that is 136 of 168 findings — 81% of the task's entire output
-   * (docs/archive/2026-08-expo-probes.md).
+   * (docs/archive/2026-08-expo-probes.md), which is why the task suppresses
+   * those three rather than recommending the build's own output be handwritten.
    */
   reactCompiler: boolean;
   /** NativeWind is wired through babel (`jsxImportSource: "nativewind"`). */

@@ -118,6 +118,74 @@ describe("task rows carry the lifecycle status", () => {
   });
 });
 
+describe("the React Compiler line under the task table", () => {
+  const suppressed = [
+    { rule: "perf/missing-memo-leaf", count: 2 },
+    { rule: "perf/no-memoisation-with-children", count: 1 },
+    { rule: "perf/unstable-child-prop", count: 4 },
+  ];
+
+  test("a suppression names its rules, its count and the config that proved the flag", () => {
+    // Suppression is never silent: REPORT.md is the committed artifact, so the
+    // evidence has to be in it and not only in a log line that scrolled past.
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          findings: [],
+          summary: "static perf analysis: 3 finding(s) across 1 root(s)",
+          reactCompiler: {
+            state: "on",
+            evidence: "app.json experiments.reactCompiler",
+            suppressed,
+          },
+        }),
+      ],
+    });
+    expect(md).toContain("`perf-static`: 3 memo rule(s) suppressed");
+    expect(md).toContain("React Compiler detected (`app.json experiments.reactCompiler`)");
+    expect(md).toContain("7 finding(s) of work it does by itself");
+    expect(md).toContain("means the compiler memoises it, not that nothing was found");
+  });
+
+  test("an undetermined state says the memo findings may be pre-compiled noise", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          summary: "static perf analysis: 9 finding(s) across 1 root(s)",
+          reactCompiler: {
+            state: "undetermined",
+            evidence: "no app.json, next.config, babel config or recognised bundler config to read",
+          },
+        }),
+      ],
+    });
+    expect(md).toContain("React Compiler state undetermined");
+    expect(md).toContain("all nine rules ran");
+    expect(md).toContain("pre-compiled noise");
+    expect(md).not.toContain("suppressed");
+  });
+
+  test("an off state prints nothing: no suppression, no line about it", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          summary: "static perf analysis: 9 finding(s) across 1 root(s)",
+          reactCompiler: { state: "off", evidence: "next.config.js" },
+        }),
+      ],
+    });
+    expect(md).not.toContain("React Compiler");
+  });
+
+  test("a run that did not include perf-static says nothing about the compiler", () => {
+    const md = renderReportMarkdown({ ...INPUT });
+    expect(md).not.toContain("React Compiler");
+  });
+});
+
 describe("Hand-work remaining", () => {
   const handWork = [
     { kind: "uninferred-return-shape", count: 9, exemplar: "/proj/flawless/unit/page.test.tsx" },
