@@ -44,22 +44,28 @@ Manually wiring up a Playwright + `<Profiler>` + `react-scan` harness for a non-
 
 ## Install
 
-Two channels, both served from the LAN on big-cachy. They ship different things, so pick by
-whether the target machine has Bun.
+Two channels. They ship different things, so pick by whether the target machine has Bun.
 
-**Source package** — every task works with no further setup, because `@biomejs/biome` comes
-along as a real dependency. Requires Bun >= 1.1 at runtime.
+**Standalone binary** — no Bun needed, nothing to install alongside it. The installer takes the
+release asset for your OS and architecture (linux and macOS, x64 and arm64), verifies it against
+the `SHA256SUMS` published beside it **while it is still a temp file with no execute bit**, and
+installs to `~/.local/bin`.
 
 ```bash
-bun add -g flawless-react --registry https://npm.in.drlario.org
-# or one-shot, no install
-bunx flawless-react ./src/Dashboard.tsx
+curl -fsSL https://raw.githubusercontent.com/lariocpt/flawless-react/main/install.sh | bash
 ```
 
-**Standalone binary** — no Bun needed, nothing to install alongside it.
+Pin a release with `--version v0.3.0`, choose the directory with `--dir <path>`. musl systems
+(Alpine) have no published asset and the installer says so rather than installing a binary that
+would fail to start.
+
+**Source package** — every task works with no further setup, because `@biomejs/biome` comes
+along as a real dependency. Requires Bun >= 1.1 at runtime. It publishes to public npm as
+`@lariocpt/flawless-react` from the first release tag onward; until that publish exists, install
+it from a checkout:
 
 ```bash
-curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- flawless-react
+git clone https://github.com/lariocpt/flawless-react.git && cd flawless-react && bun install -g .
 ```
 
 One caveat worth knowing before you pick it: the binary is self-contained Bun, but it cannot
