@@ -255,7 +255,7 @@ pipeline {
                     curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- --list | grep -q flawless-react \\
                         || { echo "FAIL: flawless-react is not listed by install.sh"; exit 1; }
                     docker run --rm node:22-bookworm-slim \\
-                        npm view "flawless-react@$NPM_VERSION" dist.unpackedSize --registry "$REGISTRY"
+                        npm view "@lariocpt/flawless-react@$NPM_VERSION" dist.unpackedSize --registry "$REGISTRY"
                     echo "published flawless-react $NPM_VERSION (npm) / $APPS_VERSION (apps)"
                 '''
             }

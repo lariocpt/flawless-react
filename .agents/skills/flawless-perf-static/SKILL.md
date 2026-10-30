@@ -6,7 +6,7 @@ description: Read and act on the findings from flawless-react's own static perfo
 # flawless perf-static
 
 ```bash
-bunx flawless-react "src/**/*.tsx" --tasks perf-static --no-inline-summary
+bunx @lariocpt/flawless-react "src/**/*.tsx" --tasks perf-static --no-inline-summary
 ```
 
 `perf-static` reports; it scaffolds nothing to run. Findings print as

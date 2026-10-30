@@ -13,7 +13,7 @@ reports are really "the host is broken", and both planes share the symptom.
 ## What it writes
 
 ```bash
-bunx flawless-react "src/app/**/page.tsx" --nextjs . --tasks unit-browser,perf-harness
+bunx @lariocpt/flawless-react "src/app/**/page.tsx" --nextjs . --tasks unit-browser,perf-harness
 ```
 
 The `perf-harness` task is what builds this plane, and `unit-browser` alongside it

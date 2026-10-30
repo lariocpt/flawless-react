@@ -11,7 +11,7 @@ also where every vacuous pass hides — a green route spec is only worth what it
 landing assertion is worth.
 
 ```bash
-bunx flawless-react "src/app/**/page.tsx" --nextjs . --tasks e2e
+bunx @lariocpt/flawless-react "src/app/**/page.tsx" --nextjs . --tasks e2e
 ```
 
 ## Prerequisites, in order

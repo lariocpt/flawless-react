@@ -115,7 +115,7 @@ median on a desktop Ryzen), so `--changed` keeps the analysis and the
 generation complete and narrows only the **run**:
 
 ```bash
-bunx flawless-react "src/**/*.tsx" --nextjs . --tasks perf-harness,unit-browser --changed
+bunx @lariocpt/flawless-react "src/**/*.tsx" --nextjs . --tasks perf-harness,unit-browser --changed
 ```
 
 It selects unit specs through vitest's module graph (`vitest related`, so it is

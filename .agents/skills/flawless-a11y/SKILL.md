@@ -6,7 +6,7 @@ description: Run and act on flawless-react's a11y task — biome's a11y rule gro
 # flawless a11y
 
 ```bash
-bunx flawless-react "src/**/*.tsx" --tasks a11y
+bunx @lariocpt/flawless-react "src/**/*.tsx" --tasks a11y
 ```
 
 One task, two engines, one aggregate report (`flawless/reports/a11y.json`). Which

@@ -6,7 +6,7 @@ description: Run and maintain the crust load pipes flawless-react generates — 
 # flawless load pipes
 
 ```bash
-bunx flawless-react "src/app/**/page.tsx" --nextjs . --tasks load
+bunx @lariocpt/flawless-react "src/app/**/page.tsx" --nextjs . --tasks load
 ```
 
 `load` writes `flawless/load/routes.pipes` — crust pipelines for the analysed page

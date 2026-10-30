@@ -14,7 +14,7 @@ tool can get one.
 ## Getting a spec
 
 ```bash
-bunx flawless-react "src/app/dashboard/page.tsx" --nextjs . --api openapi.json --swagger-url=off
+bunx @lariocpt/flawless-react "src/app/dashboard/page.tsx" --nextjs . --api openapi.json --swagger-url=off
 ```
 
 - **`--api <file>`** — a spec on disk. The value is required and must be a path.
