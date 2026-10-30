@@ -48,6 +48,12 @@ const FLAG_ASSIGNMENT = /["']?(reactCompiler|react-compiler)["']?\s*:\s*(true|fa
  * `babel-plugin-react-compiler` because Next ships it as a dependency of its
  * own while the compiler is OFF; a dependency-presence check would have
  * suppressed 127 valid findings on that run. Dependency presence ≠ activation.
+ *
+ * If a future preset ships the compiler ON by default (bare-RN's
+ * `@react-native/babel-preset` and newer Expo SDKs have been moving that way),
+ * the version-keyed default table belongs in this file: read the installed
+ * preset's SHIPPED DEFAULT as text. Asking the project's babel config that
+ * question by executing it is never the answer.
  */
 export function detectReactCompiler(root: string): ReactCompilerProbe {
   const abs = path.resolve(root);
