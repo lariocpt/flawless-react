@@ -1188,6 +1188,40 @@ export interface TaskResult {
     /** Memo-family findings the compiler makes redundant, per rule. */
     suppressed?: { rule: string; count: number }[];
   };
+  /**
+   * `perf-static`'s spec-quality tally: prop-fixture gaps bucketed per component
+   * (`SpecQualityBucket` says why that is not a finding), and deliberately absent
+   * from `findings`. A task's finding count has to mean "work in your app worth
+   * doing"; 713 of the dogfood run's 926 were this, and the headline lied.
+   *
+   * Absent when every prop synthesised — a real zero, not an unmeasured one.
+   */
+  specQuality?: {
+    /** The rule this tally reports, so the id stays greppable in the JSON. */
+    rule: "perf/unresolved-prop";
+    /** Total props across every bucket, so the split is one subtraction. */
+    props: number;
+    /** Sorted by file, then component. */
+    components: SpecQualityBucket[];
+  };
+}
+
+/**
+ * One component's fixture gaps, named once however many trees render it.
+ *
+ * NOT a performance finding. `perf/unresolved-prop` says the analyser could not
+ * invent a default value for a prop, so the generated spec passes `undefined`
+ * for it — a limit of the tool's fixtures, which is spec-quality information an
+ * adopter needs, and not a rerender risk in their app. It is counted per
+ * component rather than per prop for the same reason: on the dogfood app the
+ * per-prop count was 713 of 926 "perf findings", one component alone
+ * contributing 148, and the 127 actionable findings underneath it read as noise.
+ */
+export interface SpecQualityBucket {
+  component: string;
+  file: string;
+  /** Prop names, sorted, so two runs of one tree diff clean. */
+  props: string[];
 }
 
 export interface RunContext {

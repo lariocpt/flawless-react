@@ -311,8 +311,9 @@ Rules worth knowing:
   child; flagged harder when that child is `React.memo`-wrapped.
 - `perf/set-state-in-render` (error) — unguarded setState during render.
 - `perf/unresolved-prop` — the analyser could not synthesise a default, so the
-  generated spec passes `undefined`. Fix with `--props '{"x":1}'` or by editing
-  the spec's `DEFAULTS`.
+  generated spec passes `undefined`. Reported apart from the findings, bucketed per
+  component under REPORT.md's `## Spec quality`; fix with `--props '{"x":1}'` or by
+  editing the spec's `DEFAULTS`.
 
 Triage order, what a suppression costs, and which rule belongs to which task are
 the three skills flawless-perf-static, flawless-a11y and flawless-react-rules;

@@ -186,6 +186,82 @@ describe("the React Compiler line under the task table", () => {
   });
 });
 
+describe("the Spec quality section", () => {
+  const specQuality = {
+    rule: "perf/unresolved-prop" as const,
+    props: 11,
+    components: [
+      {
+        component: "Button",
+        file: "/proj/src/ui/button.tsx",
+        props: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+      },
+      { component: "Badge", file: "/proj/src/badge.tsx", props: ["onTap"] },
+    ],
+  };
+
+  const withSpecQuality = (): string =>
+    renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          findings: [],
+          summary: "static perf analysis: 0 finding(s) across 3 root(s)",
+          specQuality,
+        }),
+      ],
+    });
+
+  test("bucketed per component, under its own heading, said apart from the findings", () => {
+    // NOTES-9: 713 of 926 "perf findings" were these, and one component was 148
+    // of them. The heading is what makes the finding count mean app work again.
+    const md = withSpecQuality();
+    expect(md).toContain("## Spec quality");
+    expect(md).toContain("`perf/unresolved-prop`: 11 prop(s) across 2 component(s)");
+    expect(md).toContain("Not performance findings, and not in the table above");
+    expect(md).toContain("| `Badge` | `src/badge.tsx` | `onTap` |");
+  });
+
+  test("a long prop list is named up to eight and the rest counted, never dropped", () => {
+    const md = withSpecQuality();
+    expect(md).toContain("+2 more");
+    expect(md).not.toContain(
+      "| `Button` | `src/ui/button.tsx` | `a`, `b`, `c`, `d`, `e`, `f`, `g`, `h`, `i`",
+    );
+  });
+
+  test("absent when every prop synthesised — the section is a measured zero, not a shrug", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", { summary: "static perf analysis: 4 finding(s) across 3 root(s)" }),
+      ],
+    });
+    expect(md).not.toContain("## Spec quality");
+  });
+
+  test("more than 25 buckets keeps the table short and says how many it folded", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          specQuality: {
+            rule: "perf/unresolved-prop",
+            props: 30,
+            components: Array.from({ length: 30 }, (_, i) => ({
+              component: `C${i}`,
+              file: `/proj/src/c${i}.tsx`,
+              props: [`p${i}`],
+            })),
+          },
+        }),
+      ],
+    });
+    expect(md).toContain("| … | | 5 more component(s) |");
+    expect(md).not.toContain("| `C25` |");
+  });
+});
+
 describe("Hand-work remaining", () => {
   const handWork = [
     { kind: "uninferred-return-shape", count: 9, exemplar: "/proj/flawless/unit/page.test.tsx" },

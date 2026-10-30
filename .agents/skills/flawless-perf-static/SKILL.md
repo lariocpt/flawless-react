@@ -16,6 +16,12 @@ bunx @lariocpt/flawless-react "src/**/*.tsx" --tasks perf-static --no-inline-sum
 unless `--no-inline-summary`; its paths are relative to the sidecar, so resolve them
 against the sidecar's own directory.
 
+Each report file carries two numbers beside its findings: `reactCompiler` (the
+state the memo rules were judged against, with the config that proved it) and
+`specQuality` (that component's props no fixture could synthesise). Both are why a
+zero in the file means what it means — read them before concluding anything from an
+empty `findings`.
+
 Per-component report files only appear for components with findings, so **stale
 per-component files from earlier runs linger in `reports/`.** Count from the task
 summary or REPORT.md, never from a glob over the directory.
@@ -31,7 +37,7 @@ summary or REPORT.md, never from a glob over the directory.
 | `perf/unstable-child-prop` | warn | inline object/array/arrow handed to a component child |
 | `perf/no-memoisation-with-children` | warn | a component taking `children` is memoised where it cannot help |
 | `perf/missing-memo-leaf` | warn | a leaf that re-renders on every parent render, not memoised |
-| `perf/unresolved-prop` | warn | the analyser could not synthesise a default for a prop |
+| `perf/unresolved-prop` | *spec quality* | the analyser could not synthesise a default for a prop — see below |
 | `perf/effect-every-render` | warn | an effect that runs on every render |
 
 Triage in that order of trust.
@@ -50,10 +56,15 @@ Triage in that order of trust.
 - **The advisory tail** (`no-memoisation-with-children`, `missing-memo-leaf`,
   `effect-every-render`) is a scale, not a bug list. Fix where the runtime harness
   agrees (flawless-perf-harness); do not chase it to zero.
-- **`perf/unresolved-prop` is not a performance finding.** It says the analyser could
-  not invent a value, so the generated spec passes `undefined` for that prop. Fix it
-  with `--props '{"x":1}'` or by editing the spec's `DEFAULTS` — and expect the
-  component's own spec to be weak until you do.
+- **`perf/unresolved-prop` is not a performance finding, and is not counted as
+  one.** It is the only one of the nine reported apart: bucketed per component under
+  REPORT.md's `## Spec quality` heading with the prop names, and never in the task's
+  finding number. It says the analyser could not invent a value, so the generated
+  spec passes `undefined` for that prop — a limit of this tool's fixtures, not a
+  rerender risk in your app. Fix it with `--props '{"x":1}'` or by editing that
+  spec's `DEFAULTS`, and expect that component's specs to stay weak until you do.
+  Counted per prop it was **713 of the dogfood run's 926 findings**, one button alone
+  contributing 148, with the 127 findings that needed someone buried under it.
 
 ## A clean report is not proof
 

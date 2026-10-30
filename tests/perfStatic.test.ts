@@ -336,18 +336,23 @@ describe("perf-static memoisation rules", () => {
     ).toHaveLength(0);
   });
 
-  test("unresolved prop uses its declaration position", () => {
+  test("unresolved props are a per-component spec-quality bucket, not findings", () => {
+    // As per-prop findings this was "button.tsx: 148 perf findings" for one
+    // component with one unresolvable prop family. It is a fixture gap, not a
+    // rerender risk, and the fix (`--props`, the spec's DEFAULTS) addresses props
+    // by name — so the names are kept and the declaration positions are not.
     const t = tree(
       comp("Parent", {
-        unresolvedProps: ["onSave"],
+        unresolvedProps: ["onSave", "onCancel"],
         propPositions: { onSave: pos(4, 3) },
         pos: pos(2, 1),
       }),
     );
-    const found = rulesOf(analyseTree(t).findings, "perf/unresolved-prop");
-    expect(found).toHaveLength(1);
-    expect(found[0]?.line).toBe(4);
-    expect(found[0]?.column).toBe(3);
+    const report = analyseTree(t);
+    expect(rulesOf(report.findings, "perf/unresolved-prop")).toHaveLength(0);
+    expect(report.specQuality).toEqual([
+      { component: "Parent", file: FILE, props: ["onCancel", "onSave"] },
+    ]);
   });
 
   test("descendants are walked: findings from a grandchild are included", () => {

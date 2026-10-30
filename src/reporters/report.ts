@@ -217,6 +217,43 @@ export function renderReportMarkdown(input: ReportInput): string {
     );
   }
 
+  // --- spec quality ----------------------------------------------------------
+  // The other half of the perf-static number, deliberately not in the findings
+  // column above. `perf/unresolved-prop` is the analyser failing to invent a
+  // value, not the app rerendering: on the dogfood run it was 713 of 926
+  // "findings", one component contributing 148, and the 127 findings that needed
+  // someone were under it. Bucketed per component because that is the unit a
+  // person fixes.
+  const specQuality = input.results.find((r) => r.specQuality !== undefined)?.specQuality;
+  if (specQuality) {
+    lines.push(
+      "## Spec quality",
+      "",
+      `\`${specQuality.rule}\`: ${specQuality.props} prop(s) across ` +
+        `${specQuality.components.length} component(s) where the analyser could not synthesise a ` +
+        "default, so the generated spec passes `undefined` for that prop. Not performance " +
+        "findings, and not in the table above — they are this tool's own fixture limits, and a " +
+        "component's specs stay weak until they are filled.",
+      "",
+      "Fix one with `--props '{\"name\":1}'`, or by editing that spec's `DEFAULTS`.",
+      "",
+      "| Component | File | Props |",
+      "| --- | --- | --- |",
+    );
+    for (const bucket of specQuality.components.slice(0, 25)) {
+      const shown = bucket.props
+        .slice(0, 8)
+        .map((p) => `\`${p}\``)
+        .join(", ");
+      const more = bucket.props.length > 8 ? `, +${bucket.props.length - 8} more` : "";
+      lines.push(`| \`${bucket.component}\` | \`${rel(bucket.file)}\` | ${shown}${more} |`);
+    }
+    if (specQuality.components.length > 25) {
+      lines.push(`| … | | ${specQuality.components.length - 25} more component(s) |`);
+    }
+    lines.push("");
+  }
+
   // --- hand-work remaining --------------------------------------------------
   // The one adoption-cost number the component table cannot show: how many
   // TODO(flawless) markers the emitters planted, and of what kind. Counted at
