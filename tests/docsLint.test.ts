@@ -146,6 +146,9 @@ describe("`skills install` needs no project, as the docs promise", () => {
 const FOREIGN_FLAGS: Record<string, string> = {
   "--compile": "bun build",
   "--config": "playwright/vitest",
+  // Not the CLI: the flags of this repo's own install.sh, which the README's Install
+  // section has to describe. (--version names both, and is real on both.)
+  "--dir": "install.sh",
   "--env-file": "node/bun runtime",
   // Not a tool at all: the reference's "every flag that takes a value accepts
   // both `--flag value` and `--flag=value`" sentence, where --flag is a
