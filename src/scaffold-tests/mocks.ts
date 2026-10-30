@@ -119,6 +119,13 @@ function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key:
   group.specifiers.add(mi.specifier);
   for (const [name, r] of Object.entries(mi.importedReturns ?? {})) group.returns.set(name, r);
   mi.names.forEach((local, i) => {
+    // A `type` specifier is erased at compile time, so the module does not
+    // export that name at RUNTIME. It can neither force a mock — every shadcn
+    // `ui/*` module's `import { cva, type VariantProps }` did, and the factory
+    // that follows replaced `cva` with a class-string stub, which turned the
+    // app's own `const buttonVariants = cva(…)` into a string — nor be a factory
+    // entry: `VariantProps: vi.fn(…)` bound a name no importer can call.
+    if (mi.typeOnlyNames?.includes(local)) return;
     const moduleName = membershipName(mi, i);
     const isDefault = mi.hasDefault && i === 0;
     const graphOnly = !isDefault && mi.mergedNames?.includes(local) === true;

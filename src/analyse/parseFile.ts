@@ -252,6 +252,10 @@ function collectModuleImports(
     // Aligned with `names`; consumers key decisions (like the pure-utility mock
     // exemption) on the module-side name, which aliasing hides from `names`.
     const importedNames: string[] = [];
+    // LOCAL names carrying their own `type` modifier. The declaration's
+    // `isTypeOnly` says nothing about a MIXED one, and these names do not exist
+    // at runtime — see ModuleImportInfo.typeOnlyNames.
+    const typeOnlyNames: string[] = [];
     let hasDefault = false;
     if (clause.name) {
       names.push(clause.name.text);
@@ -263,6 +267,7 @@ function collectModuleImports(
         for (const el of clause.namedBindings.elements) {
           names.push(el.name.text);
           importedNames.push((el.propertyName ?? el.name).text);
+          if (el.isTypeOnly) typeOnlyNames.push(el.name.text);
         }
       } else if (ts.isNamespaceImport(clause.namedBindings)) {
         names.push(clause.namedBindings.name.text);
@@ -276,6 +281,7 @@ function collectModuleImports(
       specifier,
       names,
       importedNames,
+      ...(typeOnlyNames.length > 0 ? { typeOnlyNames } : {}),
       kind: names.some((n) => jsxRoots.has(n)) ? "component" : "value",
       isTypeOnly,
       hasDefault,

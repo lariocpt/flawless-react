@@ -723,6 +723,24 @@ export interface ModuleImportInfo {
    */
   importedNames?: string[];
   /**
+   * The LOCAL names among `names` that were imported with a `type` specifier
+   * (`import { cva, type VariantProps } from "class-variance-authority"`).
+   *
+   * They are erased at compile time: the module does not export them at
+   * runtime. So they are not bindings a `vi.mock` factory can supply, and they
+   * are no evidence that the module needs mocking. Without this field a mixed
+   * statement read as two live imports, and EVERY shadcn/ui module's
+   * `import { cva, type VariantProps } from "class-variance-authority"` earned
+   * that package a factory mock — where `cva` is stubbed as a class-string
+   * producer, so the app's own `const buttonVariants = cva(…)` evaluated to a
+   * string and 76 specs of one fresh generation died on
+   * "buttonVariants is not a function".
+   *
+   * `isTypeOnly` covers the whole declaration; this names the individual
+   * specifiers of a MIXED one.
+   */
+  typeOnlyNames?: string[];
+  /**
    * Names contributed by the component-tree walk — this file never imported
    * them; some other file in the render does. A mocked module must cover them
    * (its factory replaces every importer's view), but they carry NO evidence

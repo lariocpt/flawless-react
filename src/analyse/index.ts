@@ -638,6 +638,16 @@ async function analyseOne(
           ...(base.importedNames ?? base.names),
           ...add.map(({ n, i }) => extra.importedNames?.[i] ?? extra.names[i] ?? n),
         ],
+        // A `type` specifier stays a `type` specifier whatever merges it: the
+        // name is erased at compile time either way, so losing this list in the
+        // merge would put the runtime-binding lie back.
+        ...(base.typeOnlyNames || extra.typeOnlyNames
+          ? {
+              typeOnlyNames: [
+                ...new Set([...(base.typeOnlyNames ?? []), ...(extra.typeOnlyNames ?? [])]),
+              ],
+            }
+          : {}),
         mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
         ...(base.dataExports || extra.dataExports
           ? {
@@ -649,16 +659,27 @@ async function analyseOne(
         ...(baseReturns ? { importedReturns: returns as never } : {}),
       };
     };
+    // ONE MODULE, ONE MOCK. The page reaches a file as "./components/ui/button"
+    // and a child reaches the same file as "./ui/button". Keyed by specifier
+    // TEXT, those two views never merged: the child's entry was stored raw, so
+    // its names were never marked graph-added — which let a helper the page
+    // never named FORCE a whole-module factory — and the factory it forced
+    // covered only the child's names, dropping the `Button` the page renders:
+    // `[vitest] No "Button" export is defined on the "…/ui/button" mock`.
+    // resolvedPath IS the module's identity; a bare or unresolvable specifier
+    // has none, and its text is its identity (unchanged behaviour there).
+    const moduleKey = (mi: ModuleImportInfo): string => mi.resolvedPath ?? mi.specifier;
     const walkTree = (trees: ComponentTree[]): void => {
       for (const t of trees) {
         for (const mi of t.entry.moduleImports ?? []) {
-          const prev = extras.get(mi.specifier);
+          const key = moduleKey(mi);
+          const prev = extras.get(key);
           if (prev) {
-            extras.set(mi.specifier, mergeImport(prev, mi));
+            extras.set(key, mergeImport(prev, mi));
           } else {
-            const own = moduleImports.find((m) => m.specifier === mi.specifier);
-            if (own) extras.set(mi.specifier, mergeImport(own, mi));
-            else extras.set(mi.specifier, mi);
+            const own = moduleImports.find((m) => moduleKey(m) === key);
+            if (own) extras.set(key, mergeImport(own, mi));
+            else extras.set(key, mi);
           }
         }
         for (const d of t.entry.dataDeps ?? []) {
