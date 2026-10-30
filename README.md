@@ -59,10 +59,22 @@ Pin a release with `--version v0.3.0`, choose the directory with `--dir <path>`.
 (Alpine) have no published asset and the installer says so rather than installing a binary that
 would fail to start.
 
-**Source package** — every task works with no further setup, because `@biomejs/biome` comes
-along as a real dependency. Requires Bun >= 1.1 at runtime. It publishes to public npm as
-`@lariocpt/flawless-react` from the first release tag onward; until that publish exists, install
-it from a checkout:
+The installer then offers to install the **agent skills** — the files that teach a coding agent
+how to drive a generated suite — into the current directory. Decline with `n`; script it with
+`--skills` (install without asking) or `--no-skills`. Nothing is installed without an explicit
+yes, and over a pipe (CI) it only prints the command: `flawless-react skills install` does the
+same thing at any later point, with a menu of which skills on a terminal.
+
+**npm package** — `bun add -g @lariocpt/flawless-react`, or `npm i -g` the same name. This is the
+source package: it carries `@biomejs/biome` as a real dependency, so **all five tasks work with
+no further setup** on this channel. It needs Bun on the target machine — `bin/flawless-react` is a
+Bun script and npm will not install Bun for you.
+
+```bash
+bun add -g @lariocpt/flawless-react   # then: flawless-react "src/**/*.tsx" --tasks perf-static
+```
+
+Same thing from a checkout, if you would rather run the source:
 
 ```bash
 git clone https://github.com/lariocpt/flawless-react.git && cd flawless-react && bun install -g .
@@ -82,7 +94,7 @@ otherwise `bun add -d @biomejs/biome` in that project, or use the source package
 ## Quickstart
 
 ```bash
-bunx flawless-react ./src/Dashboard.tsx --out .profile/dashboard
+bunx @lariocpt/flawless-react ./src/Dashboard.tsx --out .profile/dashboard
 cd .profile/dashboard
 bun install
 bun run test           # headless Chromium
@@ -97,7 +109,7 @@ Pass `--nextjs [<path>]` to target an existing Next.js project. Pass nothing —
 
 ```bash
 cd my-next-app
-bunx flawless-react app/page.tsx --nextjs
+bunx @lariocpt/flawless-react app/page.tsx --nextjs
 ```
 
 In this mode flawless:
@@ -126,7 +138,7 @@ Pass `--expo [<path>]` to target an Expo project. Pass nothing — or `--expo .`
 
 ```bash
 cd my-expo-app
-bunx flawless-react --expo
+bunx @lariocpt/flawless-react --expo
 ```
 
 flawless reads the project off disk — Expo SDK major, the expo-router `app/` root, whether the React Compiler is on (`app.json`'s `experiments.reactCompiler`, or `babel-plugin-react-compiler`), whether NativeWind is wired through babel, and the port `expo start --web` serves on — then defaults the entry glob to the router root and writes to `<expoRoot>/flawless/`.
@@ -310,7 +322,7 @@ export const Dashboard: FC<DashboardProps> = ({ title, count }) => {
 Run:
 
 ```bash
-bunx flawless-react ./src/Dashboard.tsx
+bunx @lariocpt/flawless-react ./src/Dashboard.tsx
 ```
 
 The CLI prints something like:
@@ -368,13 +380,13 @@ export default function AppProvider({ children }: { children: ReactNode }) {
 ```
 
 ```bash
-bunx flawless-react ./src/Dashboard.tsx --provider ./src/providers/AppProvider.tsx
+bunx @lariocpt/flawless-react ./src/Dashboard.tsx --provider ./src/providers/AppProvider.tsx
 ```
 
 If the component fetches data, point `--api` at your OpenAPI / Swagger spec:
 
 ```bash
-bunx flawless-react ./src/Dashboard.tsx --api ./docs/api.yaml
+bunx @lariocpt/flawless-react ./src/Dashboard.tsx --api ./docs/api.yaml
 ```
 
 The scaffolder reads the spec at generation time, walks every `paths.<route>.<method>.responses` and emits static handlers in `mock/routes.ts` (priority: first `examples` → `example` → schema-synthesised default). The mock listens on port 5174; the host server (5173) transparently proxies every non-asset request to it, so `fetch('/api/users')` from your component hits the mock without any code changes. Edit `mock/routes.ts` freely after generation to add stateful logic or per-test overrides.

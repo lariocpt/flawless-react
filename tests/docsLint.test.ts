@@ -158,6 +158,8 @@ const FOREIGN_FLAGS: Record<string, string> = {
   "--headed": "playwright test",
   "--localstorage-file": "playwright",
   "--no-errors-on-unmatched": "biome check",
+  "--no-skills": "install.sh",
+  "--skills": "install.sh",
   "--porcelain": "git status",
   "--preload": "bun test",
   "--port": "crust mock-server",
