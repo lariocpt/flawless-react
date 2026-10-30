@@ -70,6 +70,12 @@ Ordered by how much the tool trusts its own finding, not by count.
    `## Spec quality`, and its fix is `--props '{"name":1}'` or that spec's `DEFAULTS`,
    never a suppression.
 
+On a project with the React Compiler on, item 5 and both memo rules in item 7 are
+suppressed by `perf-static` itself: the compiler memoises props and JSX at the call
+site, and REPORT.md names the config that proved the flag. That ladder then starts at
+item 6 for those rules — and a zero from them is the compiler's doing, not a clean
+bill. See flawless-perf-static for the three states and what each prints.
+
 ## Suppressing honestly
 
 A suppression is an **answer**, so it carries its reason:
