@@ -6,8 +6,10 @@ import type {
   ComponentTree,
   EffectFeatures,
   Finding,
+  ReactCompilerProbe,
   RunContext,
   SourcePosition,
+  SpecQualityBucket,
   Task,
   TaskResult,
 } from "../types.ts";
@@ -49,60 +51,228 @@ interface PerfReport {
   component: string;
   file: string;
   findings: Finding[];
+  /** Per component in this tree: props no fixture could synthesise. */
+  specQuality: SpecQualityBucket[];
 }
+
+/** What one walk of one tree collects. */
+interface Collected {
+  findings: Finding[];
+  specQuality: SpecQualityBucket[];
+}
+
+/** One rule and how many findings of it the compiler made redundant. */
+interface SuppressedTally {
+  rule: string;
+  count: number;
+}
+
+/**
+ * The three rules whose advice the React Compiler implements by itself.
+ *
+ * It memoises props and JSX at the call site, so "a new reference on every
+ * render" is false post-compilation and a hand-written `memo()` wrapper is work
+ * the build already did — the React docs go further and call adding one contrary
+ * to guidance. The other six rules are untouched by it: correct dependency
+ * arrays are what the compiler RELIES on, effects run per render whatever got
+ * memoised, and `set-state-in-render` is a correctness bug, not a scale.
+ *
+ * Bail-outs are deliberately not modelled. A component that violates the Rules
+ * of React is not compiled — but the react-rules task owns that detection, and
+ * these flags are global, so perf-static treats compiler state as global instead
+ * of second-guessing per-file compilation success.
+ */
+const MEMO_FAMILY_RULES: readonly string[] = [
+  "perf/no-memoisation-with-children",
+  "perf/unstable-child-prop",
+  "perf/missing-memo-leaf",
+];
+
+/** The rule that is spec quality, not app perf, and so never a finding. */
+export const SPEC_QUALITY_RULE = "perf/unresolved-prop";
 
 export const staticPerfAnalysis: Task = {
   id: "perf-static",
   label: "Static React perf analysis",
-  description: "Surface rerender / memoisation / unresolved-prop risks from the parsed tree",
+  description:
+    "Surface rerender / memoisation risks from the parsed tree, and the props no fixture could synthesise",
   needsTree: true,
   async run(ctx: RunContext): Promise<TaskResult> {
     const reportsDir = path.join(ctx.outDir, "reports");
     await mkdir(reportsDir, { recursive: true });
+
+    // Absent only on a hand-built context (a task run outside runCore). Say the
+    // run did not look rather than assuming either way — `undetermined` runs
+    // every rule, which is the safe direction, and says so.
+    const compiler: ReactCompilerProbe = ctx.reactCompiler ?? {
+      state: "undetermined",
+      evidence: "this run did not read the project's configs",
+    };
+    const suppress = compiler.state === "on" ? MEMO_FAMILY_RULES : [];
+
     const allFindings: Finding[] = [];
     const written: string[] = [];
+    const total = new Map<string, number>(suppress.map((rule) => [rule, 0]));
+    // Keyed `file::component` — the registry's own dedupe convention. A leaf
+    // rendered by forty parents is forty trees, and per-prop counting turned
+    // that into 148 "perf findings" for one button.
+    const gaps = new Map<string, { component: string; file: string; props: Set<string> }>();
 
     for (const tree of ctx.trees) {
       const report = analyseTree(tree);
-      for (const finding of report.findings) allFindings.push(finding);
+      const kept: Finding[] = [];
+      const here = new Map<string, number>();
+      for (const finding of report.findings) {
+        if (!suppress.includes(finding.rule)) {
+          kept.push(finding);
+          continue;
+        }
+        here.set(finding.rule, (here.get(finding.rule) ?? 0) + 1);
+      }
+      for (const [rule, n] of here) total.set(rule, (total.get(rule) ?? 0) + n);
+      for (const finding of kept) allFindings.push(finding);
+      for (const gap of report.specQuality) {
+        const key = `${gap.file}::${gap.component}`;
+        const bucket = gaps.get(key) ?? {
+          component: gap.component,
+          file: gap.file,
+          props: new Set<string>(),
+        };
+        for (const prop of gap.props) bucket.props.add(prop);
+        gaps.set(key, bucket);
+      }
+
       const out = path.join(reportsDir, `${report.component}.perf-static.json`);
-      await Bun.write(out, `${JSON.stringify(report, null, 2)}\n`);
+      // The state and the gaps ride along with every report file, because the
+      // numbers they explain are in there: a zero memo-finding count written by a
+      // compiler-on run means "the compiler does this", and neither it nor a
+      // component whose props all synthesised can be told apart by the counts.
+      await Bun.write(
+        out,
+        `${JSON.stringify(
+          {
+            component: report.component,
+            file: report.file,
+            findings: kept,
+            reactCompiler: compiler,
+            specQuality: report.specQuality,
+            ...(here.size > 0 ? { suppressed: tally(here) } : {}),
+          },
+          null,
+          2,
+        )}\n`,
+      );
       written.push(out);
     }
 
+    const suppressed = tally(total);
+    const components = [...gaps.values()]
+      .map((gap) => ({ component: gap.component, file: gap.file, props: [...gap.props].sort() }))
+      .sort((a, b) =>
+        a.file === b.file ? (a.component < b.component ? -1 : 1) : a.file < b.file ? -1 : 1,
+      );
+    const specQuality: TaskResult["specQuality"] =
+      components.length > 0
+        ? {
+            rule: SPEC_QUALITY_RULE,
+            props: components.reduce((n, c) => n + c.props.length, 0),
+            components,
+          }
+        : undefined;
+
+    const notes = [compilerNote(compiler, suppressed), specQualityNote(specQuality)].filter(
+      (note) => note !== "",
+    );
     return {
       id: "perf-static",
       ok: true,
       outputs: written,
       findings: allFindings,
-      summary: `static perf analysis: ${allFindings.length} finding(s) across ${ctx.trees.length} root(s)`,
+      summary:
+        `static perf analysis: ${allFindings.length} finding(s) across ` +
+        `${ctx.trees.length} root(s)` +
+        (notes.length > 0 ? ` — ${notes.join("; ")}` : ""),
+      reactCompiler: {
+        state: compiler.state,
+        evidence: compiler.evidence,
+        ...(suppress.length > 0 ? { suppressed } : {}),
+      },
+      ...(specQuality ? { specQuality } : {}),
     };
   },
 };
 
+/** Sorted so two runs of one tree diff clean, and a rule is never dropped. */
+function tally(counts: Map<string, number>): SuppressedTally[] {
+  return [...counts.entries()]
+    .map(([rule, count]) => ({ rule, count }))
+    .sort((a, b) => (a.rule < b.rule ? -1 : 1));
+}
+
+/**
+ * The one honest line for the two compiler states that change what the number
+ * means.
+ *
+ * `off` says nothing: nothing was suppressed, and a task summary that reports the
+ * absence of its own special case on every run teaches nobody anything. `on` is
+ * suppression, and suppression is never silent. `undetermined` is the one a
+ * reader could otherwise mistake for a checked `off` — the memo findings it
+ * printed may be work a compiler-on build already did.
+ */
+function compilerNote(compiler: ReactCompilerProbe, suppressed: SuppressedTally[]): string {
+  if (compiler.state === "on") {
+    const findings = suppressed.reduce((n, s) => n + s.count, 0);
+    return (
+      `${suppressed.length} memo rule(s) suppressed, ${findings} finding(s) the ` +
+      `React Compiler already memoises (${compiler.evidence})`
+    );
+  }
+  if (compiler.state === "undetermined") {
+    return "react-compiler state undetermined; memo-family findings may be pre-compiled noise on a compiler-on app";
+  }
+  return "";
+}
+
+/**
+ * The spec-quality half of the count, said apart.
+ *
+ * The finding number above means "rerender work worth doing in your app", and
+ * keeping it that way is the whole point: the dogfood run's 926 were 127 of that
+ * plus 713 of this, which read as an alarming backlog and were really the
+ * analyser's own fixture limits.
+ */
+function specQualityNote(specQuality: TaskResult["specQuality"]): string {
+  if (!specQuality) return "";
+  return (
+    `${specQuality.props} spec-quality prop gap(s) across ` +
+    `${specQuality.components.length} component(s), counted apart from the findings`
+  );
+}
+
 export function analyseTree(tree: ComponentTree): PerfReport {
-  const findings: Finding[] = [];
-  walk(tree, findings);
+  const out: Collected = { findings: [], specQuality: [] };
+  walk(tree, out);
   return {
     component: tree.entry.componentName,
     file: tree.entry.filePath,
-    findings,
+    findings: out.findings,
+    specQuality: out.specQuality,
   };
 }
 
-function walk(node: ComponentTree, findings: Finding[]): void {
-  inspect(node, findings);
-  for (const c of node.children) walk(c, findings);
+function walk(node: ComponentTree, out: Collected): void {
+  inspect(node, out);
+  for (const c of node.children) walk(c, out);
 }
 
-function inspect(node: ComponentTree, findings: Finding[]): void {
+function inspect(node: ComponentTree, out: Collected): void {
   const info = node.entry;
   const names = knownNamesOf(info);
-  inspectMemoisation(info, node.children.length, findings);
-  inspectUnresolvedProps(info, findings);
-  inspectHookDeps(info, names, findings);
-  inspectChildAttrs(node, names, findings);
-  inspectRenderSetters(info, findings);
+  inspectMemoisation(info, node.children.length, out.findings);
+  collectSpecQuality(info, out);
+  inspectHookDeps(info, names, out.findings);
+  inspectChildAttrs(node, names, out.findings);
+  inspectRenderSetters(info, out.findings);
 }
 
 /** Names recoverable from a ComponentInfo alone — no AST scope is available here. */
@@ -155,16 +325,25 @@ function inspectMemoisation(info: ComponentInfo, childCount: number, findings: F
   });
 }
 
-function inspectUnresolvedProps(info: ComponentInfo, findings: Finding[]): void {
-  for (const u of info.unresolvedProps) {
-    findings.push({
-      rule: "perf/unresolved-prop",
-      severity: "warn",
-      ...at(info.propPositions?.[u] ?? info.pos, info.filePath),
-      message: `${info.componentName}: could not synthesise a default for prop "${u}" — generated tests will pass undefined.`,
-      source: "perf-static",
-    });
-  }
+/**
+ * The ninth check, and the only one that is not about the app.
+ *
+ * One bucket per component naming the props no fixture could synthesise — NOT a
+ * finding. As a per-prop finding it said "button.tsx: 148 perf findings" about a
+ * component with one prop family the analyser could not resolve, and the rerender
+ * findings that needed someone's attention hid underneath it.
+ *
+ * The prop NAMES are the actionable half: `--props '{"x":1}'` or the spec's
+ * `DEFAULTS` address a prop by name, never by the line of the type literal it was
+ * declared on, which is the only thing the old per-prop positions added.
+ */
+function collectSpecQuality(info: ComponentInfo, out: Collected): void {
+  if (info.unresolvedProps.length === 0) return;
+  out.specQuality.push({
+    component: info.componentName,
+    file: info.filePath,
+    props: [...info.unresolvedProps].sort(),
+  });
 }
 
 function inspectHookDeps(info: ComponentInfo, names: KnownNames, findings: Finding[]): void {

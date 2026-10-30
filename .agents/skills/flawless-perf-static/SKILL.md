@@ -16,6 +16,12 @@ bunx @lariocpt/flawless-react "src/**/*.tsx" --tasks perf-static --no-inline-sum
 unless `--no-inline-summary`; its paths are relative to the sidecar, so resolve them
 against the sidecar's own directory.
 
+Each report file carries two numbers beside its findings: `reactCompiler` (the
+state the memo rules were judged against, with the config that proved it) and
+`specQuality` (that component's props no fixture could synthesise). Both are why a
+zero in the file means what it means — read them before concluding anything from an
+empty `findings`.
+
 Per-component report files only appear for components with findings, so **stale
 per-component files from earlier runs linger in `reports/`.** Count from the task
 summary or REPORT.md, never from a glob over the directory.
@@ -31,7 +37,7 @@ summary or REPORT.md, never from a glob over the directory.
 | `perf/unstable-child-prop` | warn | inline object/array/arrow handed to a component child |
 | `perf/no-memoisation-with-children` | warn | a component taking `children` is memoised where it cannot help |
 | `perf/missing-memo-leaf` | warn | a leaf that re-renders on every parent render, not memoised |
-| `perf/unresolved-prop` | warn | the analyser could not synthesise a default for a prop |
+| `perf/unresolved-prop` | *spec quality* | the analyser could not synthesise a default for a prop — see below |
 | `perf/effect-every-render` | warn | an effect that runs on every render |
 
 Triage in that order of trust.
@@ -50,10 +56,15 @@ Triage in that order of trust.
 - **The advisory tail** (`no-memoisation-with-children`, `missing-memo-leaf`,
   `effect-every-render`) is a scale, not a bug list. Fix where the runtime harness
   agrees (flawless-perf-harness); do not chase it to zero.
-- **`perf/unresolved-prop` is not a performance finding.** It says the analyser could
-  not invent a value, so the generated spec passes `undefined` for that prop. Fix it
-  with `--props '{"x":1}'` or by editing the spec's `DEFAULTS` — and expect the
-  component's own spec to be weak until you do.
+- **`perf/unresolved-prop` is not a performance finding, and is not counted as
+  one.** It is the only one of the nine reported apart: bucketed per component under
+  REPORT.md's `## Spec quality` heading with the prop names, and never in the task's
+  finding number. It says the analyser could not invent a value, so the generated
+  spec passes `undefined` for that prop — a limit of this tool's fixtures, not a
+  rerender risk in your app. Fix it with `--props '{"x":1}'` or by editing that
+  spec's `DEFAULTS`, and expect that component's specs to stay weak until you do.
+  Counted per prop it was **713 of the dogfood run's 926 findings**, one button alone
+  contributing 148, with the 127 findings that needed someone buried under it.
 
 ## A clean report is not proof
 
@@ -69,16 +80,41 @@ The same conservatism that protects the report shapes the specs: everything
 
 ## React Compiler changes what these findings mean
 
-On a project with `experiments.reactCompiler: true` (read off disk under `--expo`),
-memoisation is the compiler's job: measured on one native app, **136 of 168
-perf-static findings were the three memoisation rules**
-(`docs/archive/2026-08-expo-probes.md`). The tool surfaces them anyway and leaves
-the judgement to you — it deliberately does not suppress them, because the flag
-being set is not the same as the compiler being enabled for that package.
+On a project the compiler runs on, memoisation is the compiler's job: measured on
+one native app, **136 of 168 perf-static findings were the three memoisation
+rules** (`docs/archive/2026-08-expo-probes.md`). Telling someone to hand-write a
+`memo()` wrapper the build already applied is not advice worth printing, so
+`perf-static` reads the state off the project's own configs — in **every** mode,
+not only `--expo` — and suppresses `perf/unstable-child-prop`,
+`perf/missing-memo-leaf` and `perf/no-memoisation-with-children` when it is on.
 
-On a compiler project, therefore, report the memoisation cluster as **context, not a
-backlog**, and burn down only `set-state-in-render`, the hook-dependency rules and
-`unstable-child-prop` where a child is genuinely memoised.
+| state | read from | what the task does |
+| --- | --- | --- |
+| **on** | `app.json` `experiments.reactCompiler`; `next.config.*` `reactCompiler`; a babel or recognised bundler config naming `babel-plugin-react-compiler` | the three memo rules are suppressed, the other six run, and REPORT.md names the config that proved it |
+| **off** | a config was read, and it does not turn the compiler on | all nine rules run, and nothing is said about the compiler |
+| **undetermined** | nothing readable | all nine run, and the summary says the memo findings may be pre-compiled noise |
+
+Three things this deliberately does not do:
+
+- **It does not infer the flag from a dependency.** Next ships
+  `babel-plugin-react-compiler` in its own dependency tree, so a lockfile grep
+  reports "compiler on" for apps that never enabled it — and would have
+  suppressed 127 valid findings on the run that found this bug. Config only.
+- **It does not model per-file bail-outs.** A component that violates the Rules of
+  React is not compiled, so in principle its memo findings survive. The
+  `react-rules` task owns that detection; these flags are global, and perf-static
+  treats compiler state as global rather than guessing per file.
+- **It does not suppress quietly.** The suppression, its per-rule counts and the
+  evidence string are in the task summary, in REPORT.md, in the `--ci` blob and in
+  every `<Component>.perf-static.json`. A suppressed zero has to read differently
+  from a zero that means nothing was found — same reason the native a11y zero
+  carries its denominator.
+
+So on a compiler project the findings you still get are the ones the compiler has
+no opinion about: `set-state-in-render`, the three hook-dependency rules,
+`effect-every-render` and `unresolved-prop`. On a compiler-off project
+`unstable-child-prop` is a real win when the receiving child is memoised or heavy,
+and memoising it by hand is still the fix.
 
 ## Under `--expo`
 

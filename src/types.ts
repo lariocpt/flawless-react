@@ -1174,6 +1174,54 @@ export interface TaskResult {
    * widened by it.
    */
   handWork?: TodoTally[];
+  /**
+   * What `perf-static` knew about the React Compiler, and what it therefore did
+   * not report. Set in EVERY state, because the states are the difference
+   * between "the compiler memoises this", "nothing was found" and "we could not
+   * tell" — and a zero that hides which of the three it was is the vacuous green
+   * this tool refuses to print.
+   *
+   * `suppressed` is present only when rules were actually suppressed, so its
+   * absence never means "suppressed nothing": read `state` for that.
+   */
+  reactCompiler?: ReactCompilerProbe & {
+    /** Memo-family findings the compiler makes redundant, per rule. */
+    suppressed?: { rule: string; count: number }[];
+  };
+  /**
+   * `perf-static`'s spec-quality tally: prop-fixture gaps bucketed per component
+   * (`SpecQualityBucket` says why that is not a finding), and deliberately absent
+   * from `findings`. A task's finding count has to mean "work in your app worth
+   * doing"; 713 of the dogfood run's 926 were this, and the headline lied.
+   *
+   * Absent when every prop synthesised — a real zero, not an unmeasured one.
+   */
+  specQuality?: {
+    /** The rule this tally reports, so the id stays greppable in the JSON. */
+    rule: "perf/unresolved-prop";
+    /** Total props across every bucket, so the split is one subtraction. */
+    props: number;
+    /** Sorted by file, then component. */
+    components: SpecQualityBucket[];
+  };
+}
+
+/**
+ * One component's fixture gaps, named once however many trees render it.
+ *
+ * NOT a performance finding. `perf/unresolved-prop` says the analyser could not
+ * invent a default value for a prop, so the generated spec passes `undefined`
+ * for it — a limit of the tool's fixtures, which is spec-quality information an
+ * adopter needs, and not a rerender risk in their app. It is counted per
+ * component rather than per prop for the same reason: on the dogfood app the
+ * per-prop count was 713 of 926 "perf findings", one component alone
+ * contributing 148, and the 127 actionable findings underneath it read as noise.
+ */
+export interface SpecQualityBucket {
+  component: string;
+  file: string;
+  /** Prop names, sorted, so two runs of one tree diff clean. */
+  props: string[];
 }
 
 export interface RunContext {
@@ -1193,6 +1241,14 @@ export interface RunContext {
    * `nextjs` — a project is one or the other, and passing both is a UsageError.
    */
   expo?: ExpoContext;
+  /**
+   * Whether the React Compiler runs, read off the project's own configs. Set by
+   * `runCore` in every mode — web mode has no other route to this fact, and
+   * `perf-static`'s memo-family rules are exactly the work the compiler does by
+   * itself. Absent only for a hand-built context, and a task must then say it
+   * did not check rather than assume either way.
+   */
+  reactCompiler?: ReactCompilerProbe;
   /** Emit unit specs next to the analysed source files instead of <outDir>/unit. */
   colocate?: boolean;
   /** Every task id selected for this run, so tasks can honour cross-task deps. */
@@ -1267,6 +1323,32 @@ export interface CliArgs {
 
 export type NextjsRouter = "app" | "pages";
 
+/**
+ * Whether the React Compiler runs for a project, as `detectReactCompiler` reads
+ * it off disk — three states because a boolean would let `perf-static` suppress
+ * the memo-family rules on a guess.
+ *
+ * - `on`           — a config spells it on. The three memo-family rules name
+ *                    work the compiler does by itself and are suppressed.
+ * - `off`          — a config was READ and does not turn it on. Rules run.
+ * - `undetermined` — nothing readable. Rules run, and the task says the memo
+ *                    findings may be pre-compiled noise. Never silent.
+ */
+export type ReactCompilerState = "on" | "off" | "undetermined";
+
+export interface ReactCompilerProbe {
+  state: ReactCompilerState;
+  /**
+   * What the answer rests on, spelled the way a person would write it in the
+   * config: `app.json experiments.reactCompiler`, `next.config.ts reactCompiler`,
+   * `babel.config.js babel-plugin-react-compiler`. For `off` and `undetermined`
+   * it names what was read instead, so the state is checkable whichever way it
+   * fell — an evidence line that exists only on a suppression is a footnote to
+   * one outcome, not evidence.
+   */
+  evidence: string;
+}
+
 export interface NextjsApiRoute {
   path: string;
   methods: string[];
@@ -1316,15 +1398,18 @@ export interface ExpoContext {
   /** expo-router major, same rule. */
   routerMajor: number | undefined;
   /**
-   * The project compiles with the React Compiler (app.json's
-   * `experiments.reactCompiler`, or babel-plugin-react-compiler in the babel
-   * config).
+   * The project compiles with the React Compiler, as `detectReactCompiler` reads
+   * it (src/reactCompiler.ts) — app.json's `experiments.reactCompiler`, a
+   * `reactCompiler: true` config flag, or the babel plugin. The bare boolean is
+   * all this context has ever carried; the state AND the config that proved it
+   * travel on `RunContext.reactCompiler`, which is what tasks read.
    *
    * Load-bearing for perf-static: the compiler memoises automatically, so
    * `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
    * `perf/no-memoisation-with-children` name work it has already done. On the
    * dogfood app that is 136 of 168 findings — 81% of the task's entire output
-   * (docs/archive/2026-08-expo-probes.md).
+   * (docs/archive/2026-08-expo-probes.md), which is why the task suppresses
+   * those three rather than recommending the build's own output be handwritten.
    */
   reactCompiler: boolean;
   /** NativeWind is wired through babel (`jsxImportSource: "nativewind"`). */

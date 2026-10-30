@@ -63,6 +63,23 @@ describe("detectExpo", () => {
     expect(ctx.nativewind).toBe(false);
     expect(ctx.webPort).toBe(8081);
   });
+
+  test("the compiler spelled off is off — the flag word alone is not a yes", async () => {
+    // babel-preset-expo gates the plugin on a caller flag derived from
+    // `experiments.reactCompiler`, and a preset option spelled `false` is that
+    // gate saying no. perf-static runs all nine rules on this project.
+    const d = tmp();
+    writeFileSync(
+      path.join(d, "package.json"),
+      JSON.stringify({ name: "x", dependencies: { expo: "~54.0.0" } }),
+    );
+    writeFileSync(
+      path.join(d, "babel.config.js"),
+      "module.exports = { presets: [['babel-preset-expo', { reactCompiler: false }]] };\n",
+    );
+    const ctx = await detectExpo(d);
+    expect(ctx.reactCompiler).toBe(false);
+  });
 });
 
 describe("majorOf — never guesses", () => {

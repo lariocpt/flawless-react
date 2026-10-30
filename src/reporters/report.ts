@@ -192,6 +192,68 @@ export function renderReportMarkdown(input: ReportInput): string {
   }
   lines.push("");
 
+  // --- what the React Compiler did for this run -----------------------------
+  // The Tasks table row says "12 finding(s)". Whether that 12 was once 148 is a
+  // fact about the compiler, and it is not in the table — so a reader of the
+  // committed file cannot tell a suppressed zero from an honest one. Same
+  // principle as the native-a11y denominator: a zero has to say what kind of
+  // zero it is. Rendered only for the two states that change what the number
+  // means or could have changed (see compilerNote in tasks/staticPerfAnalysis.ts).
+  const compiler = input.results.find((r) => r.reactCompiler !== undefined)?.reactCompiler;
+  if (compiler && compiler.state !== "off") {
+    const suppressed = compiler.suppressed ?? [];
+    const suppressedFindings = suppressed.reduce((n, s) => n + s.count, 0);
+    lines.push(
+      compiler.state === "on"
+        ? `> \`perf-static\`: ${suppressed.length} memo rule(s) suppressed — React Compiler ` +
+            `detected (\`${compiler.evidence}\`), so ${suppressedFindings} finding(s) of work ` +
+            "it does by itself were not reported. A zero from `unstable-child-prop`, " +
+            "`missing-memo-leaf` or `no-memoisation-with-children` here means the compiler " +
+            "memoises it, not that nothing was found."
+        : "> `perf-static`: React Compiler state undetermined " +
+            `(\`${compiler.evidence}\`) — all nine rules ran, and the memo-family findings ` +
+            "above may be pre-compiled noise on a compiler-on app.",
+      "",
+    );
+  }
+
+  // --- spec quality ----------------------------------------------------------
+  // The other half of the perf-static number, deliberately not in the findings
+  // column above. `perf/unresolved-prop` is the analyser failing to invent a
+  // value, not the app rerendering: on the dogfood run it was 713 of 926
+  // "findings", one component contributing 148, and the 127 findings that needed
+  // someone were under it. Bucketed per component because that is the unit a
+  // person fixes.
+  const specQuality = input.results.find((r) => r.specQuality !== undefined)?.specQuality;
+  if (specQuality) {
+    lines.push(
+      "## Spec quality",
+      "",
+      `\`${specQuality.rule}\`: ${specQuality.props} prop(s) across ` +
+        `${specQuality.components.length} component(s) where the analyser could not synthesise a ` +
+        "default, so the generated spec passes `undefined` for that prop. Not performance " +
+        "findings, and not in the table above — they are this tool's own fixture limits, and a " +
+        "component's specs stay weak until they are filled.",
+      "",
+      "Fix one with `--props '{\"name\":1}'`, or by editing that spec's `DEFAULTS`.",
+      "",
+      "| Component | File | Props |",
+      "| --- | --- | --- |",
+    );
+    for (const bucket of specQuality.components.slice(0, 25)) {
+      const shown = bucket.props
+        .slice(0, 8)
+        .map((p) => `\`${p}\``)
+        .join(", ");
+      const more = bucket.props.length > 8 ? `, +${bucket.props.length - 8} more` : "";
+      lines.push(`| \`${bucket.component}\` | \`${rel(bucket.file)}\` | ${shown}${more} |`);
+    }
+    if (specQuality.components.length > 25) {
+      lines.push(`| … | | ${specQuality.components.length - 25} more component(s) |`);
+    }
+    lines.push("");
+  }
+
   // --- hand-work remaining --------------------------------------------------
   // The one adoption-cost number the component table cannot show: how many
   // TODO(flawless) markers the emitters planted, and of what kind. Counted at

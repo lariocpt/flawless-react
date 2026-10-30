@@ -118,6 +118,150 @@ describe("task rows carry the lifecycle status", () => {
   });
 });
 
+describe("the React Compiler line under the task table", () => {
+  const suppressed = [
+    { rule: "perf/missing-memo-leaf", count: 2 },
+    { rule: "perf/no-memoisation-with-children", count: 1 },
+    { rule: "perf/unstable-child-prop", count: 4 },
+  ];
+
+  test("a suppression names its rules, its count and the config that proved the flag", () => {
+    // Suppression is never silent: REPORT.md is the committed artifact, so the
+    // evidence has to be in it and not only in a log line that scrolled past.
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          findings: [],
+          summary: "static perf analysis: 3 finding(s) across 1 root(s)",
+          reactCompiler: {
+            state: "on",
+            evidence: "app.json experiments.reactCompiler",
+            suppressed,
+          },
+        }),
+      ],
+    });
+    expect(md).toContain("`perf-static`: 3 memo rule(s) suppressed");
+    expect(md).toContain("React Compiler detected (`app.json experiments.reactCompiler`)");
+    expect(md).toContain("7 finding(s) of work it does by itself");
+    expect(md).toContain("means the compiler memoises it, not that nothing was found");
+  });
+
+  test("an undetermined state says the memo findings may be pre-compiled noise", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          summary: "static perf analysis: 9 finding(s) across 1 root(s)",
+          reactCompiler: {
+            state: "undetermined",
+            evidence: "no app.json, next.config, babel config or recognised bundler config to read",
+          },
+        }),
+      ],
+    });
+    expect(md).toContain("React Compiler state undetermined");
+    expect(md).toContain("all nine rules ran");
+    expect(md).toContain("pre-compiled noise");
+    expect(md).not.toContain("suppressed");
+  });
+
+  test("an off state prints nothing: no suppression, no line about it", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          summary: "static perf analysis: 9 finding(s) across 1 root(s)",
+          reactCompiler: { state: "off", evidence: "next.config.js" },
+        }),
+      ],
+    });
+    expect(md).not.toContain("React Compiler");
+  });
+
+  test("a run that did not include perf-static says nothing about the compiler", () => {
+    const md = renderReportMarkdown({ ...INPUT });
+    expect(md).not.toContain("React Compiler");
+  });
+});
+
+describe("the Spec quality section", () => {
+  const specQuality = {
+    rule: "perf/unresolved-prop" as const,
+    props: 11,
+    components: [
+      {
+        component: "Button",
+        file: "/proj/src/ui/button.tsx",
+        props: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+      },
+      { component: "Badge", file: "/proj/src/badge.tsx", props: ["onTap"] },
+    ],
+  };
+
+  const withSpecQuality = (): string =>
+    renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          findings: [],
+          summary: "static perf analysis: 0 finding(s) across 3 root(s)",
+          specQuality,
+        }),
+      ],
+    });
+
+  test("bucketed per component, under its own heading, said apart from the findings", () => {
+    // NOTES-9: 713 of 926 "perf findings" were these, and one component was 148
+    // of them. The heading is what makes the finding count mean app work again.
+    const md = withSpecQuality();
+    expect(md).toContain("## Spec quality");
+    expect(md).toContain("`perf/unresolved-prop`: 11 prop(s) across 2 component(s)");
+    expect(md).toContain("Not performance findings, and not in the table above");
+    expect(md).toContain("| `Badge` | `src/badge.tsx` | `onTap` |");
+  });
+
+  test("a long prop list is named up to eight and the rest counted, never dropped", () => {
+    const md = withSpecQuality();
+    expect(md).toContain("+2 more");
+    expect(md).not.toContain(
+      "| `Button` | `src/ui/button.tsx` | `a`, `b`, `c`, `d`, `e`, `f`, `g`, `h`, `i`",
+    );
+  });
+
+  test("absent when every prop synthesised — the section is a measured zero, not a shrug", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", { summary: "static perf analysis: 4 finding(s) across 3 root(s)" }),
+      ],
+    });
+    expect(md).not.toContain("## Spec quality");
+  });
+
+  test("more than 25 buckets keeps the table short and says how many it folded", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      results: [
+        task("perf-static", {
+          specQuality: {
+            rule: "perf/unresolved-prop",
+            props: 30,
+            components: Array.from({ length: 30 }, (_, i) => ({
+              component: `C${i}`,
+              file: `/proj/src/c${i}.tsx`,
+              props: [`p${i}`],
+            })),
+          },
+        }),
+      ],
+    });
+    expect(md).toContain("| … | | 5 more component(s) |");
+    expect(md).not.toContain("| `C25` |");
+  });
+});
+
 describe("Hand-work remaining", () => {
   const handWork = [
     { kind: "uninferred-return-shape", count: 9, exemplar: "/proj/flawless/unit/page.test.tsx" },

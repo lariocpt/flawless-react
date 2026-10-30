@@ -554,7 +554,7 @@ describe("load task", () => {
 });
 
 describe("perf-static task", () => {
-  test("writes a per-root report and returns unresolved-prop findings", async () => {
+  test("writes a per-root report and buckets the props no fixture could synthesise", async () => {
     const outDir = tmp("perf-out");
     const tree = await toolbarTree();
     expect(tree.entry.unresolvedProps).toEqual(["onSave", "onCancel", "onDelete"]);
@@ -568,28 +568,74 @@ describe("perf-static task", () => {
     expect(result.outputs).toEqual([reportPath]);
     expect(existsSync(reportPath)).toBe(true);
 
-    const unresolved = result.findings.filter((f) => f.rule === "perf/unresolved-prop");
-    expect(unresolved).toHaveLength(3);
-    for (const f of unresolved) {
-      expect(f.source).toBe("perf-static");
-      expect(f.severity).toBe("warn");
-      expect(f.file).toBe(tree.entry.filePath);
-      expect(f.message).toContain("Toolbar");
-    }
-    expect(unresolved.map((f) => f.message).join(" ")).toContain('prop "onSave"');
+    // NOTES-9: these were per-prop findings, 713 of the dogfood run's 926, and
+    // the 127 rerender findings underneath them read as noise. They are the
+    // analyser's fixture limits, so they are bucketed per component and counted
+    // apart — the finding number means app work again.
+    expect(result.findings.filter((f) => f.rule === "perf/unresolved-prop")).toHaveLength(0);
+    expect(result.specQuality).toEqual({
+      rule: "perf/unresolved-prop",
+      props: 3,
+      components: [
+        {
+          component: "Toolbar",
+          file: tree.entry.filePath,
+          props: ["onCancel", "onDelete", "onSave"],
+        },
+      ],
+    });
     expect(result.summary).toContain(`${result.findings.length} finding(s)`);
     expect(result.summary).toContain("1 root(s)");
+    expect(result.summary).toContain("3 spec-quality prop gap(s) across 1 component(s)");
 
     const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
       component: string;
       file: string;
       findings: unknown[];
+      specQuality: unknown[];
     };
     expect(report.component).toBe("Toolbar");
     expect(report.file).toBe(tree.entry.filePath);
     expect(report.findings).toHaveLength(result.findings.length);
+    expect(report.specQuality).toHaveLength(1);
+  });
+
+  test("a component rendered by several roots is ONE bucket, and the count is props, not trees", async () => {
+    // The same leaf arrives as its own root and as someone's child — which is how
+    // one button reached 148 "findings". Merging on file::component (the registry
+    // convention) makes it one row naming its props once.
+    const outDir = tmp("perf-dedupe");
+    const tree = await toolbarTree();
+    const result = await task("perf-static").run(ctxOf({ outDir, trees: [tree, tree, tree] }));
+    expect(result.specQuality?.components).toHaveLength(1);
+    expect(result.specQuality?.props).toBe(3);
+  });
+
+  test("a tree whose props all synthesise has no spec-quality section at all — a real zero", async () => {
+    const outDir = tmp("perf-clean");
+    const tree = treeWithAllProps();
+    const result = await task("perf-static").run(ctxOf({ outDir, trees: [tree] }));
+    expect(result.specQuality).toBeUndefined();
+    expect(result.summary).not.toContain("spec-quality");
   });
 });
+
+/** A component with no unresolved props, for the measured-zero case. */
+function treeWithAllProps(): ComponentTree {
+  return {
+    entry: {
+      componentName: "Plain",
+      filePath: "/proj/src/Plain.tsx",
+      importSpecifier: "./Plain.tsx",
+      propsShape: { title: { type: "string" } },
+      variants: [],
+      hooks: [],
+      unresolvedProps: [],
+      childAttrs: [],
+    },
+    children: [],
+  };
+}
 
 describe("the perf harness respects --force and protects what it cannot rebuild", () => {
   const tree = async (): Promise<ComponentTree> =>

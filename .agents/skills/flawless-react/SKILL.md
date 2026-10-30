@@ -179,7 +179,7 @@ A refusal is a failed `TaskResult`, not a throw: it lands in `results[]`, the `-
 Two things worth knowing before reading a native run's output, both measured (`docs/archive/2026-08-expo-probes.md`):
 
 - **`a11y` on native is the tool's own analyser, and its zero carries a denominator.** Biome's 29 rules are HTML/ARIA and returned zero over 31 RN files with 82 unlabelled `<Pressable>`s (3/3 on the DOM offender fixture), so the task refused until wave 5 shipped the native engine. Its summary always says how many press targets / text inputs / icons were examined — a native zero WITHOUT that denominator is a bug, not a clean bill.
-- **The React Compiler changes what `perf-static` means.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `--expo` reads the flag and surfaces the findings for you to weigh; the tool deliberately does not suppress them.
+- **The React Compiler changes what `perf-static` means, and the task honours it.** On a project with `experiments.reactCompiler: true`, 136 of 168 findings were the three memoisation rules — work the compiler already does. `perf-static` reads that state from the project's configs in every mode (`app.json`, `next.config.*`, a babel or recognised bundler config) and suppresses those three, naming the evidence in REPORT.md; the hook-deps, effect and `set-state-in-render` rules run either way. See the `flawless-perf-static` skill for the three states and what each one prints.
 
 See the `flawless-expo` skill for the native spec shapes, the selector ladder, and what a skip means.
 
@@ -311,8 +311,9 @@ Rules worth knowing:
   child; flagged harder when that child is `React.memo`-wrapped.
 - `perf/set-state-in-render` (error) — unguarded setState during render.
 - `perf/unresolved-prop` — the analyser could not synthesise a default, so the
-  generated spec passes `undefined`. Fix with `--props '{"x":1}'` or by editing
-  the spec's `DEFAULTS`.
+  generated spec passes `undefined`. Reported apart from the findings, bucketed per
+  component under REPORT.md's `## Spec quality`; fix with `--props '{"x":1}'` or by
+  editing the spec's `DEFAULTS`.
 
 Triage order, what a suppression costs, and which rule belongs to which task are
 the three skills flawless-perf-static, flawless-a11y and flawless-react-rules;

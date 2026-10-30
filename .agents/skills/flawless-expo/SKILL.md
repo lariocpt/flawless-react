@@ -18,7 +18,7 @@ this skill records is the consequences of those four facts.
 |---|---|---|
 | `sdkMajor` | the project's own `expo` range, else what is installed | jest-expo's major must **match** it |
 | `routerRoot` | `app/` or `src/app/`, **only if** `expo-router` is a dependency | decides which files get the route template |
-| `reactCompiler` | `app.json` `experiments.reactCompiler`, or `babel-plugin-react-compiler` | three `perf-static` rules become advice about work already done |
+| `reactCompiler` | `app.json` `experiments.reactCompiler`, or `babel-plugin-react-compiler` | the three `perf-static` memo rules are suppressed, with the config that proved it named in REPORT.md |
 | `nativewind` | `babel.config.js` mentioning nativewind | decides whether an unstyled host is honest to ship |
 | `webPort` | the `web` then `start` script, default **8081** | Metro's port, not 3000 |
 
@@ -263,10 +263,14 @@ renderRouter is jest-bound), so the measured ceiling on the dogfood app was ~0 o
 ledger, and the revisit condition is an adopter with a real `components/` directory
 of non-route components. And one runner reads differently rather than refusing:
 
-- **`perf-static` runs but reads differently under the React Compiler.** On a project
+- **`perf-static` suppresses its memo rules under the React Compiler.** On a project
   with `experiments.reactCompiler: true`, 136 of 168 findings were
   `perf/unstable-child-prop`, `perf/missing-memo-leaf` and
-  `perf/no-memoisation-with-children` — work the compiler already performs.
+  `perf/no-memoisation-with-children` — work the compiler already performs, so the
+  three are suppressed and REPORT.md names `app.json experiments.reactCompiler` as
+  the evidence. The hook-dependency, effect and `set-state-in-render` rules are
+  unaffected: the compiler relies on correct dependency arrays rather than
+  repairing wrong ones.
 
 ## Never
 
