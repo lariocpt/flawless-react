@@ -12,7 +12,7 @@ under `<root>/flawless/`, merges devDeps and `flawless:*` scripts into your
 
 ```bash
 cd apps/web
-bunx flawless-react "src/app/dashboard/page.tsx" --nextjs . --tasks unit-browser,e2e
+bunx @lariocpt/flawless-react "src/app/dashboard/page.tsx" --nextjs . --tasks unit-browser,e2e
 ```
 
 The path is optional — with no value the current directory is the app root, and in

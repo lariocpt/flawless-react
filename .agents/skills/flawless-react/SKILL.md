@@ -16,11 +16,11 @@ inside the out dir are rewritten.
 
 ```bash
 # one component, unit specs only
-bunx flawless-react src/components/Widget.tsx --tasks unit-browser --no-interactive
+bunx @lariocpt/flawless-react src/components/Widget.tsx --tasks unit-browser --no-interactive
 
 # a Next.js app: real fixtures, colocated specs, route e2e and load pipes
 cd apps/web
-bunx flawless-react "src/app/dashboard/page.tsx" \
+bunx @lariocpt/flawless-react "src/app/dashboard/page.tsx" \
   --nextjs . --api openapi.json --swagger-url=off \
   --tasks unit-browser,perf-static,a11y,react-rules,e2e,load \
   --colocate --no-interactive

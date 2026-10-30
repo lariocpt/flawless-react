@@ -22,6 +22,8 @@
 #   --dir <path>      FLAWLESS_INSTALL_DIR   install directory (default: ~/.local/bin)
 #   --repo <o/r>      FLAWLESS_GITHUB_REPO   source repository (default: lariocpt/flawless-react)
 #                     FLAWLESS_DOWNLOAD_BASE base URL holding the assets, for a mirror or a test
+#   --skills          install the agent skills without asking (scripted installs)
+#   --no-skills       never touch the skills; same as declining the prompt
 set -euo pipefail
 
 REPO="${FLAWLESS_GITHUB_REPO:-lariocpt/flawless-react}"
@@ -32,15 +34,19 @@ say()  { printf '\033[36m==>\033[0m %s\n' "$1"; }
 warn() { printf '\033[33m[warn]\033[0m %s\n' "$1" >&2; }
 die()  { printf '\033[31m[error]\033[0m %s\n' "$1" >&2; exit 1; }
 
+SKILLS="${FLAWLESS_SKILLS:-ask}"   # ask | yes | no
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="${2:-}"; shift 2 ;;
     --dir)     INSTALL_DIR="${2:-}"; shift 2 ;;
     --repo)    REPO="${2:-}"; shift 2 ;;
+    --skills)    SKILLS="yes"; shift ;;
+    --no-skills) SKILLS="no";  shift ;;
     --version=*) VERSION="${1#*=}"; shift ;;
     --dir=*)     INSTALL_DIR="${1#*=}"; shift ;;
     --repo=*)    REPO="${1#*=}"; shift ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option: $1 (try --help)" ;;
   esac
 done
@@ -157,3 +163,47 @@ cat <<EOF
     (a11y under --expo is the tool's own native analyser and needs no biome.)
 
 EOF
+
+# --- Agent skills ------------------------------------------------------------
+#
+# Offered here because the skills are what make a coding agent useful on a
+# generated suite, and nobody reads a README to discover they exist. The command
+# stays the single implementation — this only asks, and then delegates which
+# skills to install (a menu on a terminal, every one when piped).
+#
+# The answer is read from /dev/tty, NEVER stdin: under `curl -fsSL … | bash`
+# stdin IS the script, so a plain `read` would take the installer's remaining
+# lines as the reply and then execute a truncated installer — a failure that
+# reports success. With no terminal at all (CI, or piped where /dev/tty is not
+# usable) nothing is written and the command is printed instead.
+offer_skills() {
+  case "$SKILLS" in
+    no)
+      say "Skills skipped (--no-skills). Any time: flawless-react skills install"
+      return 0 ;;
+    yes) ;;
+    ask)
+      # `[ -w /dev/tty ]` is not a usable test here: the node exists and is
+      # mode-666, so it reports writable even when the process has NO controlling
+      # terminal — and the redirect then fails with a bare
+      # `bash: line N: /dev/tty: No such device or address` where a sentence
+      # belongs. The only honest probe is to actually open it, in a subshell so a
+      # failure stays silent and costs nothing.
+      if ( : >/dev/tty ) 2>/dev/null; then
+        printf '\nInstall the agent skills into \033[1m%s\033[0m? [y/N] ' "$PWD" > /dev/tty
+        ANSWER=""
+        read -r ANSWER < /dev/tty || ANSWER=""
+        case "$ANSWER" in
+          [yY]|[yY][eE][sS]) ;;
+          *) say "Skills not installed. Any time: flawless-react skills install"; return 0 ;;
+        esac
+      else
+        warn "no terminal available: skills were not installed. Run: flawless-react skills install"
+        return 0
+      fi ;;
+  esac
+  "$INSTALL_DIR/flawless-react" skills install \
+    || warn "skills install failed — run it yourself: flawless-react skills install"
+}
+
+offer_skills

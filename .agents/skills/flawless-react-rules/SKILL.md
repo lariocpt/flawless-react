@@ -6,7 +6,7 @@ description: Run and act on flawless-react's react-rules task — a curated set 
 # flawless react-rules
 
 ```bash
-bunx flawless-react "src/**/*.tsx" --tasks react-rules
+bunx @lariocpt/flawless-react "src/**/*.tsx" --tasks react-rules
 ```
 
 `react-rules` is one biome sweep with a hand-picked rule set and nothing else:

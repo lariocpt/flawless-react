@@ -1,5 +1,5 @@
 {
-  "name": "flawless-react",
+  "name": "@lariocpt/flawless-react",
   "version": "0.3.0-dev",
   "description": "Multi-task quality kit for React components: scaffolds Playwright perf harness + Vitest unit + browser tests, runs static perf analysis, an accessibility scan, and Biome-driven React correctness rules. Point it at a .tsx file or glob and pick what to run.",
   "type": "module",
@@ -45,6 +45,7 @@
     "bun": ">=1.1.0"
   },
   "publishConfig": {
-    "registry": "https://npm.in.drlario.org"
+    "registry": "https://npm.in.drlario.org",
+    "access": "public"
   }
 }

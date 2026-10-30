@@ -6,7 +6,7 @@ description: Triage the findings flawless-react reports — REPORT.md's accounti
 # triaging flawless findings
 
 ```bash
-bunx flawless-react "src/**/*.tsx" --tasks perf-static,a11y,react-rules
+bunx @lariocpt/flawless-react "src/**/*.tsx" --tasks perf-static,a11y,react-rules
 ```
 
 Three tasks scaffold nothing to run and only report: `perf-static` (the tool's own
