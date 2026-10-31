@@ -11,6 +11,18 @@ deliberately does not claim lives in `docs/limits.md`.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-31
+
+Package metadata only — no behaviour change, no new surface.
+
+- `homepage` now points at the documentation site, which went public today
+  (`https://lariocpt.github.io/flawless-react-website/`). The published 0.3.0 tarball predates
+  the change, so npmjs still advertised the repo readme as the homepage. npm renders that link
+  from the tarball rather than from the repository, so a publish is the only way to correct it —
+  which is what this version exists to be.
+- The README gained npm and license badges, and the repository's About box has a website for the
+  first time.
+
 ## [0.3.0] — 2026-10-31
 
 ### Added
