@@ -4,6 +4,24 @@
   "description": "Multi-task quality kit for React components: scaffolds Playwright perf harness + Vitest unit + browser tests, runs static perf analysis, an accessibility scan, and Biome-driven React correctness rules. Point it at a .tsx file or glob and pick what to run.",
   "type": "module",
   "author": "Lario Borges",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lariocpt/flawless-react.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lariocpt/flawless-react/issues"
+  },
+  "homepage": "https://github.com/lariocpt/flawless-react#readme",
+  "keywords": [
+    "react",
+    "testing",
+    "playwright",
+    "vitest",
+    "accessibility",
+    "performance",
+    "biome",
+    "code-generation"
+  ],
   "license": "MIT",
   "bin": {
     "flawless-react": "./bin/flawless-react"
