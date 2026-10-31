@@ -1,5 +1,8 @@
 # flawless-react
 
+[![npm version](https://img.shields.io/npm/v/@lariocpt/flawless-react?label=npm&color=CB3837)](https://www.npmjs.com/package/@lariocpt/flawless-react)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A multi-task quality kit for React components. Point it at a `.tsx` file (or a glob), pick which checks to run, and get back a runnable Playwright + Vitest suite, an accessibility scan, and a Biome-driven correctness report — with file:line findings for every issue.
 
 Run it with no args for an interactive checkbox menu of seven tasks:
