@@ -7,6 +7,7 @@
 import { FLAG_NAMES, renderHelp } from "./cliFlags.ts";
 import type { CoreResult } from "./core.ts";
 import { flawlessArgv, stripTrailingComment } from "./docLine.ts";
+import { isMcpArgv, parseMcpCommand } from "./mcp/spec.ts";
 import { confirmRunTests, outro, promptInteractive } from "./prompt.ts";
 import { printSummaryTable } from "./reporters/findings.ts";
 import {
@@ -328,8 +329,11 @@ export function checkLines(text: string): CheckReport {
       // subcommand and `--flags` a bare switch. Left to parseArgs, a working
       // `flawless-react skills install --all` would be reported broken (its verb
       // read as an entry glob) and a stale flag in prose would pass uncaught —
-      // both directions of the same silence.
+      // both directions of the same silence. `mcp …` is a third: without it a
+      // documented `flawless-react mcp` line passes as an entry glob named "mcp",
+      // which is the wrong-reason pass skills/spec.ts exists to prevent.
       if (isSkillsArgv(argv)) parseSkillsCommand(argv.slice(1));
+      else if (isMcpArgv(argv)) parseMcpCommand(argv.slice(1));
       else if (argv[0] === "--flags") {
         if (argv.length > 1) throw new Error("--flags takes no arguments");
       } else parseArgs(argv);
@@ -360,6 +364,18 @@ export async function main(argv: string[]): Promise<void> {
     }
     const { runSkillsCommand } = await import("./skills/cli.ts");
     process.exit(await runSkillsCommand(cmd));
+  }
+
+  // The MCP server, dispatched for the same reason as `skills` above: `mcp` is a
+  // subcommand, not an entry glob. Falling through would start a generation run
+  // over a project called "mcp" — and the docs lint would still call that line
+  // clean. The whole server (the analyser, the rules, the child plane) stays
+  // behind a dynamic import so `--help` and `--check` never pay for the TypeScript
+  // compiler it reaches through (FR-031); only a host that actually speaks the
+  // protocol loads it.
+  if (isMcpArgv(argv)) {
+    const { runMcpCli } = await import("./mcp/server.ts");
+    process.exit(await runMcpCli(argv.slice(1)));
   }
 
   // Two parse-only surfaces, ahead of parseArgs and well ahead of the core
