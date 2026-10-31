@@ -11,7 +11,8 @@ import { type LoadTarget, renderPipes } from "../src/tasks/loadPipes.ts";
  * documented run against REAL crust and a throwaway server: no baseline
  * passes, at-baseline passes, a forced baseline fails. Fail-don't-skip: a
  * missing crust is a broken environment, not a reason to hand the blind spot
- * back (install: curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- crust,
+ * back (install it from the public release:
+ * curl -fsSL https://raw.githubusercontent.com/lariocpt/crust/main/install.sh | bash,
  * or point FLAWLESS_CRUST at a binary).
  */
 
@@ -23,7 +24,9 @@ function requireCrust(): string {
   throw new Error(
     "crust is not on PATH and FLAWLESS_CRUST is unset. This test executes the emitted " +
       "load pipes through real crust — skipping it restores exactly the vacuity FR-021 " +
-      "names. Install: curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- crust",
+      "names. Install it (public release, no VPN needed):\n" +
+      "  curl -fsSL https://raw.githubusercontent.com/lariocpt/crust/main/install.sh | bash\n" +
+      "or point FLAWLESS_CRUST at an existing binary.",
   );
 }
 

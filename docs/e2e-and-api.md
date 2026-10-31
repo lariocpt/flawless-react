@@ -203,7 +203,16 @@ the same to a line-oriented parser, and losing the second to tidy up the first i
 not a trade worth making.
 
 The task succeeds even when crust is not installed — it says so in the summary
-rather than failing a generation run over a missing optional tool.
+rather than failing a generation run over a missing optional tool. When you do want
+it, both of its channels are public:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lariocpt/crust/main/install.sh | bash
+```
+
+That writes a `crust` binary into `~/.local/bin`. `npm i -g @lariocpt/crust` is the same
+tool through npm — the package's `postinstall` fetches the GitHub release binary, so it
+works wherever GitHub does.
 
 ## Programmatic API
 
