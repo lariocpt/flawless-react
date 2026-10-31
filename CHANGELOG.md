@@ -11,7 +11,7 @@ deliberately does not claim lives in `docs/limits.md`.
 
 ## [Unreleased]
 
-## [0.3.0] — the first tag (in progress)
+## [0.3.0] — 2026-10-31
 
 ### Added
 
