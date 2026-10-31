@@ -125,6 +125,27 @@ Tasks are a registry: `findTask(id).run(ctx)` with
 a new entry in `src/tasks/index.ts` honouring one rule — write findings and
 outputs, throw only for genuine failure, and make `ok` mean what it says.
 
+## The MCP server — the same contracts for a host
+
+`flawless-react mcp` serves this tool over the Model Context Protocol on stdio:
+eight tools, and **no new API surface to learn**. `flawless_run` answers with the
+child's exit line plus the same `--ci` blob documented above, so every contract in
+this file — `testRun` as the only proof suites ran, `errors` belonging to no task,
+`absent` meaning "look elsewhere" (FR-046) — is how to read what an agent gets
+back. It spawns a `flawless-react` child per run call (a suite runner inherits
+stdout; in-process would write vitest's report into a JSON-RPC frame), so nothing
+is held between calls. The six `flawless_*` read tools parse in-process and write
+nothing; unknown arguments are rejected, not ignored; `flawless_findings` is the
+static engine only, so zero findings is not "accessible and lint-clean". List the
+tools from the binary rather than from memory:
+
+```bash
+flawless-react mcp
+flawless-react mcp --help
+```
+
+The two planes, the arguments and the honest limits: `docs/mcp.md`.
+
 ## Never
 
 - Never scrape the human console output — use `--ci` or the API's `results`.

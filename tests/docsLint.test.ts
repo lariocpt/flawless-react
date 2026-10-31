@@ -60,6 +60,7 @@ const MIN_INVOCATIONS: Record<string, number> = {
   ".agents/skills/flawless-findings/SKILL.md": 1,
   ".agents/skills/flawless-e2e/SKILL.md": 1,
   ".agents/skills/flawless-load/SKILL.md": 1,
+  ".agents/skills/flawless-api/SKILL.md": 1,
   ".agents/skills/flawless-api-fixtures/SKILL.md": 1,
 };
 
