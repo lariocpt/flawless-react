@@ -345,6 +345,20 @@ emission, package/gitignore merging, style adoption. It never calls
 interactive menu, exit codes), and [src/index.ts](../src/index.ts) exposes
 `runFlawless` plus the analysis primitives as the public programmatic API.
 
+[src/mcp/](../src/mcp/) is a fourth front door — the same tool over the Model Context
+Protocol ([docs/mcp.md](mcp.md)). The layering is dictated by what must stay cheap to
+load: `protocol.ts` is dependency-free line framing, `spec.ts` parses `mcp …` without
+importing the server so `--help`/`--check` never pay for the TypeScript compiler behind
+it (FR-031), and the server itself is behind a dynamic import in `main()`. Generation
+runs as a `--ci` **child** rather than in-process because the suites it executes
+inherit stdout — an in-process run would write its report into a JSON-RPC frame — and a
+child is also what gets per-call `cwd`/`env`, a killable process group, and the CLI's
+real exit codes. Reads run in-process, serialized, with `process.cwd()` set to the
+call's `root` for the duration of the call (two concurrent reads would each chdir out
+from under the other's glob). `tools.ts` is the single dispatch path: it validates
+arguments against each tool's published schema, so the schema a host reads and the
+check a call passes cannot drift apart.
+
 Two behaviours worth knowing because they affect the *target* repo rather than
 the output dir:
 

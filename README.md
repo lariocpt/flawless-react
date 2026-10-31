@@ -31,6 +31,7 @@ Once the suite is generated, it belongs to you. A re-run regenerates derived fil
 - [Working with stores and APIs](#working-with-stores-and-apis)
 - [Programmatic API](#programmatic-api)
 - [Agent skills](#agent-skills)
+- [MCP server](#mcp-server)
 - [Limits & assumptions](#limits--assumptions)
 - [Troubleshooting](#troubleshooting)
 - [Further reading](#further-reading)
@@ -470,6 +471,28 @@ this works from a published install on a machine with no checkout of this repo.
 `flawless-react` run asks once at the end, and stops asking as soon as the project
 has one. `FLAWLESS_NO_SKILLS=1` silences both.
 
+## MCP server
+
+`flawless-react mcp` serves the same tool over the [Model Context
+Protocol](https://modelcontextprotocol.io): JSON-RPC 2.0, one message per line on
+stdio, so an agent in OpenCode, Claude Code, Codex or Cursor can generate a suite and
+read the analyser's answer without anyone pasting terminal output into a chat.
+
+```json
+{ "mcpServers": { "flawless-react": { "command": "flawless-react", "args": ["mcp"] } } }
+```
+
+Eight tools. `flawless_run` and `flawless_skills` change a project, so they run a
+`flawless-react` child with `--ci` and return its real exit code and output;
+`flawless_analyse`, `flawless_findings`, `flawless_project_status`, `flawless_tasks`,
+`flawless_reference` and `flawless_check_docs` read only — files opened, nothing
+written, nothing spawned. A nonzero exit is always an error result carrying the
+child's own output, and any output cap announces itself rather than arriving as a
+shorter answer.
+
+`flawless-react mcp --help` lists them from the binary. Arguments, the two planes and
+the honest limits: [docs/mcp.md](docs/mcp.md).
+
 ## Limits & assumptions
 
 The static analyser is deliberately narrow — it favours predictability over cleverness.
@@ -542,6 +565,7 @@ Either upgrade Bun, or convert your spec to JSON: `bunx js-yaml api.yaml > api.j
 - [docs/generated-suite.md](docs/generated-suite.md) — anatomy of the emitted suite, file by file.
 - [docs/extending.md](docs/extending.md) — patterns for editing generated specs without regretting it.
 - [docs/e2e-and-api.md](docs/e2e-and-api.md) — route e2e, crust load pipes, and the programmatic API.
+- [docs/mcp.md](docs/mcp.md) — the MCP server: eight tools for an agent, and what each one refuses to claim.
 
 ## Development
 
