@@ -1,6 +1,6 @@
 {
   "name": "@lariocpt/flawless-react",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Multi-task quality kit for React components: scaffolds Playwright perf harness + Vitest unit + browser tests, runs static perf analysis, an accessibility scan, and Biome-driven React correctness rules. Point it at a .tsx file or glob and pick what to run.",
   "type": "module",
   "author": "Lario Borges",
