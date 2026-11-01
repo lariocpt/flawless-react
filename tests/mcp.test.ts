@@ -487,6 +487,45 @@ describe("mcp run plane", () => {
 });
 
 // ---------------------------------------------------------------------------
+// E — the exit contract: the server dies when stdin closes and the batch drains
+// ---------------------------------------------------------------------------
+
+describe("mcp exit contract", () => {
+  // The dogfood's defect #8: a client that waits for process teardown after a
+  // complete answer "hung until killed". Measured here on a real child over
+  // real pipes, the clean paths exit in milliseconds — the contract clients
+  // may rely on, now permanent. The bound is generous (measured 4–31 ms) so
+  // the test catches a hang, not a slow machine.
+  test("an idle server exits within 5 s of stdin closing", async () => {
+    const r = await exitClock([INIT, INITED]);
+    expect(r.code).toBe(0);
+    expect(r.ms).toBeLessThan(5_000);
+  }, 30_000);
+
+  test("a server that just drained a flawless_run exits within 5 s of its last answer", async () => {
+    // The piped-batch shape — `printf … | flawless-react mcp` — closes stdin
+    // as it writes, so the clock starts at the ANSWER, which is what a client
+    // that waits for teardown actually experiences.
+    const dir = await tempProject();
+    try {
+      const r = await exitClock(
+        [
+          INIT,
+          INITED,
+          call(1, "flawless_run", { cwd: dir, entry: "src/Widget.tsx", tasks: ["perf-static"] }),
+        ],
+        { closeAtWrite: true, timeoutMs: 180_000 },
+      );
+      expect(r.code).toBe(0);
+      expect(r.lines.join("\n")).toContain('"id":1');
+      expect(r.ms).toBeLessThan(5_000);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+});
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -628,6 +667,70 @@ async function session(
     if (typeof msg.id === "number") responses.set(msg.id, msg);
   }
   return { lines, responses, stderr, code };
+}
+
+/**
+ * Speak to a real server and time its teardown.
+ *
+ * Writes the frames, waits for every frame that carries an id to come back,
+ * then triggers the exit (closing stdin — after the answers by default, or
+ * at write time like a shell pipeline) and measures from that trigger to
+ * process exit. This is the measurement the dogfood could not make in-process:
+ * whether the server dies when its session ends, and how fast.
+ */
+async function exitClock(
+  frames: string[],
+  opts: { closeAtWrite?: boolean; timeoutMs?: number } = {},
+): Promise<{ ms: number; code: number; lines: string[] }> {
+  const proc = Bun.spawn(["bun", BIN, "mcp"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: REPO,
+  });
+  const expected = frames.filter((f) => {
+    try {
+      return typeof (JSON.parse(f) as { id?: unknown }).id !== "undefined";
+    } catch {
+      return false;
+    }
+  }).length;
+  proc.stdin.write(`${frames.join("\n")}\n`);
+  if (opts.closeAtWrite) proc.stdin.end();
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  const lines: string[] = [];
+  let buf = "";
+  let pending: Promise<void> = Promise.resolve();
+  const pump = (): void => {
+    pending = reader.read().then((res) => {
+      if (res.done) return;
+      buf += decoder.decode(res.value, { stream: true });
+      let nl = buf.indexOf("\n");
+      while (nl !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) lines.push(line);
+        nl = buf.indexOf("\n");
+      }
+      pump();
+    });
+  };
+  pump();
+  const deadline = Date.now() + (opts.timeoutMs ?? 120_000);
+  while (lines.length < expected && Date.now() < deadline) {
+    await Promise.race([pending, Bun.sleep(25)]);
+  }
+  if (lines.length < expected) {
+    proc.kill("SIGKILL");
+    throw new Error(
+      `server answered ${lines.length}/${expected} frames within ${opts.timeoutMs ?? 120_000}ms`,
+    );
+  }
+  const t0 = Date.now();
+  if (!opts.closeAtWrite) proc.stdin.end();
+  const code = await proc.exited;
+  return { ms: Date.now() - t0, code, lines };
 }
 
 function frame(s: Session, id: number): Frame {
