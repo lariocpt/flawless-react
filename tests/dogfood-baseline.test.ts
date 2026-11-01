@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runCore } from "../src/core.ts";
+import { STAMP_RE } from "../src/scaffold-tests/stamp.ts";
 
 /**
  * The dogfood baseline harness (DOGFOOD-0.3.1-FIX-PLAN.md, Chunk 0).
@@ -29,6 +30,7 @@ import { runCore } from "../src/core.ts";
 const FIXTURE = path.resolve(__dirname, "fixtures", "aliased-next-app");
 
 const tmpDirs: string[] = [];
+const stderrLines: string[] = [];
 
 let app: string;
 let outDir: string;
@@ -47,15 +49,35 @@ beforeAll(async () => {
   app = path.join(root, "app");
   cpSync(FIXTURE, app, { recursive: true });
   outDir = path.join(app, "flawless");
-  const result = await runCore({
-    pattern: path.join(app, "src", "**", "*.tsx"),
-    outDir,
-    taskIds: ["perf-harness", "unit-browser", "perf-static", "a11y", "react-rules", "e2e", "load"],
-    nextjs: app,
-    log: false,
-    inlineSummary: false,
-    colocate: true,
-  });
+  // runCore's warn() writes to stderr even with log:false; chunk 5's marker
+  // asserts a warning, so the run's stderr is captured here once.
+  const original = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+    stderrLines.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  let result: Awaited<ReturnType<typeof runCore>>;
+  try {
+    result = await runCore({
+      pattern: path.join(app, "src", "**", "*.tsx"),
+      outDir,
+      taskIds: [
+        "perf-harness",
+        "unit-browser",
+        "perf-static",
+        "a11y",
+        "react-rules",
+        "e2e",
+        "load",
+      ],
+      nextjs: app,
+      log: false,
+      inlineSummary: false,
+      colocate: true,
+    });
+  } finally {
+    process.stderr.write = original;
+  }
   expect(result.exitCode).toBe(0);
 }, 120_000);
 
@@ -150,17 +172,25 @@ test("defect 4: a synchronous zustand hook is mocked as an async guess", () => {
   expect(page).not.toMatch(/useToasts: vi\.fn\(async/);
 });
 
-test("defect 5: the catch-all router flattens to one swagger path and nothing warns", () => {
-  // FIX-PLAN: chunk 5 — flip to: a warning naming the catch-all file and
-  // pointing at --api, and handlers provenance so a newer spec refreshes them.
-  //
-  // Measured 1 Nov: the derived spec has exactly the one flattened path, the
-  // same "/api/{route}" the dogfood derived from its hono catch-all (71 real
-  // paths behind it there).
+test("defect 5: the catch-all flattening warns, and the handlers carry provenance", () => {
+  // FIX-PLAN: chunk 5 — FLIPPED. The derived spec still has exactly the one
+  // flattened path (the flattening is inherent to an AST walk over a hono
+  // catch-all; the fix is that it stopped being silent): the run now warns,
+  // naming the file and pointing at --api, and mocks/handlers.ts opens with a
+  // provenance stamp plus a spec digest so a newer spec refreshes it instead
+  // of it hiding behind "file exists" forever.
   const swagger = JSON.parse(readOut("swagger.json")) as { paths: Record<string, unknown> };
   expect(Object.keys(swagger.paths)).toEqual(["/api/{route}"]);
-  const report = readOut("REPORT.md");
-  expect(report).not.toMatch(/catch-all/i);
+  const warning = stderrLines.find((l) => /catch-all/i.test(l));
+  expect(warning, "the flattening warns on stderr").toBeDefined();
+  expect(warning).toContain("src/app/api/[[...route]]/route.ts");
+  expect(warning).toContain("--api");
+  expect(warning).toMatch(/1 path derived from a catch-all router/);
+  const handlers = readOut("mocks", "handlers.ts");
+  // STAMP_RE includes the line terminator, so it is matched against the line
+  // with its newline back — the same way splitStamp reads it.
+  expect(`${handlers.split("\n")[0]}\n`).toMatch(STAMP_RE);
+  expect(handlers).toMatch(/^\/\/ @flawless-spec sha256:[0-9a-f]{16}$/m);
 });
 
 test("defect 6: both playwright configs leave workers unbounded and pass no dev-shm flag", () => {
