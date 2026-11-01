@@ -19,7 +19,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkLines } from "../src/cli.ts";
@@ -384,6 +384,48 @@ describe("mcp run plane", () => {
       expect(textOf(rendered)).toContain("process group killed");
     } finally {
       if (argv1 !== undefined) process.argv[1] = argv1;
+    }
+  }, 60_000);
+
+  test("a straggler holding the child's pipes cannot wedge the call past the child's exit", async () => {
+    // The one hole the watchdog could not cover: the direct child exits, a
+    // straggler in its process group keeps the stdout pipe open, and the pipe
+    // read after `proc.exited` had no bound left — the response frame would
+    // never be written, the server's shutdown chain would never settle, and
+    // even SIGTERM could not make the server exit. Measured one layer down
+    // for the same reason as the watchdog test: at the protocol level there
+    // is no way to make a real generation leak a straggler on demand.
+    //
+    // Before the fix this call never returned (the straggler slept 30 s
+    // holding the pipe); after it, the answer arrives after the first grace
+    // and names its own cut.
+    const argv1 = process.argv[1];
+    process.argv[1] = path.join(REPO, "tests", "fixtures", "mcp-leaky-child.ts");
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-straggler-"));
+    const pidFile = path.join(dir, "straggler.pid");
+    try {
+      const t0 = Date.now();
+      const run = await runFlawlessChild([pidFile], { timeoutMs: 60_000 });
+      const ms = Date.now() - t0;
+      expect(ms).toBeLessThan(15_000); // measured ~2 s: the grace, not the sleep
+      expect(run.timedOut).toBe(false);
+      expect(run.code).toBe(0);
+      expect(run.stdout).toContain('"exitCode":0');
+      expect(run.pipesCut).toBe(true);
+      // The straggler is dead, not orphaned holding the pipe.
+      const pid = Number(await readFile(pidFile, "utf8"));
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+      // And the cut is announced, never silent.
+      expect(textOf(renderCiRun(run, 60_000))).toContain("cut short");
+    } finally {
+      if (argv1 !== undefined) process.argv[1] = argv1;
+      await rm(dir, { recursive: true, force: true });
     }
   }, 60_000);
 
