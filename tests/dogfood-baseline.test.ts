@@ -146,7 +146,7 @@ test("defect 4: a synchronous zustand hook is mocked as an async guess", () => {
   const layout = read("src", "app", "layout.flawless.test.tsx");
   expect(layout).not.toContain("vi.mock(");
   const page = read("src", "app", "page.flawless.test.tsx");
-  expect(page).toMatch(/useToasts: vi\.fn\(\(\) => \[\{ /);
+  expect(page).toMatch(/useToasts: vi\.fn\(\(\) => \(?\[\{/);
   expect(page).not.toMatch(/useToasts: vi\.fn\(async/);
 });
 
