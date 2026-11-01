@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { NextjsContext } from "../types.ts";
+import { classifyStamped, hashBody, stamp } from "../scaffold-tests/stamp.ts";
+import type { NextjsApiRoute, NextjsContext } from "../types.ts";
 import { renderBrowserSetup, renderMswHandlers, renderNodeSetup } from "./mswHandlers.ts";
 import { buildSwagger } from "./swagger.ts";
 
@@ -9,6 +10,12 @@ export interface EmitNextjsResult {
   written: string[];
   swaggerPath: string;
   handlersPath: string;
+  /** What happened to handlers.ts this run, phrased for the run summary. */
+  handlersReport: string;
+  /** `http.*` handlers in the handlers.ts now on disk — a kept file counts as-is. */
+  handlersEmitted: number;
+  /** Paths in the swagger.json this run wrote. */
+  specPaths: number;
 }
 
 export interface EmitNextjsOptions {
@@ -17,9 +24,12 @@ export interface EmitNextjsOptions {
   /**
    * Refresh the generated files here that hold nothing of the user's.
    *
-   * handlers.ts stays protected either way — its bodies are yours to fill in.
-   * browser.ts, node.ts and the README are boilerplate, and freezing them meant
-   * an existing suite could never receive a later version's fix.
+   * handlers.ts is regenerated under --force even when hand-edited — that is
+   * the escape hatch its kept-reports name. Without --force it is only
+   * rewritten when the spec changed and the file still matches its generated
+   * stamp (see emitHandlers). browser.ts, node.ts and the README are
+   * boilerplate, and freezing them meant an existing suite could never
+   * receive a later version's fix.
    */
   force?: boolean;
 }
@@ -41,14 +51,17 @@ export async function emitNextjsMocks(
   const written: string[] = [];
 
   const swagger = opts.liveSpec ?? buildSwagger(ctx.apiRoutes, path.basename(ctx.root));
-  await Bun.write(swaggerPath, `${JSON.stringify(swagger, null, 2)}\n`);
+  const swaggerText = `${JSON.stringify(swagger, null, 2)}\n`;
+  await Bun.write(swaggerPath, swaggerText);
   written.push(swaggerPath);
 
-  if (!existsSync(handlersPath)) {
-    // Don't clobber user edits — handlers are a starting point.
-    await Bun.write(handlersPath, renderMswHandlers(ctx.apiRoutes));
-    written.push(handlersPath);
-  }
+  const handlers = await emitHandlers(
+    handlersPath,
+    ctx.apiRoutes,
+    hashBody(swaggerText),
+    opts.force === true,
+  );
+  if (handlers.written) written.push(handlersPath);
 
   if (!existsSync(browserPath) || opts.force) {
     await Bun.write(browserPath, renderBrowserSetup());
@@ -65,7 +78,93 @@ export async function emitNextjsMocks(
     written.push(readmePath);
   }
 
-  return { written, swaggerPath, handlersPath };
+  const onDisk = await readFile(handlersPath, "utf8");
+  return {
+    written,
+    swaggerPath,
+    handlersPath,
+    handlersReport: handlers.report,
+    handlersEmitted: (onDisk.match(/http\.\w+\(/g) ?? []).length,
+    specPaths: countSpecPaths(swagger),
+  };
+}
+
+/**
+ * The spec digest line sits BELOW the provenance stamp, inside the hashed body.
+ * That placement is the compatibility contract: STAMP_RE is untouched, so a
+ * file stamped by 0.3.1 still classifies exactly as it used to; the host's
+ * formatter cannot lose a comment; and restampGenerated re-hashes the stamp
+ * line after formatting while preserving everything below it.
+ */
+const SPEC_DIGEST_RE = /^\/\/ @flawless-spec sha256:([0-9a-f]{16})/m;
+
+/**
+ * The handlers.ts write-once rule, upgraded from "file exists" to provenance.
+ *
+ * "File exists" was a trap: `--api` refreshed swagger.json but never the
+ * handlers generated from the old AST walk, so a project that ran once before
+ * it had a real spec kept a useless catch-all stub forever, silently. The
+ * contract now — and every branch except "created" and "regenerated" leaves
+ * the file byte-identical:
+ *
+ * - absent                        → created
+ * - --force                       → regenerated (the named escape hatch)
+ * - stamp mismatch (hand-edited)  → kept; --force or delete to regenerate
+ * - no stamp at all (0.3.1 file, hand-written, or stamp deleted) → kept, always
+ * - untouched, same spec digest   → kept
+ * - untouched, spec digest moved  → regenerated from a newer spec
+ * - untouched, stamped before spec digests existed → kept (digest unknowable)
+ */
+async function emitHandlers(
+  handlersPath: string,
+  routes: NextjsApiRoute[],
+  specDigest: string,
+  force: boolean,
+): Promise<{ written: boolean; report: string }> {
+  const render = () =>
+    stamp(`// @flawless-spec sha256:${specDigest}\n${renderMswHandlers(routes)}`);
+  if (!existsSync(handlersPath)) {
+    await Bun.write(handlersPath, render());
+    return { written: true, report: "created" };
+  }
+  if (force) {
+    await Bun.write(handlersPath, render());
+    return { written: true, report: "regenerated (--force)" };
+  }
+  const text = await readFile(handlersPath, "utf8");
+  switch (classifyStamped(text)) {
+    case "stampless":
+      return {
+        written: false,
+        report:
+          "kept (no provenance stamp — hand-written or from before stamping) — regenerate with --force or delete it",
+      };
+    case "edited":
+      return {
+        written: false,
+        report: "kept (hand-edited) — regenerate with --force or delete it",
+      };
+    default: {
+      const digest = text.match(SPEC_DIGEST_RE)?.[1];
+      if (digest === undefined) {
+        return {
+          written: false,
+          report:
+            "kept (stamped before spec digests existed) — regenerate with --force or delete it",
+        };
+      }
+      if (digest !== specDigest) {
+        await Bun.write(handlersPath, render());
+        return { written: true, report: "regenerated from a newer spec" };
+      }
+      return { written: false, report: "kept" };
+    }
+  }
+}
+
+function countSpecPaths(swagger: unknown): number {
+  const paths = (swagger as { paths?: unknown } | null)?.paths;
+  return typeof paths === "object" && paths !== null ? Object.keys(paths).length : 0;
 }
 
 function renderMocksReadme(ctx: NextjsContext): string {
@@ -73,7 +172,7 @@ function renderMocksReadme(ctx: NextjsContext): string {
 
 Derived from your Next.js \`${ctx.router}\` router's \`api/\` directory at scaffold time.
 
-- \`handlers.ts\` — one MSW handler per HTTP method × API route. **Edit freely** — once this file exists, flawless-react won't overwrite it.
+- \`handlers.ts\` — one MSW handler per HTTP method × API route. **Edit freely** — a re-run keeps your edits: it regenerates this file only when the API spec changed and the file still matches its generated stamp, or when you pass \`--force\`. A file with no provenance stamp (hand-written or from an older version) is always kept — delete it to regenerate.
 - \`browser.ts\` — \`setupWorker(...handlers)\` for the Bun host bundle (catches client-side \`fetch\`).
 - \`node.ts\` — \`setupServer(...handlers)\` for Vitest (jsdom) and any Node-side fetch (RSC, server actions).
 - \`../swagger.json\` — human-readable OpenAPI doc derived from your routes. Regenerated every run.

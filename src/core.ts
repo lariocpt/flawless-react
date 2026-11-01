@@ -520,6 +520,8 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       log(
         `nextjs: wrote ${nm.written.length} mock file(s) under ${path.relative(process.cwd(), outDir)}/mocks/`,
       );
+      log(`nextjs: mocks/handlers.ts: ${nm.handlersReport}`);
+      log(`nextjs: handlers: ${nm.handlersEmitted} emitted, covering ${nm.specPaths} spec path(s)`);
       // POSIX separators, like every other emitted path (loadPipes.ts,
       // scaffold/templates.ts, scaffold-tests/mocks.ts). These land in a file;
       // the rest of path.relative's uses in this file are log lines.

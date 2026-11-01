@@ -6,9 +6,10 @@ export function renderMswHandlers(routes: NextjsApiRoute[]): string {
   lines.push(
     `// Bodies come from the live OpenAPI spec when available (examples > schema defaults);`,
   );
-  lines.push(
-    `// otherwise an empty object. Edit freely — flawless-react will not overwrite this file.`,
-  );
+  lines.push(`// otherwise an empty object. Edit freely — a re-run keeps your edits; it`);
+  lines.push(`// regenerates this file only when the API spec changed and the file is still`);
+  lines.push(`// untouched, or under --force. No stamp (hand-written or pre-stamp)? Always`);
+  lines.push(`// kept — delete it to regenerate.`);
   lines.push(``);
   lines.push(`import { http, HttpResponse } from "msw";`);
   lines.push(``);
