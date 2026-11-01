@@ -215,6 +215,50 @@ server.browser.js exports: renderToReadableStream renderToStaticMarkup renderToS
 The same config already aliases `react-dom/server.browser`, so the specifier the spec should use is
 already wired.
 
+**Measured corrections (chunk 3, 1 Nov).** The mechanism held; the supporting claims needed
+measurement, and the version gate changed the design:
+
+1. **"The same config already aliases `react-dom/server.browser`" — true, in both modes, but it had
+   to be proven.** Measured on the fixture with react-dom 19.1.0 installed, generated with the
+   current tree: the emitted `vitest.config.mts` aliases `react-dom/server` →
+   `<nm>/react-dom/server.js` AND `react-dom/server.browser` → `<nm>/react-dom/server.browser.js`
+   in **both** Next-host and standalone mode (`computeResolveAliases`' pin block in
+   `src/tasks/unitAndBrowser.ts` — both pins emit whenever the files exist at generation time).
+   Without an installed react-dom neither pin is emitted and vite resolves both specifiers through
+   react-dom's own exports map onto the same builds.
+2. **The export tables, re-measured on installed packages:**
+
+   ```text
+   react-dom@19.1.0  server.node.js    renderToPipeableStream renderToStaticMarkup renderToString version
+                     server.browser.js renderToReadableStream renderToStaticMarkup renderToString version
+   react-dom@19.2.0  server.node.js    + renderToReadableStream resume resumeToPipeableStream
+                     server.browser.js renderToReadableStream renderToStaticMarkup renderToString resume version
+   ```
+
+   `server.browser.js` still exports `renderToReadableStream` on modern react-dom — the export map
+   did not move again — so the specifier swap is safe across the version gate, not a 19.1 fix that
+   becomes a 19.2 break.
+3. **As landed: a measured specifier, not a hardcoded one.** `src/reactDomServerStream.ts` probes
+   the react-dom the emitted aliases point at (the `reactPinDir` anchor) and names the specifier
+   whose resolved build exports `renderToReadableStream`, preferring `react-dom/server.browser`
+   (it carries the export on 18.x, 19.1 and 19.2 alike). A react-dom that satisfies neither
+   candidate is a capability gap: the spec emits a `test.skip` naming the export gap and the
+   version seen — never an "is not a function" red. The guard (`tests/documentRootStream.test.ts`)
+   greps rendered output and re-derives the export table from bytes on disk, so it cannot encode
+   19.1's table as eternal truth.
+4. **The native twin needs nothing.** `src/scaffold-tests/nativeTemplates.ts` emits no react-dom
+   import and the native jest config aliases no `react-dom/*` subpath (measured: zero matches in
+   `nativeTemplates.ts`/`nativeIndex.ts`). The TS2708 half stays static (chunk 2).
+
+**Result (chunk 3, 1 Nov).** Fixture unit plane (react-dom pinned 19.1.0): the layout spec's failure
+went from `renderToReadableStream is not a function` (defect 3) to `createStore(...) is not a
+function` — defect 4's `vi.fn(async () => ({}))` guess at `zustand/vanilla`'s curried factory; the
+page spec's two `toasts.map` reds are defect 4's too. Tally stays 3 failed / 3 passed / 1 skipped,
+but no spec fails for defect 3 any more; the layout goes fully green only with chunk 4's mock
+shapes. In the dogfood repo the two document-root specs went red→green with this change plus
+chunk 4's real fixtures (`~/FLAWLESS-DOGFOOD-31-oct.md` §3 + §4: "Replacing them with real fixtures
+… turned the file green").
+
 **Do.**
 
 1. In the document-root spec template (`src/scaffold-tests/templates.ts`; the native twin is
