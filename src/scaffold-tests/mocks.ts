@@ -82,7 +82,7 @@ const PURE_UTILITY_BINDINGS = new Set(["cn", "clsx", "cva", "twMerge", "tw"]);
  * contract; it must be stated by the source's own annotation, not guessed
  * from a call site that happens to write `await`.
  */
-function isHookContract(name: string): boolean {
+export function isHookContract(name: string): boolean {
   return /^use[A-Z]/.test(name);
 }
 
