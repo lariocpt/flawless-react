@@ -205,6 +205,17 @@ export class ModuleResolver {
     return this.nearestConfig(dir)?.patterns ?? [];
   }
 
+  /**
+   * The effective baseUrl directory for files under `dir` — undefined when the
+   * config chain declares none. Companion to aliasPatternsFor: a harness that
+   * re-emits the target's aliases must anchor them where the target anchored
+   * them, and a baseUrl with no paths is still a resolution rule the harness
+   * has to carry.
+   */
+  baseUrlFor(dir: string): string | undefined {
+    return this.nearestConfig(dir)?.baseUrlDir;
+  }
+
   /** Resolve `spec` as imported from `importerAbsPath`. Undefined for bare/unresolvable. */
   resolve(spec: string, importerAbsPath: string): string | undefined {
     if (spec.startsWith("./") || spec.startsWith("../") || spec.startsWith("/")) {

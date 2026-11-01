@@ -13,11 +13,11 @@ import { runCore } from "../src/core.ts";
  * data function, a client component reading a synchronous zustand hook, and a
  * hono-style catch-all API route.
  *
- * Every test below asserts the CURRENT, WRONG behaviour measured on 1 Nov
- * 2026, one `// FIX-PLAN: chunk N` marker per planned fix. Each chunk flips
- * its own marker to the correct behaviour instead of inventing a harness.
- * A defect that does not reproduce here is recorded as such — that is a
- * result, not a gap.
+ * Every test below asserts the CURRENT behaviour measured on 1 Nov 2026, one
+ * `// FIX-PLAN: chunk N` marker per planned fix. Each chunk flips its own
+ * marker to the correct behaviour instead of inventing a harness. Defect 1's
+ * marker is flipped in the same PR that fixes it (chunk 1). A defect that does
+ * not reproduce here is recorded as such — that is a result, not a gap.
  *
  * The runtime reproduction of defect #1 (browser plane webServer exit 1)
  * cannot live here: it needs installed react/playwright. It was measured by
@@ -70,23 +70,23 @@ test("the generation run itself is green and every selected task reports ok", ()
   expect(existsSync(path.join(outDir, "vitest.config.mts"))).toBe(true);
 });
 
-test("defect 1: the harness tsconfig IS emitted for a Next host and carries no path aliases", () => {
-  // FIX-PLAN: chunk 1 — flip to: compilerOptions.paths carries every target
-  // alias, rewritten relative to the app root, and a target baseUrl is carried.
-  //
-  // Measured 1 Nov: the file IS emitted for Next hosts — by
-  // src/scaffold-tests/index.ts (write-once, guarded only by
-  // skipInnerPackageJson, which no caller sets), NOT by the scaffold
-  // templates.ts:158 non-Next branch the plan blamed. Bun's bundler resolves
-  // `@/…` in flawless/provider.tsx through this nearest tsconfig, so the
-  // browser and perf planes died at webServer startup with
+test("defect 1: the harness tsconfig carries the app's path aliases, relative to the app root", () => {
+  // FIX-PLAN: chunk 1 — FLIPPED. The harness tsconfig is emitted for Next
+  // hosts by src/scaffold-tests/index.ts (write-once, guarded only by
+  // skipInnerPackageJson, which no caller sets — NOT the scaffold
+  // templates.ts:158 non-Next branch the plan blamed), and it now carries
+  // every target paths alias rewritten from the app root, plus the target
+  // baseUrl. Before the fix this file had neither, Bun resolved provider.tsx's
+  // `@/…` through it, and the browser/perf webServers died at startup with
   // `Could not resolve: "@/components/providers/store-provider"`.
   const harness = JSON.parse(readOut("tsconfig.json")) as {
     compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
   };
-  expect(harness.compilerOptions?.paths).toBeUndefined();
-  expect(harness.compilerOptions?.baseUrl).toBeUndefined();
-  // The import that cannot resolve through it — the exact dogfood failure.
+  expect(harness.compilerOptions?.baseUrl).toBe("..");
+  expect(harness.compilerOptions?.paths).toEqual({ "@/*": ["src/*"] });
+  // Relative bytes only — the suite is committed and must not name its machine.
+  expect(readOut("tsconfig.json")).not.toContain(app);
+  // The import this exists to resolve:
   expect(read("flawless", "provider.tsx")).toContain(
     'import { StoreProvider } from "@/components/providers/store-provider"',
   );

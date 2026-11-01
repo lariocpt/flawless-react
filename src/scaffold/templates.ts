@@ -3,6 +3,7 @@ import path from "node:path";
 import { type AuthStub, authShimEsm, collectAuthStubs } from "../analyse/authShims.ts";
 import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { libraryShimSource, referencedLibraryShims } from "../analyse/providerWraps.ts";
+import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { appReactMajor, detectAppReact } from "../packageJson.ts";
 import {
@@ -402,7 +403,94 @@ function pkgJson(name: string, report: boolean, outDir: string): string {
   )}\n`;
 }
 
-export function tsConfig(): string {
+/** The alias block a harness tsconfig carries for its app: relative paths only. */
+export interface HarnessAliasBlock {
+  /** baseUrl as the harness file sees it — relative to the harness dir, e.g. "..". */
+  baseUrl: string;
+  /** Emitted only when the target declares paths; keys as the target spelled them. */
+  paths?: Record<string, string[]>;
+}
+
+/**
+ * The target's tsconfig `paths`/`baseUrl`, re-expressed for the harness tsconfig.
+ *
+ * Bun's bundler resolves a bare specifier through the NEAREST tsconfig above
+ * the importing file — so `flawless/provider.tsx`'s `@/…` imports resolve
+ * through `flawless/tsconfig.json`, never the app's own. A harness tsconfig
+ * without the app's aliases is a webServer that dies at startup
+ * ("Could not resolve @/…", dogfood defect #1): the vitest plane already got
+ * its aliases from computeResolveAliases; this is the same contract for the
+ * file Bun reads.
+ *
+ * Every alias is carried, not just `@/*` — a filtered subset is the same bug
+ * with fewer symptoms. Targets are rewritten relative to the app root and the
+ * baseUrl anchors there (or at the target's own baseUrl), so the emitted bytes
+ * never name the machine that generated it (the emitPaths invariant).
+ *
+ * Undefined means the target declares no resolution rules to carry, and the
+ * harness tsconfig stays exactly what it always was.
+ */
+export function harnessAliasBlock(
+  aliasRoot: string,
+  outDir: string,
+): HarnessAliasBlock | undefined {
+  const resolver = new ModuleResolver();
+  const patterns = resolver.aliasPatternsFor(aliasRoot);
+  const baseUrlDir = resolver.baseUrlFor(aliasRoot);
+  if (patterns.length === 0 && baseUrlDir === undefined) return undefined;
+  // Every pattern from one config shares its baseDir (resolveModule reads paths
+  // from a single declaring entry, whose baseDir already IS the target's baseUrl
+  // when it has one). Anchor the rewrite there: a target baseUrl is carried, a
+  // paths-only target anchors on its config dir, and the harness baseUrl is the
+  // same directory seen from the suite instead of from the app.
+  const anchor = patterns[0]?.baseDir ?? baseUrlDir;
+  if (anchor === undefined) return undefined;
+  const paths: Record<string, string[]> = {};
+  for (const p of patterns) {
+    const key = p.exact ? p.prefix : `${p.prefix}*${p.suffix}`;
+    const targets = paths[key] ?? [];
+    targets.push(...p.targets.map((t) => rewriteAliasTarget(t, p.baseDir, anchor)));
+    paths[key] = targets;
+  }
+  // The guard, emitPaths-style: an alias the target declares and the emitted
+  // block would not resolve is a broken harness, not a smaller one. Today the
+  // loop above cannot drop a pattern; the day someone adds a filter (the vite
+  // side has one) this throws at generation instead of shipping a suite whose
+  // browser plane dies three commands later.
+  for (const p of patterns) {
+    const key = p.exact ? p.prefix : `${p.prefix}*${p.suffix}`;
+    if ((paths[key]?.length ?? 0) < p.targets.length) {
+      throw new Error(
+        `harness tsconfig would drop the target's "${key}" alias — every target ` +
+          `paths entry must survive into the config Bun resolves harness imports with`,
+      );
+    }
+  }
+  const block: HarnessAliasBlock = { baseUrl: relativeToEmitted(outDir, anchor) };
+  if (Object.keys(paths).length > 0) block.paths = paths;
+  return block;
+}
+
+/** One target string rewritten from (baseDir) to (anchor), `*` and separators intact. */
+function rewriteAliasTarget(target: string, baseDir: string, anchor: string): string {
+  // An absolute target is the app's own claim about the filesystem; there is
+  // nothing relative to say about it. (Real apps do not do this; tsconfig
+  // allows it, and silently rewriting it into a relative path would lie.)
+  if (path.isAbsolute(target)) return target;
+  const parts = target.split("*");
+  return parts
+    .map((part, i) => {
+      let rel = relativeToEmitted(anchor, path.resolve(baseDir, part));
+      if (rel === ".") rel = "";
+      // path.resolve eats the trailing "/" that separates a "*" from its
+      // directory; the star needs it back or "src/*" becomes "src*".
+      if (i < parts.length - 1 && /[/\\]$/.test(part) && !rel.endsWith("/")) rel += "/";
+      return rel;
+    })
+    .join("*");
+}
+
+export function tsConfig(aliases?: HarnessAliasBlock): string {
   return `${JSON.stringify(
     {
       compilerOptions: {
@@ -410,6 +498,15 @@ export function tsConfig(): string {
         lib: ["ESNext", "DOM"],
         module: "ESNext",
         moduleResolution: "bundler",
+        // Only when the target declares aliases: an empty baseUrl/paths pair is
+        // noise that reads as a decision, and the no-alias output must stay
+        // byte-identical to every suite emitted before this existed.
+        ...(aliases
+          ? {
+              baseUrl: aliases.baseUrl,
+              ...(aliases.paths ? { paths: aliases.paths } : {}),
+            }
+          : {}),
         jsx: "react-jsx",
         strict: true,
         skipLibCheck: true,
