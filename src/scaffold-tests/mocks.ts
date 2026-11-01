@@ -118,6 +118,23 @@ interface MergedModule {
   /** Module-side export name → its own return annotation, merged across the
    * declarations that import from this module. See ModuleImportInfo. */
   returns: Map<string, { value: PropValue; sync: boolean }>;
+  /**
+   * The specifier names an installed package rather than a project file:
+   * resolved into node_modules, or bare and unresolvable (the fixture's
+   * zustand is not installed at generation time — a package the resolver
+   * cannot reach is still a package, not an alias). Alias-shaped specifiers
+   * ("@/…", "~/", "#…") are local even when unresolvable, so a resolution
+   * regression keeps the old behaviour instead of silently un-mocking data.
+   */
+  pkg: boolean;
+}
+
+/** See MergedModule.pkg. */
+function looksLikePackage(specifier: string, resolvedPath: string | undefined): boolean {
+  if (resolvedPath) return resolvedPath.includes("node_modules");
+  if (/^[./]/.test(specifier)) return false;
+  if (/^(@\/|~\/|#)/.test(specifier)) return false;
+  return true;
 }
 
 /** Default and namespace entries have no module-side name; the local stands in. */
@@ -128,10 +145,11 @@ function membershipName(mi: ModuleImportInfo, index: number): string {
 function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key: string): void {
   let group = groups.get(key);
   if (!group) {
-    group = { specifiers: new Set(), bindings: [], returns: new Map() };
+    group = { specifiers: new Set(), bindings: [], returns: new Map(), pkg: false };
     groups.set(key, group);
   }
   group.specifiers.add(mi.specifier);
+  group.pkg = group.pkg || looksLikePackage(mi.specifier, mi.resolvedPath);
   for (const [name, r] of Object.entries(mi.importedReturns ?? {})) group.returns.set(name, r);
   mi.names.forEach((local, i) => {
     // A `type` specifier is erased at compile time, so the module does not
@@ -345,6 +363,18 @@ export function emitModuleMocks(
     // the tree and the spec asserted against an empty container.
     if (group.bindings.length > 0 && group.bindings.every((b) => b.pure || b.data || b.graphOnly))
       continue;
+    // Module-factory completeness, guard half (defect #4, mechanism 2). A
+    // vi.mock factory REPLACES the whole module; for a package the real
+    // export surface cannot be read (node_modules is never parsed), so the
+    // factory can only name what analysed files import — and a name no
+    // analysed file CALLS is a pure guess. When EVERY binding is such a
+    // guess, the honest factory is the one never emitted: leave the package
+    // real. The dogfood's hand-verified green fix was exactly "zustand left
+    // real"; a curried sync factory like `createStore<AppState>()((set) =>
+    // …)` cannot survive any stub the emitter could guess, and the fixture
+    // proved it: `createStore(...) is not a function` was the async `{}`
+    // stub being CALLED, not a dropped export.
+    if (group.pkg && !moduleHasEvidence(group, info)) continue;
     push(mi, (spec) => dataModuleMock(group, info, spec, todo, apiRoutes));
   }
 
@@ -646,6 +676,25 @@ vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
 }
 
 /**
+ * Does any binding of this module have EVIDENCE — a call site the analyser
+ * saw (any channel: the unit's awaited deps, the render tree's, or a sync
+ * unit's mockDeps) or a return annotation on the declaration? A package
+ * module with none is mocked on pure guesswork, which is the state where
+ * leaving it real is the honest answer (see the emitMocks loop).
+ */
+function moduleHasEvidence(group: MergedModule, info: ComponentInfo): boolean {
+  const allDeps = [
+    ...(info.dataDeps ?? []),
+    ...(info.treeDataDeps ?? []),
+    ...(info.mockDeps ?? []),
+  ];
+  return group.bindings.some(
+    (b) =>
+      allDeps.some((d) => d.calleeRoot === b.local) || group.returns.has(b.moduleName ?? b.local),
+  );
+}
+
+/**
  * A project-local module a server component reads data from — every import
  * statement of it merged, so the factory covers every binding at once.
  */
@@ -858,5 +907,19 @@ function dataModuleMock(
     guesses.length > 0
       ? `// TODO(flawless): ${guesses.join("; ")} — give them real fixtures.\n`
       : "";
-  return `${note}vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
+  // Module-factory completeness, statement half (defect #4, mechanism 2).
+  // The factory replaces the WHOLE module. For a package the rest of the
+  // surface cannot be enumerated (node_modules is never parsed), so whatever
+  // no analysed file imported is undefined in this spec — say which names
+  // are covered and what that implies, mirroring the completeness argument
+  // serverActionMock makes for its surface, rather than dropping names
+  // silently the way `vi.mock("zustand", () => ({ useStore }))` did to
+  // `createStore` in the dogfood.
+  const surface = group.pkg
+    ? `// This factory replaces the whole ${JSON.stringify(spec)} module: the names below are\n` +
+      `// every export an analysed file imports, and every other export of the package is\n` +
+      `// undefined in this spec. If a render dies on a missing export, delete this vi.mock\n` +
+      `// and give the data a real fixture.\n`
+    : "";
+  return `${surface}${note}vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
 }
