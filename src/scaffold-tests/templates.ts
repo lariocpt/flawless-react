@@ -3553,6 +3553,13 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:5173",
     trace: "retain-on-failure",
+    launchOptions: {
+      // Insurance, not a second fix: a container with a small /dev/shm kills
+      // renderers with the identical "Target crashed" from a different cause
+      // (Chromium puts shared memory there; the 64 MB default runs out). The
+      // measured crash was contention — that is what the bound above fixes.
+      args: ["--disable-dev-shm-usage"],
+    },
   },
   webServer: {
     command: "bun ../host/server.ts",

@@ -193,10 +193,9 @@ test("defect 5: the catch-all flattening warns, and the handlers carry provenanc
   expect(handlers).toMatch(/^\/\/ @flawless-spec sha256:[0-9a-f]{16}$/m);
 });
 
-test("defect 6: both playwright configs bound the default workers; dev-shm flag pending", () => {
-  // FIX-PLAN: chunk 6 — workers half flipped: the emitted configs now bound
-  // the local default to min(4, cpus/2); --disable-dev-shm-usage lands in the
-  // next commit of the same PR.
+test("defect 6: both playwright configs bound the default workers and pass the dev-shm flag", () => {
+  // FIX-PLAN: chunk 6 — flipped. The emitted configs bound the local default
+  // to min(4, cpus/2) and launch chromium with --disable-dev-shm-usage.
   //
   // Measured 1 Nov: `undefined` fell through to playwright's ½-CPU default;
   // the dogfood saw 1–3 renderer crashes per full run at that width.
@@ -206,7 +205,7 @@ test("defect 6: both playwright configs bound the default workers; dev-shm flag 
       /workers: process\.env\.FLAWLESS_WORKERS[\s\S]*?Math\.max\(1, Math\.min\(4, Math\.floor\(os\.cpus\(\)\.length \/ 2\)\)\),/,
     );
     expect(text).not.toMatch(/workers:[\s\S]*?: undefined,/);
-    expect(text).not.toContain("--disable-dev-shm-usage");
+    expect(text).toContain('args: ["--disable-dev-shm-usage"]');
   }
 });
 

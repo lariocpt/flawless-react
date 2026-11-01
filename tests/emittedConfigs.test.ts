@@ -504,6 +504,10 @@ describe("the emitted playwright configs bound the default worker count", () => 
       });
       expect(cfg.workers, "workers is set, not left to Playwright").toBeDefined();
       expect(cfg.workers).toBe(bound);
+      // Small-/dev/shm containers show the identical renderer crash from a
+      // different cause; the flag is the insurance against that one.
+      const use = cfg.use as { launchOptions?: { args?: string[] } };
+      expect(use.launchOptions?.args).toContain("--disable-dev-shm-usage");
     });
 
     test(`${cfgRel}: FLAWLESS_WORKERS still wins, over both the bound and CI`, async () => {
