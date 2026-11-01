@@ -205,9 +205,15 @@ async function runMcp(): Promise<number> {
   //   halfway would leave half-written specs in the project for no one's
   //   convenience). Closing the pipe is not a cancel — SIGTERM is.
   const shutdown = async (reason: string, opts: { kill: boolean }): Promise<void> => {
+    // The kill is deliberately NOT behind the early return: a signal landing
+    // while another teardown is already draining — the piped batch starts its
+    // drain before the child even spawns — must still take the live children
+    // with it. "A shutdown is already in flight" is exactly the moment an
+    // orphan is born: the drain is waiting on the very child the signal just
+    // cancelled.
+    if (opts.kill) killLiveChildren();
     if (exiting) return;
     exiting = true;
-    if (opts.kill) killLiveChildren();
     await chain.catch(() => {});
     const killed = killedChildCount();
     process.stderr.write(

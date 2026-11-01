@@ -565,11 +565,88 @@ describe("mcp exit contract", () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 180_000);
+  test("SIGTERM during the EOF drain still kills the live child", async () => {
+    // The piped batch starts the drain before the child even spawns, so the
+    // signal lands while a shutdown is already in flight. The documented
+    // contract is "a signal kills the live child's process group before the
+    // server exits" — the shutdown early return must not skip the kill just
+    // because a drain is already running. Measured without the kill: the
+    // child outlives the server and dies only when it next writes into the
+    // dead pipe (152 ms here; a quiet child would live for its full run).
+    const dir = await tempProject();
+    try {
+      const proc = Bun.spawn(["bun", BIN, "mcp"], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: REPO,
+      });
+      proc.stdin.write(`${INIT}\n${INITED}\n`);
+      proc.stdin.write(
+        `${call(1, "flawless_run", { cwd: dir, entry: "src/Widget.tsx", tasks: ["perf-static"] })}\n`,
+      );
+      proc.stdin.end();
+      let kid = 0;
+      const t0 = Date.now();
+      while (!kid && Date.now() - t0 < 20_000) {
+        kid = childProcsOf(proc.pid)[0] ?? 0;
+        if (!kid) await Bun.sleep(10);
+      }
+      expect(kid).toBeGreaterThan(0);
+      proc.kill("SIGTERM");
+      const code = await proc.exited;
+      expect(code).toBe(0);
+      // The kill is posted before the server exits, so the child is dead (or
+      // a zombie awaiting reap) within milliseconds of the exit. Without the
+      // kill it was measurably alive at this instant and lived ~150 ms more.
+      let alive = true;
+      const t1 = Date.now();
+      while (alive && Date.now() - t1 < 100) {
+        alive = procAlive(kid);
+        if (alive) await Bun.sleep(5);
+      }
+      expect(alive).toBe(false);
+      // Belt: never leave a process behind for the harness to trip over.
+      const t2 = Date.now();
+      while (procAlive(kid) && Date.now() - t2 < 5_000) await Bun.sleep(10);
+      expect(procAlive(kid)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/** Direct children of `pid`, via /proc — no ps parsing games. */
+function childProcsOf(pid: number): number[] {
+  const out: number[] = [];
+  for (const e of readdirSync("/proc")) {
+    if (!/^\d+$/.test(e)) continue;
+    try {
+      const stat = readFileSync(`/proc/${e}/stat`, "utf8");
+      const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      if (ppid === pid) out.push(Number(e));
+    } catch {
+      /* raced exit */
+    }
+  }
+  return out;
+}
+
+/** Is the process still running? A zombie counts as dead: the kill landed,
+ *  the reaper just has not gotten to it yet. */
+function procAlive(pid: number): boolean {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+    return state !== "Z";
+  } catch {
+    return false;
+  }
+}
 
 const INIT =
   '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"flawless-tests","version":"0"}}}';
