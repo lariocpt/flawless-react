@@ -43,7 +43,7 @@ import { handlers } from "./mocks/handlers.ts";
 await setupWorker(...handlers).start({ quiet: true });
 ```
 
-Then write `mocks/handlers.ts` with whatever endpoints your component expects. The handlers file is yours — it is never regenerated, under any flag.
+Then write `mocks/handlers.ts` with whatever endpoints your component expects. The handlers file is yours — a re-run keeps your edits; it regenerates the file only when the API spec changed and the file still matches its generated stamp, or under `--force`.
 
 ## Tighten the budgets into hard failures
 
@@ -85,7 +85,6 @@ Protected under every flag, including `--force`:
 - `flawless/host/main.tsx` — the providers, MSW wiring and hand registrations in the `ALL` spread (see above). Nothing can rebuild those from the analysis. The mount tables beside it (`host/registry.ts`) are derived, regenerate on every run, and are how a plain re-run registers newly analysed components over the kept wrapper.
 - `flawless/provider.fixtures.ts` — the typed holes for your store's initial state.
 - `flawless/e2e/global-setup.ts` — where you wire up login.
-- `flawless/mocks/handlers.ts` — the response bodies are yours to fill in.
 
 Merge-preserving under `--force` — regenerated, but never at the cost of what you put there:
 
@@ -95,6 +94,7 @@ Merge-preserving under `--force` — regenerated, but never at the cost of what 
 Kept without `--force`, regenerated with it:
 
 - `flawless/e2e/<route>.spec.ts` — route specs.
+- `flawless/mocks/handlers.ts` — the response bodies are yours to fill in. Even without `--force` a re-run refreshes it when the API spec changed and the file still matches its `// @flawless-generated` stamp (the stamp's body carries a `// @flawless-spec sha256:…` digest of the spec it was generated from); a hand-edited file, or one with no stamp at all (from before stamping existed, or hand-written), is kept and reported — `--force` or deletion regenerates it either way.
 - Colocated `*.flawless.test.tsx` specs written by `--colocate` — with one more
   guard: each one opens with a `// @flawless-generated sha256:…` stamp hashing
   the rest of the file, and `--force` only rewrites a spec whose stamp still

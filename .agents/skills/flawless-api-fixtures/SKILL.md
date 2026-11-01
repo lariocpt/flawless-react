@@ -40,13 +40,14 @@ run**.
 | file | refresh behaviour |
 | --- | --- |
 | `flawless/swagger.json` | rewritten every run |
-| `flawless/mocks/handlers.ts` | **written once, never overwritten — not by `--force` either** |
+| `flawless/mocks/handlers.ts` | kept while it carries your edits; refreshed when the spec changed and its stamp is untouched — `--force` regenerates it even hand-edited |
 | `mocks/browser.ts`, `mocks/node.ts`, `mocks/README.md` | written once, refreshed by `--force` |
 | `flawless/mock/server.ts` | only with `--api`: rewritten each run |
 | `flawless/mock/routes.ts` | only with `--api`: written once (hand-tuned bodies can't be rebuilt from the spec) |
 
 The handlers file is the one you edit. Its header says so, and it is the reason a
-spec with a `{}` body can be fixed once and stay fixed.
+spec with a `{}` body can be fixed once and stay fixed — until the spec itself
+changes while the file is still untouched, when a re-run refreshes it and says so.
 
 How the three MSW entry points wire up:
 
@@ -77,7 +78,7 @@ because it explains most empty-looking specs:
 
 So `{ id: 0, createdAt: "1970-01-01T00:00:00.000Z", items: [ … ] }` is not a bug — it
 is a spec with no examples. The fix is `examples` in the spec, or hand-editing
-`mocks/handlers.ts` (which nothing will overwrite), or both.
+`mocks/handlers.ts` (which keeps your edits), or both.
 
 When a component's endpoint has no derivable body, the generated spec says so in
 place:
