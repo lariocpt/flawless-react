@@ -111,15 +111,22 @@ test("defect 2: the run excludes the suite dir from the app's own tsconfig", () 
   expect(read("tsconfig.json")).toContain('"exclude": ["node_modules", "flawless"]');
 });
 
-test("defect 3: the document-root spec imports renderToReadableStream from react-dom/server", () => {
-  // FIX-PLAN: chunk 3 — flip to: the import names react-dom/server.browser,
-  // which the generated vitest config actually aliases to the build that
-  // exports renderToReadableStream.
-  //
-  // Measured 1 Nov on the fixture's async root layout spec — the same import
-  // that failed with "renderToReadableStream is not a function" in the dogfood.
+test("defect 3: the document-root spec imports renderToReadableStream from react-dom/server.browser", () => {
+  // FIX-PLAN: chunk 3 — FLIPPED. The specifier is now MEASURED against the
+  // react-dom the suite is pinned to (src/reactDomServerStream.ts): bare
+  // "react-dom/server" is aliased by the emitted config to the file
+  // server.js → require("./server.node") — the node build — which on the
+  // fixture's react-dom 19.1.0 exports only renderToPipeableStream
+  // renderToStaticMarkup renderToString version (measured). server.browser.js
+  // carries renderToReadableStream on 19.1 AND 19.2 (19.2's node build gained
+  // it too; the browser build kept it), so the specifier swap is safe across
+  // the version gate. Before the fix this spec died with
+  // "renderToReadableStream is not a function" — the same failure as in the
+  // dogfood. The guard over rendered output lives in
+  // tests/documentRootStream.test.ts.
   const spec = read("src", "app", "layout.flawless.test.tsx");
-  expect(spec).toContain('import { renderToReadableStream } from "react-dom/server"');
+  expect(spec).toContain('import { renderToReadableStream } from "react-dom/server.browser"');
+  expect(spec).not.toContain('from "react-dom/server";');
 });
 
 test("defect 4: a synchronous zustand hook is mocked as an async guess", () => {

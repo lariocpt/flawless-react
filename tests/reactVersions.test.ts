@@ -529,7 +529,10 @@ describe("document-root spec per React major", () => {
 
   test("React 18/19: the streaming renderer, promise props awaited", async () => {
     const spec = await docRootSpec(await appWith("19.2.8"));
-    expect(spec).toContain('import { renderToReadableStream } from "react-dom/server"');
+    // Defect #3: bare "react-dom/server" is aliased to the node build, which
+    // on react-dom < 19.2 lacks renderToReadableStream — the emitted specifier
+    // is measured (probeServerStream) and prefers react-dom/server.browser.
+    expect(spec).toContain('import { renderToReadableStream } from "react-dom/server.browser"');
     expect(spec).toContain("PROMISE_PROPS");
     expect(spec).not.toContain("renderToStaticMarkup(ui");
   });
