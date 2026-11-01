@@ -412,15 +412,12 @@ describe("mcp run plane", () => {
       expect(run.code).toBe(0);
       expect(run.stdout).toContain('"exitCode":0');
       expect(run.pipesCut).toBe(true);
-      // The straggler is dead, not orphaned holding the pipe.
+      // The straggler is dead, not orphaned holding the pipe. A zombie counts
+      // as dead — the SIGKILL landed and the reaper just has not gotten to it,
+      // and under load that gap is real: kill(pid, 0) succeeds on a zombie,
+      // which is how this assertion flaked once in a full run.
       const pid = Number(await readFile(pidFile, "utf8"));
-      let alive = true;
-      try {
-        process.kill(pid, 0);
-      } catch {
-        alive = false;
-      }
-      expect(alive).toBe(false);
+      expect(procAlive(pid)).toBe(false);
       // And the cut is announced, never silent.
       expect(textOf(renderCiRun(run, 60_000))).toContain("cut short");
     } finally {
