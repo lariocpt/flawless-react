@@ -954,6 +954,15 @@ export interface ComponentInfo {
   /** Descendants' dataDeps — call-site shapes joined via calleeRoot. */
   treeDataDeps?: DataDepInfo[];
   /**
+   * Call-site deps extracted from a NON-async unit's body (dogfood defect #4).
+   * A sync client component's `const toasts = useToasts()` crosses a boundary
+   * the mock emitter must know about — sync call, `.map` read — even though
+   * the dataDeps channel is async-only by design. Consumed ONLY by the mock
+   * emitter (this unit's own spec and the parent's treeDataDeps merge);
+   * guards, predicates and the RSC skip escape deliberately ignore it.
+   */
+  mockDeps?: DataDepInfo[];
+  /**
    * What the CHILD components rendered by this unit's own JSX expect on the
    * props they receive: tag → attr → the child's default value for it
    * (analyse/childBridge.ts). A child reads more of a value than the

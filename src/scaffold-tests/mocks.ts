@@ -646,8 +646,14 @@ function dataModuleMock(
   // The descendants' call-site evidence joins the unit's: the mock is shared
   // by the whole render, and it is the CHILD — Drop, not the page — whose
   // `interactions.liked` says what getUserDropInteractions has to return.
-  // Analyse already dropped any callee the unit itself deps on.
-  const allDeps = [...(info.dataDeps ?? []), ...(info.treeDataDeps ?? [])];
+  // Analyse already dropped any callee the unit itself deps on. The unit's own
+  // mockDeps (sync-unit call sites, defect #4) join here: a sync component's
+  // `useToasts()` is exactly the evidence the old async-by-default guess lacked.
+  const allDeps = [
+    ...(info.dataDeps ?? []),
+    ...(info.treeDataDeps ?? []),
+    ...(info.mockDeps ?? []),
+  ];
   const depsHere = allDeps.filter(
     (d) => d.specifier !== undefined && group.specifiers.has(d.specifier),
   );
