@@ -327,6 +327,22 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
       }
     }
 
+    // A catch-all router (`app/api/[[...x]]/route.ts`, hono/tRPC/...) collapses
+    // every endpoint behind it into ONE derived path — the flattening itself
+    // happens in nextjs/apiRoutes.ts's segment map. Silent, that stub starves
+    // MSW and the load pipes for hours; say it once, here, and name the way out.
+    // Skipped when a real spec enriched this run (the user already took it).
+    if (liveSpec === undefined) {
+      const flattened = nextCtx.apiRoutes.filter((r) => r.catchAll === true);
+      if (flattened.length > 0) {
+        const root = nextCtx.root;
+        const files = flattened.map((r) => path.relative(root, r.file)).join(", ");
+        warn(
+          `nextjs: ${flattened.length} path${flattened.length === 1 ? "" : "s"} derived from a catch-all router (${files}) — every endpoint behind it is invisible to swagger, MSW and the load pipes; if you export an OpenAPI spec, pass --api ${await specExportHint(root)}`,
+        );
+      }
+    }
+
     // The auto-detected app resolver is usually an async server layout that
     // cannot run under jsdom — derive a client-safe wrapper instead. An
     // explicit --provider is respected verbatim (warn when it looks unusable).
@@ -1163,6 +1179,28 @@ function assertOutDirInsideProject(outDir: string, root: string, flag: string): 
 function isInside(dir: string, file: string): boolean {
   const rel = path.relative(dir, file);
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * What to put after `--api` in the catch-all warning. If the project already
+ * exports (or has a script that exports) an OpenAPI spec, name it instead of
+ * speaking generically — the user is one command away from the fix.
+ */
+async function specExportHint(root: string): Promise<string> {
+  for (const name of ["openapi.json", "openapi.yaml"]) {
+    if (await Bun.file(path.join(root, name)).exists()) return name;
+  }
+  try {
+    const pkg = (await Bun.file(path.join(root, "package.json")).json()) as {
+      scripts?: Record<string, string>;
+    };
+    const script = Object.keys(pkg.scripts ?? {}).find((s) => /^openapi/i.test(s));
+    if (script !== undefined)
+      return `<path> — package.json script "${script}" looks like it exports one`;
+  } catch {
+    // No readable package.json — the generic hint stands.
+  }
+  return "<path>";
 }
 
 function mergeRoutes(nextCtx: NextjsContext, routes: NextjsApiRoute[]): void {

@@ -1364,6 +1364,13 @@ export interface NextjsApiRoute {
   file: string;
   /** Per-method response body (from OpenAPI example/schema). */
   responseBodies?: Record<string, unknown>;
+  /**
+   * The path was flattened from a catch-all segment (`[[...x]]` / `[...x]`):
+   * every endpoint behind that file collapses into this one swagger path, so
+   * the derived spec is a stub. Set by the walkers in nextjs/apiRoutes.ts;
+   * core.ts turns it into the `--api` warning.
+   */
+  catchAll?: boolean;
 }
 
 export interface NextjsContext {
