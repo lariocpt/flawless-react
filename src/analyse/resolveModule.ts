@@ -27,6 +27,23 @@ interface ResolvedTsconfig {
   configPath: string;
   baseUrlDir: string | undefined;
   patterns: PathPattern[];
+  /**
+   * The EFFECTIVE top-level `exclude`/`include`: the entries of the nearest
+   * config in the extends chain that declares the key (a child REPLACES the
+   * inherited list wholesale — TS does not merge these), each paired with the
+   * dir of the config that declared it, because inherited patterns resolve
+   * against the declaring config, not the extending one. Undefined when no
+   * config in the chain declares the key — for `include` that means the TS
+   * default (everything under the config's dir), which callers must model.
+   */
+  exclude: TsconfigGlobEntry[] | undefined;
+  include: TsconfigGlobEntry[] | undefined;
+}
+
+/** One `exclude`/`include` pattern plus the directory it is relative to. */
+export interface TsconfigGlobEntry {
+  entry: string;
+  baseDir: string;
 }
 
 const MODULE_SUFFIXES = [".tsx", ".ts", "/index.tsx", "/index.ts"];
@@ -351,7 +368,12 @@ export class ModuleResolver {
     // Walk the extends chain collecting raw configs root-first (child last),
     // so later entries override earlier ones with TS semantics: `paths` and
     // `baseUrl` are replaced wholesale by whichever config declares them last.
-    const chain: Array<{ dir: string; options: Record<string, unknown> }> = [];
+    const chain: Array<{
+      dir: string;
+      options: Record<string, unknown>;
+      exclude: string[] | undefined;
+      include: string[] | undefined;
+    }> = [];
     const seen = new Set<string>();
     const load = (p: string): void => {
       const abs = path.resolve(p);
@@ -361,6 +383,8 @@ export class ModuleResolver {
       const config = (read.config ?? {}) as {
         extends?: string | string[];
         compilerOptions?: Record<string, unknown>;
+        exclude?: unknown;
+        include?: unknown;
       };
       const dir = path.dirname(abs);
       const bases = config.extends
@@ -372,9 +396,32 @@ export class ModuleResolver {
         const resolved = this.resolveExtends(base, dir);
         if (resolved) load(resolved);
       }
-      chain.push({ dir, options: config.compilerOptions ?? {} });
+      const strList = (v: unknown): string[] | undefined =>
+        Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : undefined;
+      chain.push({
+        dir,
+        options: config.compilerOptions ?? {},
+        exclude: strList(config.exclude),
+        include: strList(config.include),
+      });
     };
     load(configPath);
+
+    // Effective top-level lists: nearest declarer wins (child first), and the
+    // entries stay anchored to the DECLARING config's dir — an inherited
+    // `exclude: ["flawless"]` from a base two levels up means the base's
+    // `flawless`, not the app's.
+    const anchor = (key: "exclude" | "include"): TsconfigGlobEntry[] | undefined => {
+      for (let i = chain.length - 1; i >= 0; i--) {
+        const hop = chain[i];
+        if (!hop) continue;
+        const list = hop[key];
+        if (list !== undefined) return list.map((entry) => ({ entry, baseDir: hop.dir }));
+      }
+      return undefined;
+    };
+    const exclude = anchor("exclude");
+    const include = anchor("include");
 
     let baseUrlDir: string | undefined;
     let pathsEntry:
@@ -414,9 +461,24 @@ export class ModuleResolver {
       patterns.sort((a, b) => b.prefix.length - a.prefix.length);
     }
 
-    const result: ResolvedTsconfig = { configPath, baseUrlDir, patterns };
+    const result: ResolvedTsconfig = { configPath, baseUrlDir, patterns, exclude, include };
     this.configCache.set(configPath, result);
     return result;
+  }
+
+  /**
+   * The effective top-level `exclude`/`include` for one tsconfig path,
+   * resolved through its `extends` chain — the same chain walk `paths`/
+   * `baseUrl` already use, exposed so a caller can tell the EFFECTIVE value
+   * from the file's own and avoid writing a duplicate an inherited entry
+   * already provides.
+   */
+  topLevelFor(configPath: string): {
+    exclude: TsconfigGlobEntry[] | undefined;
+    include: TsconfigGlobEntry[] | undefined;
+  } {
+    const r = this.parseConfigChain(path.resolve(configPath));
+    return { exclude: r.exclude, include: r.include };
   }
 
   private resolveExtends(spec: string, fromDir: string): string | undefined {
