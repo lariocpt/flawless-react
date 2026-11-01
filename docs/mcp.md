@@ -101,13 +101,33 @@ emitting one. Truncation announces itself with the real total. `flawless_check_d
 returns `isError` when a documented invocation does not parse — a broken example is a
 broken example, even in prose.
 
-Two ways the server stops, deliberately different. A **signal** kills the live child's
-process group before the server exits, so a server taken down never leaves a
-generation — or under `run_tests` a dev server and browsers — holding ports in your
-project. **Closing stdin** does not: `printf … | flawless-react mcp` closes the pipe as
-it writes the batch, and the work that batch asked for still runs to completion under
-its own watchdog, so a half-killed generation does not leave half-written specs behind.
-Cancel with a signal, not by hanging up.
+Two ways the server stops, deliberately different. A **signal** (SIGINT, SIGTERM)
+kills the live child's process group before the server exits — even when a
+shutdown is already draining — so a server taken down never leaves a generation,
+or under `run_tests` a dev server and browsers, holding ports in your project.
+The signalled server then gives the in-flight call at most 5 s to settle and
+exits anyway, writing `drain bound reached, in-flight call abandoned` to stderr
+when it cuts one loose: a host that sent a signal is a host that is leaving.
+**Closing stdin** does not cancel: `printf … | flawless-react mcp` closes the
+pipe as it writes the batch, and the work that batch asked for still runs to
+completion under its own watchdog, so a half-killed generation does not leave
+half-written specs behind. Cancel with a signal, not by hanging up.
+
+The exit contract clients may rely on, each kept honest by a permanent test:
+
+- **The process exits when stdin closes and the batch has drained** — measured
+  2–42 ms from the last answer frame to exit, for an idle server and one that
+  just finished a `flawless_run`.
+- **A signal always ends the process.** Live children are killed first; the
+  in-flight call gets at most 5 s; an abandoned call is named on stderr.
+- **A kept-open stdin is an open session.** The server answers calls until you
+  close stdin or signal it — it does not exit after a response, because MCP is
+  a session and the next call is normal.
+- **A call never outlives its watchdog by more than 4 s.** If the generation's
+  direct child exits but a straggler in its process group still holds the
+  output pipe open, the group is killed and the result says the output may be
+  cut short — a call that never answers is worse than an answer that names
+  its own gap.
 
 Three things this surface deliberately does not claim:
 

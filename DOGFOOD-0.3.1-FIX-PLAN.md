@@ -556,35 +556,68 @@ the plane fast, and the perf plane's measurements depend on one server.
 
 ## Chunk 7 — Defect #8: the MCP server does not exit after the call completes
 
-**Symptom, measured.** Every `flawless_run` over stdio returned a complete JSON result and then hung
-until killed. All three generation calls in the dogfood exited 124 (`timeout`) *despite* the client
-calling `child.kill()` in `finally`. A client that waits for process teardown blocks forever.
+**Symptom, as reported.** Every `flawless_run` over stdio returned a complete JSON result and then
+hung until killed. All three generation calls in the dogfood exited 124 (`timeout`) *despite* the
+client calling `child.kill()` in `finally`.
 
-**Root cause to confirm.** `src/mcp/server.ts` / `src/mcp/run.ts` spawn workers (bun/tsc/playwright
-children). A grandchild holding the inherited stdout/stderr pipe keeps the client's readline alive, so
-the client never sees EOF; `kill()` on the direct child does not close the grandchildren's handles.
+**Root cause — the plan's was wrong, and most of the defect was not a defect (chunk 7, 1 Nov).**
+The stdio client was built and the four cases measured, and the mechanism the plan blamed does not
+exist in the code:
 
-**Do.**
+- Children are spawned `stdin: "ignore", stdout: "pipe", stderr: "pipe"` (`src/mcp/run.ts`), so they
+  never inherit the transport pipes. A grandchild cannot hold the *client's* stdout open, because it
+  never had a handle on it.
+- Process-group teardown already existed and was already tested: `LIVE`, `track()`, `killGroup()`
+  (`process.kill(-pid, SIGKILL)`), the sticky `killLiveChildren()`, and the watchdog test at
+  `tests/mcp.test.ts`. Two of the plan's three fixes were already shipped.
+- Measured on the pre-change tree, over 5 runs each, trigger → process exit: stdin closed after a
+  cheap call 4/6/9 ms; after a drained `flawless_run` 8/10/31 ms; piped batch 6/6/16 ms; SIGTERM
+  after a response 3/5/12 ms; SIGTERM mid-generation 3/7/41 ms with no grandchild alive. Instrumented
+  output confirmed the signal path reaches `process.exit(0)` and the EOF path reaches its `return 0`.
+  Nothing hung. **The reported >60 s wait is the client keeping stdin open**: an open stdin is an open
+  session, the server is correct to stay, and a client that waits for teardown without closing stdin
+  or signalling waits forever. That is the documented contract, now written down as one.
 
-1. Reproduce with a 20-line stdio client (spawn `flawless-react mcp`, `initialize`, `tools/call
-   flawless_run`, then wait) and measure how long the process takes to exit after the response. Put the
-   number in the PR.
-2. Fix on the server side, not the client side:
-   - spawn children with `stdio` pipes the parent owns (not inherited), and `.unref()` handles the
-     parent does not read;
-   - on tool completion, terminate the whole process group (`detached: true` + `process.kill(-pid)`),
-     not just the direct child;
-   - on stdin EOF, shut down within a bounded grace period and exit non-zero if children refuse.
-3. Add a test that asserts the server exits within N ms of stdin closing, for both an idle server and
-   one that just finished a `flawless_run`. This is an invariant guard: keep it cheap (fixture project,
-   one task).
-4. Document in the MCP docs that clients may rely on process exit after stdin close.
+Three real holes were found by building the measurement, and each is fixed:
 
-**Acceptance.** Quote: "time from result to process exit: >60 s (killed) → X ms, measured over N runs",
-plus the new test in the suite.
+1. **A straggler could wedge a call forever.** `runFlawlessChild` cleared its watchdog at
+   `proc.exited` and then awaited the stdout/stderr reads with no bound. A straggler in the child's
+   process group that inherited the write ends (a dev server a test runner leaked) held those reads
+   open indefinitely: no response frame, a shutdown chain that never settles, and a server that
+   ignores SIGTERM. Fixed with a bounded drain — 2 s grace, group kill, 2 s more — returning partial
+   output and announcing the cut. Measured on a leaky-child fixture: never returned → 2.03 s.
+2. **A signal landing during the EOF drain skipped the kill.** `shutdown()` early-returned when a
+   teardown was already in flight, and the piped batch makes that the common case: EOF starts the
+   drain before the run child spawns. Measured: the child outlived the server and died only when it
+   next wrote into the dead pipe, 152 ms later for a chatty child and its full run for a quiet one.
+   The kill now runs before the early return.
+3. **The forced drain had no bound of its own.** A signal waited on the call chain, whose only bound
+   is the call's watchdog — floor 1 s, ceiling 4 h. The signal and stdin-error paths now race the
+   drain against 5 s and exit anyway, naming the abandonment on stderr. The EOF drain stays unbounded
+   by design: that is what lets a piped batch finish.
+
+**Do — as landed.** The stdio client became a permanent test (`mcp exit contract` in
+`tests/mcp.test.ts`: idle server, piped `flawless_run`, and a mid-generation signal that must kill),
+the three holes above were fixed in `run.ts` and `server.ts`, and `docs/mcp.md` now states the exit
+contract clients may rely on. The `unref()` idea was not needed: nothing keeps a handle the server
+does not read.
+
+**Acceptance, measured.** Time from the last result frame to process exit, 5 runs each (min/median/
+max), compiled binary before → compiled binary after (same tree lineage, per AGENTS.md): cheap call
++ stdin close 4/6/9 → 2/4/12 ms; `flawless_run` + stdin close 8/10/31 → 2/6/42 ms; piped batch
+6/6/16 → 2/3/5 ms; SIGTERM after response 3/5/12 → 2/2/4 ms; SIGTERM mid-generation 3/7/41 →
+5/9/18 ms. The before numbers were already fast — the defect was the client's reading, and the fix
+is the contract plus the three holes that could make it true.
 
 **Gotchas.** Do not make the server exit *immediately* on response — MCP is a session, and clients send
-further calls. The contract is: exit when stdin closes, and do not keep pipes open that nothing reads.
+further calls. The contract is: exit when stdin closes and the batch has drained, and do not keep
+pipes open that nothing reads.
+
+**Candidate defect #15 (recorded by chunk 7, not fixed by any chunk):** GitHub `releases/latest` is
+`v0.3.0` while npm carries `0.3.1` (`@lariocpt/flawless-react` dist-tag `latest` = 0.3.1, verified
+1 Nov), and the website's example gate validates against the GitHub artifact — so the site's gate has
+been testing an older binary than the one users install. This is a release-process gap, not a tool
+defect: the 0.3.1 GitHub release was never published.
 
 ---
 
