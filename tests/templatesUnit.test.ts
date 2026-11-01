@@ -336,7 +336,7 @@ describe("renderUnitBrowser async server components", () => {
     expect(src).toContain(
       'vi.mock("@/lib/db", () => ({ default: vi.fn(), getUser: vi.fn(async () => ({})) }));',
     );
-    expect(src).toContain("TODO(flawless): some return shapes could not be inferred");
+    expect(src).toContain("TODO(flawless): getUser guessed async {}");
     // next/link IS mocked, deliberately: the real <Link> reads Next's
     // AppRouterContext, which jsdom cannot provide, so it throws on render. The
     // passthrough keeps the anchor and its href queryable — the opposite of the

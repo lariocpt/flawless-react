@@ -130,16 +130,19 @@ test("defect 3: the document-root spec imports renderToReadableStream from react
 });
 
 test("defect 4: a synchronous zustand hook is mocked as an async guess", () => {
-  // FIX-PLAN: chunk 4 — flip to: hooks the source calls synchronously get
-  // sync mocks with a shape implied by the use sites ([] for .map), not
-  // `vi.fn(async () => ({}))`.
-  //
-  // Measured 1 Nov: the layout spec (which mounts the derived provider around
-  // the store) mocks the whole zustand family as async — exactly the 50-times
-  // pattern that made `toasts.map is not a function` in the dogfood.
+  // FIX-PLAN: chunk 4 — FLIPPED (intermediate; the package-module guard lands
+  // in the next commit and rewrites this marker again). Measured 1 Nov: the
+  // layout spec mocked the whole zustand family `vi.fn(async () => ({}))` —
+  // the 50-times pattern that made `toasts.map is not a function`. The async
+  // guess came from the emitter's no-evidence fallback (mocks.ts entry()),
+  // not from `awaited`: the callers are SYNC components, which recorded no
+  // deps at all. Now: a use*-shaped binding is sync by contract whatever
+  // `awaited` says, and the TODO names the guess and its reason.
   const spec = read("src", "app", "layout.flawless.test.tsx");
-  expect(spec).toMatch(/vi\.mock\("zustand", \(\) => \(\{ useStore: vi\.fn\(async/);
-  expect(spec).toContain("zustand/react/shallow");
+  expect(spec).toContain("useStore: vi.fn(() => ({}))");
+  expect(spec).not.toContain("useStore: vi.fn(async");
+  expect(spec).toContain("useShallow: vi.fn(() => ({}))");
+  expect(spec).toContain("TODO(flawless): useStore guessed {} — a use* hook is sync by contract");
 });
 
 test("defect 5: the catch-all router flattens to one swagger path and nothing warns", () => {

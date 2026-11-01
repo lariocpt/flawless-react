@@ -72,6 +72,21 @@ const MOCK_SKIP =
 const PURE_UTILITY_BINDINGS = new Set(["cn", "clsx", "cva", "twMerge", "tw"]);
 
 /**
+ * A `use*`-shaped binding is a React hook, and a hook's contract is a VALUE:
+ * `await 5 === 5`, so a sync mock under an `await` still works, while `.map`
+ * on a Promise is a crash. Whatever `awaited` says, a hook-shaped binding is
+ * therefore never mocked async. This is the general rule the hand-written
+ * known-sync factories already encode one specifier at a time —
+ * navigationMock's usePathname/useRouter/useParams, swrMock's useSWR reads,
+ * all synchronous. A hook that genuinely returns a Promise is a DIFFERENT
+ * contract; it must be stated by the source's own annotation, not guessed
+ * from a call site that happens to write `await`.
+ */
+function isHookContract(name: string): boolean {
+  return /^use[A-Z]/.test(name);
+}
+
+/**
  * Class-string producer stand-in for a pure binding inside a mocked module:
  * synchronous and string-valued, because the component drops its result
  * straight into className — vi.fn(async …) there renders "[object Promise]".
@@ -658,6 +673,11 @@ function dataModuleMock(
     (d) => d.specifier !== undefined && group.specifiers.has(d.specifier),
   );
   let uncertain = false;
+  // Every guess this module's factory makes, stated in the TODO with its
+  // reason. "some return shapes could not be inferred" told the reader nothing
+  // about WHICH binding or WHY (defect #4, Do #4); each entry below names
+  // both, so the TODO is an answerable question, not a shrug.
+  const guesses: string[] = [];
 
   // Resolves an `equalsDep` note — `m.user_id === user.id` — to the literal
   // the referenced dep's own fixture holds, whichever channel that fixture
@@ -690,6 +710,19 @@ function dataModuleMock(
   // takes the declaration's value — `job.status` read into a lookup says
   // nothing about legal statuses, while `Promise<Job>`'s z.enum names one.
   const depStub = (dep: DataDepInfo, seed: string, fill?: unknown): string => {
+    // Sync-by-contract: a hook-shaped callee is never mocked async when the
+    // async-ness would be a GUESS (see isHookContract). The one exception is
+    // the annotation path below: a `Promise<T>` return annotation is the
+    // hook's contract STATED in the source, and a stated contract beats the
+    // naming heuristic. When the source writes `await useThing()` with no
+    // annotation, the disagreement is stated on the stub rather than hidden:
+    // the sync mock still satisfies the await.
+    const hookSync = isHookContract(dep.calleeRoot);
+    const awaited = dep.awaited && !hookSync;
+    const hookNote =
+      hookSync && dep.awaited
+        ? ` /* awaited at the call site, but a use* hook's contract is a value */`
+        : "";
     if (dep.uncertain || dep.shape.kind === "unknown") {
       // Usage said nothing, but the dep's own declaration may have: the
       // annotation-derived value, or the OpenAPI example for the fetch the
@@ -706,7 +739,10 @@ function dataModuleMock(
           : `vi.fn(() => (${lit})) ${provenance}`;
       }
       uncertain = true;
-      return dep.awaited ? "vi.fn(async () => ({}))" : "vi.fn(() => ({}))";
+      guesses.push(
+        `${dep.callee} guessed {} — neither its call sites nor its declaration said its shape`,
+      );
+      return awaited ? "vi.fn(async () => ({}))" : `vi.fn(() => ({}))${hookNote}`;
     }
     // Shape inferred from how the awaited value is actually used in the body.
     // The props fixture the spec's own DEFAULTS is built from, so a field
@@ -718,7 +754,7 @@ function dataModuleMock(
       depFieldValue,
       fill,
     );
-    return dep.awaited ? `vi.fn(async () => (${literal}))` : `vi.fn(() => (${literal}))`;
+    return awaited ? `vi.fn(async () => (${literal}))` : `vi.fn(() => (${literal}))${hookNote}`;
   };
 
   const entry = (b: MergedBinding): string => {
@@ -766,7 +802,18 @@ function dataModuleMock(
       // awaiting makes a dep) renders at worst, and a promise child silently
       // suspends the whole tree. SYNC {} fails loudly where it appears, and
       // `await {}` still resolves.
-      if (b.graphOnly) return `${key}: vi.fn(() => ({}))`;
+      if (b.graphOnly) {
+        guesses.push(`${key} guessed {} — graph-only name, no call site in this render`);
+        return `${key}: vi.fn(() => ({}))`;
+      }
+      // A hook-shaped name is sync by contract even with no evidence at all
+      // (isHookContract): the async {} here is what turned `useToasts` into a
+      // Promise and the mount into "toasts.map is not a function".
+      if (isHookContract(b.moduleName ?? b.local)) {
+        guesses.push(`${key} guessed {} — a use* hook is sync by contract; its shape is unknown`);
+        return `${key}: vi.fn(() => ({}))`;
+      }
+      guesses.push(`${key} guessed async {} — no call-site evidence`);
       return `${key}: vi.fn(async () => ({}))`;
     }
     // `db.query.users.findMany()` needs the vi.fn at the LEAF of the dotted
@@ -780,9 +827,20 @@ function dataModuleMock(
       // callable object stub would be inventing semantics. The honest {}
       // keeps the TODO and the RSC skip escape alive.
       uncertain = true;
+      guesses.push(`${key} guessed {} — bare and dotted call paths on one binding conflict`);
       return `${key}: vi.fn(async () => ({}))`;
     }
-    return `${key}: ${depStub(dep, b.local, group.returns.get(b.moduleName ?? b.local)?.value)}`;
+    // Call sites may disagree about `await` — one file awaits the callee,
+    // another uses it synchronously. Prefer sync and SAY so: a sync mock
+    // under `await` still works (`await 5 === 5`), the reverse is a crash.
+    const effAwaited = deps.every((d) => d.awaited);
+    if (!effAwaited && deps.some((d) => d.awaited)) {
+      guesses.push(
+        `${key} is awaited at some call sites and used synchronously at others — mocked sync; the await of a sync value still resolves`,
+      );
+    }
+    const eff = effAwaited ? dep : { ...dep, awaited: false };
+    return `${key}: ${depStub(eff, b.local, group.returns.get(b.moduleName ?? b.local)?.value)}`;
   };
 
   const entries = [
@@ -793,8 +851,12 @@ function dataModuleMock(
   // One marker (and one tally) per module mock, however many of its bindings
   // were uninferrable — the marker is what the reader answers, not the binding.
   if (uncertain) todo?.("uninferred-return-shape");
-  const note = uncertain
-    ? "// TODO(flawless): some return shapes could not be inferred — give them fixtures.\n"
-    : "";
+  // The TODO states each guess and its reason — which binding, and what the
+  // analyser could not see — where the old blanket "some return shapes could
+  // not be inferred" told the next person nothing (defect #4, Do #4).
+  const note =
+    guesses.length > 0
+      ? `// TODO(flawless): ${guesses.join("; ")} — give them real fixtures.\n`
+      : "";
   return `${note}vi.mock(${JSON.stringify(spec)}, () => ({ ${entries.join(", ")} }));`;
 }
