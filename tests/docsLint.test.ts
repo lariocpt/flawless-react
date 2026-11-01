@@ -403,6 +403,27 @@ describe("environment variables named in prose exist in the code", () => {
 /** Directories a real run writes. A prose path starting with one is a claim. */
 const EMITTED_DIRS = ["host", "unit", "browser", "profile", "e2e", "load", "mocks", "reports"];
 
+/**
+ * Is an inline-code span an artefact-path claim, and which path does it claim?
+ *
+ * A quoted REPORT line — `mocks/handlers.ts: regenerated from a newer spec`
+ * — claims the path before the colon; the rest is the tool's own report text
+ * and no part of any path. Reading the whole span as a path is what made the
+ * website's handlers-provenance recipe fail this lint: the claim was real,
+ * the colon was prose. Returns the path claim, or null when the span is not
+ * one (foreign text, a directory, or a glob whose family is checked by its
+ * own concrete mentions).
+ */
+function artifactClaim(span: string): string | null {
+  const raw = span.trim().replace(/^\.?\/?(flawless|<outDir>)\//, "");
+  const colon = raw.indexOf(": ");
+  const claim = (colon === -1 ? raw : raw.slice(0, colon)).trim();
+  if (!EMITTED_DIRS.some((d) => claim.startsWith(`${d}/`))) return null;
+  if (claim.endsWith("/")) return null; // a directory, not a file
+  if (/[*?]/.test(claim)) return null; // a glob describes a family
+  return claim;
+}
+
 describe("emitted artefact paths named in prose are really emitted", () => {
   test("every claimed path matches a file the fixture run produced", () => {
     const actual = new Set(emitted);
@@ -439,17 +460,28 @@ describe("emitted artefact paths named in prose are really emitted", () => {
       const bad = new Set<string>();
       for (const rel of corpus()) {
         for (const span of inlineCode(await readProse(rel))) {
-          const claim = span.trim().replace(/^\.?\/?(flawless|<outDir>)\//, "");
-          if (!EMITTED_DIRS.some((d) => claim.startsWith(`${d}/`))) continue;
-          if (claim.endsWith("/")) continue; // a directory, not a file
-          // `reports/*.json`, `unit/**` — a glob describes a family, and the
-          // family's members are checked by their own concrete mentions.
-          if (/[*?]/.test(claim)) continue;
+          const claim = artifactClaim(span);
+          if (claim === null) continue;
           if (!matches(claim)) bad.add(`${claim} (${rel})`);
         }
       }
       expect([...bad].join("\n")).toBe("");
     })();
+  });
+
+  test("a quoted report line claims the path before its colon, not the whole span", () => {
+    // The website's handlers-provenance recipe quotes
+    // `mocks/handlers.ts: regenerated from a newer spec` — a real path claim
+    // wrapped in the tool's report text. The path must still be checked;
+    // the colon tail must not turn a true claim into a false failure.
+    expect(artifactClaim("mocks/handlers.ts: regenerated from a newer spec")).toBe(
+      "mocks/handlers.ts",
+    );
+    expect(artifactClaim("mocks/handlers.ts")).toBe("mocks/handlers.ts");
+    expect(artifactClaim("host")).toBeNull();
+    expect(artifactClaim("reports/*.json")).toBeNull();
+    expect(artifactClaim("e2e/")).toBeNull();
+    expect(artifactClaim("vitest: keep")).toBeNull();
   });
 });
 
