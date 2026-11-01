@@ -75,3 +75,14 @@ bunx playwright test --config flawless/browser/playwright.config.ts
 vitest must be 2.x: vitest 5 + vite 7 ignores the emitted `esbuild.jsx` override
 and dies collecting every spec ("make sure to not set jsx to preserve" — the
 fixture's `jsx: "preserve"` is Next's own, not a fixture bug).
+
+## Unit plane after chunk 3 (measured 1 Nov, react-dom pinned 19.1.0)
+
+The document-root spec now streams through `react-dom/server.browser` — the specifier
+the pinned react-dom actually exports `renderToReadableStream` from, measured at
+generation time (`src/reactDomServerStream.ts`). Per spec: `layout.flawless.test.tsx`
+no longer fails `renderToReadableStream is not a function` (defect 3 gone); it now
+fails `createStore(...) is not a function` — defect 4's `vi.fn(async () => ({}))`
+guess at `zustand/vanilla`'s curried factory. `page.flawless.test.tsx`'s two
+`toasts.map` reds are defect 4's too. Tally: 3 failed / 3 passed / 1 skipped —
+same count, different reasons; the layout goes green only with chunk 4.

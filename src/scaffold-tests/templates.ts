@@ -9,6 +9,7 @@ import {
 } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
 import { appReactMajor } from "../packageJson.ts";
+import { probeServerStream, type ServerStreamProbe } from "../reactDomServerStream.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { VITEST_CONFIG } from "../suiteScripts.ts";
 import type {
@@ -408,6 +409,9 @@ test("${name} is a next/og route handler", () => {
       todo,
       opts.apiRoutes,
       (appReactMajor(opts.outDir) ?? 18) <= 17,
+      // Measured against the react-dom the emitted aliases point at — the
+      // same anchor computeResolveAliases chose (see ReactPinDir).
+      probeServerStream(opts.reactPinDir ? path.join(opts.reactPinDir, "react-dom") : undefined),
     );
   }
   return mode === "rsc"
@@ -2104,6 +2108,7 @@ function constrainedSpec(
   todo?: TodoRecorder,
   apiRoutes?: NextjsApiRoute[],
   legacyServer = false,
+  serverStream?: ServerStreamProbe,
 ): string {
   const info = c.info;
   const name = info.componentName;
@@ -2152,9 +2157,37 @@ function constrainedSpec(
     // React 17 has no streaming renderer (renderToReadableStream is 18+) and
     // no promise-as-child support at all, so the markup assertion runs
     // through renderToStaticMarkup and the promise-prop wrapping is dropped.
+    //
+    // The streaming specifier is MEASURED, not assumed (dogfood defect #3):
+    // the emitted vitest config aliases bare "react-dom/server" to the FILE
+    // server.js → require("./server.node") — the node build — which on
+    // react-dom < 19.2 does not export renderToReadableStream. serverStream
+    // carries the specifier whose resolved build DOES, for the react-dom this
+    // suite is pinned to (probeServerStream). A measured react-dom that
+    // satisfies neither candidate is a capability gap: skip by name, never
+    // redden "is not a function".
+    if (!legacyServer && serverStream && !serverStream.specifier) {
+      const seen = serverStream.version ? `react-dom@${serverStream.version}` : "this react-dom";
+      return `import { test, expect, vi } from "vitest";
+${mockBlock}${emitComponentImport(info, importPath)}
+
+// ${name} ${note}.
+// Generation-time skip: ${seen} exports no renderToReadableStream — neither
+// react-dom/server.browser nor react-dom/server carries it — so the
+// document-root contract cannot be rendered here. Named, not silent:
+// regenerate once the pin satisfies the export.
+test.skip("${name} returns a document root — skipped: ${seen} exports no renderToReadableStream", () => {
+  expect(typeof ${name}).toMatch(/function|object/);
+  void vi;
+});
+`;
+    }
+    const streamSpecifier = serverStream?.specifier ?? "react-dom/server.browser";
     const serverImport = legacyServer
       ? `import { renderToStaticMarkup } from "react-dom/server";\n`
-      : `import { renderToReadableStream } from "react-dom/server";\n`;
+      : streamSpecifier === "react-dom/server"
+        ? `import { renderToReadableStream } from "react-dom/server";\n`
+        : `// Not bare "react-dom/server": the vitest config aliases that specifier to the node build, which on react-dom < 19.2 does not export renderToReadableStream (defect #3) — do not simplify this back.\nimport { renderToReadableStream } from "react-dom/server.browser";\n`;
     const promiseBlock = legacyServer
       ? ""
       : `const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};\n`;
