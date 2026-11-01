@@ -491,27 +491,63 @@ Error: page.waitForFunction: Target page, context or browser has been closed
 `FLAWLESS_WORKERS=4` gave 145 passed / 0 failed, twice in a row. The perf plane showed the same class:
 its one failure (`stress-click-rerender x 50`) passes in isolation in 3.6 s.
 
-**Root cause.** The generated `browser/playwright.config.ts` (`src/scaffold/templates.ts`, `workers:`
-at ~line 477) leaves workers at playwright's default (½ CPU) while **one** shared host server serves
-every worker. Each page bundles the whole app; the crash is contention, not the app.
+**Root cause — corrected by measurement.** The plan named one config and named it wrong twice:
+`browser/playwright.config.ts` is **not** emitted by `src/scaffold/templates.ts` — that emitter
+(`playwrightConfig()`, `workers:` at ~574) writes the suite-root `playwright.config.ts`, whose
+`testDir` is `./profile`: it is the **perf/profile plane**. The browser plane's config is
+`browserPlaywrightConfig()` in `src/scaffold-tests/templates.ts`. There are **four** emitted
+playwright configs, not one:
 
-**Do.**
+| emitted file | emitter | plane | `workers` before |
+| --- | --- | --- | --- |
+| `flawless/playwright.config.ts` | `playwrightConfig()`, `src/scaffold/templates.ts` | perf/profile (`testDir: "./profile"`) | `FLAWLESS_WORKERS ?? (CI ? 1 : undefined)` |
+| `flawless/browser/playwright.config.ts` | `browserPlaywrightConfig()`, `src/scaffold-tests/templates.ts` | browser (`testDir: "."`) | same expression |
+| `flawless/e2e/playwright.config.ts` | `e2eConfig()`, `src/tasks/e2eRoutes.ts` | route e2e | hardcoded `1` |
+| `flawless/e2e/playwright.config.ts` (expo) | `expoE2eConfig()`, `src/tasks/e2eExpo.ts` | native e2e web | hardcoded `1` |
 
-1. Bound the default: `workers = FLAWLESS_WORKERS ?? (CI ? 1 : Math.min(4, cpus/2))`, and keep the
-   existing env override semantics. Document the reasoning in the config comment that already discusses
-   `FLAWLESS_WORKERS`.
-2. Add `launchOptions: { args: ["--disable-dev-shm-usage"] }` — cheap insurance for containers where
-   `/dev/shm` *is* small, which is the same symptom with a different cause.
-3. Make the host reusable-but-stable: it already is (`reuseExistingServer`), but add a readiness probe
-   that fails with a clear message if the host died mid-run, so a crash is reported as "host died"
-   rather than as a random spec failure.
-4. Tests: the emitted config contains the bounded default and the launch arg; a run against the
-   fixture with default settings completes without renderer crashes.
-5. Flip the Chunk 0 marker for defect #6.
+The two unbounded configs share the identical expression — the browser crash and the perf plane's
+`stress-click-rerender x 50` failure were two configs with one shared cause. CI already resolved
+to 1 in both, so the bound changes local runs only. The e2e plane already pins `workers: 1`.
 
-**Acceptance.** Quote: "browser plane at default settings: N renderer crashes → 0 across 3 consecutive
-runs; wall clock X s → Y s". If bounding workers costs meaningful throughput, say so with the numbers —
-a slower green beats a faster red, but the trade must be stated.
+**Do — as landed (chunk 6, 1 Nov).**
+
+1. Both unbounded configs emit
+   `workers = FLAWLESS_WORKERS ?? (CI ? 1 : Math.max(1, Math.min(4, Math.floor(os.cpus().length / 2))))`,
+   reasoning in the comment that already discussed `FLAWLESS_WORKERS`. The `max(1, …)` guard is an
+   addition to the plan's formula: on a 1-CPU box the bare `min(4, cpus/2)` floors to 0. The bound
+   resolves to 4 on the 24-core dogfood machine — the value that measured green twice there.
+2. `launchOptions: { args: ["--disable-dev-shm-usage"] }` added to both configs' `use` block, with
+   the reason in the emitted comment: a small-`/dev/shm` container produces the identical
+   `Target crashed` from a different cause; the flag is insurance for that cause, not a second
+   fix for the measured one.
+3. **Host death: measured, playwright already reports it, nothing changed.** Killed the shared
+   host mid-run on the dogfood suite: every subsequent spec fails with
+   `page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5173/` (111 failed / 35 passed).
+   The error names the refused host URL on every failure — self-diagnosing, unlike the renderer
+   crash it is being distinguished from. No readiness probe was added; playwright has no
+   mid-run webServer supervision and a per-test liveness fixture would touch every spec template
+   to restate what the error already says.
+4. Tests: `tests/emittedConfigs.test.ts` loads both emitted configs and asserts the resolved
+   value — default = the bound, `FLAWLESS_WORKERS` wins over both the bound and CI, CI resolves
+   to 1, `use.launchOptions.args` carries the flag. (Incidental: bun caches `file://` imports by
+   pathname and ignores the query, so re-loading one config needs a fresh path.)
+5. Flipped the Chunk 0 marker for defect #6.
+
+**Acceptance, measured (1 Nov, dogfood app `mybodycorpai/apps/web`, 156 browser tests + 360
+profile tests, same suite bytes and playwright 1.64.1, only the worker count varying — the new
+default resolves to 4 on this machine, so `FLAWLESS_WORKERS=4` runs are the new default's runtime
+behaviour).** The plan's "N crashes → 0 across 3 runs" is not measurable on the 4-spec fixture
+(it cannot crash renderers), and on the dogfood app **today** the motivating crash rate did not
+reproduce at either width: browser plane, sequential clean runs — control (½-CPU = 12 workers):
+1 crash in 6 runs, wall 31–36 s; bounded (4): 1 crash in 6 runs, wall 48–49 s. The failure mode
+(`Target page, context or browser has been closed`, different spec each time) still appears at
+both widths on the current machine state (a ~60 GiB model server is resident; the dogfood ran
+without it), so the crash-rate win is the dogfood's own numbers, not today's. What today does
+show is the perf plane's side of the trade: bounding makes the recorded measurements *tighter* —
+per-test p95 9.2–9.5 s → 4.7–5.2 s, max ~20 s → ~8 s, budget warnings 12 → 2 across the pairs —
+at a wall-clock cost of ~40 % on the browser plane (33 s → 48 s) and ~60 % on the perf plane
+(86 s → 138 s). `stress-click-rerender x 50` passed in every clean run at both widths. A slower
+green with tighter numbers beats a faster red; the numbers are in the PR.
 
 **Gotchas.** Do not "fix" this by making every worker boot its own host: the shared host is what makes
 the plane fast, and the perf plane's measurements depend on one server.
