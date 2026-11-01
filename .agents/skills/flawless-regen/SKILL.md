@@ -17,8 +17,9 @@ before touching an adopted suite:
 
 | Category | Files | On re-run | Under `--force` |
 | --- | --- | --- | --- |
-| Write-once | `budgets.json`, `host/main.tsx` (wrapper only — the `host/registry.ts` beside it regenerates), `provider.fixtures.ts`, `e2e/global-setup.ts`, `mocks/handlers.ts`, `mock/routes.ts` | kept | **kept** |
+| Write-once | `budgets.json`, `host/main.tsx` (wrapper only — the `host/registry.ts` beside it regenerates), `provider.fixtures.ts`, `e2e/global-setup.ts`, `mock/routes.ts` | kept | **kept** |
 | Merge-kept | `e2e/params.json`, `load/routes.pipes` | kept | **merged** — your edits, rates, commented pipes survive |
+| Provenance-stamped | `mocks/handlers.ts` | kept; regenerated only when the spec digest moved and the stamp is untouched | **regenerated** — even hand-edited; it is the escape hatch the kept-reports name |
 | Colocated specs | `src/**/*.flawless.test.tsx` | kept | **stamp-checked** — untouched refreshed; edited or pre-stamp kept and listed |
 | Everything else | out-dir specs, configs, generated prose, REPORT.md, sidecars | rewritten | rewritten |
 

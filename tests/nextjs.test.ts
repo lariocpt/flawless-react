@@ -112,6 +112,34 @@ describe("walkApiRoutes route groups", () => {
   });
 });
 
+describe("walkApiRoutes catch-all detection", () => {
+  // The flattening itself (`[[...route]]` → `{route}`) is inherent to the
+  // derived spec; what chunk 5 added is that it stops being silent. The
+  // walkers flag the flattened routes; core.ts turns the flag into the
+  // `--api` warning (asserted end-to-end in tests/dogfood-baseline.test.ts).
+  const ALIASED = path.resolve(__dirname, "fixtures/aliased-next-app");
+
+  test("a hono-style [[...route]] catch-all is flagged, plain routes are not", async () => {
+    const routes = await walkApiRoutes("app", path.join(ALIASED, "src", "app"));
+    expect(routes.length).toBeGreaterThan(0);
+    const catchAll = routes.filter((r) => r.catchAll === true);
+    expect(catchAll.map((r) => r.path)).toEqual(["/api/{route}"]);
+    expect(catchAll[0]?.file).toContain("[[...route]]");
+  });
+
+  test("a pages-router [...slug].ts catch-all is flagged too", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flawless-catchall-"));
+    tmpDirs.push(dir);
+    const api = path.join(dir, "pages", "api");
+    mkdirSync(api, { recursive: true });
+    writeFileSync(path.join(api, "[...slug].ts"), "export default function handler() {}\n");
+    writeFileSync(path.join(api, "health.ts"), "export default function handler() {}\n");
+    const routes = await walkApiRoutes("pages", path.join(dir, "pages"));
+    expect(routes.find((r) => r.path === "/api/{slug}")?.catchAll).toBe(true);
+    expect(routes.find((r) => r.path === "/api/health")?.catchAll).toBeUndefined();
+  });
+});
+
 describe("pageFileToRoute", () => {
   test("maps a dynamic app-router page to its url path, params and spec stem", () => {
     const route = pageFileToRoute(path.join(APP_DIR, "items", "[id]", "page.tsx"), "app", APP_DIR);

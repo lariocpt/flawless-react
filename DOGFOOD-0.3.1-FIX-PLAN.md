@@ -426,32 +426,54 @@ the 404s stopped — but only after `mocks/handlers.ts` was deleted by hand.
 are write-once ("Edit freely — flawless-react will not overwrite this file"). A project that ran once
 before it had a spec keeps a useless catch-all forever, silently.
 
-**Do.**
+**Do — as landed (chunk 5, 1 Nov).**
 
-1. In `src/scaffold/openapi.ts` (and the Next route scanner that feeds it), detect catch-all segments
-   (`[[...x]]`, `[...x]` under `app/api`) and emit a warning naming the file and the count:
-   `1 path derived from a catch-all router; if you export an OpenAPI spec, pass --api <path>`.
-   If the target also has an `openapi.json`/`openapi.yaml` (or a script named `openapi*` in
-   package.json), name it in the warning.
-2. In `src/nextjs/mswHandlers.ts`, make the write-once check smarter than "file exists": store a
-   provenance marker inside the generated file (a hash of the spec it came from, the way the specs
-   already carry `@flawless-generated sha256:…`). On a run where the spec changed and the file still
-   matches the *old generated* hash, regenerate it and report `handlers.ts: regenerated from a newer
-   spec`. If the user edited it (hash mismatch), keep it and report
-   `handlers.ts: kept (hand-edited) — regenerate with --force or delete it`.
-3. Make the summary say how many handlers exist and how many spec paths they cover, so a catch-all
-   stub is visible in the run output rather than discovered an hour later.
-4. Tests: (a) catch-all fixture → warning present, mentions `--api`; (b) handlers file untouched by a
-   second run with the same spec; (c) second run with a *different* spec and an unedited handlers file
-   → regenerated and reported; (d) hand-edited handlers file → kept and reported.
-5. Flip the Chunk 0 marker for defect #5.
+1. **The plan's two sites were both wrong.** The flattening is not in
+   `src/scaffold/openapi.ts` — that file is the spec *parser* (`extractRoutes`), it never sees a
+   filesystem. It is `appRouterSegment`/`pagesRouterSegment` in `src/nextjs/apiRoutes.ts`, which map
+   `[[...x]]` and `[...x]` to one swagger path param. Those walkers now set `NextjsApiRoute.catchAll`,
+   and `core.ts` turns the flag into the warning — after the `--api`/live-spec enrichment, so a run
+   that already passed a real spec stays quiet. The warning names the file, the collapsed count and
+   the way out, and names `openapi.json`/`openapi.yaml` or an `openapi*` package.json script when the
+   project has one.
+2. **The write-once check is not in `src/nextjs/mswHandlers.ts` either** — that file is a pure
+   renderer with no filesystem logic. The `existsSync` guard lives in `src/nextjs/emit.ts`, which is
+   where the provenance contract landed. It reuses `src/scaffold-tests/stamp.ts` rather than inventing
+   a second hash dialect: the file opens with the existing `@flawless-generated sha256:<16hex>
+   flawless-react@<version>` line, and the spec digest rides on the line *below* it
+   (`// @flawless-spec sha256:<16hex>`), inside the hashed body. That placement is the compatibility
+   contract — `STAMP_RE` is untouched, so a file already stamped by 0.3.1 classifies exactly as it
+   used to, and `restampGenerated` re-hashes the stamp line after the host formatter runs while
+   preserving everything below it.
+3. Contract, every kept branch byte-identical: absent → `created`; `--force` → regenerated (the named
+   escape hatch, hand-edits included); stamp mismatch → `kept (hand-edited) — regenerate with --force
+   or delete it`; **no stamp at all** → kept, always; untouched + same digest → `kept`; untouched +
+   digest moved → `regenerated from a newer spec`; untouched + stamped before spec digests existed →
+   kept, because its digest is unknowable.
+4. The summary reports both the handlers outcome and the coverage: `mocks/handlers.ts: <report>` and
+   `handlers: N emitted, covering M spec path(s)`, so a catch-all stub is visible in run output.
+5. Tests: `tests/handlersProvenance.test.ts` (a–f, including the 0.3.1-stamp compatibility case) and
+   the flipped Chunk 0 marker, which now captures the run's stderr to assert the warning.
 
-**Acceptance.** Against the hono-style fixture: the warning appears on a spec-less run; with `--api`
-pointed at a 70-ish-path spec, handler count goes from 6 (one per verb) to the real per-path count, and
-a second `--api` run with a changed spec refreshes handlers without deleting anything by hand.
+**Acceptance, measured (1 Nov, in-process `runCore` against the hono-style fixture).** Spec-less:
+1 path, 2 handlers, and the warning fires — naming `src/app/api/[[...route]]/route.ts` and `--api`;
+with an `openapi.json` present the same line ends `pass --api openapi.json` instead of `<path>`.
+`--api` at the real 71-path spec (231 KB, `mybodycorpai/apps/web/openapi.json`, still checked out):
+**99 handlers covering 71 spec paths**, up from 2 covering 1. Re-running with a spec that gained one
+path reported `regenerated from a newer spec` and produced **100 handlers covering 72 paths** with
+nothing deleted by hand; the same run before the fix left the handlers file untouched.
 
-**Gotchas.** Do not overwrite a handlers file that has no provenance marker at all (a file from 0.3.1 or
-hand-written from scratch) — keep it and tell the user what to do.
+**Corrected: the plan's "6 (one per verb)" baseline was wrong.** The AST walk reads the methods the
+route file actually exports, so the fixture's catch-all yields 2 handlers (GET, POST), not 6.
+
+**Candidate defect #14 (recorded by chunk 5, not fixed by any chunk): a failed live-spec fetch is
+silent by default.** `src/nextjs/liveSpec.ts` fetches `http://localhost:3000/api/docs` (1500 ms
+timeout) whenever `--swagger-url` is not `off`, and returns `{ ok: false }` on a non-200, a non-JSON
+content type, or any throw. `core.ts` only warns when the user *passed* `--swagger-url`: with the
+default, a dead dev server produces no output at all and the run quietly falls back to the AST walk —
+the same class of silence as the flattened catch-all this chunk fixed, one file over. What the user
+sees today is nothing. Not widened here: the fix is a decision about whether the default fetch should
+exist at all (it adds 1500 ms to every CI run that has no dev server), which is bigger than a warning.
 
 ---
 

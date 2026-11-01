@@ -31,6 +31,7 @@ async function walkAppRouterApi(apiDir: string): Promise<NextjsApiRoute[]> {
       path: stripTrailingSlash(urlPath),
       methods,
       file: abs,
+      ...(segments.some(isCatchAllSegment) ? { catchAll: true } : {}),
     });
   }
   return out;
@@ -50,9 +51,15 @@ async function walkPagesRouterApi(apiDir: string): Promise<NextjsApiRoute[]> {
       path: stripTrailingSlash(urlPath),
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
       file: abs,
+      ...(segments.some(isCatchAllSegment) ? { catchAll: true } : {}),
     });
   }
   return out;
+}
+
+/** `[[...x]]` / `[...x]` — a catch-all segment; the same shape nextjs/routes.ts matches. */
+function isCatchAllSegment(seg: string): boolean {
+  return /^\[\[?\.\.\.(.+?)\]?\]$/.test(seg);
 }
 
 function appRouterSegment(seg: string): string {

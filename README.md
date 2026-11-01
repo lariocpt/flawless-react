@@ -21,7 +21,7 @@ The tool itself is a thin scaffolder. The intelligence is the static analysis th
 
 Optional flags let you `--provider <file>` to wrap mounted components in your Redux / React Query / theme provider, and `--api <openapi.json>` to scaffold a standalone Bun mock server alongside the host so the component's `fetch('/api/…')` calls hit deterministic example responses.
 
-Once the suite is generated, it belongs to you. A re-run regenerates derived files (specs inside the out dir, configs, generated prose) so they track your source; the files meant to hold your work — `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`, `mocks/handlers.ts`, `e2e/global-setup.ts`, and colocated specs — are write-once or kept unless you ask otherwise.
+Once the suite is generated, it belongs to you. A re-run regenerates derived files (specs inside the out dir, configs, generated prose) so they track your source; the files meant to hold your work — `budgets.json`, `host/main.tsx`, `provider.fixtures.ts`, `e2e/global-setup.ts`, and colocated specs — are write-once or kept unless you ask otherwise. `mocks/handlers.ts` is kept while your edits are in it, and refreshed when the API spec changes and the file is still untouched.
 
 ## Contents
 
@@ -126,7 +126,7 @@ In this mode flawless:
 - adds `flawless:unit` / `flawless:perf` / `flawless:browser` scripts so you can `bun run flawless:unit` etc. from your project root. A `flawless:*` script you have customised survives a re-run: only a value the tool recognises as one of its own past spellings upgrades; anything else is kept and named in the summary and REPORT.md (`> Kept script(s): ...`). Delete the key to take the tool's current command
 - writes the runnable harness to **`<project-root>/flawless/`** — no separate npm project, no duplicated deps
 
-Override the auto-detected app resolver with `--app-resolver <file>` if you have a custom wrapper. The generated `flawless/mocks/handlers.ts` is yours to edit — flawless won't overwrite it once it exists, so swap the empty `HttpResponse.json({})` bodies for realistic fixtures.
+Override the auto-detected app resolver with `--app-resolver <file>` if you have a custom wrapper. The generated `flawless/mocks/handlers.ts` is yours to edit — a re-run keeps your edits, regenerating the file only when the API spec changed and it still matches its generated stamp, or when you pass `--force`, so swap the empty `HttpResponse.json({})` bodies for realistic fixtures.
 
 Three behaviours worth knowing before the first run:
 
@@ -242,7 +242,7 @@ flawless-react <entry.tsx> [options]
 | `--api <spec>` | none | Path to an OpenAPI / Swagger JSON or YAML file. Scaffolds a standalone Bun mock server (`mock/server.ts`) with static route handlers generated from the spec's first example responses; the host server transparently proxies all non-asset requests to it. Read by `perf-harness`, and by the MSW emit under `--nextjs` — it does nothing for a `--tasks unit-browser` run outside Next.js mode. |
 | `--colocate` | off | Write unit specs beside their source as `<name>.flawless.test.tsx`. Existing colocated specs are kept unless `--force` — they're the ones you hand-harden. Each opens with a `// @flawless-generated sha256:…` stamp so `--force` can tell an untouched spec from one you edited. |
 | `--ci` | off | Shorthand for `--no-interactive --json`. |
-| `--force` | off | Regenerate the files a plain re-run keeps: colocated specs, e2e route specs, the derived provider wrapper. A colocated spec is only rewritten while its provenance stamp still matches — hand-edited (or pre-stamp) specs are kept and listed; delete one to regenerate it. A re-run already refreshes the out-dir harness; write-once files are never touched under any flag. |
+| `--force` | off | Regenerate the files a plain re-run keeps: colocated specs, e2e route specs, the derived provider wrapper, and `mocks/handlers.ts` (even hand-edited — it is the escape hatch the kept-reports name). A colocated spec is only rewritten while its provenance stamp still matches — hand-edited (or pre-stamp) specs are kept and listed; delete one to regenerate it. A re-run already refreshes the out-dir harness; write-once files are never touched under any flag. |
 | `--report` | off | Emit `scripts/report.mjs` so `bun run report` aggregates run output into a markdown summary. |
 | `--tasks <ids>` | `perf-harness` | Comma-separated subset of `perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`. Omitting it does **not** run all seven — a non-interactive run with no `--tasks` runs `perf-harness` alone. In a TTY you get the checkbox menu instead, with `perf-harness` and `perf-static` preselected. |
 | `--roots <mode>` | `primary` | `exported` emits one tree per *exported* component — what a whole-app sweep needs, since a shadcn `card.tsx` exports seven of them. |
