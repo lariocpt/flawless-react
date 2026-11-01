@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -445,4 +447,82 @@ describe("the emitted playwright configs select the specs the same run wrote", (
     expect(existsSync(dir), `${cfg.testDir} exists`).toBe(true);
     expect(existsSync(path.join(dir, "Toolbar.spec.ts"))).toBe(true);
   });
+});
+
+describe("the emitted playwright configs bound the default worker count", () => {
+  // Dogfood defect #6: `undefined` fell through to Playwright's ½-CPU default,
+  // and a 24-core machine running one shared host produced 1–3 renderer
+  // crashes per full run. The emitted configs must therefore resolve workers
+  // themselves — env override, then CI=1, then min(4, cpus/2) — and never
+  // leave the field unset. The e2e plane's configs pin `workers: 1`
+  // unconditionally and are not part of this contract.
+  const bound = Math.max(1, Math.min(4, Math.floor(os.cpus().length / 2)));
+
+  const emitBoth = async (): Promise<string> => {
+    const root = projectWithStubs();
+    const outDir = path.join(root, "flawless");
+    await run("perf-harness" as TaskId, ctxOf({ outDir, trees: [await toolbar()] }));
+    await run("unit-browser" as TaskId, ctxOf({ outDir, trees: [await toolbar()] }));
+    return outDir;
+  };
+
+  // The config computes `workers` at import time, so the env has to be set
+  // around the dynamic import itself. Reloading the SAME file with a new
+  // query does not re-evaluate it: bun caches `file://` imports by pathname
+  // and ignores the query (measured). So each load copies the emitted bytes
+  // to a sibling path — same directory, so every import in it resolves
+  // identically — and loads that.
+  const loadWith = async (
+    file: string,
+    env: Record<string, string | undefined>,
+  ): Promise<Record<string, unknown>> => {
+    const saved = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(env)) {
+      saved.set(key, process.env[key]);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    const fresh = `${file}.${Math.random().toString(36).slice(2)}.ts`;
+    copyFileSync(file, fresh);
+    try {
+      return await load(fresh);
+    } finally {
+      rmSync(fresh, { force: true });
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  };
+
+  for (const cfgRel of ["playwright.config.ts", path.join("browser", "playwright.config.ts")]) {
+    test(`${cfgRel}: default is the bound, not Playwright's ½-CPU default`, async () => {
+      const outDir = await emitBoth();
+      const cfg = await loadWith(path.join(outDir, cfgRel), {
+        FLAWLESS_WORKERS: undefined,
+        CI: undefined,
+      });
+      expect(cfg.workers, "workers is set, not left to Playwright").toBeDefined();
+      expect(cfg.workers).toBe(bound);
+    });
+
+    test(`${cfgRel}: FLAWLESS_WORKERS still wins, over both the bound and CI`, async () => {
+      const outDir = await emitBoth();
+      expect(
+        (await loadWith(path.join(outDir, cfgRel), { FLAWLESS_WORKERS: "7", CI: undefined }))
+          .workers,
+      ).toBe(7);
+      expect(
+        (await loadWith(path.join(outDir, cfgRel), { FLAWLESS_WORKERS: "2", CI: "1" })).workers,
+      ).toBe(2);
+    });
+
+    test(`${cfgRel}: CI still resolves to 1`, async () => {
+      const outDir = await emitBoth();
+      expect(
+        (await loadWith(path.join(outDir, cfgRel), { FLAWLESS_WORKERS: undefined, CI: "1" }))
+          .workers,
+      ).toBe(1);
+    });
+  }
 });
