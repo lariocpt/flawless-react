@@ -92,19 +92,23 @@ test("defect 1: the harness tsconfig carries the app's path aliases, relative to
   );
 });
 
-test("defect 2: the run never touches the app's own tsconfig exclude", () => {
-  // FIX-PLAN: chunk 2 — flip to: the app tsconfig's exclude contains the
-  // suite dir ("flawless"), added with the file's formatting preserved.
-  //
-  // Measured 1 Nov: the app tsconfig is byte-identical after the run; the
-  // generated files sit inside the app's TypeScript program, so the host's
-  // own `tsc`/`next build` chokes on them (TS2708 across unit specs in the
-  // dogfood's native app).
+test("defect 2: the run excludes the suite dir from the app's own tsconfig", () => {
+  // FIX-PLAN: chunk 2 — FLIPPED. The run now merges the suite dir into the
+  // app tsconfig's `exclude` (src/tsconfigJson.ts), preserving the file's
+  // formatting: a line-level insert after the last existing entry, nothing
+  // else moved. Before the fix the app tsconfig was byte-identical after the
+  // run and the generated files sat inside the app's TypeScript program:
+  // measured on a copy of this fixture (deps installed), `bunx tsc --noEmit`
+  // went from clean to 29 errors — all in `flawless/` (Bun-only host server
+  // code) — and the app's own build died type-checking them. The native
+  // TS2708 half (`Cannot use namespace 'jest' as a value` across
+  // `flawless/unit/`) is the Expo twin of the same mechanism and stays
+  // static here: a Next fixture emits vitest specs, not jest ones.
   const appTsconfig = JSON.parse(read("tsconfig.json")) as {
     exclude?: string[];
   };
-  expect(appTsconfig.exclude).toEqual(["node_modules"]);
-  expect(read("tsconfig.json")).toContain('"exclude": ["node_modules"]');
+  expect(appTsconfig.exclude).toContain("flawless");
+  expect(read("tsconfig.json")).toContain('"exclude": ["node_modules", "flawless"]');
 });
 
 test("defect 3: the document-root spec imports renderToReadableStream from react-dom/server", () => {

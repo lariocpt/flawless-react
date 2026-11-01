@@ -31,6 +31,7 @@ import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { restampGenerated } from "./scaffold-tests/stamp.ts";
 import { EXPO_SCRIPT, JEST_CONFIG, NEXT_SCRIPT, VITEST_CONFIG } from "./suiteScripts.ts";
 import { findTask, TASKS } from "./tasks/index.ts";
+import { ensureSuiteExcluded } from "./tsconfigJson.ts";
 import type {
   ComponentTree,
   ExpoContext,
@@ -747,6 +748,32 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     for (const t of ensureFormatterIgnores(ignoreRoot, outDirRel(outDir, ignoreRoot))) {
       log(`added ${t.entry} to ${path.join(ignoreRoot, t.file)} — tool-owned suite`);
     }
+  }
+
+  // The suite dir sits inside the project's TypeScript program, and its files
+  // are Bun/vitest/jest code the app's own compiler options were never meant
+  // to compile. After a run the app's own type-check died on them — dogfood
+  // defect #2: `next build` failing on `flawless/host/registry.ts`, and the
+  // Expo app's `bunx tsc --noEmit` failing `TS2708: Cannot use namespace
+  // 'jest' as a value` across `flawless/unit/*.flawless.test.tsx`. Both went
+  // green by hand with one exclude entry; the tool now does it itself, and
+  // reports it the way scripts are reported, because a silent edit of a
+  // user-owned config is exactly how this regressed once already.
+  try {
+    const tsEdit = ensureSuiteExcluded(outDir);
+    if (tsEdit) {
+      const rel = path.relative(process.cwd(), tsEdit.file) || tsEdit.file;
+      log(
+        tsEdit.status === "added"
+          ? `tsconfig.json: added "${tsEdit.entry}" to exclude (${rel}) — the generated suite is not the host's type-check input`
+          : `tsconfig.json: kept — "${tsEdit.entry}" already excluded (${rel})`,
+      );
+    }
+  } catch (err) {
+    anyFailed = true;
+    const message = `tsconfig exclude merge failed: ${(err as Error).message}`;
+    runErrors.push(message);
+    warn(message);
   }
 
   if (ctx.inlineSummary) {

@@ -142,6 +142,34 @@ machinery for exactly this kind of merge for `package.json` (`src/packageJson.ts
 — merge, never clobber, and report what was merged), so the pattern exists; it just was not applied to
 tsconfig.
 
+**Measured corrections (chunk 2, 1 Nov).** The mechanism held; three details did not, and the
+measurement wins:
+
+1. **The exclude alone does not make the fixture green.** After adding `"flawless"` to the fixture's
+   `exclude`, `bunx tsc --noEmit` still failed — one error: a COLOCATED spec (in `src/`, inside the
+   program regardless of the exclude) calls `toBeInTheDocument` whose type augmentation arrives only
+   through `flawless/setup.ts`, now on the excluded side. Fixed as a second mechanism: a spec that
+   calls a jest-dom matcher imports `@testing-library/jest-dom/vitest` itself.
+2. **The fixture cannot produce a `next build` type-check at all** — before or after generation.
+   `next build` dies loading `next.config.ts` under bun's node_modules layout (`TypeError: Cannot
+   read properties of undefined (reading 'fileExists')`), and with the config renamed to `.mjs`,
+   webpack fails to resolve the app's own `@/` paths (paths without `baseUrl`) on a PRISTINE copy
+   with no generated files. The fixture's equivalent type-check is `bunx tsc --noEmit` — which is
+   exactly what `next build`'s type-check step runs against the same tsconfig — and that is what the
+   chunk quotes.
+3. **The native TS2708 half stays static.** A Next fixture emits vitest specs, not jest ones; the
+   `Cannot use namespace 'jest' as a value` symptom is the Expo twin of the same mechanism and is
+   recorded as static-only in `tests/dogfood-baseline.test.ts`.
+
+The gotcha about `extends` was real and is now pinned by a test: inherited `exclude` patterns anchor
+to the DECLARING config's dir, so a repo-root base excluding `flawless` does NOT cover
+`apps/web/flawless` — anchoring wrong would have produced both a false "kept" and a real duplicate.
+
+**Candidate defect #10 (recorded here, not fixed by any chunk):** vitest 5 + vite 7 ignores the
+emitted `esbuild.jsx` override and dies collecting every spec under a host `"jsx": "preserve"`
+("make sure to not set jsx to preserve"). This is not a fixture quirk — any real user on vitest 5
+hits the same wall. It needs its own chunk; see `tests/fixtures/README.md`.
+
 **Do.**
 
 1. New `src/tsconfigJson.ts` mirroring `src/packageJson.ts`: read the target tsconfig as JSONC

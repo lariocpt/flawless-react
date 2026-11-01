@@ -2321,6 +2321,7 @@ ${runBlock}
 
 ${reactNote}
 - The Playwright \`webServer\` boots \`bun host/server.ts\` automatically; no manual server step.
+- If the project has a \`tsconfig.json\`, the generator adds this directory to its \`exclude\` on purpose — the generated suite is type-checked by the harness configs, not the app's build. Pruning that entry makes the app's own \`tsc\`/\`next build\` fail on files it does not own; that is exactly how this regressed once.
 `;
 }
 

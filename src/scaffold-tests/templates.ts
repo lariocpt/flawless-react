@@ -273,7 +273,9 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
         relPath: `unit/${specName}.test.tsx`,
         absPath,
         skipIfExists: true,
-        content: renderUnitFile(c, opts, srcDir, `./${base}`, opts.todos?.for(absPath)),
+        content: ensureJestDomAugmentation(
+          renderUnitFile(c, opts, srcDir, `./${base}`, opts.todos?.for(absPath)),
+        ),
       });
     } else {
       const fromDir = path.resolve(opts.outDir, "unit");
@@ -282,12 +284,14 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
       const target = path.join(fromDir, `${specName}.test.tsx`);
       files.push({
         relPath: `unit/${specName}.test.tsx`,
-        content: renderUnitFile(
-          c,
-          opts,
-          fromDir,
-          toRel(fromDir, c.info.filePath),
-          opts.todos?.for(target),
+        content: ensureJestDomAugmentation(
+          renderUnitFile(
+            c,
+            opts,
+            fromDir,
+            toRel(fromDir, c.info.filePath),
+            opts.todos?.for(target),
+          ),
         ),
       });
     }
@@ -324,6 +328,33 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
   // place. Rendered last for that reason, prepended so it is written first.
   files.unshift({ relPath: VITEST_CONFIG, content: vitestConfig(opts) });
   return files;
+}
+
+/**
+ * A spec that calls a jest-dom matcher has to carry the matcher's type
+ * augmentation itself.
+ *
+ * The augmentation (`@testing-library/jest-dom/vitest`) is loaded at runtime
+ * through the vitest config's setupFiles, so the plane runs fine — but a
+ * COLOCATED spec lives in `src/`, inside the host's TypeScript program even
+ * after the suite dir is excluded (dogfood defect #2), and the file that
+ * imports the augmentation — `flawless/setup.ts` — is on the excluded side
+ * of that line. The host's own `tsc --noEmit` then fails the app's build
+ * with `TS2339: Property 'toBeInTheDocument' does not exist`: the generator
+ * broke the app again through a door the exclude could not close. Measured
+ * on the dogfood fixture: one such error survived the exclude alone.
+ *
+ * Importing the augmentation in the spec makes the file self-sufficient for
+ * any program that includes it. At runtime it is free: ESM caches the module,
+ * and setup.ts already loaded it.
+ */
+function ensureJestDomAugmentation(content: string): string {
+  if (!content.includes("toBeInTheDocument(")) return content;
+  if (content.includes("@testing-library/jest-dom")) return content;
+  const firstImport = /^import[^\n]*\n/.exec(content);
+  if (!firstImport) return `import "@testing-library/jest-dom/vitest";\n${content}`;
+  const at = firstImport.index + firstImport[0].length;
+  return `${content.slice(0, at)}import "@testing-library/jest-dom/vitest";\n${content.slice(at)}`;
 }
 
 function renderUnitFile(
