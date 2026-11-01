@@ -826,3 +826,40 @@ describe("harness tsconfig carries the app's path aliases (dogfood defect #1)", 
     expect(readFileSync(tsPath, "utf8")).toContain('   "noUncheckedIndexedAccess"');
   });
 });
+
+// Chunk 2 (defect #2), the second door: a COLOCATED spec lives in src/, inside
+// the host's TypeScript program even after the suite dir is excluded, and the
+// jest-dom matcher types arrive only through flawless/setup.ts — which sits on
+// the excluded side of that line. The host's own `tsc --noEmit` then failed
+// the app with `TS2339: Property 'toBeInTheDocument' does not exist` (measured
+// on the dogfood fixture: one such error survived the exclude alone). A spec
+// that calls a jest-dom matcher must therefore carry the augmentation itself.
+describe("jest-dom augmentation self-sufficiency", () => {
+  const unitContent = (extra: Partial<ComponentInfo>, outDir: string): string => {
+    const root = tmpRoot();
+    const src = path.join(root, "src");
+    mkdirSync(src, { recursive: true });
+    const files = renderUnitBrowser({
+      trees: [tree(comp("Widget", path.join(src, "Widget.tsx"), extra))],
+      outDir,
+      variants: 1,
+      browserSpecs: false,
+    });
+    return files.find((f) => f.relPath === "unit/Widget.test.tsx")?.content ?? "";
+  };
+
+  test("a spec that calls toBeInTheDocument imports the augmentation", () => {
+    const content = unitContent(
+      { renderMode: "client", acceptsChildren: true, childrenFlow: true },
+      path.join(tmpRoot(), "flawless"),
+    );
+    expect(content).toContain("toBeInTheDocument(");
+    expect(content).toContain('import "@testing-library/jest-dom/vitest";');
+  });
+
+  test("a spec with no jest-dom matcher does not carry the import", () => {
+    const content = unitContent({ renderMode: "client" }, path.join(tmpRoot(), "flawless"));
+    expect(content).not.toContain("toBeInTheDocument(");
+    expect(content).not.toContain("@testing-library/jest-dom");
+  });
+});
