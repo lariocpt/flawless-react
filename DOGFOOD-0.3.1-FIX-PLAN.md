@@ -303,6 +303,55 @@ which proves the mock, not the app, was at fault. The pattern appeared 50 times 
 "shape could not be inferred" body). When the return type is unknown the template defaults to
 `vi.fn(async () => ({}))` — async and `{}` regardless of how the call site uses the value.
 
+**Measured corrections (chunk 4, 1 Nov).** The symptom and the fix direction held; the blamed
+machinery did not, and the dogfood's hand-verified fix had a second mechanism the plan dropped:
+
+1. **Neither blamed line emitted the async mock.** The fixture's zustand-family stubs came from
+   `dataModuleMock.entry()`'s no-evidence fallback in `src/scaffold-tests/mocks.ts` (~line 764),
+   not from `templates.ts:2439`, and `extractDataDeps.ts:239` — the `await Promise.all([...])`
+   path the `awaited` flag is set on — never saw these hooks at all.
+2. **`awaited` is per-declaration, not per-use-site.** The plan's "the analyser already knows
+   whether the import is `await`ed at each use site" is false: the channel records one boolean
+   per imported binding. A module awaited in one file and called sync in another arrives as one
+   answer; call-site disagreement now surfaces as a TODO naming both call sites instead of
+   silently picking a side.
+3. **The deps channel never ran for the fixture's sync components.** `src/analyse/index.ts:313`
+   extracted data deps only for async units, so the sync client components that read the store
+   recorded nothing and every guess fell to the no-evidence fallback. Fixed with a NEW `mockDeps`
+   analyse channel (sync call-site evidence feeding only the mock emitter — guards, predicates
+   and the RSC skip never read it), not by widening `dataDeps`.
+4. **The hook rule overrides only a GUESS, not a stated contract.** The plan says `use*` → sync,
+   always. As landed, a `use*` binding whose annotation says `Promise<T>` keeps its async mock:
+   a stated contract beats a naming heuristic. The rule fires only where async-ness was guessed.
+5. **The second mechanism was missing from the plan.** The dogfood hand-fix was "real fixtures +
+   zustand left real". Call-site rules alone still emit a guessed stub for `zustand/vanilla`'s
+   curried `createStore<AppState>()((set) => …)` — no guessed shape survives being called as
+   `stub()((set) => …)`. As landed: a package module no analysed file CALLS is not mocked at all
+   (left real), and a mixed package factory carries a comment saying which exports are guesses.
+   `importOriginal` was rejected (importing a package's real module can pull `next/cache` write
+   helpers into the jsdom graph); extending the skip to local modules was rejected (local modules
+   are exactly where the guessed fixtures belong).
+6. **The `[]` for `.map` use sites lands as a one-element array**, `[{ id: "flawless-id", … }]`,
+   per the emitter's documented `mockLiteral` contract: a one-element array witnesses the element
+   shape AND a non-empty render; an empty array witnesses nothing and makes `.map` assertions
+   vacuous. The denylist (Do.4) was not needed — the hook rule plus the package skip cover the
+   zustand family without a list to maintain.
+
+**Result (chunk 4, 1 Nov).** Fixture unit plane, freshly generated with the fixed tree and run
+(vitest 2.1.9, react-dom 19.1.0): **4 files, 6 passed / 1 skipped / 0 failed**. Before: the
+layout spec red with `TypeError: createStore(...) is not a function` (the async stub called as a
+curried sync factory), the page spec red ×2 with `toasts.map is not a function`, InboxList and
+store-provider green (3 passed / 1 skipped). After: the layout spec emits **no `vi.mock` at all**
+— the whole zustand family left real, the dogfood hand-fix's shape; the page spec emits
+`useToasts: vi.fn(() => [{ id: "flawless-id", text: "flawless-text" }])` from its `.map` use
+site; the store-provider spec mounts the real store (2 passed / 1 skipped). This satisfies the
+§4 acceptance quote ("Replacing them with real fixtures … turned the file green", the pattern
+50× across the web suite). Defect 7 did NOT surface on this fixture — its page children are sync
+and the layout uses the streaming renderer; chunk 9 needs a promise-valued-children fixture.
+The native plane has its own emitter (`networkModuleMocks` in `nativeTemplates.ts`, mocks only
+`fetch()`-containing modules, annotation-driven); the hook guard was added to its two
+guessed-async branches and is provably inert on the current native fixture.
+
 **Do.**
 
 1. Thread the **call-site shape** into the mock emitter. The analyser already knows whether the import
@@ -330,6 +379,30 @@ which proves the mock, not the app, was at fault. The pattern appeared 50 times 
 **Gotchas.** Some deps are *both* (a function called with and without `await` in different files). When
 call sites disagree, prefer sync and say so in the TODO; a sync mock under `await` still works
 (`await 5 === 5`), the reverse does not.
+
+**Candidate defect #11 (recorded by chunk 0, verdict by chunk 4): the `.gitignore` write is
+intended, not a defect.** `src/nextjs/detect.ts` (`ignoreEntries`/`updateGitignore`) adds suite
+artifacts to the host's `.gitignore` on purpose — the saleor-dashboard rationale: generated files
+committed by accident rot silently — and `src/core.ts` reports it ("added N entry(ies) to
+.gitignore"). Closed as intended-and-reported; no chunk owns it and none should.
+
+**Candidate defect #12 (recorded by chunk 4, not fixed by any chunk): colocated specs cannot run
+from the suite dir.** Running vitest with the cwd inside a suite dir that carries its own
+`package.json` (the standalone layout) fails every colocated spec with `Failed to load url …
+Does the file exist?` — vite's `server.fs.allow` roots at the cwd and refuses the app files
+above it. The emitted `flawless/vitest.config.mts` sets no `fs.allow`; running from the APP root
+with `--config flawless/vitest.config.mts` works (that is how chunk 4's execution test runs).
+Any user who `cd flawless && npx vitest` hits this and sees a phantom "files do not exist" red.
+Fix is one line (`server.fs.allow: [projectRoot]` in the emitted config) and needs its own chunk.
+
+**Candidate defect #13 (recorded by chunk 4, not fixed by any chunk): a mock factory is complete
+only for its evidenced importers.** A mocked module's factory covers the exports the analysed
+call sites evidence; a module also imported by NON-analysed files in the render graph (a util
+re-exporting a store action) can touch an export the factory never emitted → `undefined is not a
+function` at runtime. The package-module skip (correction 5) removed the fixture's exposure —
+uncalled package modules are left real — and the drop hazard did not reproduce as a "dropped
+export" here (`createStore` was present-but-async, not missing), but the hazard is real for local
+mixed-importer modules and needs a factory-completeness rule of its own.
 
 ---
 

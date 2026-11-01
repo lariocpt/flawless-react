@@ -333,6 +333,25 @@ async function analyseOne(
         cache,
       )
     : [];
+  // Call-site evidence from SYNCHRONOUS units. The gate above means a client
+  // component's `const toasts = useToasts()` records nothing — but the mock
+  // emitter still has to answer "was this call awaited, and what was read off
+  // the result", or the shared module mock guesses `async () => ({})` and the
+  // mount dies with "toasts.map is not a function" (dogfood defect #4: the
+  // pattern appeared 50 times across one web suite). This channel feeds ONLY
+  // the emitter — this unit's own spec, and the parent's treeDataDeps merge in
+  // walkTree below. Guards, predicates and the RSC skip escape never read it,
+  // which is exactly why it is a separate field and not extra dataDeps: for a
+  // sync unit those consumers would treat every call as fetch noise.
+  const mockDeps = unit.isAsync
+    ? []
+    : resolveDepReturns(
+        extractDataDeps(unit.bodyNode, parsed.sourceFile, parsed.imports),
+        parsed.imports,
+        absPath,
+        resolver,
+        cache,
+      );
   const guards = extractGuards(
     unit.bodyNode,
     parsed.sourceFile,
@@ -440,6 +459,7 @@ async function analyseOne(
     ...(apiCalls.length > 0 ? { apiCalls } : {}),
     staticText,
     dataDeps,
+    ...(mockDeps.length > 0 ? { mockDeps } : {}),
     guards,
     ...(predicates.inversions.length > 0 ? { predicateInversions: predicates.inversions } : {}),
     ...(predicates.refusals.length > 0 ? { predicateRefusals: predicates.refusals } : {}),
@@ -583,7 +603,9 @@ async function analyseOne(
   // (it sits on the primary path); tree entries fill what the unit never
   // touched.
   if (children.length > 0) {
-    const ownCallees = new Set((info.dataDeps ?? []).map((d) => d.callee));
+    const ownCallees = new Set(
+      [...(info.dataDeps ?? []), ...(info.mockDeps ?? [])].map((d) => d.callee),
+    );
     const extras = new Map<string, ModuleImportInfo>();
     const depExtras: DataDepInfo[] = [];
     // The child bridge (analyse/childBridge.ts): a rendered component knows
@@ -682,7 +704,7 @@ async function analyseOne(
             else extras.set(key, mi);
           }
         }
-        for (const d of t.entry.dataDeps ?? []) {
+        for (const d of [...(t.entry.dataDeps ?? []), ...(t.entry.mockDeps ?? [])]) {
           if (!ownCallees.has(d.callee) && !depExtras.some((e) => e.callee === d.callee)) {
             depExtras.push(d);
           }

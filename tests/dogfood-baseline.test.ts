@@ -130,16 +130,24 @@ test("defect 3: the document-root spec imports renderToReadableStream from react
 });
 
 test("defect 4: a synchronous zustand hook is mocked as an async guess", () => {
-  // FIX-PLAN: chunk 4 — flip to: hooks the source calls synchronously get
-  // sync mocks with a shape implied by the use sites ([] for .map), not
-  // `vi.fn(async () => ({}))`.
-  //
-  // Measured 1 Nov: the layout spec (which mounts the derived provider around
-  // the store) mocks the whole zustand family as async — exactly the 50-times
-  // pattern that made `toasts.map is not a function` in the dogfood.
-  const spec = read("src", "app", "layout.flawless.test.tsx");
-  expect(spec).toMatch(/vi\.mock\("zustand", \(\) => \(\{ useStore: vi\.fn\(async/);
-  expect(spec).toContain("zustand/react/shallow");
+  // FIX-PLAN: chunk 4 — FLIPPED. Measured 1 Nov: the layout spec mocked the
+  // whole zustand family `vi.fn(async () => ({}))` — the 50-times pattern
+  // that made `toasts.map is not a function`. Both mechanisms ran through
+  // the emitter's no-evidence fallback (mocks.ts entry()), NOT through
+  // `awaited`: the callers are SYNC components, which recorded no deps at
+  // all. Now: (a) sync call sites are evidence (mockDeps), so the page's
+  // `useToasts` gets a sync array fixture from its `.map` use site; (b) a
+  // use*-shaped binding is sync by contract whatever `awaited` says; (c) a
+  // package module no analysed file CALLS is not mocked at all — the
+  // hand-verified dogfood fix was "zustand left real", and a curried sync
+  // factory like `createStore<AppState>()((set) => …)` cannot survive any
+  // guessed stub. The layout spec now carries no vi.mock at all and its
+  // runtime went from `createStore(...) is not a function` to green.
+  const layout = read("src", "app", "layout.flawless.test.tsx");
+  expect(layout).not.toContain("vi.mock(");
+  const page = read("src", "app", "page.flawless.test.tsx");
+  expect(page).toMatch(/useToasts: vi\.fn\(\(\) => \(?\[\{/);
+  expect(page).not.toMatch(/useToasts: vi\.fn\(async/);
 });
 
 test("defect 5: the catch-all router flattens to one swagger path and nothing warns", () => {

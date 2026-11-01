@@ -15,6 +15,7 @@ import { expoFileToRoute, routeModuleId } from "../expo/routes.ts";
 import { titleSafe } from "../scaffold/templates.ts";
 import { JEST_CONFIG } from "../suiteScripts.ts";
 import type { ComponentTree, ExpoContext, TodoRecorder } from "../types.ts";
+import { isHookContract } from "./mocks.ts";
 import { describeNoClaim } from "./postDispatch.ts";
 import {
   allocateSpecNames,
@@ -1177,7 +1178,14 @@ function networkModuleMocks(
       mi.names.map((local, i) => [mi.importedNames?.[i] ?? local, local] as const),
     );
     const bodies = names.map((n) => {
-      if (!used.has(n)) return `  ${n}: jest.fn(async () => ({})),`;
+      // Sync-by-contract (dogfood #4, native twin): a use*-shaped export is a
+      // hook, and a hook's contract is a value — `await 5 === 5`, so a sync
+      // stub satisfies an await, while `.map` on a Promise is a crash. The
+      // async {} below is a GUESS wherever no `Promise<T>` annotation resolved,
+      // and a guess must not async a hook. (The annotation-resolved branches
+      // keep async: a stated `Promise<T>` is a contract, not a guess.)
+      if (!used.has(n))
+        return `  ${n}: ${isHookContract(n) ? "jest.fn(() => ({}))" : "jest.fn(async () => ({}))"},`;
       const value = annotatedReturnValue(mi.resolvedPath as string, n, resolver, cache);
       // Annotated `Promise<void>`: undefined IS the realistic return value, so
       // no marker. `logout`, `changePassword` and `forgotPassword` in the
@@ -1189,8 +1197,9 @@ function networkModuleMocks(
       if (value === undefined) {
         // No resolvable annotation: an honest empty object plus the marker, which
         // is the same bail resolveDepReturns makes rather than inventing a shape.
+        // A use*-shaped name is stubbed SYNC — the hook contract (see above).
         todo?.("uninferred-return-shape");
-        return `  ${n}: jest.fn(async () => ({})), // TODO(flawless): give this a realistic return value`;
+        return `  ${n}: ${isHookContract(n) ? "jest.fn(() => ({}))" : "jest.fn(async () => ({}))"}, // TODO(flawless): give this a realistic return value`;
       }
       // The same shape with ONE row, kept for a loaded-state test. The default
       // mock stays empty so the assertions derived from the initial render hold;

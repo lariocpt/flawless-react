@@ -86,3 +86,15 @@ fails `createStore(...) is not a function` — defect 4's `vi.fn(async () => ({}
 guess at `zustand/vanilla`'s curried factory. `page.flawless.test.tsx`'s two
 `toasts.map` reds are defect 4's too. Tally: 3 failed / 3 passed / 1 skipped —
 same count, different reasons; the layout goes green only with chunk 4.
+
+## Unit plane after chunk 4 (measured 1 Nov, vitest 2.1.9, react-dom pinned 19.1.0)
+
+The whole unit plane is green: **4 files, 6 passed / 1 skipped / 0 failed**, executed from the
+app root with `vitest run --config flawless/vitest.config.mts` (candidate defect #12: running
+from inside `flawless/` instead reddens every colocated spec on vite's `fs.allow`). The layout
+spec now emits no `vi.mock` at all — the zustand family is left real, so `createStore<AppState>()
+((set) => …)` runs for real and `createStore(...) is not a function` is gone. The page spec's
+`useToasts` gets a sync one-element array fixture from its `.map` use site
+(`vi.fn(() => [{ id: "flawless-id", text: "flawless-text" }])`), so both `toasts.map` reds are
+gone. `store-provider.flawless.test.tsx` mounts the real store (2 passed / 1 skipped — the
+interaction skip is the guard-path contract, not a defect). InboxList stays green.
