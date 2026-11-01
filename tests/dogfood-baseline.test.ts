@@ -227,14 +227,19 @@ test("defect 7: the RSC page spec resolves async components by flattening childr
   expect(spec).not.toMatch(/Suspense/);
 });
 
-test("defect 8: MCP stdio exit is not asserted here", () => {
-  // FIX-PLAN: chunk 7 — the exit-after-stdin-close contract needs a stdio
-  // client (spawn `flawless-react mcp`, initialize, tools/call, close stdin,
-  // measure teardown). That test belongs to chunk 7 with a bounded time
-  // assertion; a timing assertion here would only prove the runner is not
-  // slower than the bound. This marker exists so chunk 7 flips a named
-  // placeholder instead of inventing one.
-  expect(existsSync(path.resolve(__dirname, "..", "src", "mcp", "server.ts"))).toBe(true);
+test("defect 8: MCP stdio exit has a permanent stdio-client test", () => {
+  // FIX-PLAN: chunk 7 — FLIPPED. The stdio client landed: the
+  // "mcp exit contract" tests in tests/mcp.test.ts spawn a real
+  // `bun src/bin.ts mcp` child, speak the protocol, and time the process from
+  // its last answer (or from stdin closing) to exit — idle server and one
+  // that just drained a flawless_run. Measured 1 Nov: 4–31 ms on the clean
+  // paths; the dogfood's >60 s hang was the client keeping stdin open (the
+  // session is meant to stay alive) plus one real hole — a straggler holding
+  // the child's output pipes — which chunk 7's run.ts fix bounds. The
+  // contract is in docs/mcp.md.
+  const mcpTests = readFileSync(path.resolve(__dirname, "mcp.test.ts"), "utf8");
+  expect(mcpTests).toContain("mcp exit contract");
+  expect(mcpTests).toContain("exitClock");
 });
 
 test("defect 9: the emitted setup.ts is not lint-clean under a noExplicitAny host config", () => {

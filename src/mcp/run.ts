@@ -63,6 +63,12 @@ export interface ChildRun {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** The direct child exited but its output pipes stayed open — a straggler
+   *  in its process group (a dev server a test runner leaked) had inherited
+   *  the write ends. The group was killed and the drain cut short; the text
+   *  carried is what arrived and may be incomplete. Absent on every clean
+   *  run, and announced in the rendered result when set. */
+  pipesCut?: boolean;
 }
 
 /** Generation over a whole app's glob is analysis + file writing; with
@@ -77,6 +83,31 @@ export interface ChildOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeoutMs?: number;
+}
+
+/** How long the child's stdout/stderr pipes are given to close on their own
+ *  after the direct child exits — and again for the group kill that forces
+ *  them closed. Two seconds is generous for "the writer is gone and the
+ *  kernel is closing the pipe", and short enough that a straggler cannot
+ *  hold a tool call (or the server's shutdown chain) hostage. */
+const PIPE_DRAIN_GRACE_MS = 2_000;
+
+/** Read a pipe to the end, accumulating into `sink` as bytes arrive. Unlike
+ *  `new Response(stream).text()`, the text read SO FAR survives an abandoned
+ *  read — which is the whole point when the drain is cut short. */
+async function readPipe(stream: ReadableStream<Uint8Array>, sink: { text: string }): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    sink.text += decoder.decode(value, { stream: true });
+  }
+}
+
+/** Did the promise settle within `ms`? A false means "not yet", never "no". */
+async function settles(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  return await Promise.race([promise.then(() => true), Bun.sleep(ms).then(() => false)]);
 }
 
 /**
@@ -177,14 +208,42 @@ export async function runFlawlessChild(args: string[], opts: ChildOptions = {}):
   }, timeoutMs);
   // No race needed: the watchdog KILLS the child, so `proc.exited` is the one
   // promise that always lands — with or without the deadline.
-  const readOut = new Response(proc.stdout as ReadableStream).text();
-  const readErr = new Response(proc.stderr as ReadableStream).text();
+  const out = { text: "" };
+  const err = { text: "" };
+  const readOut = readPipe(proc.stdout as ReadableStream<Uint8Array>, out);
+  const readErr = readPipe(proc.stderr as ReadableStream<Uint8Array>, err);
   await proc.exited;
   LIVE.delete(proc);
   clearTimeout(killer);
-  const stdout = await readOut;
-  const stderr = await readErr;
-  return { code: timedOut ? -1 : (proc.exitCode ?? -1), stdout, stderr, timedOut };
+  // The child is gone; its pipes should close with it. A straggler in its
+  // process group — a dev server a test runner leaked — inherits the write
+  // ends and would hold these reads open forever, and nothing bounds that any
+  // more: the watchdog was just cleared, and the child it would kill is
+  // already dead. An unbounded read here is worse than a slow tool call: the
+  // response frame is never written, the server's shutdown chain never
+  // settles, and even SIGTERM cannot make the server exit. So: a grace for
+  // the pipes to close on their own, then the group kill — which is exactly
+  // the straggler's execution order — and a second grace for it to land. If
+  // even that fails (a straggler that re-detached into its own group), return
+  // with the partial text and say so; an answer that names its own gap beats
+  // a call that never answers.
+  let pipesCut = false;
+  if (
+    !(await settles(readOut, PIPE_DRAIN_GRACE_MS)) ||
+    !(await settles(readErr, PIPE_DRAIN_GRACE_MS))
+  ) {
+    pipesCut = true;
+    killGroup(proc);
+    await settles(readOut, PIPE_DRAIN_GRACE_MS);
+    await settles(readErr, PIPE_DRAIN_GRACE_MS);
+  }
+  return {
+    code: timedOut ? -1 : (proc.exitCode ?? -1),
+    stdout: out.text,
+    stderr: err.text,
+    timedOut,
+    pipesCut,
+  };
 }
 
 /** A stream, capped and labelled; empty streams say so rather than vanishing. */
@@ -195,6 +254,11 @@ function stream(label: string, text: string): string | null {
   return `--- ${label}${capped.truncated ? " (truncated, see marker)" : ""} ---\n${body}`;
 }
 
+/** Announced, never silent — the honest-failure rule read on the drain side. */
+const PIPE_CUT_NOTE =
+  "note: the child exited but a straggler in its process group held the output pipe " +
+  "open; the group was killed and the output may be cut short";
+
 /** Nonzero exit and timeouts are isError; the child's verdict is the verdict. */
 export function renderRun(run: ChildRun, timeoutMs: number): ToolResult {
   const parts = [
@@ -202,6 +266,7 @@ export function renderRun(run: ChildRun, timeoutMs: number): ToolResult {
       ? `timed out after ${timeoutMs}ms — process group killed (exit reported as -1)`
       : `exit ${run.code}`,
   ];
+  if (run.pipesCut) parts.push(PIPE_CUT_NOTE);
   const out = stream("stdout", run.stdout);
   const err = stream("stderr", run.stderr);
   if (out) parts.push(out);
@@ -227,6 +292,7 @@ export function renderCiRun(run: ChildRun, timeoutMs: number): ToolResult {
     : `exit ${run.code}`;
   const blob = parseCiBlob(run.stdout);
   const parts = [head];
+  if (run.pipesCut) parts.push(PIPE_CUT_NOTE);
   if (blob !== null) {
     parts.push(`--- result (--ci --json) ---\n${JSON.stringify(blob, null, 2)}`);
   } else {

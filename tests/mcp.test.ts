@@ -19,7 +19,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkLines } from "../src/cli.ts";
@@ -387,6 +387,48 @@ describe("mcp run plane", () => {
     }
   }, 60_000);
 
+  test("a straggler holding the child's pipes cannot wedge the call past the child's exit", async () => {
+    // The one hole the watchdog could not cover: the direct child exits, a
+    // straggler in its process group keeps the stdout pipe open, and the pipe
+    // read after `proc.exited` had no bound left — the response frame would
+    // never be written, the server's shutdown chain would never settle, and
+    // even SIGTERM could not make the server exit. Measured one layer down
+    // for the same reason as the watchdog test: at the protocol level there
+    // is no way to make a real generation leak a straggler on demand.
+    //
+    // Before the fix this call never returned (the straggler slept 30 s
+    // holding the pipe); after it, the answer arrives after the first grace
+    // and names its own cut.
+    const argv1 = process.argv[1];
+    process.argv[1] = path.join(REPO, "tests", "fixtures", "mcp-leaky-child.ts");
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-straggler-"));
+    const pidFile = path.join(dir, "straggler.pid");
+    try {
+      const t0 = Date.now();
+      const run = await runFlawlessChild([pidFile], { timeoutMs: 60_000 });
+      const ms = Date.now() - t0;
+      expect(ms).toBeLessThan(15_000); // measured ~2 s: the grace, not the sleep
+      expect(run.timedOut).toBe(false);
+      expect(run.code).toBe(0);
+      expect(run.stdout).toContain('"exitCode":0');
+      expect(run.pipesCut).toBe(true);
+      // The straggler is dead, not orphaned holding the pipe.
+      const pid = Number(await readFile(pidFile, "utf8"));
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+      // And the cut is announced, never silent.
+      expect(textOf(renderCiRun(run, 60_000))).toContain("cut short");
+    } finally {
+      if (argv1 !== undefined) process.argv[1] = argv1;
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test("timeout_ms is read and bounded, not accepted and ignored", async () => {
     const dir = await tempProject();
     try {
@@ -487,8 +529,124 @@ describe("mcp run plane", () => {
 });
 
 // ---------------------------------------------------------------------------
+// E — the exit contract: the server dies when stdin closes and the batch drains
+// ---------------------------------------------------------------------------
+
+describe("mcp exit contract", () => {
+  // The dogfood's defect #8: a client that waits for process teardown after a
+  // complete answer "hung until killed". Measured here on a real child over
+  // real pipes, the clean paths exit in milliseconds — the contract clients
+  // may rely on, now permanent. The bound is generous (measured 4–31 ms) so
+  // the test catches a hang, not a slow machine.
+  test("an idle server exits within 5 s of stdin closing", async () => {
+    const r = await exitClock([INIT, INITED]);
+    expect(r.code).toBe(0);
+    expect(r.ms).toBeLessThan(5_000);
+  }, 30_000);
+
+  test("a server that just drained a flawless_run exits within 5 s of its last answer", async () => {
+    // The piped-batch shape — `printf … | flawless-react mcp` — closes stdin
+    // as it writes, so the clock starts at the ANSWER, which is what a client
+    // that waits for teardown actually experiences.
+    const dir = await tempProject();
+    try {
+      const r = await exitClock(
+        [
+          INIT,
+          INITED,
+          call(1, "flawless_run", { cwd: dir, entry: "src/Widget.tsx", tasks: ["perf-static"] }),
+        ],
+        { closeAtWrite: true, timeoutMs: 180_000 },
+      );
+      expect(r.code).toBe(0);
+      expect(r.lines.join("\n")).toContain('"id":1');
+      expect(r.ms).toBeLessThan(5_000);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+  test("SIGTERM during the EOF drain still kills the live child", async () => {
+    // The piped batch starts the drain before the child even spawns, so the
+    // signal lands while a shutdown is already in flight. The documented
+    // contract is "a signal kills the live child's process group before the
+    // server exits" — the shutdown early return must not skip the kill just
+    // because a drain is already running. Measured without the kill: the
+    // child outlives the server and dies only when it next writes into the
+    // dead pipe (152 ms here; a quiet child would live for its full run).
+    const dir = await tempProject();
+    try {
+      const proc = Bun.spawn(["bun", BIN, "mcp"], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: REPO,
+      });
+      proc.stdin.write(`${INIT}\n${INITED}\n`);
+      proc.stdin.write(
+        `${call(1, "flawless_run", { cwd: dir, entry: "src/Widget.tsx", tasks: ["perf-static"] })}\n`,
+      );
+      proc.stdin.end();
+      let kid = 0;
+      const t0 = Date.now();
+      while (!kid && Date.now() - t0 < 20_000) {
+        kid = childProcsOf(proc.pid)[0] ?? 0;
+        if (!kid) await Bun.sleep(10);
+      }
+      expect(kid).toBeGreaterThan(0);
+      proc.kill("SIGTERM");
+      const code = await proc.exited;
+      expect(code).toBe(0);
+      // The kill is posted before the server exits, so the child is dead (or
+      // a zombie awaiting reap) within milliseconds of the exit. Without the
+      // kill it was measurably alive at this instant and lived ~150 ms more.
+      let alive = true;
+      const t1 = Date.now();
+      while (alive && Date.now() - t1 < 100) {
+        alive = procAlive(kid);
+        if (alive) await Bun.sleep(5);
+      }
+      expect(alive).toBe(false);
+      // Belt: never leave a process behind for the harness to trip over.
+      const t2 = Date.now();
+      while (procAlive(kid) && Date.now() - t2 < 5_000) await Bun.sleep(10);
+      expect(procAlive(kid)).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/** Direct children of `pid`, via /proc — no ps parsing games. */
+function childProcsOf(pid: number): number[] {
+  const out: number[] = [];
+  for (const e of readdirSync("/proc")) {
+    if (!/^\d+$/.test(e)) continue;
+    try {
+      const stat = readFileSync(`/proc/${e}/stat`, "utf8");
+      const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      if (ppid === pid) out.push(Number(e));
+    } catch {
+      /* raced exit */
+    }
+  }
+  return out;
+}
+
+/** Is the process still running? A zombie counts as dead: the kill landed,
+ *  the reaper just has not gotten to it yet. */
+function procAlive(pid: number): boolean {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+    return state !== "Z";
+  } catch {
+    return false;
+  }
+}
 
 const INIT =
   '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"flawless-tests","version":"0"}}}';
@@ -628,6 +786,70 @@ async function session(
     if (typeof msg.id === "number") responses.set(msg.id, msg);
   }
   return { lines, responses, stderr, code };
+}
+
+/**
+ * Speak to a real server and time its teardown.
+ *
+ * Writes the frames, waits for every frame that carries an id to come back,
+ * then triggers the exit (closing stdin — after the answers by default, or
+ * at write time like a shell pipeline) and measures from that trigger to
+ * process exit. This is the measurement the dogfood could not make in-process:
+ * whether the server dies when its session ends, and how fast.
+ */
+async function exitClock(
+  frames: string[],
+  opts: { closeAtWrite?: boolean; timeoutMs?: number } = {},
+): Promise<{ ms: number; code: number; lines: string[] }> {
+  const proc = Bun.spawn(["bun", BIN, "mcp"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: REPO,
+  });
+  const expected = frames.filter((f) => {
+    try {
+      return typeof (JSON.parse(f) as { id?: unknown }).id !== "undefined";
+    } catch {
+      return false;
+    }
+  }).length;
+  proc.stdin.write(`${frames.join("\n")}\n`);
+  if (opts.closeAtWrite) proc.stdin.end();
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  const lines: string[] = [];
+  let buf = "";
+  let pending: Promise<void> = Promise.resolve();
+  const pump = (): void => {
+    pending = reader.read().then((res) => {
+      if (res.done) return;
+      buf += decoder.decode(res.value, { stream: true });
+      let nl = buf.indexOf("\n");
+      while (nl !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) lines.push(line);
+        nl = buf.indexOf("\n");
+      }
+      pump();
+    });
+  };
+  pump();
+  const deadline = Date.now() + (opts.timeoutMs ?? 120_000);
+  while (lines.length < expected && Date.now() < deadline) {
+    await Promise.race([pending, Bun.sleep(25)]);
+  }
+  if (lines.length < expected) {
+    proc.kill("SIGKILL");
+    throw new Error(
+      `server answered ${lines.length}/${expected} frames within ${opts.timeoutMs ?? 120_000}ms`,
+    );
+  }
+  const t0 = Date.now();
+  if (!opts.closeAtWrite) proc.stdin.end();
+  const code = await proc.exited;
+  return { ms: Date.now() - t0, code, lines };
 }
 
 function frame(s: Session, id: number): Frame {
