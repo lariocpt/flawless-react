@@ -94,8 +94,10 @@ specs use the same host on the same port** (`browser/playwright.config.ts` runs
 and noisy numbers at best. To clear a stuck host: `lsof -ti :5173 | xargs -r kill`.
 
 Measurement hygiene: `FLAWLESS_WORKERS=1` forces a single worker; CI defaults to 1,
-otherwise Playwright decides. Budgets only warn, so parallel measurement can't fail
-a run — but it does make the numbers worse. Record a number with one worker.
+and the local default is bounded to `min(4, cpus/2)` — Playwright's ½-CPU default
+crashed renderers on a 24-core machine sharing one host. Budgets only warn, so
+parallel measurement can't fail a run — but it does make the numbers worse. Record a
+number with one worker.
 
 Output lands in `test-results/` (already gitignored, and Playwright clears it at the
 start of each run): `test-results/results.json` is the machine-readable one —

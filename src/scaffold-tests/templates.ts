@@ -3522,7 +3522,8 @@ function emitPlaywrightTrigger(label: LabelSource): string | undefined {
 }
 
 function browserPlaywrightConfig(): string {
-  return `import { defineConfig, devices } from "@playwright/test";
+  return `import os from "node:os";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
@@ -3536,16 +3537,29 @@ export default defineConfig({
   // Budgets only warn, so parallel measurement never fails a run — but it does
   // make the numbers noisier, so CI (where a recorded number usually matters)
   // keeps one, and FLAWLESS_WORKERS=1 forces it anywhere else.
+  // Locally the default is BOUNDED, not Playwright's ½-CPU default: one shared
+  // host serves every worker and each page bundles the whole app, so a wide
+  // local run is contention, not speed — a 24-core dogfood crashed 1–3
+  // renderers per full run at the ½-CPU default and went green at 4 workers.
+  // min(4, cpus/2) reproduces the value that measured green; the env override
+  // above still wins anywhere.
   fullyParallel: true,
   workers: process.env.FLAWLESS_WORKERS
     ? Number(process.env.FLAWLESS_WORKERS)
     : process.env.CI
       ? 1
-      : undefined,
+      : Math.max(1, Math.min(4, Math.floor(os.cpus().length / 2))),
   reporter: [["list"]],
   use: {
     baseURL: "http://127.0.0.1:5173",
     trace: "retain-on-failure",
+    launchOptions: {
+      // Insurance, not a second fix: a container with a small /dev/shm kills
+      // renderers with the identical "Target crashed" from a different cause
+      // (Chromium puts shared memory there; the 64 MB default runs out). The
+      // measured crash was contention — that is what the bound above fixes.
+      args: ["--disable-dev-shm-usage"],
+    },
   },
   webServer: {
     command: "bun ../host/server.ts",

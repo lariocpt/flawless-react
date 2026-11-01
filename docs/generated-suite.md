@@ -58,7 +58,7 @@ webServer: {
 }
 ```
 
-Workers are pinned to 1 under CI, because the host serves one component at a time and parallel mounts fight over the singleton `activeRoot`. Locally the run is parallel (Playwright's default); set `FLAWLESS_WORKERS` to pin it yourself.
+Workers are pinned to 1 under CI, because the host serves one component at a time and parallel mounts fight over the singleton `activeRoot`. Locally the default is bounded to `min(4, cpus/2)` rather than Playwright's ½-CPU default: the one shared host makes a very wide local run contention, not speed (a 24-core dogfood crashed renderers at 12 workers and ran green at 4). Set `FLAWLESS_WORKERS` to pin it yourself anywhere.
 
 **Edit when**: you need a different port, you want to add a `firefox` or `webkit` project, or you want to run tests in parallel (which requires reworking the host to scope state per-page).
 
