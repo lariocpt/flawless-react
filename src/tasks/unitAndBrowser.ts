@@ -177,6 +177,14 @@ export const unitAndBrowser: Task = {
       // mount) to this same pair.
       reactPinDir: aliasRes.pinDir,
       reactShim,
+      // The harness tsconfig must resolve what the app's own tsconfig resolves:
+      // provider.tsx lives in the suite and imports the app's `@/…` specifiers,
+      // and Bun's bundler consults the nearest tsconfig per file — the suite's.
+      // Next mode only: a standalone suite touches the app through relative
+      // paths, and those files resolve their aliases through their own nearest
+      // tsconfig, so giving the standalone harness the app's aliases would
+      // encode a machine-relative claim for no resolution gain.
+      aliasRoot: ctx.nextjs?.root,
       // The app package's .env files for the emitted vitest config (server
       // modules read DATABASE_URL & co. at import time; unset env crashes
       // every importing spec at collection).

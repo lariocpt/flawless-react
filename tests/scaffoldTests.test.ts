@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { tsConfig } from "../src/scaffold/templates.ts";
 import {
   ensurePnpmSuiteSettings,
   findOrphanUnitSpecs,
@@ -712,5 +713,116 @@ describe("findOrphanUnitSpecs", () => {
     writeFileSync(orphan, "// hardened by hand over a week\n");
     await findOrphanUnitSpecs(out, new Set());
     expect(existsSync(orphan)).toBe(true);
+  });
+});
+
+describe("harness tsconfig carries the app's path aliases (dogfood defect #1)", () => {
+  // Bun's bundler resolves a bare specifier through the NEAREST tsconfig above
+  // the importing file, so flawless/provider.tsx resolves @/… through the
+  // harness tsconfig — which shipped without the app's aliases and killed the
+  // browser and perf webServers at startup. These tests pin the contract that
+  // fix installed: every target paths alias survives, rewritten relative to the
+  // app root; a target baseUrl is carried; no aliases means byte-identical
+  // output; and the emitted bytes never name the machine that generated them.
+
+  function appWithTsconfig(compilerOptions: Record<string, unknown>): string {
+    const root = tmpRoot();
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    writeFileSync(
+      path.join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions, include: ["**/*.ts", "**/*.tsx"] }, null, 2),
+    );
+    return root;
+  }
+
+  async function scaffoldWithAliasRoot(root: string): Promise<string> {
+    const outDir = path.join(root, "flawless");
+    await scaffoldUnitBrowser({
+      trees: [tree(comp("Widget", path.join(root, "src", "Widget.tsx")))],
+      outDir,
+      variants: 1,
+      aliasRoot: root,
+    });
+    return outDir;
+  }
+
+  function harnessCompilerOptions(outDir: string): Record<string, unknown> {
+    return readJson(path.join(outDir, "tsconfig.json")).compilerOptions as Record<string, unknown>;
+  }
+
+  test("a paths-only target (no baseUrl) gets baseUrl '..' and the rewritten alias", async () => {
+    const root = appWithTsconfig({ paths: { "@/*": ["./src/*"] } });
+    const outDir = await scaffoldWithAliasRoot(root);
+    const co = harnessCompilerOptions(outDir);
+    expect(co.baseUrl).toBe("..");
+    expect(co.paths).toEqual({ "@/*": ["src/*"] });
+    // The emitPaths invariant: committed bytes must not name this machine.
+    const text = readFileSync(path.join(outDir, "tsconfig.json"), "utf8");
+    expect(text).not.toContain(root);
+    expect(text).not.toContain("/home/");
+    expect(text).not.toContain("/tmp/");
+  });
+
+  test("every alias survives — all three, including an exact key and a second prefix", async () => {
+    const root = appWithTsconfig({
+      paths: {
+        "@/*": ["./src/*"],
+        "@ui/*": ["./src/ui/*"],
+        "@lib": ["./src/lib/index.ts"],
+      },
+    });
+    const outDir = await scaffoldWithAliasRoot(root);
+    expect(harnessCompilerOptions(outDir).paths).toEqual({
+      "@/*": ["src/*"],
+      "@ui/*": ["src/ui/*"],
+      "@lib": ["src/lib/index.ts"],
+    });
+  });
+
+  test("a target with no aliases emits the byte-identical harness tsconfig", async () => {
+    // No empty baseUrl/paths noise: the no-alias output must not move at all,
+    // or every existing suite rewrites the file on the next run.
+    const root = appWithTsconfig({ strict: true });
+    const outDir = await scaffoldWithAliasRoot(root);
+    expect(readFileSync(path.join(outDir, "tsconfig.json"), "utf8")).toBe(tsConfig());
+  });
+
+  test("a target baseUrl is carried — paths resolve from it, not from the app root", async () => {
+    const root = appWithTsconfig({ baseUrl: "./app", paths: { "~/*": ["*"] } });
+    mkdirSync(path.join(root, "app"), { recursive: true });
+    const outDir = await scaffoldWithAliasRoot(root);
+    const co = harnessCompilerOptions(outDir);
+    expect(co.baseUrl).toBe("../app");
+    expect(co.paths).toEqual({ "~/*": ["*"] });
+  });
+
+  test("an untouched tool-emitted tsconfig is refreshed; a touched one is kept", async () => {
+    // The write-once trap the dogfood repo hit by hand: a suite generated
+    // before this fix keeps its alias-less harness tsconfig forever unless
+    // bytes that are exactly the old tool default are recognised as tool
+    // output. A human edit — even one re-indented by the host formatter on
+    // top of tool bytes plus any added key — keeps the write-once promise.
+    const root = appWithTsconfig({ paths: { "@/*": ["./src/*"] } });
+    const outDir = path.join(root, "flawless");
+    const tsPath = path.join(outDir, "tsconfig.json");
+    // First run WITHOUT aliasRoot: the pre-fix bytes land.
+    await scaffoldUnitBrowser({
+      trees: [tree(comp("Widget", path.join(root, "src", "Widget.tsx")))],
+      outDir,
+      variants: 1,
+    });
+    expect(readJson(tsPath).compilerOptions as Record<string, unknown>).not.toHaveProperty("paths");
+    // Second run WITH aliasRoot: untouched tool output is refreshed.
+    await scaffoldWithAliasRoot(root);
+    expect((readJson(tsPath).compilerOptions as Record<string, unknown>).paths).toEqual({
+      "@/*": ["src/*"],
+    });
+    // A hand edit (an added key the tool never writes) survives the next run.
+    const edited = JSON.parse(readFileSync(tsPath, "utf8"));
+    edited.compilerOptions.noUncheckedIndexedAccess = true;
+    writeFileSync(tsPath, JSON.stringify(edited, null, 3));
+    await scaffoldWithAliasRoot(root);
+    expect(readFileSync(tsPath, "utf8")).toContain("noUncheckedIndexedAccess");
+    expect(readFileSync(tsPath, "utf8")).toContain('   "noUncheckedIndexedAccess"');
   });
 });

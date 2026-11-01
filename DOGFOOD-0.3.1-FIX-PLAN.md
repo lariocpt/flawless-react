@@ -38,7 +38,8 @@ below needs a before/after number. Build that once.
 **Do.**
 
 1. Create a fixture project the test suite can generate into, modelled on the dogfood target but tiny
-   (`test/fixtures/aliased-next-app/` or reuse whatever `src/scaffold-tests` already drives):
+   (`tests/fixtures/aliased-next-app/` — **landed there**, not `test/`: the repo has no singular
+   `test/` tree and a second one would trip the stray-nested-checkout hunt in AGENTS.md):
    - `tsconfig.json` with `compilerOptions.paths: { "@/*": ["./src/*"] }` and **no** `baseUrl`;
    - `src/app/layout.tsx` (async root layout returning `<html>`), one async RSC page that awaits a
      data function and renders a client child, one client component reading a synchronous store hook
@@ -51,12 +52,20 @@ below needs a before/after number. Build that once.
    "wrong" to "right" instead of inventing a new harness later.
 3. Record the numbers in `test/fixtures/README.md`: files emitted, and which planes start.
 
-**Acceptance.** `bun test test/dogfood-baseline.test.ts` passes; the file names, for each of chunks
+**Acceptance.** `bun test tests/dogfood-baseline.test.ts` passes; the file names, for each of chunks
 1–9, the assertion that currently fails in the real world and is green here because it is not asserted
 yet.
 
 **Do not.** Do not fix anything in this chunk. If a defect does not reproduce in the fixture, say so in
 the PR body and describe what the fixture lacks — that is a result, not a failure.
+
+**Result (chunk 0, 1 Nov).** Landed as `tests/fixtures/aliased-next-app/` +
+`tests/dogfood-baseline.test.ts` + `tests/fixtures/README.md`. Defects 1–6 and 9 reproduce (1, 3, 4
+also at runtime: webServer exit 1, `renderToReadableStream is not a function`, `toasts.map is not a
+function` — the last two need react/react-dom pinned to 19.1.0 and installed *before* generation, see
+the fixture README). Defect 7's mechanism reproduces statically but its runtime symptom is masked by
+defect 4 (the page spec dies at `toasts.map` before the empty-container symptom can show); defect 8
+needs a stdio MCP client and is a named placeholder, not an assertion.
 
 ---
 
@@ -69,11 +78,25 @@ the PR body and describe what the fixture lacks — that is a result, not a fail
 Error: Process from config.webServer was not able to start. Exit code: 1
 ```
 
-**Root cause.** `tsConfig()` in `src/scaffold/templates.ts` (~line 405) emits
-`flawless/tsconfig.json` with `moduleResolution: "bundler"` and no `baseUrl`/`paths`. Bun's bundler
-resolves the nearest tsconfig for the file being served, so `flawless/provider.tsx`'s `@/…` imports
-have no mapping. The vitest config already solves this for vite (it emits an `alias` block derived
-from the target's tsconfig) — the harness tsconfig was simply never given the same treatment.
+**Root cause — corrected by measurement (chunk 1, 1 Nov).** The symptom was right; the blamed line
+was not. `tsConfig()` in `src/scaffold/templates.ts` is only emitted for **non**-Next suites
+(`templates.ts:158` guards it with `if (!opts.nextjsHost)`). For a Next host the harness tsconfig is
+emitted by `src/scaffold-tests/index.ts` (write-once, guarded only by `skipInnerPackageJson`, which
+no caller sets) — so `flawless/tsconfig.json` *is* written for Next apps, with no `baseUrl`/`paths`,
+and Bun's bundler (which consults the nearest tsconfig per importing file) resolves
+`flawless/provider.tsx`'s `@/…` through it. Deleting the file — leaving the app's own
+paths-carrying tsconfig as the nearest one — started both planes, proving the mechanism. The vitest
+config's vite `alias` block (`computeResolveAliases` → `ModuleResolver.aliasPatternsFor`) already
+solved the same problem for vite; the harness tsconfig had never been given it.
+
+**Do — as landed.** `tsConfig()` now takes an optional alias block, and `harnessAliasBlock(aliasRoot,
+outDir)` (same file) computes it from `ModuleResolver.aliasPatternsFor` + `baseUrlFor` — every target
+`paths` alias (star keys and exact keys), rewritten relative to the app root, target `baseUrl`
+carried, never absolute (the `emitPaths` invariant). The unit-browser task passes `aliasRoot:
+ctx.nextjs?.root` (Next mode only: a standalone suite touches the app through relative paths, whose
+files resolve their own aliases through their own nearest tsconfig). A guard throws at generation if
+an alias would be dropped. Because the file is write-once, a tsconfig whose bytes are *exactly* the
+old tool default is refreshed on the next run; anything hand-touched keeps the write-once promise.
 
 **Do.**
 

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { appReactPin, mergePackageJson, repairReactPin } from "../packageJson.ts";
-import { PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
+import { harnessAliasBlock, PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
 import { classifyStamped, stamp } from "./stamp.ts";
 import { renderUnitBrowser, type UnitBrowserRenderOptions } from "./templates.ts";
@@ -28,6 +28,18 @@ import { renderUnitBrowser, type UnitBrowserRenderOptions } from "./templates.ts
  */
 export interface ScaffoldUnitBrowserOptions extends UnitBrowserRenderOptions {
   skipInnerPackageJson?: boolean;
+  /**
+   * The app root whose tsconfig `paths`/`baseUrl` the emitted harness tsconfig
+   * must be able to resolve. Set in Next mode, where `flawless/provider.tsx`
+   * is derived from the app's layout and imports the app's own `@/…`
+   * specifiers: Bun's bundler resolves those through the NEAREST tsconfig per
+   * file — this one — so an alias-less harness tsconfig kills the browser and
+   * perf webServers at startup (dogfood defect #1). Undefined keeps the
+   * harness self-contained, exactly as before: a standalone suite imports the
+   * app only through relative paths, and those files resolve their own
+   * aliases through their own nearest tsconfig.
+   */
+  aliasRoot?: string;
   /**
    * The run is a Next.js suite living under the app. The manifest is emitted
    * there too (a self-contained install needs it), but WITHOUT its "type"
@@ -165,14 +177,58 @@ export async function scaffoldUnitBrowser(
       written.push(path.join(outDir, "pnpm-workspace.yaml"));
     }
     // The suite type-checks in isolation (docs promise); emitted once, then
-    // the user's — the same write-once promise as the yaml above.
+    // the user's — the same write-once promise as the yaml above. One
+    // exception: bytes that are EXACTLY the tool's own alias-less default are
+    // still tool output, and refreshing only those keeps a suite generated
+    // before defect #1 was fixed from killing its own webServers run after
+    // run. Anything a human touched — even by reformatting a value — keeps
+    // the write-once promise.
     const tsPath = path.join(outDir, "tsconfig.json");
+    const aliases = opts.aliasRoot ? harnessAliasBlock(opts.aliasRoot, outDir) : undefined;
     if (!existsSync(tsPath)) {
-      await writeFile(tsPath, tsConfig());
+      await writeFile(tsPath, tsConfig(aliases));
+      written.push(tsPath);
+    } else if (aliases && (await isUntouchedToolTsconfig(tsPath))) {
+      await writeFile(tsPath, tsConfig(aliases));
       written.push(tsPath);
     }
   }
   return { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept, orphanUnitSpecs };
+}
+
+/**
+ * True when the file's bytes are exactly the tool's own alias-less default,
+ * formatting ignored — the host's formatter has usually re-indented it by the
+ * time a re-run sees the file, and byte equality would never fire. Semantic
+ * equality on the two keys the tool writes, and a strict side: any top-level
+ * key, compilerOptions key, or value the tool did not write makes this false,
+ * so a file a human touched keeps the write-once promise. Unparseable is
+ * "touched" too — the tool does not overwrite what it cannot read.
+ */
+async function isUntouchedToolTsconfig(file: string): Promise<boolean> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    return false;
+  }
+  const defaults = JSON.parse(tsConfig()) as Record<string, unknown>;
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const stable = (v: unknown): string => JSON.stringify(sortDeep(v));
+  return stable(parsed) === stable(defaults);
+}
+
+/** Key-sorted deep copy, so two JSON objects compare equal however the file spelled the order. */
+function sortDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortDeep);
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = sortDeep((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
 }
 
 /**
