@@ -13,10 +13,12 @@
 // Lifetime contract: the host owns the lifecycle. A signal (SIGINT, SIGTERM) kills
 // any live child's process group and then drains the in-flight call, so a server
 // that is taken down never leaves a generation — or under `--run-tests` a dev
-// server and a browser — holding ports in someone's project. stdin EOF drains
-// instead: `printf … | flawless-react mcp` closes the pipe as it writes the batch,
-// and the work that batch asked for still finishes (its watchdog still bounds it).
-// Closing the pipe is not a cancel.
+// server and a browser — holding ports in someone's project. That forced drain
+// is bounded: a signalled server always exits within its grace, saying so on
+// stderr when it abandons a wedged call. stdin EOF drains instead, unbounded
+// except by each call's own watchdog: `printf … | flawless-react mcp` closes
+// the pipe as it writes the batch, and the work that batch asked for still
+// finishes. Closing the pipe is not a cancel.
 //
 // Calls are SERIALIZED, one in flight, and this is load-bearing rather than
 // polite: the read plane runs with the process working directory set to the
@@ -204,20 +206,40 @@ async function runMcp(): Promise<number> {
   //   were made; draining them lets a piped batch finish (a generation killed
   //   halfway would leave half-written specs in the project for no one's
   //   convenience). Closing the pipe is not a cancel — SIGTERM is.
-  const shutdown = async (reason: string, opts: { kill: boolean }): Promise<void> => {
-    // The kill is deliberately NOT behind the early return: a signal landing
-    // while another teardown is already draining — the piped batch starts its
-    // drain before the child even spawns — must still take the live children
-    // with it. "A shutdown is already in flight" is exactly the moment an
-    // orphan is born: the drain is waiting on the very child the signal just
-    // cancelled.
+  //
+  // `boundMs` bounds the drain wait itself. The EOF path passes none — its
+  // bound is each call's own watchdog plus the child's pipe-drain grace, and
+  // a legitimate long generation must be allowed to finish. The forced paths
+  // pass one: there the kill has already happened, so anything still pending
+  // is a call wedged somewhere the kill cannot reach (a client that stopped
+  // reading mid-frame is the classic), and a host that sent a signal is a
+  // host that is leaving. When the bound bites, stderr says so and the
+  // in-flight call is abandoned — a server that ignores SIGTERM forever is
+  // worse than one that truncates a frame nobody is reading.
+  const SIGNAL_DRAIN_GRACE_MS = 5_000;
+  const shutdown = async (
+    reason: string,
+    opts: { kill: boolean; boundMs?: number },
+  ): Promise<void> => {
+    // The kill is deliberately NOT behind the early return: a signal that
+    // lands while another teardown is already draining must still take the
+    // live children with it. "A shutdown is already in flight" is exactly the
+    // moment an orphan is born — the drain is waiting on the very child the
+    // signal just cancelled.
     if (opts.kill) killLiveChildren();
     if (exiting) return;
     exiting = true;
-    await chain.catch(() => {});
+    const drained = await (opts.boundMs === undefined
+      ? chain.catch(() => {}).then(() => true)
+      : Promise.race([
+          chain.catch(() => {}).then(() => true),
+          Bun.sleep(opts.boundMs).then(() => false),
+        ]));
     const killed = killedChildCount();
     process.stderr.write(
-      `flawless-react mcp: ${reason}, shutting down${killed ? ` (${killed} child killed)` : ""}\n`,
+      `flawless-react mcp: ${reason}, shutting down${killed ? ` (${killed} child killed)` : ""}${
+        drained ? "" : " — drain bound reached, in-flight call abandoned"
+      }\n`,
     );
   };
   // The signal name is passed as the reason rather than taken from the handler
@@ -225,7 +247,9 @@ async function runMcp(): Promise<number> {
   // a `NodeJS.Signals`-typed parameter does not satisfy. Exiting here, after the
   // drain, is what keeps a killed server from truncating a frame mid-write.
   const onSignal = (signal: string): void => {
-    void shutdown(signal, { kill: true }).then(() => process.exit(0));
+    void shutdown(signal, { kill: true, boundMs: SIGNAL_DRAIN_GRACE_MS }).then(() =>
+      process.exit(0),
+    );
   };
   process.on("SIGTERM", () => onSignal("SIGTERM"));
   process.on("SIGINT", () => onSignal("SIGINT"));
@@ -273,7 +297,7 @@ async function runMcp(): Promise<number> {
     // A broken transport is not a closed one: nothing more can be read or answered,
     // so an in-flight child is killed rather than left working for a server that
     // cannot report on it.
-    await shutdown("stdin error", { kill: true });
+    await shutdown("stdin error", { kill: true, boundMs: SIGNAL_DRAIN_GRACE_MS });
     return 1;
   }
   // stdin closed cleanly. Drain rather than kill: a piped batch closes the moment
