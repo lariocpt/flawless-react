@@ -798,3 +798,125 @@ Corrections to the plan text:
 Chunks 1, 3, 6, 8 are each under an hour and unblock real planes; do them early. Chunk 9 is the only one
 that might end in "documented limitation" rather than a fix — that is an acceptable outcome provided the
 spec skips with a named reason and the report counts it.
+
+---
+
+## Candidate triage (2 Nov, re-measured against `main` @ 838c142)
+
+Every open candidate from the chunks above was re-measured against the current tree — measurement
+beats plan text, so where the recorded text is wrong it is corrected below, not silently kept.
+Verdicts: **reproduces** (real today), **fixed** (green today, receipt given), **closed** (not a
+defect / already resolved). The eslint gap gets a number: **#17**.
+
+| candidate | verdict | proving command (cold) |
+| --- | --- | --- |
+| #10 vitest 5 + vite 8 JSX | reproduces (combo corrected) | recipe below; receipt in this section |
+| #11 `.gitignore` write | closed — intended, already recorded above | `grep -n "ignoreEntries" src/nextjs/detect.ts` |
+| #12 colocated specs dead from the suite dir | reproduces — **fixed this session** | `bun test tests/suiteDirExecution.test.ts` (red without the fix, green with) |
+| #13 mock factory incomplete for non-analysed importers | reproduces exactly as recorded | recipe below |
+| #14 silent live-spec fetch | recorded text stands (not re-measured this session) | see chunk 5's write-up |
+| #15 GitHub release lagged npm | fixed 2 Nov, already recorded above | `gh release view v0.3.1` |
+| #16 emitted suite leaves lint residue | reproduces — and **grew**: 33 warnings + 13 infos | recipe below |
+| #17 eslint hosts get no style pass | confirmed gap | `grep -in eslint src/scaffold/adoptStyle.ts` → no matches |
+
+### #10 — reproduces, but the recorded combo is wrong
+
+The plan says "vitest 5 + vite 7". Measured: vitest **5.0.5** pulls vite **8.3.5** (the
+rolldown/oxc build), not vite 7. A minimal app with host `"jsx": "preserve"` and the emitted-style
+config dies collecting every `.tsx` spec with a RolldownError — `Unexpected JSX expression` …
+`make sure to not set jsx to preserve` — because oxc ignores the emitted `esbuild.jsx` override.
+The candidate fix `oxc: { jsx: { runtime: "automatic" } }` in the emitted config made the repro
+green. Recipe: scratch app, one `.tsx` component + one spec, host tsconfig `jsx: "preserve"`,
+`bun add -d vitest@5 jsdom @testing-library/react`, emit-style `esbuild.jsx` override only, run
+vitest → red; add the `oxc` block → green. (The scratch dir lived in `/tmp/opencode/c10b` and is
+gone with tmp cleanup; the receipt above is from this session's runs.)
+
+**Chunk it.** Not fixed here because the config emitter now has three JSX mechanisms with overlap
+(`esbuild.jsx`, `oxc.jsx`, and the jsx-runtime pin) and choosing the honest combination across
+vitest 2 *and* vitest 5 is design work, not a template patch. Only bites users who move to
+vitest 5 — the suite pins `^2.1.0` — so it is not on fire, but the wall is real and silent.
+**Acceptance:** a fixture on vitest 5 (vite 8) with host `jsx: "preserve"` runs its colocated specs
+green from the app root; the vitest 2 path is unchanged (existing execution tests stay green); the
+emitted config carries one comment explaining which mechanism serves which vite generation.
+
+### #12 — reproduces; fixed this session; two corrections to the recorded text
+
+**Layout correction:** the plan blames "the standalone layout". Measured, it is the **colocated**
+layout that is exposed: standalone specs live *under* the suite dir, which fs.allow already
+covers, so standalone is immune. Colocated specs live in the app and import across the suite
+boundary, and the suite dir always carries its own `package.json`.
+
+**Mechanism correction:** vite's allow-list does not "root at the cwd" in general. vitest 2.1.9's
+`resolveFsAllow` returns `[dirname(rootConfigFile), searchForWorkspaceRoot(cwd), rootDir]` — with
+cwd inside the suite dir, `searchForWorkspaceRoot` stops at the suite `package.json` and
+`dirname(config)` is the suite dir, so every app file above is refused with the phantom
+`Failed to load url … Does the file exist?`. The config's `root: projectRoot` does **not** widen
+fs.allow; an explicit `server.fs.allow` merges in and does. The fix is the plan's one line —
+`server: { fs: { allow: [projectRoot] } }` — but only in the **colocate branch** of the emitted
+`vitest.config.mts` (standalone needs nothing).
+
+**Receipt (measured):** aliased-next-app fixture, colocate gen, vitest 2.1.9: `cd flawless &&
+../node_modules/.bin/vitest run` went **10 failed → 16 passed / 1 skipped**; the app-root run
+(`--config flawless/vitest.config.mts`) stayed green before and after. The user-visible entry
+point is the emitted `flawless/package.json`'s own `test:unit: "vitest run"` script, which runs
+from exactly that cwd. Pinned by `tests/suiteDirExecution.test.ts`, verified to go red when the
+templates fix is stashed.
+
+### #13 — reproduces exactly as recorded
+
+The hazard is real, not the plan's earlier "did not reproduce as dropped export" hedge. Fixture
+(page spec, mocked `@/lib/data`): **2 failed** with
+`Error: [vitest] No "signOff" export is defined on the "@/lib/data" mock` — the mock factory
+covers only evidenced importers, and the render graph reaches the mocked module through a
+NON-analysed util (`src/lib/labels.ts` via `InboxList` → `signatureLine()` imports `signOff`).
+Recipe: any page whose component graph imports a mocked module through a file the analysis never
+opened. **Chunk it:** the fix is a factory-completeness rule in `src/scaffold-tests/mocks.ts`
+(the `graphOnly`/`mergedNames` machinery is the seam) — every export of a mocked module that is
+reachable through the render graph must exist in the factory, even when no analysed call site
+evidences it. **Acceptance:** a fixture with a mocked module reached only through a non-analysed
+util runs green; the emitted factory contains the reached export; existing mock tests stay green.
+
+### #16 — reproduces, and the residue grew
+
+Fresh full-task colocate generation + the host biome gate now measures **0 errors / 33 warnings /
+13 infos** — the recorded 7 + 12 is stale residue growth. By rule: `noUnusedImports` × 18,
+`noUnusedFunctionParameters` × 7, `suppressions/unused` × 7 (a **new regression class** from
+chunk 9: the unconditional `biome-ignore lint/suspicious/noArrayIndexKey` in colocated specs no
+longer fires), `useTemplate` × 12 infos, `noUselessFragments` × 1, `noUnusedVariables` × 1.
+Recipe: generate the full task set colocate against a fixture, then run the repo-pinned biome
+over the suite dir. **Chunk it:** none of these are fixable by `adoptStyle`'s `--write` (every
+fix biome offers is unsafe-for-default), so the fix is conditional emission across 6+ templates
+(emit imports/params/ignores only when used) — that is template work, not "a few edits".
+**Acceptance:** fresh full-task colocate generation + `biome check` over the suite reports
+**0 warnings** (any surviving info is named and justified in the PR body); `suppressions/unused`
+is specifically 0.
+
+### #17 — the eslint gap, numbered
+
+`src/scaffold/adoptStyle.ts` detects only `biome.json`/`biome.jsonc` and prettier configs; an
+eslint host gets `formatter: "none"` — no style pass at all — and the emitted suite has never been
+verified against eslint's default ruleset (whose `no-unused-vars` bites the same profile-spec
+imports #16 lists). **Chunk it** after #16, whose template hygiene half of the work is shared.
+**Acceptance:** a fixture carrying `eslint.config.js` gets a detected style pass; the emitted
+suite passes the host's eslint with 0 errors (warnings named), or the PR states precisely which
+rule the suite cannot satisfy and why.
+
+### #14 — deferred with a named trigger
+
+Not re-measured this session; the chunk 5 write-up stands (default live-spec fetch fails silently
+when no dev server is listening). Deferred because the fix is a product decision — whether the
+default fetch should exist at all, since it adds 1500 ms to every CI run without a dev server —
+not a bug patch. **Trigger:** the next user report of a quiet AST-walk fallback, or any decision
+to keep/remove the default fetch, opens the chunk.
+
+### Ordered chunk list (by user-visible cost)
+
+1. **#10** — vitest 5 users hit a silent total-red wall.
+2. **#13** — phantom mock failures on reachable-but-unevidenced exports; erodes trust in green runs.
+3. **#17** — eslint hosts get no style pass; whole class of hosts unverified.
+4. **#16** — lint residue on every generation; noisy but non-blocking.
+5. **#14** — silent fallback; deferred, trigger above.
+
+Two loose ends recorded for the record, neither owned here: #11 and #15 stay closed as written
+above (no chunk should reopen them), and the 183 → 119 colocated-web-specs question is owned by
+`VERDICT-SHAPE-EXPLORATION-PROMPT.md`, not by this plan.

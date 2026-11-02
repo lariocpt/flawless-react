@@ -742,6 +742,15 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, "..");
 ${multiBlock}${envBlock}export default defineConfig({
   root: projectRoot,
+  // Widen vite's fs allow-list to the project root. vitest 2 roots fs.allow at
+  // the CONFIG file's dir when the suite dir carries its own package.json —
+  // which it always does — so running the suite from inside it (cd flawless &&
+  // npx vitest, exactly what the emitted package.json's test:unit script does)
+  // refused every app file above it and each colocated spec died as
+  // "Failed to load url … Does the file exist?" — a phantom red that reads as
+  // missing files (candidate defect #12). The app root is the honest boundary:
+  // the colocated specs live in it and import from it.
+  server: { fs: { allow: [projectRoot] } },
 ${pluginsBlock}  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
   // jsx "preserve", which gives vitest's esbuild nothing usable, and every
   // spec died at render with "React is not defined". The suite pins react
