@@ -261,7 +261,7 @@ describe("renderUnitBrowser providerWraps option", () => {
     });
     const src = contentOf(files, "unit/Page.test.tsx");
     expect(src).toContain('import __ProvThemeProvider from "../../src/theme-provider";');
-    expect(src).toContain("render(<__ProvThemeProvider>{ui}</__ProvThemeProvider>)");
+    expect(src).toContain("await renderSettled(<__ProvThemeProvider>{ui}</__ProvThemeProvider>)");
   });
 });
 
@@ -318,7 +318,9 @@ describe("renderUnitBrowser async server components", () => {
     expect(src).toContain("async function resolveAsyncUi(");
     // render() sits INSIDE the try: the throw often happens there rather than in
     // the component call, and a guard outside it would miss the case entirely.
-    expect(src).toMatch(/try \{[\s\S]*render\(<>\{ui\}<\/>\);[\s\S]*\} catch/);
+    // The mount itself goes through renderSettled (chunk 9): Suspense boundary
+    // + awaited act, so a late-resolving resource cannot land outside the flush.
+    expect(src).toMatch(/try \{[\s\S]*await renderSettled\(<>\{ui\}<\/>\);[\s\S]*\} catch/);
     // notFound()/redirect() abort rendering; anything else is rethrown as
     // itself rather than asserted against the guard pattern.
     expect(src).toContain("notFound\\(\\) called|NEXT_REDIRECT");
@@ -650,7 +652,7 @@ describe("renderUnitBrowser async server components", () => {
     });
     const src = contentOf(files, "unit/Page.test.tsx");
     expect(src).toContain('import AppProvider from "../../test/AppProvider";');
-    expect(src).toContain("render(<AppProvider>{ui}</AppProvider>)");
+    expect(src).toContain("await renderSettled(<AppProvider>{ui}</AppProvider>)");
   });
 });
 

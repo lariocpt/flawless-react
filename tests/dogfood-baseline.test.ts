@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runCore } from "../src/core.ts";
@@ -209,22 +209,99 @@ test("defect 6: both playwright configs bound the default workers and pass the d
   }
 });
 
-test("defect 7: the RSC page spec resolves async components by flattening children through cloneElement", () => {
-  // FIX-PLAN: chunk 9 — flip to: promise-valued props/children awaited,
-  // static children not flattened into a keyless array, render inside
-  // Suspense + act.
-  //
-  // Measured 1 Nov: the emitted spec for the fixture's async page carries the
-  // mechanism the dogfood probe identified — resolveAsyncUi rebuilds children
-  // as a flat array via cloneElement(el, {}, resolved) and nothing wraps the
-  // render in Suspense/act. The runtime symptom (empty container, "A
-  // suspended resource finished loading inside a test") needs the unit plane
-  // actually running (installed vitest + jsdom), which this generation-only
-  // harness does not start; chunk 9 proves the symptom on this fixture.
+test("defect 7: the RSC spec awaits promise props and children, stops flattening, and renders inside Suspense + act", () => {
+  // FIX-PLAN: chunk 9 — FLIPPED. Measured 2 Nov on this fixture with the unit
+  // plane actually running (installed vitest 2.1.9 + jsdom, react-dom 19.1.0;
+  // receipts in tests/fixtures/README.md): before, the promise-prop page
+  // rendered the empty container (`container.innerHTML.length` 0) with
+  // "A suspended resource finished loading inside a test, but the event was
+  // not wrapped in act(...)" and the key warning from the children
+  // flattening; after, 0 failed and both warnings are gone. The emitted
+  // mechanism, asserted here:
   const spec = read("src", "app", "page.flawless.test.tsx");
   expect(spec).toContain("async function resolveAsyncUi(");
-  expect(spec).toContain("cloneElement(el, {}, resolved)");
-  expect(spec).not.toMatch(/Suspense/);
+  // (b) promise-valued PROPS are walked, not just children — the shape the
+  // old resolver ignored entirely.
+  expect(spec).toContain("isThenable");
+  expect(spec).toContain("for (const key of Object.keys(props))");
+  // the flattening cloneElement is gone; children go through the config.
+  expect(spec).not.toContain("cloneElement(el, {}, resolved)");
+  expect(spec).toContain("return cloneElement(el, next);");
+  // the render goes through a Suspense boundary and settles inside act().
+  expect(spec).toContain("<Suspense fallback=");
+  expect(spec).toContain("await act(");
+  expect(spec).toContain("waitFor");
+});
+
+test("defect 7 shape (a): the promise-child page resolves the awaited child before createRoot", () => {
+  // The page whose child is a promise (React 19 suspense-data). Correction to
+  // the plan: the OLD resolver already awaited promise CHILDREN by accident —
+  // `await` unwraps a thenable returned from the recursion — so this shape
+  // rendered content before the fix too; what it carried was the key warning
+  // (measured: "Each child in a list should have a unique key prop. Check the
+  // top-level render call using <main>"). The fix makes the await explicit
+  // (isThenable) and the warning gone.
+  const spec = read("src", "app", "promise-child", "page.flawless.test.tsx");
+  expect(spec).toContain("if (isThenable(node)) return resolveAsyncUi(await node, depth + 1);");
+  expect(spec).toContain("await renderSettled(<AppProvider>{ui}</AppProvider>)");
+});
+
+test("defect 7 shape (b): the promise-prop page pre-resolves the prop before createRoot", () => {
+  // The shape that reproduced the dogfood symptom exactly (empty container +
+  // the suspended-resource act line). The page passes a promise as a prop;
+  // the emitted resolver must walk props.
+  const spec = read("src", "app", "promise-prop", "page.flawless.test.tsx");
+  expect(spec).toContain("const resolved = await resolveAsyncUi(props[key], depth + 1);");
+  // A synthesised children array carries deliberate positional keys — the
+  // plan's "synthesise deliberately and say why", with the why in the comment.
+  expect(spec).toContain("cloneElement(k, { key: `flawless-async-" + "${i}` })");
+  expect(spec).toContain("keys are synthesised DELIBERATELY");
+});
+
+test("defect 7 shape (c): the nested async component recurses to the innermost component", () => {
+  const spec = read("src", "app", "nested", "page.flawless.test.tsx");
+  expect(spec).toContain('ctor?.constructor?.name === "AsyncFunction"');
+  // The nested components' own specs exist and carry the same resolver.
+  expect(read("src", "components", "Outer.flawless.test.tsx")).toContain("resolveAsyncUi");
+  expect(read("src", "components", "Inner.flawless.test.tsx")).toContain("resolveAsyncUi");
+});
+
+test("no emitted spec wraps a resolve or a render in a bare swallow", () => {
+  // FIX-PLAN: chunk 9 — the skip contract's teeth. A `catch { return; }`
+  // around a resolve/render is how a red suite pretends to be green: the old
+  // static-content template emitted exactly that, and a page whose resolve
+  // threw for a NON-guard reason passed while asserting nothing. A catch that
+  // admits a declared guard path must name it (console.warn + ctx.skip()).
+  const bare: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (/\.(flawless\.)?(test|spec)\.[cm]?[jt]sx?$/.test(e.name)) {
+        // A catch with no binding whose whole body is a bare return.
+        if (/catch\s*\{\s*\n\s*return;?\s*\n\s*\}/.test(readFileSync(abs, "utf8"))) {
+          bare.push(path.relative(app, abs));
+        }
+      }
+    }
+  };
+  walk(app);
+  expect(bare).toEqual([]);
+});
+
+test("REPORT.md counts the named skips the suite emits", () => {
+  // FIX-PLAN: chunk 9 — the skip contract, auditable: every emitted
+  // test.skip carries its reason in its title, and REPORT.md counts them so
+  // a suite cannot go quietly yellow.
+  const report = readOut("REPORT.md");
+  expect(report).toContain("## Named skips");
+  const m = /(\d+) emitted test\(s\) skip by name/.exec(report);
+  expect(m).not.toBeNull();
+  // The count is not decorative: the fixture's one generation-time named
+  // skip (the store-provider interaction guard) is in the table by name.
+  expect(Number(m?.[1])).toBeGreaterThanOrEqual(1);
+  expect(report).toContain("interactions need a fixture");
 });
 
 test("defect 8: MCP stdio exit has a permanent stdio-client test", () => {

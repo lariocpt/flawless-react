@@ -14,6 +14,10 @@ marker per fix. Read that file for what each shape is for.
 | `biome.json` | `noExplicitAny: error` — a host lint gate | #9 |
 | `src/app/layout.tsx` | async root layout returning `<html>`, wrapping children in a client provider imported via `@/` — the derived `flawless/provider.tsx` carries that `@/` import | #1, #3, #4 |
 | `src/app/page.tsx` | async RSC page awaiting a data function, rendering a client child | #4, #7 |
+| `src/app/promise-child/page.tsx` | async page with a PROMISE as a child (React 19 suspense-data) and two children so the flattening key-warning fires | #7 shape (a) |
+| `src/app/promise-prop/page.tsx` + `src/components/ReportTitle.tsx` | async page passing a PROMISE-VALUED PROP into a client child that renders it directly — the shape `resolveAsyncUi` ignored | #7 shape (b) |
+| `src/app/nested/page.tsx` + `src/components/Outer.tsx` + `src/components/Inner.tsx` | async component rendered by an async page, itself rendering an async component | #7 shape (c) |
+| `src/lib/data.ts` `loadHeading()` | a promise handed to JSX UNAWAITED, resolving on a macrotask so a late resolution can land outside act() | #7 |
 | `src/components/InboxList.tsx` | client component calling a synchronous zustand selector and `.map`ping its result | #4 |
 | `src/components/providers/store-provider.tsx` | real zustand store (sync `useStore` hooks) | #4 |
 | `src/app/api/[[...route]]/route.ts` | hono-style catch-all API router | #5 |
@@ -98,3 +102,32 @@ spec now emits no `vi.mock` at all — the zustand family is left real, so `crea
 (`vi.fn(() => [{ id: "flawless-id", text: "flawless-text" }])`), so both `toasts.map` reds are
 gone. `store-provider.flawless.test.tsx` mounts the real store (2 passed / 1 skipped — the
 interaction skip is the guard-path contract, not a defect). InboxList stays green.
+
+## Unit plane after chunk 9 (measured 2 Nov, vitest 2.1.9, react-dom pinned 19.1.0)
+
+The three defect-#7 shapes, generated from this fixture and executed with
+`vitest run --config flawless/vitest.config.mts` from the app root. **Before** the fix:
+**2 failed / 14 passed / 1 skipped (10 files)** — the promise-prop page reproduced the dogfood
+symptom exactly:
+
+```
+× PromisePropPage (RSC): resolves, or takes one of its declared guard paths
+  → expected 0 to be greater than 0            (container.innerHTML — the empty <div />)
+× PromisePropPage static content > renders "below the slot"
+  → Unable to find an element with the text: below the slot … <body><div /></body>
+stderr: A suspended resource finished loading inside a test, but the event was not wrapped in act(...).
+stderr: A component suspended inside an `act` scope, but the `act` call was not awaited.
+stderr: Each child in a list should have a unique "key" prop.
+        Check the top-level render call using <main>.
+```
+
+The key warning came from any page with ≥2 children (promise-child and the original page included):
+`resolveAsyncUi` rebuilt the children array through `cloneElement`, which cannot reproduce the
+"static children" mark the jsx runtime attaches internally. The promise-CHILD shape rendered content
+even before the fix — `await` unwrapped the thenable by accident — the plan's "children never
+awaited" half was wrong; only promise-valued PROPS reproduced the empty container.
+
+**After** the fix (props walked, explicit `isThenable` await, deliberate positional keys on rebuilt
+arrays, render through `Suspense` + awaited `act` + `waitFor` settle): **10 files, 16 passed /
+1 skipped / 0 failed, zero stderr** — no key warning, no act warning, the skipped test is the
+store-provider interaction guard (named, counted in REPORT.md's "Named skips").

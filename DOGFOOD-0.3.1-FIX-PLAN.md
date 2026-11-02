@@ -687,7 +687,7 @@ baseline harness's existing generation.
 
 ## Chunk 9 — Defect #7: RSC page specs render an empty container (diagnose first, then fix)
 
-**Status: open.** 5 files, 29 tests in the dogfood repo — the five async-RSC detail pages. Everything
+**Status: fixed.** 5 files, 29 tests in the dogfood repo — the five async-RSC detail pages. Everything
 below was measured with a probe, not inferred.
 
 **What is known.**
@@ -741,6 +741,42 @@ instead of returning silently", and the key warning gone (it is the tell that ch
 
 **Gotchas.** The template's own comment says an exit here is a tool gap and must stay red. Keep that
 philosophy: a skip must name the missing capability, and the count of skips must appear in `REPORT.md`.
+
+**Result (chunk 9, 2 Nov).** Reproduced on the fixture, then fixed; the plan text needed three
+corrections, all measured. The fixture grew three shapes (`promise-child`, `promise-prop`, `nested`
+pages + `ReportTitle`/`Outer`/`Inner` components, `loadHeading()` in `data.ts` — a macrotask-delayed
+promise so a late resolution can land outside `act`). All three land on the **createRoot** path:
+`extractRenderMode` routes to the streaming renderer only when the component returns `<html>`
+(document-root); every other async component is `rsc` → `render()`. Chunk 4's note stands: the
+fixture's layout streams, its pages never did.
+
+Measured on the installed unit plane (vitest 2.1.9, react-dom 19.1.0, jsdom; receipts in
+`tests/fixtures/README.md`): **before** — 2 failed / 14 passed / 1 skipped, the promise-prop page
+committing the empty container (`<div />`) with both act lines and the key warning on the pages with
+≥2 children; **after** — 0 failed / 16 passed / 1 skipped, zero stderr. Dogfood quote (§7): "5 files,
+29 tests" — the five async-RSC detail pages failing every content assertion with exactly the two log
+lines this fixture now reproduces; the dogfood number is quoted, not re-measured here.
+
+Corrections to the plan text:
+
+1. **"promise-valued props/children are never awaited" — only the PROPS half is true.** A promise
+   CHILD was awaited by accident: the recursion `return node`s a thenable and `await` unwraps it, so
+   shape (a) rendered content before the fix too (carrying the key warning). The empty container
+   reproduced only on a promise-valued PROP — the shape the resolver ignored entirely. The fix makes
+   the child await explicit (`isThenable`) and walks every prop.
+2. **"keep element identity when nothing changed" survives, but identity alone cannot kill the key
+   warning.** React's jsx runtime marks static children through a dev-only internal
+   (`_store.validated`); no public API reproduces that mark, and `cloneElement` validates only its
+   varargs. So a *changed* children array synthesises positional keys deliberately
+   (`flawless-async-<i>`, keyed entries that arrived keyed keep theirs), with the why in the emitted
+   comment and a reasoned `biome-ignore` for `noArrayIndexKey`. Unchanged arrays return identity and
+   clone nothing — the warning is gone on both paths (measured: zero key warnings after).
+3. **Step 5's jsdom-capability skip was not needed** — all three shapes render in jsdom after 1–4.
+   The skip contract landed anyway, at the place that actually swallows: the static-content template's
+   `catch { return; }` became a named guard-path skip (`console.warn` + `ctx.skip()`), a guard test
+   reddens any emitted spec with a bare `catch { return; }` around a resolve/render, and REPORT.md
+   gained a "Named skips" section counting every `test.skip` generation emitted (chunk 3's three
+   questions are answered in the PR body).
 
 ---
 

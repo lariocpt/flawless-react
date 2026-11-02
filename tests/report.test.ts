@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { reproCommand } from "../src/core.ts";
-import { renderReportMarkdown } from "../src/reporters/report.ts";
+import { collectNamedSkips, renderReportMarkdown } from "../src/reporters/report.ts";
 import type { ComponentInfo, ComponentTree, TaskResult } from "../src/types.ts";
 
 function comp(name: string, extra: Partial<ComponentInfo> = {}): ComponentInfo {
@@ -584,5 +584,54 @@ describe("REPORT.md carries a command that reproduces the run", () => {
     const md = renderReportMarkdown({ trees: [], outDir: "/tmp/x", results: [] } as never);
     expect(md).not.toContain("Reproduce this run");
     expect(md).not.toContain("```bash");
+  });
+});
+
+describe("named skips (chunk 9 skip contract)", () => {
+  test("collectNamedSkips extracts skip titles verbatim, including template-literal ones", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "flawless-skips-"));
+    await Bun.write(
+      path.join(dir, "a.flawless.test.tsx"),
+      [
+        `test.skip("Widget: interactions need a fixture — an early return may render nothing", () => {});`,
+        "test.skip(" + "`${NAME}: click — no clickable target could be derived`, () => {});",
+        `test("a live test — not a skip", () => {});`,
+      ].join("\n"),
+    );
+    await Bun.write(path.join(dir, "notes.txt"), 'test.skip("not a spec file", () => {});');
+    const skips = collectNamedSkips([], [{ dir, pattern: /\.flawless\.test\.tsx$/ }]);
+    expect(skips.map((s) => s.title)).toEqual([
+      "Widget: interactions need a fixture — an early return may render nothing",
+      "$" + "{NAME}: click — no clickable target could be derived",
+    ]);
+  });
+
+  test("REPORT.md counts the named skips and names each one", () => {
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/proj/flawless",
+      projectRoot: "/proj",
+      results: [],
+      namedSkips: [
+        {
+          file: "/proj/src/Widget.flawless.test.tsx",
+          title: "Widget: interactions need a fixture — an early return may render nothing",
+        },
+      ],
+    } as never);
+    expect(md).toContain("## Named skips");
+    expect(md).toContain("1 emitted test(s) skip by name");
+    expect(md).toContain("| `src/Widget.flawless.test.tsx` | Widget: interactions need a fixture");
+  });
+
+  test("a suite with no skips says so instead of omitting the section", () => {
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/proj/flawless",
+      results: [],
+      namedSkips: [],
+    } as never);
+    expect(md).toContain("## Named skips");
+    expect(md).toContain("No emitted spec skips a test by name.");
   });
 });
