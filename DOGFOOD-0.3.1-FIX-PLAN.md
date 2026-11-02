@@ -613,11 +613,15 @@ is the contract plus the three holes that could make it true.
 further calls. The contract is: exit when stdin closes and the batch has drained, and do not keep
 pipes open that nothing reads.
 
-**Candidate defect #15 (recorded by chunk 7, not fixed by any chunk):** GitHub `releases/latest` is
-`v0.3.0` while npm carries `0.3.1` (`@lariocpt/flawless-react` dist-tag `latest` = 0.3.1, verified
+**Candidate defect #15 (recorded by chunk 7, FIXED 2 Nov):** GitHub `releases/latest` was
+`v0.3.0` while npm carried `0.3.1` (`@lariocpt/flawless-react` dist-tag `latest` = 0.3.1, verified
 1 Nov), and the website's example gate validates against the GitHub artifact — so the site's gate has
-been testing an older binary than the one users install. This is a release-process gap, not a tool
-defect: the 0.3.1 GitHub release was never published.
+been testing an older binary than the one users install. It was a release-process gap, not a tool
+defect: the 0.3.1 GitHub release had simply never been published. On 2 Nov the `v0.3.1` tag
+(`b12e482`, the 0.3.1 version bump — the same tree npm published from) went live with a release
+carrying the four cross-compiled binaries plus `SHA256SUMS`; the published linux-x64 asset passes
+the Jenkins smoke gates (`--version` reports 0.3.1, `--flags` survives compilation, an Expo fixture
+run emits its jest config and native specs), and `releases/latest` now matches npm.
 
 ---
 
