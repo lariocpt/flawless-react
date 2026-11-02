@@ -242,14 +242,15 @@ test("defect 8: MCP stdio exit has a permanent stdio-client test", () => {
   expect(mcpTests).toContain("exitClock");
 });
 
-test("defect 9: the emitted setup.ts is not lint-clean under a noExplicitAny host config", () => {
-  // FIX-PLAN: chunk 8 — flip to: zero `: any` occurrences (or scoped
-  // suppression comments naming the rule, each with a reason).
-  //
-  // Measured 1 Nov on this fixture: 4 occurrences (the dogfood app counted 5;
-  // the count tracks the emitted canvas-stub surface, not the app). The
-  // fixture's biome.json raises noExplicitAny to error, so a host with that
-  // gate could not commit this file.
+test("defect 9: the emitted setup.ts carries no explicit any", () => {
+  // FIX-PLAN: chunk 8 — FLIPPED. Option 1 (emit it lint-clean) landed: the
+  // canvas stub types its prototype/ctx as Record<string, unknown> (the block
+  // WRITES keys the DOM lib does not carry, and index-assigns the draw
+  // methods by name), and the next/router withRouter mock takes
+  // ComponentType<Record<string, unknown>>. Measured 2 Nov on this fixture:
+  // 5 occurrences (chunk 0 measured 4; the fifth is the second `: any` on the
+  // withRouter line — the count tracks the emitted surface, not the app).
+  // No biome-ignore comments: none of the five needed one.
   const anyCount = (readOut("setup.ts").match(/: any\b/g) ?? []).length;
-  expect(anyCount).toBeGreaterThan(0);
+  expect(anyCount).toBe(0);
 });
