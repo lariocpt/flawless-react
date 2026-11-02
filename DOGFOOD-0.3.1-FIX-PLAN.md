@@ -627,27 +627,61 @@ run emits its jest config and native specs), and `releases/latest` now matches n
 
 ## Chunk 8 — Defect #9: generated `flawless/setup.ts` fails a host repo's lint gate
 
+**Status: FIXED (chunk 8, 2 Nov).** Option 1 (emit it lint-clean) landed, and the lint-the-suite test
+is in `tests/dogfood-baseline.test.ts`. What follows replaces the plan text where measurement
+disagreed with it.
+
 **Symptom, measured.** The dogfood repo's pre-commit biome hook refused the commit:
 `Checked 324 files… Found 5 errors`, all `noExplicitAny` in `flawless/setup.ts`. Until the file was
 excluded, a first run could not be committed at all in a linted repo.
 
-**Do.** Pick one, in this order of preference:
+**The plan's anchors were wrong in two ways (chunk 8, 2 Nov).**
 
-1. **Emit it lint-clean.** Replace the 5 `any`s with `unknown` + narrowing or `Record<string, unknown>`.
-   This is the right fix if it fits; the file is small.
-2. If a type is genuinely unavoidable, emit a scoped disable with a reason
-   (`// biome-ignore lint/suspicious/noExplicitAny: <why>`), which most configs honour.
-3. Only if neither works, have the generator add the host's ignore entry (biome `files.includes`
-   `!`, eslint ignore) and **report it** the way Chunk 2 reports the tsconfig edit.
+- The `any`s are emitted by `setupTs()` (`src/scaffold-tests/templates.ts:830`) after all — but not
+  in its opening region, which is why grepping that region found none. They sit in two blocks of the
+  polyfill body: the jsdom canvas stub (`__canvasProto`, `__make2d`, `ctx` — 3) and the
+  `next/router` `withRouter` mock (2). Chunk 0's fixture count of 4 vs the dogfood's 5 was the same
+  line counted twice: `(Component: any) => (props: any)` is one line, two occurrences.
+- **The generator already invokes the host's own biome — as a formatter.** `src/scaffold/adoptStyle.ts`
+  walks up from the project root (biome config → the project's own biome; prettier config → prettier;
+  neither → untouched) and runs `biome check --write` on what was written. That is precisely why this
+  defect survived: **adoptStyle formats, it does not lint** — `noExplicitAny` is a lint rule, invisible
+  to a formatter run whose safe fixes cannot retype a file. The fix therefore had to happen at the
+  template, not in the style pass.
 
-Whichever is chosen, add a test that runs the repo's own linter over the emitted suite in the fixture
-and fails on any error — the point is that a generated suite must be committable in a linted repo.
+**Fix, measured.** The fixture's emitted suite under the fixture's own biome.json
+(recommended + `noExplicitAny: error`, biome 2.5.1): **10 errors → 0**. The dogfood's 5 were only
+`setup.ts` because the fixture's config is *stricter* than the dogfood's — running the suite-wide
+gate surfaced five more lint errors the dogfood never counted:
 
-**Acceptance.** Quote: "biome over the generated suite: 5 errors → 0" (or the eslint equivalent), and
-the new lint-the-suite test in the suite.
+- `host/main.tsx` × 3 and `host/index.html` × 1 `noAssignInExpressions` (the `x ?? (x = …)` /
+  `(t.updates ??= []).push` idioms, and `var p = (g.process = g.process || {})`) — rewritten as
+  explicit get-then-set in `src/scaffold/templates.ts`.
+- `host/server.ts` × 1 `noImplicitAnyLet` (`let code;` → `let code: string;`).
+- `reports/summary.json` a format error: it was the one suite file core wrote that was **not** in
+  adoptStyle's `writtenFiles` (emitted two-space, biome defaults to tabs) — it now is, like
+  `swagger.json` before it.
 
-**Gotchas.** Do not silence the host's linter wholesale for `flawless/**` — that hides real findings in
-specs the user will hand-edit. Scope to the file, or better, fix the types.
+No `biome-ignore` comments were needed anywhere: every `any` had an honest type (`Record<string,
+unknown>` for the canvas prototype/ctx, which the block index-writes by name;
+`import("react").ComponentType<Record<string, unknown>>` for `withRouter`). Option 3 was not reached.
+
+**Candidate defect #16 (recorded by chunk 8, not fixed by any chunk): the emitted suite leaves
+7 warnings + 12 infos under the host's recommended ruleset.** None fails a host gate (biome exits 0
+on warnings): `noUnusedImports` × 5 (profile specs import the full `_helpers` surface
+whether or not the emitted spec uses it; `playwright.config.ts` imports `os` unused),
+`noUnusedFunctionParameters` × 1, `noUnusedVariables` × 1 (`catch (e) {}` in `host/index.html`),
+`useTemplate` × 11 and `noUselessFragments` × 1. Template hygiene, not committability.
+
+**eslint: a named gap.** adoptStyle detects biome and prettier configs only — an eslint host gets no
+style pass at all today, and this chunk's proof covers biome hosts. The emitted suite is *not*
+verified against eslint's default ruleset (whose `no-unused-vars` would bite the same profile-spec
+imports). Closing the gap (detect an eslint config, run it like biome) is a separate defect.
+
+**Acceptance, measured.** "biome over the generated suite: 10 errors → 0" (fixture, the fixture's
+own biome.json, repo-pinned biome 2.5.1), and `setup.ts` `: any` occurrences 5 → 0. The
+lint-the-suite test costs ~150 ms (two biome spawns over 37 files, ~110 ms wall) on top of the
+baseline harness's existing generation.
 
 ---
 

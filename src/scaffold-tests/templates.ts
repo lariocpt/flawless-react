@@ -1291,8 +1291,14 @@ if (typeof window !== "undefined") {
   const __isJsdom =
     typeof navigator !== "undefined" &&
     String(navigator.userAgent ?? "").toLowerCase().includes("jsdom");
-  const __canvasProto: any =
-    typeof HTMLCanvasElement === "undefined" ? undefined : HTMLCanvasElement.prototype;
+  // Typed as a mutable record, not HTMLCanvasElement: the block below WRITES
+  // new keys (getContext, __flawlessRealGetContext) that the DOM lib's
+  // interface does not carry, and a host repo linting with noExplicitAny
+  // rejects the escape hatch that used to sit here.
+  const __canvasProto: Record<string, unknown> | undefined =
+    typeof HTMLCanvasElement === "undefined"
+      ? undefined
+      : (HTMLCanvasElement.prototype as unknown as Record<string, unknown>);
   if (__isJsdom && __canvasProto) {
     const __realGetContext = __canvasProto.getContext;
       // The documented 2d surface that has no interesting return value. Methods
@@ -1309,9 +1315,12 @@ if (typeof window !== "undefined") {
       "setTransform", "resetTransform", "setLineDash", "drawFocusIfNeeded",
       "scrollPathIntoView", "putImageData", "transferFromImageBitmap",
     ];
-    const __make2d = (canvas: unknown): any => {
+    const __make2d = (canvas: unknown): Record<string, unknown> => {
       const draws: string[] = [];
-      const ctx: any = {
+      // A record, not any: the loop below hangs the no-return-value draw
+      // methods off the object by name, and the host's linter (rightly)
+      // refuses an explicit any for one index assignment.
+      const ctx: Record<string, unknown> = {
         canvas,
         __flawlessDraws: draws,
         get flawlessDrawCount() {
@@ -1455,8 +1464,13 @@ vi.mock("next/router", async () => {
     router: __router,
     useRouter: vi.fn(() => __router),
     withRouter: vi.fn(
-      (Component: any) =>
-        (props: any) => React.createElement(Component, { ...props, router: __router }),
+      // Typed, not any: a host repo linting with noExplicitAny rejects the
+      // old spelling, and the wrapper's contract is exactly "any component,
+      // any props, plus the router" — which is what these types say. The
+      // import type is inline so the mock stays one block.
+      (Component: import("react").ComponentType<Record<string, unknown>>) =>
+        (props: Record<string, unknown>) =>
+          React.createElement(Component, { ...props, router: __router }),
     ),
   };
 });

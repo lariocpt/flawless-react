@@ -995,7 +995,7 @@ const stubServerModules: BunPlugin = {
       // forms that break — named and namespace imports — onto the default
       // import, which interop preserves verbatim, and which the stub's
       // callable Proxy answers for every name.
-      let code;
+      let code: string;
       try {
         code = readFileSync(args.path, "utf8");
       } catch {
@@ -1212,7 +1212,8 @@ function hostHtml(): string {
       // precedes the bundle's module script.
       (function () {
         var g = globalThis;
-        var p = (g.process = g.process || {});
+        var p = g.process || {};
+        g.process = p;
         try {
           p.env = p.env || {};
           p.versions = p.versions || {};
@@ -1666,13 +1667,25 @@ function wrap(tree: ReactNode): ReactNode {
 }
 
 function onProfile(id: string, phase: string, actualDuration: number): void {
-  const c = renderCount[id] ?? (renderCount[id] = { value: 0 });
+  // Explicit get-then-set, not ??= or an inline assignment: a host repo whose
+  // linter bans assignments in expressions (biome's noAssignInExpressions is
+  // recommended) must be able to commit the harness it was given.
+  let c = renderCount[id];
+  if (!c) {
+    c = { value: 0 };
+    renderCount[id] = c;
+  }
   c.value += 1;
-  const t = renderTime[id] ?? (renderTime[id] = {});
+  let t = renderTime[id];
+  if (!t) {
+    t = {};
+    renderTime[id] = t;
+  }
   if (phase === "mount") {
     t.mount = actualDuration;
   } else {
-    (t.updates ??= []).push(actualDuration);
+    if (!t.updates) t.updates = [];
+    t.updates.push(actualDuration);
   }
 }
 

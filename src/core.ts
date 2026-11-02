@@ -797,7 +797,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   if (ctx.inlineSummary) {
     await writeInlineSummaries(trees, results, outDir);
   }
-  await writeSummaryJson(outDir, results);
+  const summaryJsonPath = await writeSummaryJson(outDir, results);
   // A suite whose specs cannot even be collected should say so at generation
   // time: the vitest log for that run is 401 lines of "failed (0 test)" with
   // the reason buried after them (see analyse/bootability.ts). Only when this
@@ -848,6 +848,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const styleRoot = nextCtx?.root ?? outDir;
   const writtenFiles = [
     reportPath,
+    // Written on every run like swagger.json below: if it lands in the host's
+    // own style, its formatter never churns it back. (Measured: emitted with
+    // two-space indent, a biome-default-tabs host flagged it as a format
+    // error the style pass could not see — chunk 8.)
+    summaryJsonPath,
     ...results.flatMap((r) => r.outputs),
     // swagger.json + mocks are rewritten on every run; if they are not written
     // in the project's own style, its formatter (or a pre-commit hook) will

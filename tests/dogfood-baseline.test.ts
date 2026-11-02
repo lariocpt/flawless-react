@@ -242,14 +242,67 @@ test("defect 8: MCP stdio exit has a permanent stdio-client test", () => {
   expect(mcpTests).toContain("exitClock");
 });
 
-test("defect 9: the emitted setup.ts is not lint-clean under a noExplicitAny host config", () => {
-  // FIX-PLAN: chunk 8 — flip to: zero `: any` occurrences (or scoped
-  // suppression comments naming the rule, each with a reason).
-  //
-  // Measured 1 Nov on this fixture: 4 occurrences (the dogfood app counted 5;
-  // the count tracks the emitted canvas-stub surface, not the app). The
-  // fixture's biome.json raises noExplicitAny to error, so a host with that
-  // gate could not commit this file.
+test("defect 9: the emitted setup.ts carries no explicit any", () => {
+  // FIX-PLAN: chunk 8 — FLIPPED. Option 1 (emit it lint-clean) landed: the
+  // canvas stub types its prototype/ctx as Record<string, unknown> (the block
+  // WRITES keys the DOM lib does not carry, and index-assigns the draw
+  // methods by name), and the next/router withRouter mock takes
+  // ComponentType<Record<string, unknown>>. Measured 2 Nov on this fixture:
+  // 5 occurrences (chunk 0 measured 4; the fifth is the second `: any` on the
+  // withRouter line — the count tracks the emitted surface, not the app).
+  // No biome-ignore comments: none of the five needed one.
   const anyCount = (readOut("setup.ts").match(/: any\b/g) ?? []).length;
-  expect(anyCount).toBeGreaterThan(0);
+  expect(anyCount).toBe(0);
+});
+
+test("the whole emitted suite passes the host's own biome with zero errors", () => {
+  // FIX-PLAN: chunk 8 — the actual point: a generated suite must be
+  // committable in a linted repo, so the host's linter runs over EVERY
+  // emitted file, not just setup.ts. The fixture ships a biome.json
+  // (recommended + noExplicitAny: error) — that IS the host's linter; the
+  // binary is the repo's pinned @biomejs/biome.
+  //
+  // The --write pass is the tool's own style path (adoptStyle runs the host's
+  // `biome check --write` on what it wrote whenever the binary resolves; in
+  // this tmp copy runCore cannot resolve one, so the same command runs here —
+  // over the whole suite dir, a superset of adoptStyle's file list).
+  // Formatting is the formatter's job; what must be true AT THE SOURCE is
+  // that no LINT error survives: adoptStyle formats, it does not lint, and
+  // that is exactly why this defect class existed.
+  const biome = path.resolve(__dirname, "../node_modules/.bin/biome");
+  // The emitted suite is flawless/** PLUS the colocated *.flawless.test.tsx
+  // files the unit-browser task writes into the host's src/ — both are
+  // committed by the host, so both are linted. (biome's CLI takes paths, not
+  // shell-less globs, so the colocated files are enumerated here.)
+  const colocated = [...new Bun.Glob("src/**/*.flawless.test.tsx").scanSync({ cwd: app })].sort();
+  expect(colocated.length).toBeGreaterThan(0);
+  const emitted = ["flawless", ...colocated];
+  // The --write exit code is deliberately not asserted: adoptStyle itself
+  // treats biome's exit 1 (unfixable diagnostics remain) as "formatted", and
+  // the gate below is what must be clean — its error list is the failure.
+  Bun.spawnSync([biome, "check", "--write", "--no-errors-on-unmatched", ...emitted], {
+    cwd: app,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const gate = Bun.spawnSync(
+    [biome, "check", "--max-diagnostics=200", "--reporter=json", ...emitted],
+    {
+      cwd: app,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const report = JSON.parse(gate.stdout.toString()) as {
+    summary: { errors: number; warnings: number; infos: number };
+    diagnostics: Array<{ severity: string; code?: string; message: string }>;
+  };
+  // Errors are what fails a host's pre-commit gate (biome exits 0 over
+  // warnings/infos). The non-error residue of the host's recommended set —
+  // useTemplate infos, a few unused imports in profile specs — is recorded
+  // as candidate defect #16 in the plan, not silenced here.
+  const errors = report.diagnostics.filter((d) => d.severity === "error");
+  expect(errors.map((d) => `${d.code}: ${d.message}`)).toEqual([]);
+  expect(report.summary.errors).toBe(0);
+  expect(gate.exitCode).toBe(0);
 });
