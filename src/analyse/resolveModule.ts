@@ -28,6 +28,14 @@ interface ResolvedTsconfig {
   baseUrlDir: string | undefined;
   patterns: PathPattern[];
   /**
+   * The effective `jsx` compiler option: the last declarer in the extends
+   * chain (a child REPLACES the inherited value, the same TS override
+   * semantics baseUrl follows here). Undefined when no config in the chain
+   * declares the key — the TS default is "preserve", which callers who care
+   * (a jsx-mechanism guard) must model explicitly rather than assume.
+   */
+  jsx: string | undefined;
+  /**
    * The EFFECTIVE top-level `exclude`/`include`: the entries of the nearest
    * config in the extends chain that declares the key (a child REPLACES the
    * inherited list wholesale — TS does not merge these), each paired with the
@@ -233,6 +241,16 @@ export class ModuleResolver {
     return this.nearestConfig(dir)?.baseUrlDir;
   }
 
+  /**
+   * The effective `jsx` compiler option for files under `dir` — the same
+   * extends-chain walk paths/baseUrl use, exposed as a query. Undefined when
+   * no config in the chain declares the key (the TS default is "preserve")
+   * or no tsconfig exists at all.
+   */
+  jsxFor(dir: string): string | undefined {
+    return this.nearestConfig(dir)?.jsx;
+  }
+
   /** Resolve `spec` as imported from `importerAbsPath`. Undefined for bare/unresolvable. */
   resolve(spec: string, importerAbsPath: string): string | undefined {
     if (spec.startsWith("./") || spec.startsWith("../") || spec.startsWith("/")) {
@@ -424,12 +442,15 @@ export class ModuleResolver {
     const include = anchor("include");
 
     let baseUrlDir: string | undefined;
+    let jsx: string | undefined;
     let pathsEntry:
       | { dir: string; paths: Record<string, unknown>; baseUrlDir?: string }
       | undefined;
     for (const { dir, options } of chain) {
       const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : undefined;
       if (baseUrl !== undefined) baseUrlDir = path.resolve(dir, baseUrl);
+      const jsxOpt = typeof options.jsx === "string" ? options.jsx : undefined;
+      if (jsxOpt !== undefined) jsx = jsxOpt;
       const paths = options.paths;
       if (paths && typeof paths === "object") {
         pathsEntry = { dir, paths: paths as Record<string, unknown>, baseUrlDir };
@@ -461,7 +482,7 @@ export class ModuleResolver {
       patterns.sort((a, b) => b.prefix.length - a.prefix.length);
     }
 
-    const result: ResolvedTsconfig = { configPath, baseUrlDir, patterns, exclude, include };
+    const result: ResolvedTsconfig = { configPath, baseUrlDir, jsx, patterns, exclude, include };
     this.configCache.set(configPath, result);
     return result;
   }

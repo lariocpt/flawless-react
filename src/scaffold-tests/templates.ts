@@ -187,6 +187,20 @@ export interface UnitBrowserRenderOptions {
    * file from this very directory).
    */
   appEnvRoot?: string;
+  /**
+   * The JSX mechanism the emitted vitest config declares. "esbuild" for the
+   * vite <= 7 generations (the transformer there; an `oxc` key is inert —
+   * vite 7 ships no oxc machinery at all) and "oxc" for vite 8+ (the
+   * transformer there; vitest 4/5's always-injected `oxc: { target }`
+   * default discards an `esbuild` key with a both-set warning, and jsx then
+   * falls back to a host tsconfig where "preserve" kills every spec at
+   * parse). Picked from the vitest the suite will ACTUALLY run
+   * (unitAndBrowser's hostViteFamily) — the config must be honest about the
+   * worst case its install can produce, or a fresh install reds every spec.
+   * Undefined keeps the historical esbuild bytes, so a caller that does not
+   * compute the family emits exactly what older versions emitted.
+   */
+  jsxTransform?: "esbuild" | "oxc";
 }
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
@@ -532,7 +546,40 @@ function reactExportsShimSource(shim: ReactExportShim, outDir: string): string {
   ].join("\n");
 }
 
+/**
+ * The one comment the emitted vitest config carries about its JSX
+ * mechanism — identical in both layouts, because the gate is the same in
+ * both, and it is the WHOLE explanation: which key this file carries, why
+ * the choice follows the vite that RUNS rather than the manifest pin, and
+ * why the other key is wrong on each generation. Measured, not chosen:
+ * vite 7.3.7's dist has no oxc machinery (the oxc key is inert below 8),
+ * and vite 8.3.5's resolveConfig discards an esbuild key alongside vitest
+ * 4/5's always-injected oxc default ("Both esbuild and oxc options were
+ * set"), after which jsx follows the tsconfig and a "preserve" host dies
+ * every spec at parse. An explicit jsx wins over the tsconfig on both
+ * transformers.
+ */
+export const JSX_MECHANISM_COMMENT = `  // JSX runtime, picked by the vite the suite RUNS, not by what its manifest
+  // pins — vitest 4/5 pull vite 8, older vitests pull vite 5/7. On vite <= 7
+  // the transformer is esbuild (an \`oxc\` key is inert there: vite 7 ships no
+  // oxc machinery at all), so this file carries \`esbuild\` while the suite's
+  // vite is below 8. On vite 8 the transformer is oxc, and vitest 4/5 always
+  // inject their own \`oxc: { target }\` default: an \`esbuild\` key beside it
+  // is discarded with a "Both esbuild and oxc options were set" warning, jsx
+  // falls back to the tsconfig, and a host "preserve" (Next's own default)
+  // leaves raw JSX that dies when vite re-parses its transform output —
+  // every spec. Hence \`oxc\` from vite 8 up. An explicit jsx wins over the
+  // tsconfig on both transformers, and the specs generated beside this file
+  // never import React: the automatic runtime is always present in the
+  // react >= 18 this manifest pins, so no host tsconfig can take it away.`;
+
 function vitestConfig(opts: UnitBrowserRenderOptions): string {
+  // The one JSX mechanism this file declares — JSX_MECHANISM_COMMENT (emitted
+  // beside it, in both layouts) says what each value means per generation.
+  const jsxMechanism =
+    (opts.jsxTransform ?? "esbuild") === "oxc"
+      ? 'oxc: { jsx: { runtime: "automatic" } }'
+      : 'esbuild: { jsx: "automatic" }';
   // Every replacement is resolved against the config's own directory rather
   // than baked in absolute. This file is committed, and the react/react-dom
   // pins in particular pointed into a node_modules path that exists only on the
@@ -751,12 +798,8 @@ ${multiBlock}${envBlock}export default defineConfig({
   // missing files (candidate defect #12). The app root is the honest boundary:
   // the colocated specs live in it and import from it.
   server: { fs: { allow: [projectRoot] } },
-${pluginsBlock}  // The automatic JSX runtime, pinned HERE: a Next.js host's tsconfig says
-  // jsx "preserve", which gives vitest's esbuild nothing usable, and every
-  // spec died at render with "React is not defined". The suite pins react
-  // >=18, where the automatic runtime always exists (FR-018 — found the
-  // first time an emitted spec was actually executed in this repo).
-  esbuild: { jsx: "automatic" },
+${pluginsBlock}${JSX_MECHANISM_COMMENT}
+  ${jsxMechanism},
   // Kill the PostCSS config FILE search: vite walks up from the suite and
   // picks up the repo's own postcss config (a tailwind v4 plugin vite cannot
   // even load here — "Invalid PostCSS Plugin found at: plugins[0]"). Specs
@@ -801,10 +844,8 @@ ${multiBlock}${envBlock}`
 
 `;
   return `${anchor}export default defineConfig({
-${pluginsBlock}  // See the colocate branch: a host tsconfig with jsx "preserve" (the
-  // Next.js default) left esbuild on the classic runtime and every render
-  // threw "React is not defined" (FR-018).
-  esbuild: { jsx: "automatic" },
+${pluginsBlock}${JSX_MECHANISM_COMMENT}
+  ${jsxMechanism},
   // Kill the PostCSS config FILE search: vite walks up from the suite and
   // picks up the repo's own postcss config (a tailwind v4 plugin vite cannot
   // even load here — "Invalid PostCSS Plugin found at: plugins[0]"). Specs

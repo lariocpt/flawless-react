@@ -5,6 +5,15 @@
 the current (wrong) behaviour of each dogfood defect, one `// FIX-PLAN: chunk N`
 marker per fix. Read that file for what each shape is for.
 
+`vitest5-app/` — the host of chunk #10's execution test
+(`tests/vitest5AppExecution.test.ts`): a minimal non-Next app whose tsconfig says
+`jsx: "preserve"` — the shape that killed every colocated spec at parse under the
+old always-esbuild emission — and whose own package.json declares vitest `^5.0.0`
+(a fresh install lands vitest 5.x + vite 8.x). The test installs that stack before
+running the tool, asserts the emitted config declares the oxc mechanism for the
+vite that will actually run, and runs the colocated specs green from the app root
+and from the suite's own `test:unit` entry point.
+
 ## Why each file exists
 
 | file | shape it carries | defect |
@@ -76,9 +85,16 @@ bunx vitest run --config flawless/vitest.config.mts
 bunx playwright test --config flawless/browser/playwright.config.ts
 ```
 
-vitest must be 2.x: vitest 5 + vite 7 ignores the emitted `esbuild.jsx` override
-and dies collecting every spec ("make sure to not set jsx to preserve" — the
-fixture's `jsx: "preserve"` is Next's own, not a fixture bug).
+The emitted config's JSX mechanism follows the vite the suite will actually run,
+not the vitest its manifest pins: vitest 2/3 pull vite 5/7, where the transformer
+is esbuild, so the config carries `esbuild: { jsx: "automatic" }` — green on this
+fixture's `jsx: "preserve"` host (Next's own, not a fixture bug). Vitest 4/5 pull
+vite 8, where vitest always injects its own `oxc: { target }` default and vite
+discards a second `esbuild` key with a warning, leaving jsx to the host tsconfig —
+so the config carries `oxc: { jsx: { runtime: "automatic" } }` instead, green on
+every host `jsx` shape, preserve included. This fixture's reproduction pins
+vitest 2, its frozen path; a vitest 5 host is covered by `vitest5-app/` and
+`tests/vitest5AppExecution.test.ts`.
 
 ## Unit plane after chunk 3 (measured 1 Nov, react-dom pinned 19.1.0)
 

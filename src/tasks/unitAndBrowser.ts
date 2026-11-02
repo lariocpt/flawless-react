@@ -3,11 +3,12 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { rendersNativeSource } from "../analyse/nativeDialect.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
-import { appPackageRoot } from "../packageJson.ts";
+import { appPackageRoot, hostViteFamily, jsxTransformFor } from "../packageJson.ts";
 import {
   findOrphanUnitSpecs,
   type ScaffoldUnitBrowserOptions,
   scaffoldUnitBrowser,
+  suitePackageJson,
 } from "../scaffold-tests/index.ts";
 import { scaffoldNativeUnit } from "../scaffold-tests/nativeIndex.ts";
 import { flattenTrees } from "../scaffold-tests/registry.ts";
@@ -160,6 +161,29 @@ export const unitAndBrowser: Task = {
     // scaffolder stops reading, is invisible. This is the hole that let the
     // manifest's reactPinDir anchor exist at runtime while the scaffolder's own
     // options type did not name it.
+    // The JSX mechanism the emitted vitest config must declare: computed from
+    // the vitest the suite will ACTUALLY run — the installed store, the suite
+    // manifest's own pin, the host's declaration, the tool's generated
+    // default (hostViteFamily's four legs) — and never from the default
+    // alone, which is what left a fresh suite on the esbuild spelling under a
+    // vite 8 install (every spec red at parse). The generated default is read
+    // off the fresh manifest itself — hostViteFamily's leg 2 compares the
+    // on-disk manifest against it byte for byte, so a moved default moves the
+    // comparison with it; the literal only bails a missing pin back to the
+    // historical esbuild spelling instead of failing the run.
+    const generatedVitestPin =
+      (
+        JSON.parse(
+          suitePackageJson(
+            ctx.outDir,
+            browserSpecs,
+            ctx.nextjs !== undefined,
+            ctx.nextjs !== undefined,
+            aliasRes.pinDir,
+          ),
+        ) as { devDependencies?: Record<string, string> }
+      ).devDependencies?.vitest ?? "^2.1.0";
+    const viteFamily = hostViteFamily({ suiteDir: ctx.outDir, fallbackRange: generatedVitestPin });
     const scaffoldOptions: ScaffoldUnitBrowserOptions = {
       browserSpecs,
       trees,
@@ -198,6 +222,9 @@ export const unitAndBrowser: Task = {
       apiRoutes: ctx.nextjs?.apiRoutes,
       providerWraps: ctx.providerWraps,
       todos,
+      // The emitted config's one JSX mechanism for the vitest the suite will
+      // run (viteFamily above): "esbuild" on vite <= 7, "oxc" on vite 8+.
+      jsxTransform: jsxTransformFor(viteFamily),
     };
     const { written, skipped, keptEdited, keptLegacy, staleRemoved, staleKept, orphanUnitSpecs } =
       await scaffoldUnitBrowser(scaffoldOptions);

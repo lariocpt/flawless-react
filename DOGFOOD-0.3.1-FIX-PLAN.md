@@ -165,10 +165,13 @@ The gotcha about `extends` was real and is now pinned by a test: inherited `excl
 to the DECLARING config's dir, so a repo-root base excluding `flawless` does NOT cover
 `apps/web/flawless` — anchoring wrong would have produced both a false "kept" and a real duplicate.
 
-**Candidate defect #10 (recorded here, not fixed by any chunk):** vitest 5 + vite 7 ignores the
-emitted `esbuild.jsx` override and dies collecting every spec under a host `"jsx": "preserve"`
-("make sure to not set jsx to preserve"). This is not a fixture quirk — any real user on vitest 5
-hits the same wall. It needs its own chunk; see `tests/fixtures/README.md`.
+**Candidate defect #10 (fixed — the #10 chunk):** a host on vitest 4/5, which pull vite 8, died
+collecting every spec under a host `"jsx": "preserve"`. The wording here ("vitest 5 + vite 7
+ignores the emitted `esbuild.jsx` override") was wrong on both halves — the vite is 8, and the
+key is not ignored but discarded beside vitest's always-injected `oxc` default, after which jsx
+falls through to the host tsconfig. Not a fixture quirk — any real user on vitest 4/5 with a
+preserve host hits the same wall. Fixed by family-gated emission; see the corrected #10 section
+in the candidate triage and `tests/fixtures/vitest5-app/`.
 
 **Do.**
 
@@ -810,7 +813,7 @@ defect / already resolved). The eslint gap gets a number: **#17**.
 
 | candidate | verdict | proving command (cold) |
 | --- | --- | --- |
-| #10 vitest 5 + vite 8 JSX | reproduces (combo corrected) | recipe below; receipt in this section |
+| #10 vitest 4/5 + vite 8 JSX | **fixed** (re-measured; combo and mechanism corrected) | `bun test tests/vitest5AppExecution.test.ts` |
 | #11 `.gitignore` write | closed — intended, already recorded above | `grep -n "ignoreEntries" src/nextjs/detect.ts` |
 | #12 colocated specs dead from the suite dir | reproduces — **fixed this session** | `bun test tests/suiteDirExecution.test.ts` (red without the fix, green with) |
 | #13 mock factory incomplete for non-analysed importers | reproduces exactly as recorded | recipe below |
@@ -819,25 +822,64 @@ defect / already resolved). The eslint gap gets a number: **#17**.
 | #16 emitted suite leaves lint residue | reproduces — and **grew**: 33 warnings + 13 infos | recipe below |
 | #17 eslint hosts get no style pass | confirmed gap | `grep -in eslint src/scaffold/adoptStyle.ts` → no matches |
 
-### #10 — reproduces, but the recorded combo is wrong
+### #10 — fixed; the recorded combo and the recorded mechanism were both wrong
 
-The plan says "vitest 5 + vite 7". Measured: vitest **5.0.5** pulls vite **8.3.5** (the
-rolldown/oxc build), not vite 7. A minimal app with host `"jsx": "preserve"` and the emitted-style
-config dies collecting every `.tsx` spec with a RolldownError — `Unexpected JSX expression` …
-`make sure to not set jsx to preserve` — because oxc ignores the emitted `esbuild.jsx` override.
-The candidate fix `oxc: { jsx: { runtime: "automatic" } }` in the emitted config made the repro
-green. Recipe: scratch app, one `.tsx` component + one spec, host tsconfig `jsx: "preserve"`,
-`bun add -d vitest@5 jsdom @testing-library/react`, emit-style `esbuild.jsx` override only, run
-vitest → red; add the `oxc` block → green. (The scratch dir lived in `/tmp/opencode/c10b` and is
-gone with tmp cleanup; the receipt above is from this session's runs.)
+**Combo correction (again).** The plan says "vitest 5 + vite 7"; the 2 Nov re-measurement
+corrected the vite to 8 but named vitest 5.0.5. Re-measured against current `main`: vitest
+**5.1.0** peers vite `^6.4.0 || ^7.0.0 || ^8.0.0`, and a fresh install lands vite **8.3.5** —
+and vitest **4.1.12** spans the same vite 8 (`^6.0.0 || ^7.0.0 || ^8.0.0`), so the wall is not a
+vitest 5 curiosity; any host on vitest 4 or 5 with `jsx: "preserve"` hits it.
 
-**Chunk it.** Not fixed here because the config emitter now has three JSX mechanisms with overlap
-(`esbuild.jsx`, `oxc.jsx`, and the jsx-runtime pin) and choosing the honest combination across
-vitest 2 *and* vitest 5 is design work, not a template patch. Only bites users who move to
-vitest 5 — the suite pins `^2.1.0` — so it is not on fire, but the wall is real and silent.
-**Acceptance:** a fixture on vitest 5 (vite 8) with host `jsx: "preserve"` runs its colocated specs
-green from the app root; the vitest 2 path is unchanged (existing execution tests stay green); the
-emitted config carries one comment explaining which mechanism serves which vite generation.
+**Mechanism correction.** The 2 Nov text said "oxc ignores the emitted `esbuild.jsx` override".
+Measured in the dists, it is a two-step discard: vitest 4/5 *always* inject an `oxc` default
+into the user's vite config (5.1.0: `oxc: { target: "node22" }` unless `oxc: false`;
+4.1.12: `oxc: { target: "node18" }` on the rolldown-vite build), and vite 8's `resolveConfig`
+then discards an `esbuild` key that sits beside `oxc` — the "Both esbuild and oxc options were
+set" warning — after which the jsx option has no explicit value and follows the host tsconfig.
+Under `"jsx": "preserve"` (Next's own default) that leaves raw JSX, which dies when vite's ssr
+transform re-parses its own transform output: `RolldownError: Parse failure: Unexpected JSX
+expression` — every spec, on both entry points. (vite 7.3.7, for contrast, ships no oxc
+machinery at all: no both-set warning, no `convertEsbuildConfigToOxcConfig`, no `vite:oxc`
+plugin — an `oxc` key is inert there and esbuild is the transformer, which is why the old
+single-mechanism emission was correct for every generation it ever shipped into.)
+
+**The fix — family-gated emission.** The emitted config declares ONE jsx mechanism, chosen from
+the vitest the suite will *actually* run, not from the manifest pin: `esbuild: { jsx:
+"automatic" }` while the suite's vite is <= 7 (byte-identical to what older versions emitted —
+the frozen vitest 2 path is untouched) and `oxc: { jsx: { runtime: "automatic" } }` from vite 8
+up. The family comes from the installed store (the vitest that resolves and the vite that
+lands), then the suite manifest's own vitest pin — EXCEPT while that pin is byte-identical to
+the tool's own generated default, which is this tool's output, not a declaration — then the
+host's declared vitest (a range answering at its top: `>=2 <6` installs 5, so the config is
+written for vite 8), then the generated default. An explicit jsx beats the tsconfig on both
+transformers, so the preserve host is covered on every generation; oxc natively honours the
+tsconfig's `jsxImportSource` (probed with a throwing fake runtime — it emitted the import
+unprompted), so no forwarding is emitted. The "three overlapping mechanisms" in the 2 Nov text
+narrows to TWO jsx keys: the jsx-runtime resolve alias survives vite 8 untouched (probed), and
+the generated specs never import React, so the automatic runtime is always the one in the react
+the manifest pins. The alternative of emitting both keys was rejected by measurement: under the
+vitest 2 / vite 5 types an `oxc` key in the config is a hard TS2769, so a dual-key config
+type-checks red on today's green vitest 2 hosts.
+
+**Receipt.** `tests/fixtures/vitest5-app/` — host tsconfig `jsx: "preserve"`, own package.json
+declaring `vitest: "^5.0.0"` (a fresh install lands vitest 5.1.x + vite 8.3.x), two small
+components, its own biome config — and `tests/vitest5AppExecution.test.ts`, which installs the
+fixture's stack *before* running the tool (the `bun.lockb` that install drops is the boundary
+the store walk stops at), asserts the installed majors, runs the tool, and pins the emitted
+config: oxc present, the esbuild spelling absent, the one comment that is the whole
+explanation — while the fresh suite manifest still carries the generated `^2.1.0` default the
+emission must not have followed. It then runs the colocated specs green from the suite's own
+`test:unit` with cwd inside the suite dir (bun resolves the app store's vitest 5 — the
+manifest's pin is never installed) and from the app root with `--config`; both runs report
+2 passed with no `Parse failure` and no both-set warning. Emission-side coverage is in
+`tests/vitestJsxEmission.test.ts` (the range grammar, the four legs, the mechanism switch, the
+one-comment layout, and the host-shape × vite-generation guard matrix). The vitest 2 path is
+unchanged: every existing execution test stays green on the esbuild spelling.
+
+**Acceptance (met).** A fixture on vitest 5 (vite 8) with host `jsx: "preserve"` runs its
+colocated specs green from the app root — and from the suite's own `test:unit` too, which the
+original acceptance did not ask for; the vitest 2 path is unchanged; the emitted config carries
+one comment explaining which mechanism serves which vite generation.
 
 ### #12 — reproduces; fixed this session; two corrections to the recorded text
 
@@ -911,7 +953,8 @@ to keep/remove the default fetch, opens the chunk.
 
 ### Ordered chunk list (by user-visible cost)
 
-1. **#10** — vitest 5 users hit a silent total-red wall.
+1. **#10** — vitest 4/5 users hit a silent total-red wall. **Fixed** (family-gated jsx
+   emission; `tests/fixtures/vitest5-app/`).
 2. **#13** — phantom mock failures on reachable-but-unevidenced exports; erodes trust in green runs.
 3. **#17** — eslint hosts get no style pass; whole class of hosts unverified.
 4. **#16** — lint residue on every generation; noisy but non-blocking.
