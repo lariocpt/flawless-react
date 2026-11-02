@@ -369,9 +369,21 @@ describe("environment variables named in prose exist in the code", () => {
   test("every FLAWLESS_/LOAD_/MOCK_/RPT_ name is referenced by src or tests", async () => {
     // src AND tests: FLAWLESS_CI_BROWSER gates the real-chromium executions and
     // lives only in tests/, but it is documented and is genuinely a knob.
+    //
+    // The walk is over TRACKED files only (`git ls-files`), not the whole
+    // directory tree. The old `grep -r` over src/ and tests/ followed every
+    // untracked byte — a fixture's installed node_modules (630 MB measured)
+    // and anyone's tests/.tmp scratch — and its duration stopped being a
+    // property of the repo: prompt 10's .tmp scratch tripped this test's 5 s
+    // timeout. The claim is about committed code, so the bound is git's
+    // index: `--full-name` keeps the grep cwd-independent like the old
+    // absolute paths, `-z`/`xargs -0` survive spaces in names, and `-r`
+    // (no-run-if-empty) keeps an empty file list a no-op instead of a grep
+    // that hangs reading stdin.
     const haystack =
-      await Bun.$`grep -rhoE "[A-Z][A-Z0-9_]{3,}" ${path.join(REPO_ROOT, "src")} ${path.join(REPO_ROOT, "tests")}`
+      await Bun.$`git -C ${REPO_ROOT} ls-files -z --full-name -- src tests | xargs -0 -r grep -hoE "[A-Z][A-Z0-9_]{3,}" --`
         .quiet()
+        .nothrow()
         .text();
     const known = new Set(haystack.split("\n"));
     const missing = new Set<string>();
