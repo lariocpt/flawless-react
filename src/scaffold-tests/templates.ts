@@ -2367,20 +2367,57 @@ ${body}
  * Guard / static-text / inversion siblings in the same file share it.
  */
 const RSC_RESOLVE_ASYNC_UI = `
-// Server components compose server components: invoke the async ones in the
-// tree so react-dom / renderToStaticMarkup only ever see sync elements.
+function isThenable(value: unknown): value is PromiseLike<React.ReactNode> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as PromiseLike<React.ReactNode>).then === "function"
+  );
+}
+// Server components compose server components and hand each other promises,
+// so nothing below may assume a prop or child is sync. Invoke the async
+// components in place, await EVERY thenable — children and props alike (a
+// promise-valued prop used to reach React un-awaited and suspend the root
+// with no boundary: empty container, no error) — and keep element identity
+// when nothing resolved to anything new, so untouched subtrees are the same
+// objects React already had.
 async function resolveAsyncUi(
   node: React.ReactNode,
   depth = 0,
 ): Promise<React.ReactNode> {
   if (node === null || node === undefined || depth > 24) return node;
+  if (isThenable(node)) return resolveAsyncUi(await node, depth + 1);
   if (Array.isArray(node)) {
     const out: React.ReactNode[] = [];
     for (const kid of await Promise.all(node.map((k) => resolveAsyncUi(k, depth + 1)))) {
-      if (Array.isArray(kid)) out.push(...kid);
-      else out.push(kid);
+      out.push(kid);
     }
-    return out;
+    // Identity when nothing changed: the SAME array comes back, the caller
+    // skips its cloneElement, and the original static JSX children keep
+    // their static (keyless) semantics. Sub-arrays are NOT flattened — one
+    // slot in, one slot out.
+    if (out.every((k, i) => k === node[i])) return node;
+    // A CHANGED array is a synthesised list: React cannot see its origin and
+    // demands keys ("Each child in a list should have a unique key prop" —
+    // the tell that children were rebuilt). Static JSX children were
+    // positional, not keyed; the jsx runtime marks them "static" through a
+    // dev-only internal no caller may touch, and cloneElement cannot
+    // reproduce that mark. So keys are synthesised DELIBERATELY here, by
+    // position, and only on entries that have none — entries that arrived
+    // keyed (a real .map) keep their own keys.
+    const keyed: React.ReactNode[] = [];
+    for (let i = 0; i < out.length; i++) {
+      const k = out[i];
+      // biome-ignore lint/suspicious/noArrayIndexKey: this rebuilt array IS the
+      // element's positional static children; the index is the only honest
+      // witness of position, and nothing reorders this array within one render.
+      keyed.push(
+        isValidElement(k) && k.key === null
+          ? cloneElement(k, { key: \`flawless-async-\${i}\` })
+          : k,
+      );
+    }
+    return keyed;
   }
   if (!isValidElement(node)) return node;
   const el = node as React.ReactElement;
@@ -2389,10 +2426,58 @@ async function resolveAsyncUi(
     const inner = await (el.type as (props: unknown) => Promise<React.ReactNode>)(el.props);
     return resolveAsyncUi(inner, depth + 1);
   }
-  const kids = (el.props as { children?: React.ReactNode }).children;
-  if (kids === undefined || kids === null) return el;
-  const resolved = await resolveAsyncUi(kids, depth + 1);
-  return resolved === kids ? el : cloneElement(el, {}, resolved);
+  // Walk EVERY prop, not just children: children is one key of props, and
+  // the promise-valued prop was the shape this resolver used to ignore.
+  const props = el.props as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  let changed = false;
+  for (const key of Object.keys(props)) {
+    const resolved = await resolveAsyncUi(props[key], depth + 1);
+    if (resolved !== props[key]) changed = true;
+    next[key] = resolved;
+  }
+  if (!changed) return el;
+  // Children go through the config object, NOT as cloneElement's varargs:
+  // varargs mark direct element children "static" but not elements inside
+  // an array, so an array of rebuilt children passed as varargs would carry
+  // the old code's key warning anyway. An unchanged children array is the
+  // original (already static); a rebuilt one carries synthesised keys from
+  // the array branch above. Either way this clone adds no warning.
+  return cloneElement(el, next);
+}
+`;
+
+/**
+ * Emitted next to RSC_RESOLVE_ASYNC_UI in every spec that mounts through
+ * createRoot. resolveAsyncUi pre-resolves the thenables it can SEE in the
+ * element tree; what it cannot see is a promise a sync component creates in
+ * its own body at render time. Without a boundary such a resource commits
+ * nothing — the empty container with no error — and its eventual resolution
+ * lands outside act: "a suspended resource finished loading inside a test".
+ * The boundary gives React somewhere to commit; the settle loop keeps every
+ * late resolution inside act().
+ */
+const RSC_RENDER_SETTLED = `
+async function renderSettled(
+  ui: React.ReactNode,
+): Promise<ReturnType<typeof render>> {
+  let view: ReturnType<typeof render> | undefined;
+  await act(async () => {
+    view = render(
+      <Suspense fallback={<div data-flawless-suspended="true" />}>{ui}</Suspense>,
+    );
+  });
+  if (!view) throw new Error("flawless: the render never ran");
+  const settled = view;
+  // The fallback is the witness. waitFor polls inside act(), so a resource
+  // that resolves late is awaited, not raced; one that never resolves fails
+  // by naming the fallback that stands forever — never a silent green.
+  await waitFor(() => {
+    expect(settled.container.querySelectorAll('[data-flawless-suspended="true"]')).toHaveLength(
+      0,
+    );
+  });
+  return settled;
 }
 `;
 
@@ -2424,11 +2509,11 @@ function rscSpec(
   // component rendered nothing. The container is what this component produced.
   const renderExpr = providerImport
     ? autoProv?.open
-      ? `rendered = render(<AppProvider>${autoProv.open}{ui}${autoProv.close}</AppProvider>)`
-      : `rendered = render(<AppProvider>{ui}</AppProvider>)`
+      ? `rendered = await renderSettled(<AppProvider>${autoProv.open}{ui}${autoProv.close}</AppProvider>)`
+      : `rendered = await renderSettled(<AppProvider>{ui}</AppProvider>)`
     : autoProv?.open
-      ? `rendered = render(${autoProv.open}{ui}${autoProv.close})`
-      : `rendered = render(<>{ui}</>)`;
+      ? `rendered = await renderSettled(${autoProv.open}{ui}${autoProv.close})`
+      : `rendered = await renderSettled(<>{ui}</>)`;
 
   const callArgs = rscCallArgs(info);
   // A zero-parameter component never calls buildProps, and an unused helper
@@ -2457,8 +2542,8 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir, autoProv);
 
   return `import { describe, test, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { cloneElement, isValidElement } from "react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { cloneElement, isValidElement, Suspense } from "react";
 import type * as React from "react";
 ${mocks.join("\n")}
 ${providerLine}${emitComponentImport(info, importPath)}
@@ -2466,7 +2551,7 @@ ${providerLine}${emitComponentImport(info, importPath)}
 // ${name} is an async server component: it is invoked as a function and its
 // resolved JSX is rendered directly. Module-level data dependencies above are
 // mocked — fill in fixtures to make the assertions meaningful.
-${propsBlock}${RSC_RESOLVE_ASYNC_UI}
+${propsBlock}${RSC_RESOLVE_ASYNC_UI}${RSC_RENDER_SETTLED}
 test("${name} (RSC): resolves, or takes one of its declared guard paths", async (t) => {
   // Hoisted so the assertion below stays OUTSIDE the try: an assertion
   // failure must be reported as itself, never swallowed by the guard catch.
@@ -2564,15 +2649,24 @@ function emitStaticTextTests(
       ? `let ui: React.ReactNode;
       try {
         ui = await resolveAsyncUi(await ${name}(${callArgs}));
-      } catch {
-        return;
+      } catch (err) {
+        // A declared guard path (notFound()/redirect() against empty mocks):
+        // the main test already asserts that outcome, so this one has no text
+        // to assert — but it says so by NAME. A bare \`catch { return; }\`
+        // here is how a red suite pretends to be green.
+        if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) {
+          console.warn(\`[flawless] ${name} takes a guard path (notFound/redirect) at these props — no static text renders\`);
+          ctx.skip();
+          return;
+        }
+        throw err;
       }
-      render(${open || "<>"}{ui}${close || "</>"});`
+      await renderSettled(${open || "<>"}{ui}${close || "</>"});`
       : "renderTarget();";
   return `
 describe("${name} static content", () => {
   for (const t of ${JSON.stringify(texts)}) {
-    test(\`renders \${JSON.stringify(t)}\`, async () => {
+    test(\`renders \${JSON.stringify(t)}\`, ${mode === "rsc" ? "async (ctx)" : "async ()"} => {
       ${render}
       // getAllByText, not getByText: the claim is "this text renders", and a
       // page legitimately rendering the same literal twice (an eyebrow above
@@ -2661,11 +2755,13 @@ function emitPredicateInversionTests(
   const renderOf = (uiVar: string): string => {
     if (autoProv?.open) {
       const uiExpr = `${autoProv.open}{${uiVar}}${autoProv.close}`;
-      return providerImport ? `render(<AppProvider>${uiExpr}</AppProvider>)` : `render(${uiExpr})`;
+      return providerImport
+        ? `await renderSettled(<AppProvider>${uiExpr}</AppProvider>)`
+        : `await renderSettled(${uiExpr})`;
     }
     return providerImport
-      ? `render(<AppProvider>{${uiVar}}</AppProvider>)`
-      : `render(<>{${uiVar}}</>)`;
+      ? `await renderSettled(<AppProvider>{${uiVar}}</AppProvider>)`
+      : `await renderSettled(<>{${uiVar}}</>)`;
   };
   const staticText = info.staticText ?? [];
   const mountProof = staticText[0];
