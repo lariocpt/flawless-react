@@ -9,6 +9,7 @@ import {
   topMajorOf,
   vitestRangeToViteFamily,
 } from "../src/packageJson.ts";
+import { JSX_MECHANISM_COMMENT, renderUnitBrowser } from "../src/scaffold-tests/templates.ts";
 
 /**
  * The readers behind the emitted config's JSX mechanism (chunk #10): the
@@ -326,4 +327,135 @@ describe("ModuleResolver.jsxFor: the effective jsx through the extends chain", (
     const app = scratch("jsx-none");
     expect(new ModuleResolver().jsxFor(app)).toBeUndefined();
   });
+});
+
+// The mechanism marker (the comment's first line) and the two key spellings
+// exactly as they are emitted, indentation included: one line each, and the
+// whole of the file's jsx mechanism.
+const MARKER = "JSX runtime, picked by the vite the suite RUNS";
+const OXC_KEY_LINE = '  oxc: { jsx: { runtime: "automatic" } },';
+const ESB_KEY_LINE = '  esbuild: { jsx: "automatic" },';
+
+function keyLineFor(key: "esbuild" | "oxc"): string {
+  return key === "oxc" ? OXC_KEY_LINE : ESB_KEY_LINE;
+}
+
+/** The empty-tree config (no aliases, shims or env root) for one layout+mechanism. */
+function renderConfig(outDir: string, colocate: boolean, jsxTransform?: "esbuild" | "oxc"): string {
+  const files = renderUnitBrowser({
+    trees: [],
+    outDir,
+    variants: 0,
+    colocate,
+    jsxTransform,
+    browserSpecs: false,
+  });
+  return files.find((f) => f.relPath === "vitest.config.mts")?.content ?? "";
+}
+
+/**
+ * The contiguous `//` block starting at the mechanism marker, plus the first
+ * line after it — the mechanism key.
+ */
+function blockAfterMarker(content: string): { block: string; keyLine: string } {
+  const lines = content.split("\n");
+  const start = lines.findIndex((l) => l.includes(MARKER));
+  expect(start).toBeGreaterThanOrEqual(0);
+  const block: string[] = [];
+  let i = start;
+  for (;;) {
+    const line = lines[i];
+    if (line === undefined || !line.trim().startsWith("//")) break;
+    block.push(line);
+    i += 1;
+  }
+  return { block: block.join("\n"), keyLine: lines[i] ?? "" };
+}
+
+describe("renderUnitBrowser: the emitted mechanism and its one comment", () => {
+  // undefined is the historical default: a caller that never computes the
+  // family must keep emitting the exact esbuild bytes older versions emitted.
+  for (const jsx of ["oxc", "esbuild", undefined] as const) {
+    for (const colocate of [true, false] as const) {
+      test(`jsxTransform=${String(jsx)} in the ${colocate ? "colocate" : "standalone"} layout`, () => {
+        const app = scratch(`emit-${String(jsx)}-${colocate ? "col" : "std"}`);
+        const content = renderConfig(path.join(app, "flawless"), colocate, jsx);
+        const { block, keyLine } = blockAfterMarker(content);
+        // The key line is exactly the one the mechanism names — and the
+        // OTHER spelling appears nowhere: the comment mentions both words but
+        // never as a key (`oxc: { target }` is the injected default it
+        // describes, not a key this file declares).
+        expect(keyLine).toBe(keyLineFor(jsx === "oxc" ? "oxc" : "esbuild"));
+        expect(content.includes("oxc: { jsx")).toBe(jsx === "oxc");
+        expect(content.includes("esbuild: { jsx")).toBe(jsx !== "oxc");
+        // The comment is the WHOLE explanation: exactly one block, and it is
+        // the shared constant, complete.
+        expect(content.split(JSX_MECHANISM_COMMENT).length - 1).toBe(1);
+        expect(block).toBe(JSX_MECHANISM_COMMENT);
+      });
+    }
+  }
+
+  test("the comment block is byte-identical between the two layouts", () => {
+    for (const jsx of ["oxc", "esbuild"] as const) {
+      const app = scratch(`ident-${jsx}`);
+      const col = blockAfterMarker(renderConfig(path.join(app, "col"), true, jsx)).block;
+      const std = blockAfterMarker(renderConfig(path.join(app, "std"), false, jsx)).block;
+      expect(col).toBe(std);
+    }
+  });
+});
+
+describe("the guard: a host jsx shape never meets a mechanism absent for its vite", () => {
+  // The jsx key ACTUALLY EFFECTIVE per vite generation, written as a literal
+  // rather than derived from jsxTransformFor: a guard that recomputed the
+  // switch could only prove the switch self-consistent. The entries are the
+  // measurements —
+  //   vite 5/6/7: esbuild is the transformer, and an explicit
+  //     `esbuild: { jsx: "automatic" }` overrides any host tsconfig jsx —
+  //     proven on the worst shape ("preserve", aliased-next-app's own
+  //     setting) by the frozen vitest 2 execution tests staying green;
+  //   vite 8: the `esbuild` key is discarded beside vitest 4/5's
+  //     always-injected `oxc: { target }` (both-set warning), and the
+  //     explicit `oxc: { jsx: ... }` measured green on ALL FOUR shapes
+  //     below with a clean stderr.
+  const EFFECTIVE_KEY: ReadonlyArray<readonly [number, "esbuild" | "oxc"]> = [
+    [5, "esbuild"],
+    [6, "esbuild"],
+    [7, "esbuild"],
+    [8, "oxc"],
+  ];
+
+  // The tsconfig `jsx` values as hosts declare them. "unset" is what TS
+  // treats as preserve — the shape that kills every spec when the only
+  // mechanism is absent for the vite running.
+  const HOST_SHAPES: Array<{
+    label: string;
+    tsconfig: { compilerOptions?: { jsx?: string } };
+    readback: string | undefined;
+  }> = [
+    { label: "preserve", tsconfig: { compilerOptions: { jsx: "preserve" } }, readback: "preserve" },
+    {
+      label: "react-jsx",
+      tsconfig: { compilerOptions: { jsx: "react-jsx" } },
+      readback: "react-jsx",
+    },
+    { label: "unset", tsconfig: {}, readback: undefined },
+    { label: "classic", tsconfig: { compilerOptions: { jsx: "react" } }, readback: "react" },
+  ];
+
+  for (const shape of HOST_SHAPES) {
+    for (const [family, effective] of EFFECTIVE_KEY) {
+      test(`${shape.label} host on vite ${family}: the emitted key is the effective one`, () => {
+        const app = scratch(`guard-${shape.label}-${family}`);
+        writeJson(app, "tsconfig.json", shape.tsconfig);
+        // The scratch tsconfig must read back as the shape it claims, or the
+        // cell is not testing what its name says.
+        expect(new ModuleResolver().jsxFor(app)).toBe(shape.readback);
+        const jsxTransform = jsxTransformFor(family);
+        const content = renderConfig(path.join(app, "flawless"), true, jsxTransform);
+        expect(blockAfterMarker(content).keyLine).toBe(keyLineFor(effective));
+      });
+    }
+  }
 });
