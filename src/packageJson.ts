@@ -1,11 +1,18 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { stringifyLike } from "./scaffold/adoptStyle.ts";
 
 interface Pkg {
+  name?: string;
+  version?: string;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  workspaces?: string[] | { packages?: string[] };
+  catalogs?: Record<string, Record<string, string>>;
+  pnpm?: { catalog?: Record<string, string> };
   [key: string]: unknown;
 }
 
@@ -122,6 +129,15 @@ function versionInNodeModules(nmDir: string, name: string): string | undefined {
   }
 }
 
+/** The manifest at `<dir>/package.json`, or undefined when it is absent/unparseable. */
+function readManifest(dir: string): Pkg | undefined {
+  try {
+    return JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as Pkg;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The React the suite's own install has to match.
  *
@@ -204,12 +220,9 @@ export function appPackageRoot(fromDir: string): string | undefined {
 
 function resolveCatalog(
   range: string | undefined,
-  key: "react" | "react-dom",
+  key: string,
   dir: string,
-  pkg: {
-    catalogs?: Record<string, Record<string, string>>;
-    pnpm?: { catalog?: Record<string, string> };
-  },
+  pkg: Pkg,
 ): string | undefined {
   if (!range) return undefined;
   if (!range.startsWith("catalog:")) return range;
@@ -225,11 +238,7 @@ function resolveCatalog(
 // `catalog:` / `catalogs:` maps in a pnpm-workspace.yaml, without a YAML
 // parser: `  react: x` under a top-level catalog:, or one more indent under
 // catalogs:<name>: . A file with only the default catalog is unambiguous.
-function catalogFromYaml(
-  dir: string,
-  catalog: string | null,
-  key: "react" | "react-dom",
-): string | undefined {
+function catalogFromYaml(dir: string, catalog: string | null, key: string): string | undefined {
   let yaml: string;
   try {
     yaml = readFileSync(path.join(dir, "pnpm-workspace.yaml"), "utf8");
@@ -269,6 +278,314 @@ function catalogFromYaml(
 function bareVersion(range: string | undefined): string | undefined {
   const m = range?.match(/(\d+\.\d+\.\d+)/);
   return m?.[1];
+}
+
+/**
+ * The top major a version range can resolve to, read per npm's comparator
+ * grammar.
+ *
+ * A disjunction (`||`) is bounded by its WIDEST part — `^2 || ^5` installs 5,
+ * so it answers 5. Within a part the comparators AND: an upper bound caps the
+ * answer (`<X` → X−1, `<=X` → X, `^M`/`~M`/an exact `M.x.y` → M), a lower
+ * bound alone (`>`, `>=`) leaves the part open, and an open part answers
+ * `"unbounded"` — `*`, `latest` and a `>=X` with nothing above it all mean
+ * "whatever is newest". What carries no version at all — a dist tag, a
+ * `git+`/URL range, a `catalog:`/`workspace:` reference — answers undefined:
+ * no major can be read, and a caller deciding between "the host picked a
+ * version" and "the host's declaration is unreadable" must be able to tell.
+ * References resolve to a concrete version through the manifest context at
+ * the call sites that have one (hostViteFamily's legs); passed here raw they
+ * are the unreadable answer, never a guess.
+ */
+export function topMajorOf(range: string): number | "unbounded" | undefined {
+  const parts = range
+    .split("||")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return undefined;
+  let best: number | undefined;
+  for (const part of parts) {
+    const top = partTopMajor(part);
+    if (top === "unbounded") return "unbounded";
+    if (top === undefined) continue;
+    if (best === undefined || top > best) best = top;
+  }
+  return best;
+}
+
+function partTopMajor(part: string): number | "unbounded" | undefined {
+  if (part === "*" || part === "x" || part === "X" || part === "latest") return "unbounded";
+  if (/^(git\+|https?:|file:)/.test(part)) return undefined;
+  if (part.startsWith("workspace:") || part.startsWith("catalog:")) return undefined;
+  let upper: number | undefined;
+  for (const comp of part.split(/\s+/)) {
+    const m = /^(<=|>=|<|>|~|\^)?(\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?)?$/.exec(comp);
+    if (!m) return undefined;
+    const op = m[1] ?? "";
+    const ver = m[2];
+    if (ver === undefined) continue; // a bare `>`/`>=`: a lower bound only
+    const major = Number(ver.split(/[.+~-]/)[0]);
+    if (!Number.isFinite(major)) return undefined;
+    switch (op) {
+      case "<":
+        // strictly below: `<6.0.0` tops out at 5.x, `<6` at 5.x too
+        upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, major - 1);
+        break;
+      case "<=":
+        upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, major);
+        break;
+      case ">":
+      case ">=":
+        break; // no upper contribution
+      case "^":
+      case "~":
+      case "":
+        // ^M (M>0) tops at M; ^0.x, ~M.m and an exact M.x.y all top at M too
+        upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, major);
+        break;
+    }
+  }
+  return upper === undefined ? "unbounded" : Math.max(upper, 0);
+}
+
+/**
+ * The vite MAJOR a vitest range runs on, from the shipped package.json files
+ * (the declared range is the contract a fresh install honours — the installed
+ * copy outranks it, and is read separately in installedViteFamilyAt):
+ *
+ *   vitest 2.1.9  → vite `^5.0.0`
+ *   vitest 3.x    → vite `^5.0.0 || ^6.0.0 || ^7.0.0-0`
+ *   vitest 4.1.12 → vite `^6.0.0 || ^7.0.0 || ^8.0.0`
+ *   vitest 5.1.0  → vite `^6.4.0 || ^7.0.0 || ^8.0.0` (peer)
+ *
+ * The answer is the TOP of the range: `^6.0.0 || ^7.0.0 || ^8.0.0` CAN
+ * install vite 8, and a config written only for the family the range floors
+ * at goes red the moment a fresh install picks the top — so it is written
+ * for the worst case. Majors nobody has shipped and unbounded ranges answer
+ * 8, the newest family, for the same reason. Unreadable answers 8 here too:
+ * a direct range→family conversion has no "yield" to fall back on.
+ */
+export function vitestRangeToViteFamily(range: string): number {
+  const top = topMajorOf(range);
+  if (top === undefined || top === "unbounded") return 8;
+  if (top === 2) return 5;
+  if (top === 3) return 7;
+  return 8;
+}
+
+/**
+ * The JSX mechanism the emitted vitest config must declare, for the vite
+ * generation the suite runs on (hostViteFamily's answer). Measured, not
+ * chosen:
+ *
+ * vite ≤ 7 — the transformer is esbuild. vite 7.3.7's dist carries NO oxc
+ * machinery (no `vite:oxc` plugin, no `convertEsbuildConfigToOxcConfig`, no
+ * both-set warning), so an `oxc` key is inert there and `esbuild: { jsx:
+ * "automatic" }` is the only spelling that works.
+ *
+ * vite 8 — the transformer is oxc, and vitest 4/5 ALWAYS inject their own
+ * `oxc: { target: … }` default (4.1.12: `target: viteConfig.oxc?.target ||
+ * "node18"`; 5.1.0: `target ??= "node22"`). Vite 8's resolveConfig then finds
+ * BOTH an `esbuild` and an `oxc` key, discards the esbuild one with a "Both
+ * esbuild and oxc options were set" warning on every run, and jsx falls back
+ * to the tsconfig — where a host `"jsx": "preserve"` (Next's own) leaves raw
+ * JSX that dies when vite re-parses its own transform output: `Parse
+ * failure: Unexpected JSX expression`, every spec file.
+ * `oxc: { jsx: { runtime: "automatic" } }` is the only variant measured green
+ * on every host tsconfig shape (preserve / react-jsx / unset / classic) with
+ * no warning — an explicit jsx wins over the tsconfig on both transformers.
+ */
+export function jsxTransformFor(family: number): "esbuild" | "oxc" {
+  return family < 8 ? "esbuild" : "oxc";
+}
+
+/**
+ * A declared dependency range as a concrete range: `catalog:` references
+ * resolve through the declaring manifest's catalogs (or its sibling
+ * pnpm-workspace.yaml), `workspace:` references through the nearest workspace
+ * root's member packages — anything else passes through untouched. A
+ * reference that cannot be resolved answers undefined (unreadable), never a
+ * guess: an unreadable preference is not a disagreement.
+ */
+function resolveDeclaredRange(
+  range: string,
+  depName: string,
+  dir: string,
+  pkg: Pkg,
+): string | undefined {
+  if (range.startsWith("catalog:")) return resolveCatalog(range, depName, dir, pkg);
+  if (range.startsWith("workspace:")) return workspacePackageVersion(dir, depName);
+  return range;
+}
+
+/**
+ * The version a `workspace:` range answers, through the NEAREST workspace
+ * root — the manifest at `dir` or one hop up that declares `workspaces` —
+ * reading the member package named `name` (literal dirs and single-star dir
+ * globs only, the same supported subset the workspace map honours;
+ * negations and `node_modules` globs skipped, the never-walk invariant
+ * intact). Unresolvable answers undefined.
+ */
+function workspacePackageVersion(fromDir: string, name: string): string | undefined {
+  const start = path.resolve(fromDir);
+  for (const dir of [start, path.dirname(start)]) {
+    const root = readManifest(dir);
+    if (!root) continue;
+    const globs = Array.isArray(root.workspaces) ? root.workspaces : root.workspaces?.packages;
+    if (!globs) continue;
+    for (const glob of globs) {
+      if (typeof glob !== "string" || glob.startsWith("!") || glob.includes("node_modules"))
+        continue;
+      for (const member of workspaceMemberDirs(dir, glob)) {
+        const manifest = readManifest(member);
+        if (manifest?.name === name && typeof manifest.version === "string") {
+          return manifest.version;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The member dirs one glob names, at the supported subset (see workspacePackageVersion). */
+function workspaceMemberDirs(rootDir: string, glob: string): string[] {
+  if (!glob.includes("*")) return [path.resolve(rootDir, glob)];
+  if (glob !== "*" && !glob.endsWith("/*")) return [];
+  if (glob !== "*" && glob.lastIndexOf("*") !== glob.length - 1) return [];
+  const parent = path.resolve(rootDir, glob === "*" ? "." : glob.slice(0, -2));
+  if (path.basename(parent) === "node_modules") return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(parent);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e !== "node_modules" && !e.startsWith("."))
+    .map((e) => path.join(parent, e));
+}
+
+/**
+ * The vite family ONE store (a dir carrying a node_modules) answers with, in
+ * the order the graph actually loads: the store-root vite first (the hoisted
+ * copy a fresh bun install lands), then vitest's own nested copy, then the
+ * vite range the INSTALLED VITEST's manifest declares (dependencies before
+ * peers before optional — the contract a fresh install honours when no copy
+ * is present), then the table by the installed vitest's major. A store
+ * without a vitest in it answers undefined — it is not a store for this
+ * question, and the walk continues above it.
+ */
+function installedViteFamilyAt(storeDir: string): number | undefined {
+  const nm = path.join(storeDir, "node_modules");
+  if (!existsSync(nm)) return undefined;
+  const rootVite = versionInNodeModules(nm, "vite");
+  const rootMajor = rootVite === undefined ? undefined : viteMajorOf(rootVite);
+  if (rootMajor !== undefined) return rootMajor;
+  const nested = versionInNodeModules(path.join(nm, "vitest", "node_modules"), "vite");
+  const nestedMajor = nested === undefined ? undefined : viteMajorOf(nested);
+  if (nestedMajor !== undefined) return nestedMajor;
+  const vitestPkg = readManifest(path.join(nm, "vitest"));
+  if (vitestPkg?.name !== "vitest") return undefined;
+  for (const field of ["dependencies", "peerDependencies", "optionalDependencies"] as const) {
+    const range = vitestPkg[field]?.vite;
+    if (!range) continue;
+    const resolved = resolveDeclaredRange(range, "vite", storeDir, vitestPkg);
+    if (resolved !== undefined) return vitestRangeToViteFamily(resolved);
+  }
+  if (typeof vitestPkg.version === "string") return vitestRangeToViteFamily(vitestPkg.version);
+  return undefined;
+}
+
+function viteMajorOf(version: string): number | undefined {
+  const m = /^(\d+)/.exec(version);
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * A dir carrying a repo root marker: the walk-up boundary for stores.
+ * Beyond the repo there is no project for this question to be about — a
+ * vitest in some tooling's home directory must not answer for the app.
+ */
+function isRepoBoundary(dir: string): boolean {
+  return (
+    existsSync(path.join(dir, ".git")) ||
+    existsSync(path.join(dir, "bun.lock")) ||
+    existsSync(path.join(dir, "bun.lockb"))
+  );
+}
+
+/**
+ * The vite generation the suite's vitest runs on — the number
+ * jsxTransformFor switches on, and the answer the emitted config's JSX
+ * mechanism must be honest about. Four legs, in order, each answering only
+ * what it can prove:
+ *
+ * 1. An INSTALLED vitest, walking up from the suite dir. The nearest store
+ *    wins: a suite that installed its own manifest runs ITS vitest — that is
+ *    the copy its own test:unit script executes — and an app-store install
+ *    (the pattern the execution tests use) answers one hop up. The walk
+ *    stops after a dir carrying a .git or a bun lockfile, or at the
+ *    filesystem root (isRepoBoundary), so nothing above the repo is ever
+ *    consulted. Within a store, the installed vite outranks every declared
+ *    range (installedViteFamilyAt).
+ *
+ * 2. The SUITE MANIFEST's own vitest pin — `<suiteDir>/package.json`,
+ *    devDependencies before dependencies, references resolved — EXCEPT while
+ *    its pin is byte-identical to `fallbackRange`, the tool's own generated
+ *    default. A manifest holding the default the tool itself wrote last run
+ *    is not a declaration: it is this tool's own output, and letting it
+ *    answer would pin every fresh suite's config to the default's family no
+ *    matter what the host actually runs (a host on `^5` with a fresh
+ *    manifest would emit the esbuild spelling and red on vite 8). A pin the
+ *    user chose — anything different from the default — outranks the host:
+ *    the manifest is where the suite's install lives, and a boundary-
+ *    spanning host range (`^2 || ^5`) defangs the moment the manifest says
+ *    one thing.
+ *
+ * 3. The HOST-declared vitest, the same nearest-wins 8-hop walk
+ *    detectAppReact makes (starting at the suite's parent, devDependencies
+ *    before dependencies, references resolved). A range answers at its TOP —
+ *    `>=2 <6` installs 5, so the config must be written for vite 8. An
+ *    unreadable pin (a `workspace:*` no workspace root answers, a git/URL
+ *    range) yields to the next hop rather than guessing.
+ *
+ * 4. `fallbackRange` itself — the tool's own default, the answer when
+ *    nothing on the machine declared a version.
+ */
+export function hostViteFamily(opts: { suiteDir: string; fallbackRange: string }): number {
+  const suiteDir = path.resolve(opts.suiteDir);
+  let dir = suiteDir;
+  for (;;) {
+    const store = installedViteFamilyAt(dir);
+    if (store !== undefined) return store;
+    const up = path.dirname(dir);
+    if (up === dir || isRepoBoundary(dir)) break;
+    dir = up;
+  }
+  const manifest = readManifest(suiteDir);
+  const declared = manifest?.devDependencies?.vitest ?? manifest?.dependencies?.vitest;
+  const resolved =
+    declared !== undefined && manifest !== undefined
+      ? resolveDeclaredRange(declared, "vitest", suiteDir, manifest)
+      : undefined;
+  if (resolved !== undefined && resolved !== opts.fallbackRange) {
+    return vitestRangeToViteFamily(resolved);
+  }
+  dir = path.dirname(suiteDir);
+  for (let hop = 0; hop < 8; hop++) {
+    const host = readManifest(dir);
+    if (host) {
+      const range = host.devDependencies?.vitest ?? host.dependencies?.vitest;
+      if (range !== undefined) {
+        const concrete = resolveDeclaredRange(range, "vitest", dir, host);
+        if (concrete !== undefined) return vitestRangeToViteFamily(concrete);
+      }
+    }
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return vitestRangeToViteFamily(opts.fallbackRange);
 }
 
 /**
