@@ -25,7 +25,12 @@ import {
 import { appReactMajor } from "./packageJson.ts";
 import { configRootFor, detectReactCompiler } from "./reactCompiler.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
-import { type UnparseableFile, writeReportMarkdown } from "./reporters/report.ts";
+import {
+  collectNamedSkips,
+  SPEC_FILE,
+  type UnparseableFile,
+  writeReportMarkdown,
+} from "./reporters/report.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { restampGenerated } from "./scaffold-tests/stamp.ts";
@@ -827,6 +832,23 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     trees,
     results,
     outDir,
+    // The chunk-9 skip census: every test.skip generation emitted into a
+    // spec file, counted here so REPORT.md can say how many tests skip and
+    // why without running the suite. The suite dirs are scanned as well as
+    // the run's outputs, because a write-once colocated spec that was kept
+    // is not "written" this run but is still part of the suite.
+    namedSkips: collectNamedSkips(
+      results.flatMap((r) => r.outputs),
+      [
+        // Everything the suite itself holds: in-outDir specs by name, and in
+        // the app tree only the tool's own colocated specs — the host's own
+        // *.test.tsx files are not this suite's skips.
+        { dir: outDir, pattern: SPEC_FILE },
+        ...(nextCtx
+          ? [{ dir: nextCtx.root, pattern: /\.flawless\.(test|spec)\.[cm]?[jt]sx?$/ }]
+          : []),
+      ],
+    ),
     projectRoot: nextCtx?.root,
     unparseable,
     unresolvable,

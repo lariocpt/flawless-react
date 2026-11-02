@@ -1,3 +1,4 @@
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { UnresolvableImport } from "../analyse/bootability.ts";
 import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
@@ -21,6 +22,66 @@ import { VERSION } from "../version.ts";
 export interface UnparseableFile {
   file: string;
   reason: string;
+}
+
+/**
+ * One emitted `test.skip` with the reason carried in its title. The chunk-9
+ * skip contract: a skip must NAME what it cannot do, and the count must be
+ * auditable without running the suite — so generation counts the skips it
+ * emitted, and REPORT.md renders them.
+ */
+export interface NamedSkip {
+  /** The spec file that carries the skip (already relative-ready). */
+  file: string;
+  /** The skip's title, verbatim — the reason lives in it after the "—". */
+  title: string;
+}
+
+export const SPEC_FILE = /\.(flawless\.)?(test|spec)\.[cm]?[jt]sx?$/;
+
+/**
+ * Extract every `test.skip("<title>"…)` from the given spec files, plus every
+ * spec file found under `scanRoots` (a kept write-once colocated spec is not
+ * in the run's outputs, but it is still part of the suite the report counts).
+ * Titles are captured verbatim, including `${…}` interpolations in
+ * template-literal titles — this is a generation-time census of what
+ * generation emitted, not a runtime result, and it never executes the spec.
+ */
+export function collectNamedSkips(
+  files: readonly string[],
+  scanRoots: readonly { dir: string; pattern: RegExp }[] = [],
+): NamedSkip[] {
+  const targets = new Set(files.filter((f) => SPEC_FILE.test(f)));
+  const walk = (dir: string, pattern: RegExp): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs, pattern);
+      else if (pattern.test(e.name)) targets.add(abs);
+    }
+  };
+  for (const root of scanRoots) walk(root.dir, root.pattern);
+  const out: NamedSkip[] = [];
+  for (const file of [...targets].sort()) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (!line.includes("test.skip(")) continue;
+      const m = /test\.skip\(\s*(?:true,\s*)?(["`])((?:(?!\1)[^\\]|\\.)*)\1/.exec(line);
+      if (m?.[2]) out.push({ file, title: m[2] });
+    }
+  }
+  return out;
 }
 
 export interface ReportInput {
@@ -54,6 +115,11 @@ export interface ReportInput {
    * the run's log line is invisible under --ci and programmatic use.
    */
   keptScripts?: readonly string[];
+  /**
+   * The skips generation emitted into the specs, counted so a suite cannot
+   * go quietly yellow. Collected from the written spec files (collectNamedSkips).
+   */
+  namedSkips?: readonly NamedSkip[];
 }
 
 export function renderReportMarkdown(input: ReportInput): string {
@@ -415,6 +481,34 @@ export function renderReportMarkdown(input: ReportInput): string {
       a.file === b.file ? (a.name < b.name ? -1 : 1) : a.file < b.file ? -1 : 1,
     )) {
       lines.push(`| \`${e.name}\` | \`${e.file}\` | ${e.reason} |`);
+    }
+    lines.push("");
+  }
+
+  // --- named skips ----------------------------------------------------------
+  // The chunk-9 skip contract, counted at generation time: every emitted
+  // test.skip carries its reason in its title, and this section makes the
+  // count auditable without running the suite. A skip that names no reason
+  // is a tool defect (the guard test in the dogfood baseline reddens one).
+  lines.push("## Named skips", "");
+  const namedSkips = [...(input.namedSkips ?? [])].sort((a, b) =>
+    rel(a.file) === rel(b.file) ? (a.title < b.title ? -1 : 1) : rel(a.file) < rel(b.file) ? -1 : 1,
+  );
+  if (namedSkips.length === 0) {
+    lines.push("No emitted spec skips a test by name.", "");
+  } else {
+    lines.push(
+      `${namedSkips.length} emitted test(s) skip by name. Every skip title carries its`,
+      "reason — a capability the host cannot provide or a fixture this analysis",
+      "could not synthesise. Runtime skips a test declares for itself (`t.skip()`)",
+      "are counted by the runner, not here: generation cannot see a run it did",
+      "not make.",
+      "",
+      "| Spec | Skipped test |",
+      "| --- | --- |",
+    );
+    for (const s of namedSkips) {
+      lines.push(`| \`${rel(s.file)}\` | ${s.title} |`);
     }
     lines.push("");
   }

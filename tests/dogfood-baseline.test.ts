@@ -290,6 +290,20 @@ test("no emitted spec wraps a resolve or a render in a bare swallow", () => {
   expect(bare).toEqual([]);
 });
 
+test("REPORT.md counts the named skips the suite emits", () => {
+  // FIX-PLAN: chunk 9 — the skip contract, auditable: every emitted
+  // test.skip carries its reason in its title, and REPORT.md counts them so
+  // a suite cannot go quietly yellow.
+  const report = readOut("REPORT.md");
+  expect(report).toContain("## Named skips");
+  const m = /(\d+) emitted test\(s\) skip by name/.exec(report);
+  expect(m).not.toBeNull();
+  // The count is not decorative: the fixture's one generation-time named
+  // skip (the store-provider interaction guard) is in the table by name.
+  expect(Number(m?.[1])).toBeGreaterThanOrEqual(1);
+  expect(report).toContain("interactions need a fixture");
+});
+
 test("defect 8: MCP stdio exit has a permanent stdio-client test", () => {
   // FIX-PLAN: chunk 7 — FLIPPED. The stdio client landed: the
   // "mcp exit contract" tests in tests/mcp.test.ts spawn a real
