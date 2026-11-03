@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { underOutDir } from "../emitPaths.ts";
-import { stringifyLike } from "../scaffold/adoptStyle.ts";
+import { ESLINTRC_CONFIG_NAMES, stringifyLike } from "../scaffold/adoptStyle.ts";
 import {
   type NextjsApiRoute,
   type NextjsContext,
@@ -206,18 +206,10 @@ const PRETTIER_CONFIG_NAMES = [
   "prettier.config.js",
   "prettier.config.cjs",
 ];
-// The ES-LINT-RC family only. eslint.config.* is the flat config, and a flat
-// config does not read .eslintignore at all — writing the file there would be
-// dead weight that outlives the migration to make it seem supported.
-const ESLINTRC_CONFIG_NAMES = [
-  ".eslintrc",
-  ".eslintrc.js",
-  ".eslintrc.cjs",
-  ".eslintrc.json",
-  ".eslintrc.json5",
-  ".eslintrc.yaml",
-  ".eslintrc.yml",
-];
+// The ES-LINT-RC family only (shared with the style pass in adoptStyle.ts,
+// which owns the list). eslint.config.* is the flat config, and a flat config
+// does not read .eslintignore at all — writing the file there would be dead
+// weight that outlives the migration to make it seem supported.
 
 /**
  * Make the repo's own formatter and linter skip the suite directory.

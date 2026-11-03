@@ -392,9 +392,10 @@ the output dir:
   wrap list is closed under requirements and ordered outermost-first; the
   user's `--provider` rides outside the whole nest.
 - **Style adoption** — `scaffold/adoptStyle.ts` reformats everything written
-  with the host project's own biome or prettier, and JSON merges preserve the
-  file's existing indentation. Generation should read as an additive diff, not
-  a reformat.
+  with the host project's own biome, prettier or eslint, and JSON merges
+  preserve the file's existing indentation. A host carrying several is
+  formatted by the first of the chain it carries, in that order. Generation
+  should read as an additive diff, not a reformat.
 
 ## The docs are part of the deliverable
 
