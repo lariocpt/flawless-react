@@ -20,16 +20,18 @@ import { suitePackageJson } from "../src/scaffold-tests/index.ts";
  *
  * A flat-config host leaves no filesystem trace from that pass:
  * ensureFormatterIgnores writes .eslintignore for the eslintrc family only,
- * and --fix on the template output is a measured no-op — none of the errors
- * pinned below is auto-fixable. The pass is therefore proven by runCore's
- * stdout (the `style:` line naming the formatter), and its effect is
- * measured by the HOST's own eslint over the two trees the run wrote.
+ * and --fix is a measured no-op on this output. The pass is therefore proven
+ * by runCore's stdout (the `style:` line naming the formatter), and its
+ * effect is measured by the HOST's own eslint over the two trees the run
+ * wrote.
  *
- * The pinned set is the gap as measured on the CONTROL binary (main at
- * 376023e, built the same way) on a fresh copy of this fixture: 32 errors /
- * 0 warnings. None of them is auto-fixable, so the pass's --fix clears
- * nothing — every one is a template defect, and the template work this
- * chunk lands exists to make the next measurement read zero.
+ * The CONTROL (main at 376023e, built the same way, fresh copy of this
+ * fixture) measured 32 errors / 0 warnings / exit 1 there — 10
+ * no-useless-escape and 22 @typescript-eslint/no-unused-vars, none of them
+ * auto-fixable, every one a template defect. The branch's own binary
+ * measured 0 / 0 / exit 0 on the identical sequence once those templates
+ * were fixed, and the pins below now hold that closed state: any re-emerging
+ * defect names its rule and its file.
  */
 
 const FIXTURE = path.resolve(__dirname, "fixtures", "eslint-next-app");
@@ -49,28 +51,15 @@ const RUNNERS = [
 ];
 
 /**
- * The gap as measured (control binary, fresh fixture copy): the host's own
- * eslint over `src flawless` exits 1 with exactly these 32 errors — 10
- * no-useless-escape (8 in host/server.ts, 2 in vitest.config.mts) and 22
- * @typescript-eslint/no-unused-vars across the suite's configs and specs.
+ * The acceptance state as measured on THIS branch's binary (the template
+ * work included, built the same way) on a fresh copy of this fixture: the
+ * host's own eslint over `src flawless` exits 0 with no errors and no
+ * warnings. The control measured the 32/0/exit 1 gap above; a regression in
+ * any template re-emerges here with its rule and file named.
  */
-const EXPECTED_EXIT = 1;
-const EXPECTED_BY_RULE: Record<string, number> = {
-  "no-useless-escape": 10,
-  "@typescript-eslint/no-unused-vars": 22,
-};
-const EXPECTED_ERROR_FILES: Record<string, number> = {
-  "flawless/host/server.ts": 8,
-  "flawless/playwright.config.ts": 1,
-  "flawless/profile/HomePage.profile.spec.ts": 3,
-  "flawless/profile/Providers.profile.spec.ts": 3,
-  "flawless/profile/Toast.profile.spec.ts": 3,
-  "flawless/vitest.config.mts": 2,
-  "src/app/items/[id]/page.flawless.test.tsx": 3,
-  "src/app/page.flawless.test.tsx": 2,
-  "src/components/Providers.flawless.test.tsx": 3,
-  "src/components/Toast.flawless.test.tsx": 4,
-};
+const EXPECTED_EXIT = 0;
+const EXPECTED_BY_RULE: Record<string, number> = {};
+const EXPECTED_ERROR_FILES: Record<string, number> = {};
 
 /**
  * Non-vacuity: the complete set of 40 JS files the host's eslint linted in
