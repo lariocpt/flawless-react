@@ -26,8 +26,9 @@ and from the suite's own `test:unit` entry point.
 | `src/app/promise-child/page.tsx` | async page with a PROMISE as a child (React 19 suspense-data) and two children so the flattening key-warning fires | #7 shape (a) |
 | `src/app/promise-prop/page.tsx` + `src/components/ReportTitle.tsx` | async page passing a PROMISE-VALUED PROP into a client child that renders it directly — the shape `resolveAsyncUi` ignored | #7 shape (b) |
 | `src/app/nested/page.tsx` + `src/components/Outer.tsx` + `src/components/Inner.tsx` | async component rendered by an async page, itself rendering an async component | #7 shape (c) |
-| `src/lib/data.ts` `loadHeading()` | a promise handed to JSX UNAWAITED, resolving on a macrotask so a late resolution can land outside act() | #7 |
-| `src/components/InboxList.tsx` | client component calling a synchronous zustand selector and `.map`ping its result | #4 |
+| `src/lib/data.ts` | `loadHeading()` — a promise handed to JSX UNAWAITED, resolving on a macrotask so a late resolution can land outside act(); `signOff()` — the export only the non-analysed `labels.ts` names, which the page's evidenced import forces the mock to cover anyway | #7, #13 |
+| `src/lib/labels.ts` | plain (non-component) lib the analysis never opens (entry pattern `*.tsx`, never tagged); its module-scope import of `signOff` from `./data` makes the mocked data module load through a file the analysis never read | #13 |
+| `src/components/InboxList.tsx` | client component calling a synchronous zustand selector and `.map`ping its result; imports `signatureLine` from `@/lib/labels` — type FIRST, value second, the load-bearing order — and renders its output in a `.sig` span | #4, #13 |
 | `src/components/providers/store-provider.tsx` | real zustand store (sync `useStore` hooks) | #4 |
 | `src/app/api/[[...route]]/route.ts` | hono-style catch-all API router | #5 |
 
@@ -147,3 +148,31 @@ awaited" half was wrong; only promise-valued PROPS reproduced the empty containe
 arrays, render through `Suspense` + awaited `act` + `waitFor` settle): **10 files, 16 passed /
 1 skipped / 0 failed, zero stderr** — no key warning, no act warning, the skipped test is the
 store-provider interaction guard (named, counted in REPORT.md's "Named skips").
+
+## Unit plane after chunk 13 (defect #13's standing shape)
+
+`src/lib/labels.ts` + the re-wired `src/components/InboxList.tsx` carry defect
+#13: `InboxList` imports `signatureLine` from a lib the analysis never opens
+(the entry pattern is `*.tsx`, and nothing is tagged from `labels.ts`), and
+that lib imports `signOff` from the same `@/lib/data` module the page's
+evidenced `getInboxItems` import forces to mock. Before the fix the page
+spec's data factory covered only the evidenced importers, and the real
+`labels.ts` died at import time on the missing export — the 2 Nov triage
+measured **2 failed** with
+`Error: [vitest] No "signOff" export is defined on the "@/lib/data" mock`.
+
+The import statement order in `InboxList` (type FIRST, value second) is
+load-bearing: it is the merge order, and only a type-only merge base keeps
+the `@/lib/labels` view type-only, which is what keeps the module REAL and
+lets its own `./data` import run against the mock. A value-first order mocks
+labels and hides the hazard. The plan's #13 section carries the receipts and
+says which seam shipped.
+
+The fix folds the non-analysed importer's own import lines into the per-module
+mock view (analysis-side, one hop, through the shared source cache), so the
+factory covers `signOff` (graph-only: the honest `{}` stub plus the "guessed"
+note) while `@/lib/labels` stays real. `tests/mockFactoryExtension.test.ts`
+renders the real page and asserts the signOff output in the DOM. The
+after-tallies of the full unit-plane run are recorded once the deferred gate
+runs land on the verification host — nothing here is quoted before it is
+measured.
