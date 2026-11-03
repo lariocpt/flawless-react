@@ -161,7 +161,13 @@ function mergeInto(groups: Map<string, MergedModule>, mi: ModuleImportInfo, key:
     if (mi.typeOnlyNames?.includes(local)) return;
     const moduleName = membershipName(mi, i);
     const isDefault = mi.hasDefault && i === 0;
-    const graphOnly = !isDefault && mi.mergedNames?.includes(local) === true;
+    // mergedNames marks the names this statement merely CARRIES — added by
+    // the tree walk or a graph-extension synthetic (defect #13), never
+    // evidenced by a call site — so they are covered, never a vote. A
+    // default reaches mergedNames only through a synthetic (mergeImport
+    // skips a late default), and a non-analysed importer's default import
+    // must not force a factory the render's own call sites never earned.
+    const graphOnly = mi.mergedNames?.includes(local) === true;
     // Dedup on the MODULE-side name: the factory keys on it, and two files
     // importing { toast } and { toast as t } must produce ONE `toast:` entry,
     // not two — a duplicate key in the factory object is at best noise. A
@@ -487,6 +493,12 @@ function reachesDataPath(mi: ModuleImportInfo): boolean {
   ) {
     return false;
   }
+  // A graph-extension synthetic (defect #13) carries no call-site evidence,
+  // so its `kind` comes from the non-analysed file's own JSX roots — a
+  // component there would be dropped by the `kind === "value"` gate below
+  // and its names never merged. The allowlist above already refused the
+  // special-cased specifiers; MOCK_SKIP keeps assets out.
+  if (mi.graphExtension) return !MOCK_SKIP.test(mi.specifier);
   return mi.kind === "value" && !MOCK_SKIP.test(mi.specifier);
 }
 

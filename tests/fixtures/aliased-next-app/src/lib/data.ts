@@ -21,3 +21,15 @@ export async function getInboxItems(): Promise<InboxItem[]> {
 export function loadHeading(): Promise<string> {
   return new Promise((resolve) => setTimeout(() => resolve("Quarterly report"), 10));
 }
+
+/**
+ * A data call the render graph reaches only through src/lib/labels.ts — a
+ * file the analysis never opens (a lib, never an entry, never a rendered
+ * tag). The page's evidenced getInboxItems import forces this module's
+ * mock, so the factory must still export signOff or the real labels.ts dies
+ * at import time with `No "signOff" export is defined on the "@/lib/data"
+ * mock` (defect #13).
+ */
+export function signOff(): string {
+  return "Signed";
+}

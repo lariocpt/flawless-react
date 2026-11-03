@@ -210,7 +210,7 @@ export function collectImports(sf: ts.SourceFile): Map<string, ImportBinding> {
   return out;
 }
 
-function collectModuleImports(
+export function collectModuleImports(
   sf: ts.SourceFile,
   imports: Map<string, ImportBinding>,
 ): ModuleImportInfo[] {
