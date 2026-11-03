@@ -131,7 +131,7 @@ function mockBlockOf(spec: string): string {
   if (start === -1) return "";
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^import[ \t]/.test(lines[i])) {
+    if (/^import[ \t]/.test(lines[i] ?? "")) {
       end = i;
       break;
     }

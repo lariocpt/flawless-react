@@ -815,10 +815,18 @@ async function analyseOne(
       // sites).
       const runtimeNames = up.names.filter((n) => !up.typeOnlyNames?.includes(n));
       if (runtimeNames.length === 0) continue;
+      // Read into a local BEFORE the contextually-typed literal: tsc 5.9.3
+      // re-checks a spread's condition against the literal's contextual type
+      // and drops the `?.` guard's narrowing there (TS18048 on
+      // `up.importedNames?.length` — the same expression type-checks fine as a
+      // plain statement, which a scratch bisection confirmed). A const local
+      // keeps its narrowing on every reference. Identical behaviour: `[]`
+      // fails both `?.length > 0` and `x && x.length > 0`.
+      const importedNames = up.importedNames;
       const synthetic: ModuleImportInfo = {
         specifier: up.specifier,
         names: up.names,
-        ...(up.importedNames?.length > 0 ? { importedNames: up.importedNames } : {}),
+        ...(importedNames && importedNames.length > 0 ? { importedNames } : {}),
         ...(up.typeOnlyNames ? { typeOnlyNames: up.typeOnlyNames } : {}),
         kind: up.kind,
         isTypeOnly: false,
