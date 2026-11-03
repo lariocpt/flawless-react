@@ -6,15 +6,43 @@ import path from "node:path";
  * Make generated files conform to the HOST project's formatter so flawless
  * output never churns a target repo's lint/format state. Detection walks up
  * from the project root: biome config → run the project's own biome;
- * prettier config → run prettier; neither → leave files untouched.
+ * prettier config → run prettier; eslint config → run eslint --fix; none of
+ * the three → leave files untouched. A host carrying several is formatted by
+ * the first of the chain it carries, in that order.
  * Failures are warnings, never task failures.
  */
 
 export interface AdoptStyleResult {
-  formatter: "biome" | "prettier" | "none";
+  formatter: "biome" | "prettier" | "eslint" | "none";
   formatted: number;
   warning?: string;
 }
+
+// eslint.config.* is the flat config; the .eslintrc* family is the legacy
+// format. Flat is probed first because a host carrying both is linted by
+// eslint's own flat-by-default resolution. The legacy list is shared with
+// nextjs/detect.ts' ensureFormatterIgnores, which must decide from the SAME
+// names whether a repo's .eslintignore is in force.
+export const FLAT_ESLINT_CONFIG_NAMES = [
+  "eslint.config.js",
+  "eslint.config.mjs",
+  "eslint.config.cjs",
+];
+export const ESLINTRC_CONFIG_NAMES = [
+  ".eslintrc",
+  ".eslintrc.js",
+  ".eslintrc.cjs",
+  ".eslintrc.json",
+  ".eslintrc.json5",
+  ".eslintrc.yaml",
+  ".eslintrc.yml",
+];
+
+// The extensions eslint can lint when passed explicitly. FORMATTABLE's
+// .json/.css/.md have no processor in the default configs, and passing a
+// file no config entry matches is a hard eslint error — so the eslint pass
+// filters them out rather than letting one bad extension sink the whole run.
+const JS_LINTABLE = /\.(tsx?|jsx?|mjs|cjs|mts|cts)$/;
 
 // .html is deliberately excluded: biome's HTML formatting is not stable enough
 // to churn the emitted host/index.html.
@@ -128,6 +156,56 @@ export async function adoptProjectStyle(
     };
   }
 
+  // eslint is last in the chain: a host that also carries biome or prettier is
+  // formatted by the first of the chain it carries — the documented contract,
+  // not a config preference.
+  const eslintDir =
+    findUp(projectRoot, FLAT_ESLINT_CONFIG_NAMES) ?? findUp(projectRoot, ESLINTRC_CONFIG_NAMES);
+  const hasEslintConfig = eslintDir !== undefined || packageJsonHasEslint(projectRoot);
+  if (hasEslintConfig) {
+    const cwd = eslintDir?.dir ?? projectRoot;
+    // eslint hard-errors on a file no config entry matches, and the default
+    // configs carry no processor for FORMATTABLE's .json/.css/.md — so the
+    // pass hands it only the JS family instead of letting one bad extension
+    // sink the whole run.
+    const jsFiles = files.filter((f) => JS_LINTABLE.test(f));
+    if (jsFiles.length === 0) return { formatter: "none", formatted: 0 };
+    // No `bunx` fallback (unlike prettier): a host eslint config is
+    // version-sensitive — flat vs legacy resolution depends on the installed
+    // major — and a floating registry install would lint with a different
+    // parser than the repo's own CI. A missing binary degrades to a warning,
+    // like the biome branch.
+    const bin = resolveLocalBin(cwd, "eslint") ?? Bun.which("eslint");
+    if (!bin) {
+      return {
+        formatter: "eslint",
+        formatted: 0,
+        warning: "eslint config found but no eslint binary",
+      };
+    }
+    // --fix only, never --fix-suggestions: the pass must not apply
+    // semantics-changing fixes. --no-ignore keeps the files the tool just
+    // wrote out of the repo's own ignore lists — flat `ignores`, or a
+    // .eslintignore that ensureFormatterIgnores appends the out dir to — so a
+    // run's own suite is not silently skipped on the next pass.
+    const proc = Bun.spawn([bin, "--fix", "--no-ignore", ...jsFiles], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const code = await proc.exited;
+    if (code === 0 || code === 1) {
+      // eslint exits 1 when unfixable errors remain — the pass still ran.
+      return { formatter: "eslint", formatted: jsFiles.length };
+    }
+    const stderr = await new Response(proc.stderr).text();
+    return {
+      formatter: "eslint",
+      formatted: 0,
+      warning: `eslint --fix exited ${code}: ${stderr.slice(0, 300)}`,
+    };
+  }
+
   return { formatter: "none", formatted: 0 };
 }
 
@@ -175,6 +253,17 @@ function packageJsonHasPrettier(projectRoot: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(found.file, "utf8")) as Record<string, unknown>;
     return pkg.prettier !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+function packageJsonHasEslint(projectRoot: string): boolean {
+  const found = findUp(projectRoot, ["package.json"]);
+  if (!found) return false;
+  try {
+    const pkg = JSON.parse(readFileSync(found.file, "utf8")) as Record<string, unknown>;
+    return pkg.eslintConfig !== undefined;
   } catch {
     return false;
   }

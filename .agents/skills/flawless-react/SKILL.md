@@ -339,10 +339,10 @@ shorthand for `--no-interactive --json`.
 
 ## Style
 
-Generated files are reformatted with the **host project's** biome or prettier
-before the run finishes, and JSON merges preserve the file's existing
-indentation — generation should produce a clean `git diff`, not a reformat of
-your `package.json`.
+Generated files are reformatted with the **host project's** biome, prettier
+or eslint before the run finishes, and JSON merges preserve the file's
+existing indentation — generation should produce a clean `git diff`, not a
+reformat of your `package.json`.
 
 ## Troubleshooting
 

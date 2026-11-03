@@ -1016,6 +1016,47 @@ imports #16 lists). **Chunk it** after #16, whose template hygiene half of the w
 suite passes the host's eslint with 0 errors (warnings named), or the PR states precisely which
 rule the suite cannot satisfy and why.
 
+**Measured — branch `fix/dogfood-031-chunk-17-eslint` (C1 `5329893`, C2 `911ee38`, C3
+`71e19cf`) over `main` at `376023e`**, both arms the same fixture
+(`tests/fixtures/eslint-next-app`) fresh-copied and the same standing invocation (all seven
+tasks, colocated), both binaries built `bun build --compile --minify … src/bin.ts` (141
+modules each):
+
+1. **Before (control, `376023e`):** no `style:` line in the tool log — the eslint host got
+   `formatter: "none"`, no style pass at all. The host's own `eslint src flawless --format
+   json` over the tool-written tree exits **1** over **40 of the 60** files on disk (the
+   JS-family filter; the 20 non-JS files match no config entry) with **32 errors / 0
+   warnings**: **10 `no-useless-escape`** (`flawless/host/server.ts` ×8 — the stub
+   `onResolve` filters, `vitest.config.mts` ×2 — the pnpm-alias raw patterns `[^\/]`) +
+   **22 `@typescript-eslint/no-unused-vars`** (10 files — `flawless/playwright.config.ts`
+   ×1, the 3 profile specs ×3 each, the 4 colocated specs ×2–4). None of the 32 is
+   auto-fixable (`--fix` is a measured no-op) — every one is a template defect.
+2. **After (treatment, `71e19cf`):** the tool log carries
+   `style: formatted 32 generated file(s) with the project's eslint`, and the host's own
+   eslint over the regenerated tree exits **0** over the same **40 files** with **0 errors /
+   0 warnings** (`byRule {}`). The fixture's devDeps resolve the floating pins to eslint
+   9.39.5 / @eslint/js 9.39.5 / typescript-eslint 8.72.1 / typescript 5.9.3 — the test's
+   0-warnings assertion is the tripwire if they drift.
+3. Pins: `tests/eslintHost.test.ts` now holds the closed state (exit 0, no errors, no
+   warnings, the 40-file required set unchanged) with the control's 32/0/exit 1 recorded in
+   its header; `tests/depReturnsExecution.test.ts` (the OpaquePanel uncertain-dep RSC
+   control) is the execution-side witness for the `t`-parameter deviation below. Gates on
+   the committed tree: `bun test` **1737 pass / 11 skip / 0 fail** (1748 tests / 116 files
+   = the 1729 baseline + 7 C1 tests + 1 C2 test), cold check **0 errors + the 2
+   pre-existing warnings**, `tsc --noEmit` clean.
+
+**Template lines #16 inherits** (its baseline must be re-measured on this tree, since these
+edits move exactly the hygiene its 33-warning receipt counts — the five are
+conditional-emission, the same pattern #16 needs against biome's `noUnusedImports`):
+(a) `vitestConfig` raw patterns via `regexLiteralSlashes` (in-class `\/` → `/`); (b) the
+`unitSpec` import prune (`describe`/`screen`/`waitFor`/`userEvent`, with `screen`'s
+`void screen` keep-alive shape — a deviation from the plan's `screen.`-only); (c) the
+`rscSpec` prune (`describe`/`vi`) plus the **conditional `t` parameter** — a second
+deviation, the plan's blanket removal was a `ReferenceError` on every uncertain-dep RSC
+spec because `uncertainEscape()` emits `t.skip()`; (d) the profile spec's `_helpers`/`_heap`
+imports built from the skip state (`repeatClick` de-imported, `takeHeapSnapshot` kept alive
+by the foot `void`); (e) the deleted unused `node:path` import in `playwrightConfig`.
+
 ### #14 — deferred with a named trigger
 
 Not re-measured this session; the chunk 5 write-up stands (default live-spec fetch fails silently

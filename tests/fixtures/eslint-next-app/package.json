@@ -1,0 +1,17 @@
+{
+  "name": "eslint-next-app",
+  "scripts": {
+    "dev": "next dev -p 3123"
+  },
+  "dependencies": {
+    "next": "15.0.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.72.1"
+  }
+}

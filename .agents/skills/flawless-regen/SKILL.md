@@ -114,8 +114,8 @@ Never take stdout as evidence — write evidence to files and check the disk:
 
 ## Style adoption
 
-Generated files are reformatted with the host project's biome or prettier
-(including `.mts`/`.cts` configs), and JSON merges preserve the file's
+Generated files are reformatted with the host project's biome, prettier or
+eslint (including `.mts`/`.cts` configs), and JSON merges preserve the file's
 indentation — a regeneration should produce a semantic diff, never a reformat.
 If `biome ci` errors on a generated file after a regen, that is a tool bug;
 report it rather than hand-formatting generated output.

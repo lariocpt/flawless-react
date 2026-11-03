@@ -597,9 +597,11 @@ function vitestConfig(opts: UnitBrowserRenderOptions): string {
         : `path.resolve(configDir, ${rel})`;
       // Raw patterns are emitted as regex LITERALS, so every "/" in the
       // source must carry a backslash — an unescaped one would terminate the
-      // literal mid-pattern and leave the config unparseable.
+      // literal mid-pattern and leave the config unparseable. Only outside
+      // character classes: inside one a bare "/" is already literal, and the
+      // escape would be a no-useless-escape violation in the host's lint.
       const find = a.raw
-        ? `/${a.find.replace(/\//g, "\\/")}/`
+        ? `/${regexLiteralSlashes(a.find)}/`
         : a.prefix
           ? `/^${escapeRegex(a.find)}/`
           : `/^${escapeRegex(a.find)}$/`;
@@ -875,6 +877,35 @@ ${resolveBlock}  test: {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
+// The raw-pattern counterpart of escapeRegex: the source is already regex
+// text, so only the "/" is special to the LITERAL — and a "/" inside a
+// character class is not special at all, where the blanket replace used to
+// emit `[^\/]`, a useless escape that the host's no-useless-escape flags.
+// Walk the pattern, letting escape pairs pass through untouched (an escaped
+// "[" or "]" is not a class boundary, and re-escaping the escaped char would
+// corrupt the pattern) and escaping a bare "/" only outside a class.
+function regexLiteralSlashes(s: string): string {
+  let out = "";
+  let inClass = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "\\") {
+      out += s.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (ch === "[") {
+      inClass = true;
+    } else if (ch === "]") {
+      inClass = false;
+    } else if (ch === "/" && !inClass) {
+      out += "\\";
+    }
+    out += ch;
+  }
+  return out;
 }
 
 function setupTs(
@@ -1609,6 +1640,57 @@ afterAll(() => server.close());
 // Client-component unit spec
 // ---------------------------------------------------------------------------
 
+/**
+ * Prunes import bindings the assembled spec never references.
+ *
+ * Each candidate carries the reference shapes its uses take in emitted code —
+ * a call, a member read, or the `void x;` keep-alive the specs emit for a
+ * binding they import but cannot use. Every shape is chosen so the import
+ * line itself never matches: the line lists the bare name, and `screen`
+ * inside `{ render, screen, waitFor }` is neither `screen.` nor `void
+ * screen`, so the scan may run over the whole file. The bias is toward
+ * KEEPING — a name inside a string literal or a comment keeps its import,
+ * because a dropped binding the spec turns out to need is a ReferenceError,
+ * while a kept one is nothing.
+ *
+ * Braced lists are rebuilt as `import { a, b } from "mod";` — byte-identical
+ * when nothing dropped. A default import whose name is pruned is removed
+ * with its line, leaving no blank where it stood.
+ */
+export function dropUnusedImportNames(
+  code: string,
+  candidates: Array<{ name: string; refs: RegExp[] }>,
+): string {
+  const drop = new Set(
+    candidates.filter((c) => c.refs.every((re) => !re.test(code))).map((c) => c.name),
+  );
+  if (drop.size === 0) return code;
+  const out: string[] = [];
+  for (const line of code.split("\n")) {
+    const braced = line.match(/^import\s*\{([^}]*)\}\s*from\s*("[^"]*");\s*$/);
+    if (braced?.[1]) {
+      const names = braced[1]
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const kept = names.filter((n) => !drop.has(n));
+      if (kept.length === names.length) {
+        out.push(line);
+      } else if (kept.length > 0) {
+        out.push(`import { ${kept.join(", ")} } from ${braced[2]};`);
+      }
+      continue;
+    }
+    const single = line.match(/^import\s+([A-Za-z_$][\w$]*)\s+from\s*("[^"]*");\s*$/);
+    if (single?.[1]) {
+      if (!drop.has(single[1])) out.push(line);
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function unitSpec(
   c: FlatComponent,
   variants: number,
@@ -1770,7 +1852,7 @@ function unitSpec(
   const mocks = emitModuleMocks(info, "client", specDir, todo).statements;
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
 
-  return `import { describe, test, expect, vi, beforeEach } from "vitest";
+  const spec = `import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor${fireEventImport} } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 ${propsTypeBlock}${mswImports}${mockBlock}${providerLine}${emitComponentImport(info, importPath)}
@@ -1816,6 +1898,18 @@ void VARIANTS;`
 
 ${interactionTests}
 ${staticTextTests}${stateTests}${fetchTests}`;
+  // describe/screen/waitFor/userEvent have call sites that can be absent
+  // WHOLESALE — a component with no variants, no interactions and no static
+  // copy uses none of them — and an import the body never references is a
+  // no-unused-vars error in the host the spec lives in. The rest of the
+  // imports are referenced unconditionally (vi through the handlers line,
+  // beforeEach through its own block), so they are never candidates.
+  return dropUnusedImportNames(spec, [
+    { name: "describe", refs: [/\bdescribe\(/] },
+    { name: "screen", refs: [/\bscreen\./, /\bvoid\s+screen\b/] },
+    { name: "waitFor", refs: [/\bwaitFor\(/] },
+    { name: "userEvent", refs: [/\buserEvent\./] },
+  ]);
 }
 
 /**
@@ -2590,8 +2684,14 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   const staticTextTests = emitStaticTextTests(name, info, "rsc", providerImport, autoProv);
   const guardTests = emitGuardTests(name, info);
   const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir, autoProv);
+  // The escape needs the per-test api to skip itself from inside the catch,
+  // so the callback's parameter exists only when the escape is emitted: an
+  // unused `t` is a no-unused-vars error in the host, and a missing one is a
+  // ReferenceError on the uncertain path.
+  const esc = uncertainEscape(info, apiRoutes);
+  const tParam = esc !== "" ? "t" : "";
 
-  return `import { describe, test, expect, vi } from "vitest";
+  const spec = `import { describe, test, expect, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { cloneElement, isValidElement, Suspense } from "react";
 import type * as React from "react";
@@ -2602,7 +2702,7 @@ ${providerLine}${emitComponentImport(info, importPath)}
 // resolved JSX is rendered directly. Module-level data dependencies above are
 // mocked — fill in fixtures to make the assertions meaningful.
 ${propsBlock}${RSC_RESOLVE_ASYNC_UI}${RSC_RENDER_SETTLED}
-test("${name} (RSC): resolves, or takes one of its declared guard paths", async (t) => {
+test("${name} (RSC): resolves, or takes one of its declared guard paths", async (${tParam}) => {
   // Hoisted so the assertion below stays OUTSIDE the try: an assertion
   // failure must be reported as itself, never swallowed by the guard catch.
   let rendered: ReturnType<typeof render> | undefined;
@@ -2613,7 +2713,7 @@ test("${name} (RSC): resolves, or takes one of its declared guard paths", async 
     // notFound()/redirect() are legitimate outcomes when the mocked data layer
     // returns nothing — this component declares ${guardSummary}.
     if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;
-${uncertainEscape(info, apiRoutes)}    // Not a guard and not an admitted gap: a real failure, reported as itself
+${esc}    // Not a guard and not an admitted gap: a real failure, reported as itself
     // rather than as a confusing "expected TypeError to match /notFound/".
     throw err;
   }
@@ -2621,6 +2721,15 @@ ${uncertainEscape(info, apiRoutes)}    // Not a guard and not an admitted gap: a
   void screen;
 });
 ${staticTextTests}${guardTests}${inversionTests}`;
+  // Only the vitest line can lose members — a component with no guarded
+  // fetches and no static copy uses neither describe nor vi. The RTL and
+  // react lines are referenced unconditionally: waitFor, render and act by
+  // renderSettled, screen by the `void` above, and the react trio by the
+  // resolver — so they are never candidates.
+  return dropUnusedImportNames(spec, [
+    { name: "describe", refs: [/\bdescribe\(/] },
+    { name: "vi", refs: [/\bvi\./] },
+  ]);
 }
 
 /**

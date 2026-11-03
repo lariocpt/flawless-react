@@ -1,5 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { adoptProjectStyle, detectJsonIndent, stringifyLike } from "../src/scaffold/adoptStyle.ts";
@@ -186,5 +194,148 @@ describe("adoptProjectStyle", () => {
     const result = await adoptProjectStyle(dir, [heap]);
     expect(result).toEqual({ formatter: "none", formatted: 0 });
     expect(readFileSync(heap, "utf8")).toBe(before);
+  });
+});
+
+describe("adoptProjectStyle: the eslint branch", () => {
+  // The stub records its argv so the contract is checked without a real eslint
+  // binary or a network — same pattern as the prettier ignore test above.
+  function eslintStub(dir: string, argvFile: string): void {
+    const bin = path.join(dir, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(path.join(bin, "eslint"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${argvFile}'\n`);
+    chmodSync(path.join(bin, "eslint"), 0o755);
+  }
+
+  test("a flat eslint.config.js is detected and the pass runs --fix --no-ignore on the JS files", async () => {
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "eslint.config.js"), "export default [];\n");
+    const argvFile = path.join(dir, "eslint-argv.txt");
+    eslintStub(dir, argvFile);
+    const target = path.join(dir, "generated.ts");
+    writeFileSync(target, "const x = 1\n");
+
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result).toEqual({ formatter: "eslint", formatted: 1 });
+    expect(readFileSync(argvFile, "utf8").trim().split("\n")).toEqual([
+      "--fix",
+      "--no-ignore",
+      target,
+    ]);
+  });
+
+  test("a legacy .eslintrc.json whose .eslintignore covers the suite dir still gets the files passed", async () => {
+    // ensureFormatterIgnores appends the out dir to the repo's .eslintignore.
+    // eslint skips ignored files even when they are passed explicitly, so the
+    // pass takes --no-ignore to keep its own output in scope on the next run.
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, ".eslintrc.json"), "{}\n");
+    writeFileSync(path.join(dir, ".eslintignore"), "flawless/\n");
+    const argvFile = path.join(dir, "eslint-argv.txt");
+    eslintStub(dir, argvFile);
+    const target = path.join(dir, "flawless", "spec.test.ts");
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "const x = 1\n");
+
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result.formatter).toBe("eslint");
+    expect(result.formatted).toBe(1);
+    const argv = readFileSync(argvFile, "utf8").trim().split("\n");
+    expect(argv).toContain("--no-ignore");
+    expect(argv).toContain(target);
+  });
+
+  test("a package.json eslintConfig key is a config too", async () => {
+    const dir = tmpDir();
+    writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "app", eslintConfig: { root: true } }),
+    );
+    const argvFile = path.join(dir, "eslint-argv.txt");
+    eslintStub(dir, argvFile);
+    const target = path.join(dir, "generated.ts");
+    writeFileSync(target, "const x = 1\n");
+
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result).toEqual({ formatter: "eslint", formatted: 1 });
+    expect(readFileSync(argvFile, "utf8").trim().split("\n")).toContain("--fix");
+  });
+
+  test("non-JS files are excluded from eslint's argv — passing them would be a hard error", async () => {
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "eslint.config.js"), "export default [];\n");
+    const argvFile = path.join(dir, "eslint-argv.txt");
+    eslintStub(dir, argvFile);
+    const json = path.join(dir, "data.json");
+    const css = path.join(dir, "styles.css");
+    const md = path.join(dir, "notes.md");
+    const ts = path.join(dir, "code.ts");
+    writeFileSync(json, "{}\n");
+    writeFileSync(css, ".a {}\n");
+    writeFileSync(md, "# hi\n");
+    writeFileSync(ts, "const x = 1\n");
+
+    const result = await adoptProjectStyle(dir, [json, css, md, ts]);
+    expect(result.formatter).toBe("eslint");
+    expect(result.formatted).toBe(1);
+    expect(readFileSync(argvFile, "utf8").trim().split("\n")).toEqual(["--fix", "--no-ignore", ts]);
+  });
+
+  test("an eslint config with zero JS files formats nothing and never resolves a binary", async () => {
+    // No node_modules in this dir: if the pass resolved a binary first and
+    // warned about its absence, the formatter would read "eslint" — the JS
+    // filter must short-circuit before that.
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "eslint.config.js"), "export default [];\n");
+    const json = path.join(dir, "data.json");
+    const md = path.join(dir, "notes.md");
+    writeFileSync(json, "{}\n");
+    writeFileSync(md, "# hi\n");
+
+    const result = await adoptProjectStyle(dir, [json, md]);
+    expect(result).toEqual({ formatter: "none", formatted: 0 });
+    expect(readFileSync(json, "utf8")).toBe("{}\n");
+  });
+
+  test("a host carrying both prettier and eslint keeps the prettier pass — chain order wins", async () => {
+    const dir = tmpDir();
+    writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ prettier: { semi: false }, eslintConfig: { root: true } }),
+    );
+    const prettierArgv = path.join(dir, "prettier-argv.txt");
+    const eslintArgv = path.join(dir, "eslint-argv.txt");
+    const bin = path.join(dir, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      path.join(bin, "prettier"),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > '${prettierArgv}'\n`,
+    );
+    chmodSync(path.join(bin, "prettier"), 0o755);
+    writeFileSync(path.join(bin, "eslint"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${eslintArgv}'\n`);
+    chmodSync(path.join(bin, "eslint"), 0o755);
+    const target = path.join(dir, "generated.ts");
+    writeFileSync(target, "const x = 1\n");
+
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result.formatter).toBe("prettier");
+    expect(result.formatted).toBe(1);
+    expect(existsSync(prettierArgv)).toBe(true);
+    // The eslint stub was never invoked.
+    expect(existsSync(eslintArgv)).toBe(false);
+  });
+
+  test("an eslint config with no resolvable binary warns instead of rejecting", async () => {
+    const dir = tmpDir();
+    writeFileSync(path.join(dir, "eslint.config.js"), "export default [];\n");
+    const target = path.join(dir, "generated.ts");
+    writeFileSync(target, "const x = 1\n");
+
+    // eslint may or may not be on this machine's PATH; either way the
+    // contract is the same — resolve with formatter "eslint", never reject.
+    const result = await adoptProjectStyle(dir, [target]);
+    expect(result.formatter).toBe("eslint");
+    expect(result.formatted).toBeGreaterThanOrEqual(0);
+    if (result.formatted === 0) expect(typeof result.warning).toBe("string");
   });
 });
