@@ -172,6 +172,31 @@ test("defect 4: a synchronous zustand hook is mocked as an async guess", () => {
   expect(page).not.toMatch(/useToasts: vi\.fn\(async/);
 });
 
+test("defect 13: the mocked data factory covers the non-analysed importer's names", () => {
+  // FIX-PLAN: chunk 13 — the 2 Nov triage's measured receipt on this
+  // fixture's regenerated suite was 2 failed, with the collection error
+  // `No "signOff" export is defined on the "@/lib/data" mock`: the factory
+  // was built from the analysed importers alone and lacked signOff, the
+  // name only the non-analysed labels.ts binds at module scope. The
+  // analysis-side graph extension folds that importer's import lines into
+  // the module view as mergedNames — covered by the factory the page's
+  // own call site earned, never a vote for one. The execution twin
+  // (tests/mockFactoryExtension.test.ts) renders the same spec; its green
+  // runs are the deferred gate's receipts.
+  const page = read("src", "app", "page.flawless.test.tsx");
+  expect(page).toContain('vi.mock("@/lib/data"');
+  // signOff is the factory's graph-only guess: a SYNC {} — a promise would
+  // suspend the tree, a string would lie about the annotation.
+  expect(page).toContain("signOff: vi.fn(() => ({}))");
+  expect(page).toContain("signOff guessed {}");
+  expect(page).toContain("graph-only name, no call site in this render");
+  // labels itself is never mocked: its type-first merge view is type-only,
+  // so the mock loop passes it by. The REAL labels running against the
+  // mocked data is the only wiring in which the defect manifests — a
+  // value-first order would mock labels and hide the hazard.
+  expect(page).not.toContain('vi.mock("@/lib/labels"');
+});
+
 test("defect 5: the catch-all flattening warns, and the handlers carry provenance", () => {
   // FIX-PLAN: chunk 5 — FLIPPED. The derived spec still has exactly the one
   // flattened path (the flattening is inherent to an AST walk over a hono
