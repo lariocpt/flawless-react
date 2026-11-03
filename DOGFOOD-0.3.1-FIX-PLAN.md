@@ -816,7 +816,7 @@ defect / already resolved). The eslint gap gets a number: **#17**.
 | #10 vitest 4/5 + vite 8 JSX | **fixed** (re-measured; combo and mechanism corrected) | `bun test tests/vitest5AppExecution.test.ts` |
 | #11 `.gitignore` write | closed — intended, already recorded above | `grep -n "ignoreEntries" src/nextjs/detect.ts` |
 | #12 colocated specs dead from the suite dir | reproduces — **fixed this session** | `bun test tests/suiteDirExecution.test.ts` (red without the fix, green with) |
-| #13 mock factory incomplete for non-analysed importers | reproduces exactly as recorded — **fixed this session** (verification deferred) | `bun test tests/mockFactoryExtension.test.ts` + the baseline's defect-13 test — receipts pending |
+| #13 mock factory incomplete for non-analysed importers | reproduces exactly as recorded — **fixed; verified on the verification host (3 Nov)** | `bun test tests/mockFactoryExtension.test.ts` + the baseline's defect-13 test — all five gates green; receipts in the #13 section |
 | #14 silent live-spec fetch | recorded text stands (not re-measured this session) | see chunk 5's write-up |
 | #15 GitHub release lagged npm | fixed 2 Nov, already recorded above | `gh release view v0.3.1` |
 | #16 emitted suite leaves lint residue | reproduces — and **grew**: 33 warnings + 13 infos | recipe below |
@@ -904,7 +904,7 @@ point is the emitted `flawless/package.json`'s own `test:unit: "vitest run"` scr
 from exactly that cwd. Pinned by `tests/suiteDirExecution.test.ts`, verified to go red when the
 templates fix is stashed.
 
-### #13 — reproduces exactly as recorded; **fixed this session** (verification deferred)
+### #13 — reproduces exactly as recorded; **fixed — verified on the verification host**
 
 The hazard is real, not the plan's earlier "did not reproduce as dropped export" hedge.
 **Before (the 2 Nov triage's measured receipt):** fixture (page spec, mocked
@@ -932,22 +932,57 @@ evidences it — a name with no call site earns the graph-only stub (`vi.fn(() =
 `TODO(flawless)` guess line, never a real fixture, and never a reason to mock a module that
 stays exempt.
 
-**After — PENDING.** Per operator request nothing was executed on the authoring machine, so
-none of these receipts exists on this branch yet; the verification host must produce them, in
-this order, before `mesh-repo-sync` and the PR:
+**After — verified on the verification host (bigcachy, 3 Nov).** Per operator request nothing
+was executed on the authoring machine, so the branch as authored was never witnessed anywhere;
+the host first made the three commits the gates surfaced, then measured all five below, in this
+order, all before the push:
 
-- `rm -rf node_modules/.cache/biome && bun run check`
-- `bunx tsc --noEmit`
-- `bun test` ×2 — 0 failed; the tally grows by exactly the 3 new tests over the pre-fix tree
-  (1726/11/0 was the pre-fix receipt — read it as the before, not the after)
-- `bun test tests/mockFactoryExtension.test.ts` — the two execution tests (the fixture's
-  regenerated page spec carries `signOff` in the `@/lib/data` factory, leaves `@/lib/labels`
-  real, and its probe renders the real page through the real labels lib; the guard app pins
-  the never-forcing property — pure `./utils` unmocked while async `./data` is mocked, and the
-  probe's "themed card" text is producible only by the real `cn` join). Needs registry access
-  for the bun installs.
-- same-binary-lineage before/after measurement per AGENTS.md — the control rebuilt from the
-  exact pre-fix tree, built the same way, before believing the delta.
+1. `rm -rf node_modules/.cache/biome && bun run check` — **0 errors, 2 warnings**, both
+   pre-existing on `2f52c9c` (`noTemplateCurlyInString` at
+   `tests/dogfood-baseline.test.ts:282` and `tests/report.test.ts:597`). The authored tree
+   still carried two formatter diffs (its moved merge and its new test file); the host applied
+   them as `57754c3`, after which the cold check measured the 0/2 above.
+2. `bunx tsc --noEmit` — the authored branch reported exactly **2 errors**, both in this
+   chunk's new code; clean after `b6cfe7a`. The first was a tsc 5.9.3 contextual-typing edge:
+   the synthetic's spread condition `up.importedNames?.length > 0` errors TS18048 inside the
+   object literal — the compiler re-checks the condition against the literal's contextual type
+   and drops the `?.` guard's narrowing there — while the same expression type-checks fine as a
+   plain statement (bisected in a scratch file). The fix hoists the read into a const local
+   before the literal; behaviour is identical (an empty array fails both tests), and the
+   adjacent `typeOnlyNames` spread needed no change. The second was `lines[i]` being
+   `string | undefined` under `noUncheckedIndexedAccess` (`?? ""` — the empty string never
+   matches `/^import/`).
+3. `bun test` ×2 — the host's **first two runs measured 1728/11/1**: the fixture execution
+   test failed because it installed only BEFORE `runCore`, while the tool's standing
+   invocation writes `msw`/`@playwright/test`/`react-scan` into the app's package.json
+   (`src/core.ts`), so the emitted suite's setup file import of `./mocks/node` (which imports
+   `msw/node`) died at collect — `Failed to resolve import "msw/node" from
+   "flawless/mocks/node.ts"` — and every spec in the plane failed before any test ran, while
+   the emitted spec's text assertions (the `signOff` factory line) already passed. `19cb3b0`
+   adds the post-regen `bun install` — the real user flow, which the guard test already ran,
+   and which is why the guard stayed green. After it: **1729 pass / 11 skip / 0 fail twice**
+   (1740 tests / 115 files) = the 1726 pre-fix receipt + exactly the 3 new tests; the 11 skips
+   are unchanged.
+4. `bun test tests/mockFactoryExtension.test.ts` — **2 pass / 0 fail** (6.39 s). The
+   fixture's regenerated page spec carries `signOff: vi.fn(() => ({}))` plus the
+   `TODO(flawless)` guess line in the `@/lib/data` factory, leaves `@/lib/labels` unmocked,
+   and its probe's `.sig` span renders exactly `[object Object] Inbox` through the real labels
+   lib (1 passed); the page spec — the 2 Nov triage's **2 failed** — **2 passed**; the full
+   unit plane **17 passed + 1 named skip** (the store-provider interaction guard), 0 failed.
+   The guard app pins the never-forcing property: pure `./utils` unmocked while async
+   `./data` is mocked, and the probe's "themed card" text is producible only by the real `cn`
+   join. (Both tests need registry access for the bun installs.)
+5. Same-binary-lineage before/after per AGENTS.md — both binaries built the same way
+   (`bun build --compile --minify --outfile … src/bin.ts`, 141 modules each), both runs
+   against the chunk's fixture standing shape: the control (`2f52c9c`) regenerated the page
+   spec whose factory still lacks `signOff` — the page spec **2 failed** with exactly `Error:
+   [vitest] No "signOff" export is defined on the "@/lib/data" mock`, the 2 Nov triage's
+   receipt reproduced byte-for-byte, and the full plane 2 failed | 14 passed | 1 skipped (10
+   files, 1 failed). The treatment (branch tip) ran the same flow green: page spec **2
+   passed**, full plane **16 passed | 1 skipped, 0 failed** (17 tests — the binary flow
+   writes no probe spec, the probe is test-written, not tool-emitted — vs the in-process
+   test's 18), with the factory receipts confirmed in the emitted text (`signOff` stub
+   present, `vi.mock("@/lib/labels"` absent, TODO guess line present).
 
 **Acceptance (as recorded, unchanged):** a fixture with a mocked module reached only through a
 non-analysed util runs green; the emitted factory contains the reached export; existing mock
