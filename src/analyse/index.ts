@@ -30,7 +30,13 @@ import { errorFallbackText, extractStaticText } from "./extractStaticText.ts";
 import { harvestApiEndpoints } from "./harvestApiEndpoints.ts";
 import { makeHostTagResolver } from "./hostTag.ts";
 import { detectHostDialect } from "./nativeDialect.ts";
-import { declaresComponentName, defaultExportComponentName, parseFile } from "./parseFile.ts";
+import {
+  collectImports,
+  collectModuleImports,
+  declaresComponentName,
+  defaultExportComponentName,
+  parseFile,
+} from "./parseFile.ts";
 import { isPureLocalModule } from "./pureModule.ts";
 import { followHandoff, reexportTableOf } from "./reexportTable.ts";
 import { buildComponentScope } from "./refs.ts";
@@ -602,11 +608,77 @@ async function analyseOne(
   // the whole render's evidence. The unit's own evidence wins for a callee
   // (it sits on the primary path); tree entries fill what the unit never
   // touched.
+  // The merge machinery below lives OUTSIDE the children gate on purpose:
+  // the graph extension (defect #13) feeds the same `extras` map for a unit
+  // with no children at all — a unit that imports a non-analysed lib still
+  // has to make that lib's modules' mock views whole.
+  const extras = new Map<string, ModuleImportInfo>();
+  // A mocked module is served to EVERY importer in the graph, so its factory
+  // must cover every name ANY file imports from it — sonner: one file's
+  // { toast } stood for the whole mock while components/toaster's
+  // { Toaster } was dropped, and the real importer died at import time on
+  // the missing export. The walk merges per-specifier name sets (the unit's
+  // own statements included); a default arriving late is skipped — its
+  // index-0 slot belongs to the entry that registered first.
+  const mergeImport = (base: ModuleImportInfo, extra: ModuleImportInfo): ModuleImportInfo => {
+    const add = extra.names
+      .map((n, i) => ({ n, i }))
+      .filter(({ n, i }) => !base.names.includes(n) && !(extra.hasDefault && i === 0));
+    if (add.length === 0) return base;
+    // The added names' return annotations travel with them: RelativeTime's
+    // `timeAgo(d): string` is what makes the stub SYNC when the module ends
+    // up mocked anyway — an async stub rendered as a JSX child silently
+    // suspends the whole tree.
+    const returns: Record<string, unknown> = { ...base.importedReturns };
+    for (const { n, i } of add) {
+      const m = extra.importedNames?.[i] ?? extra.names[i] ?? n;
+      const r = extra.importedReturns?.[m];
+      if (r !== undefined && returns[m] === undefined) returns[m] = r;
+    }
+    const baseReturns = Object.keys(returns).length > 0;
+    return {
+      ...base,
+      names: [...base.names, ...add.map(({ n }) => n)],
+      importedNames: [
+        ...(base.importedNames ?? base.names),
+        ...add.map(({ n, i }) => extra.importedNames?.[i] ?? extra.names[i] ?? n),
+      ],
+      // A `type` specifier stays a `type` specifier whatever merges it: the
+      // name is erased at compile time either way, so losing this list in the
+      // merge would put the runtime-binding lie back.
+      ...(base.typeOnlyNames || extra.typeOnlyNames
+        ? {
+            typeOnlyNames: [
+              ...new Set([...(base.typeOnlyNames ?? []), ...(extra.typeOnlyNames ?? [])]),
+            ],
+          }
+        : {}),
+      mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
+      ...(base.dataExports || extra.dataExports
+        ? {
+            dataExports: [
+              ...new Set([...(base.dataExports ?? []), ...(extra.dataExports ?? [])]),
+            ],
+          }
+        : {}),
+      ...(baseReturns ? { importedReturns: returns as never } : {}),
+    };
+  };
+  // ONE MODULE, ONE MOCK. The page reaches a file as "./components/ui/button"
+  // and a child reaches the same file as "./ui/button". Keyed by specifier
+  // TEXT, those two views never merged: the child's entry was stored raw, so
+  // its names were never marked graph-added — which let a helper the page
+  // never named FORCE a whole-module factory — and the factory it forced
+  // covered only the child's names, dropping the `Button` the page renders:
+  // `[vitest] No "Button" export is defined on the "…/ui/button" mock`.
+  // resolvedPath IS the module's identity; a bare or unresolvable specifier
+  // has none, and its text is its identity (unchanged behaviour there).
+  const moduleKey = (mi: ModuleImportInfo): string => mi.resolvedPath ?? mi.specifier;
+
   if (children.length > 0) {
     const ownCallees = new Set(
       [...(info.dataDeps ?? []), ...(info.mockDeps ?? [])].map((d) => d.callee),
     );
-    const extras = new Map<string, ModuleImportInfo>();
     const depExtras: DataDepInfo[] = [];
     // The child bridge (analyse/childBridge.ts): a rendered component knows
     // more about the value it is handed than this unit's reads show — the
@@ -630,67 +702,6 @@ async function analyseOne(
     // cache already warm, so a component's expectations never depend on how
     // far down the host's tree it happened to be discovered.
     const truncated = new Map<string, ComponentTree>();
-    // A mocked module is served to EVERY importer in the graph, so its factory
-    // must cover every name ANY file imports from it — sonner: one file's
-    // { toast } stood for the whole mock while components/toaster's
-    // { Toaster } was dropped, and the real importer died at import time on
-    // the missing export. The walk merges per-specifier name sets (the unit's
-    // own statements included); a default arriving late is skipped — its
-    // index-0 slot belongs to the entry that registered first.
-    const mergeImport = (base: ModuleImportInfo, extra: ModuleImportInfo): ModuleImportInfo => {
-      const add = extra.names
-        .map((n, i) => ({ n, i }))
-        .filter(({ n, i }) => !base.names.includes(n) && !(extra.hasDefault && i === 0));
-      if (add.length === 0) return base;
-      // The added names' return annotations travel with them: RelativeTime's
-      // `timeAgo(d): string` is what makes the stub SYNC when the module ends
-      // up mocked anyway — an async stub rendered as a JSX child silently
-      // suspends the whole tree.
-      const returns: Record<string, unknown> = { ...base.importedReturns };
-      for (const { n, i } of add) {
-        const m = extra.importedNames?.[i] ?? extra.names[i] ?? n;
-        const r = extra.importedReturns?.[m];
-        if (r !== undefined && returns[m] === undefined) returns[m] = r;
-      }
-      const baseReturns = Object.keys(returns).length > 0;
-      return {
-        ...base,
-        names: [...base.names, ...add.map(({ n }) => n)],
-        importedNames: [
-          ...(base.importedNames ?? base.names),
-          ...add.map(({ n, i }) => extra.importedNames?.[i] ?? extra.names[i] ?? n),
-        ],
-        // A `type` specifier stays a `type` specifier whatever merges it: the
-        // name is erased at compile time either way, so losing this list in the
-        // merge would put the runtime-binding lie back.
-        ...(base.typeOnlyNames || extra.typeOnlyNames
-          ? {
-              typeOnlyNames: [
-                ...new Set([...(base.typeOnlyNames ?? []), ...(extra.typeOnlyNames ?? [])]),
-              ],
-            }
-          : {}),
-        mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
-        ...(base.dataExports || extra.dataExports
-          ? {
-              dataExports: [
-                ...new Set([...(base.dataExports ?? []), ...(extra.dataExports ?? [])]),
-              ],
-            }
-          : {}),
-        ...(baseReturns ? { importedReturns: returns as never } : {}),
-      };
-    };
-    // ONE MODULE, ONE MOCK. The page reaches a file as "./components/ui/button"
-    // and a child reaches the same file as "./ui/button". Keyed by specifier
-    // TEXT, those two views never merged: the child's entry was stored raw, so
-    // its names were never marked graph-added — which let a helper the page
-    // never named FORCE a whole-module factory — and the factory it forced
-    // covered only the child's names, dropping the `Button` the page renders:
-    // `[vitest] No "Button" export is defined on the "…/ui/button" mock`.
-    // resolvedPath IS the module's identity; a bare or unresolvable specifier
-    // has none, and its text is its identity (unchanged behaviour there).
-    const moduleKey = (mi: ModuleImportInfo): string => mi.resolvedPath ?? mi.specifier;
     const walkTree = (trees: ComponentTree[]): void => {
       for (const t of trees) {
         for (const mi of t.entry.moduleImports ?? []) {
@@ -746,12 +757,93 @@ async function analyseOne(
         childExpected[tag] = exp;
       }
     }
-    if (extras.size > 0) info.treeImports = [...extras.values()];
     if (depExtras.length > 0) info.treeDataDeps = depExtras;
 
     info.childExpected = childExpected;
     if (info.dataDeps) bridgeDataShapes(unit.bodyNode, info.dataDeps, childExpected);
   }
+
+  // The render graph reaches a module through files the analysis never
+  // opened: the tree imports a lib (labels.ts) and that lib imports a data
+  // module the analysed tree also names for its own evidence. The data module
+  // is mocked for that evidence — and a mock REPLACES the module for every
+  // importer, including the lib. A factory built from the analysed importers
+  // alone lacks the lib's names, and the lib's own import dies at collection
+  // time with `No "signOff" export is defined on the "@/lib/data" mock`
+  // (defect #13: the 2 Nov triage's 2 failed specs).
+  //
+  // One hop, import lines only: for every non-type import of every file the
+  // graph DID open, read the target's own import declarations through the
+  // shared SourceFileCache — a target the rest of the analysis already read
+  // costs nothing new — and fold each into the per-module view as a
+  // graph-extension synthetic. Every runtime name it binds is mergedNames:
+  // covered by any factory the module earns, never a vote for one. The
+  // target's own imports are the extent of it: a non-analysed chain two hops
+  // down is the same hazard class, numbered (#19) rather than parsed here.
+  const graphFiles = new Set<string>([absPath]);
+  const graphImports: ModuleImportInfo[] = [...moduleImports];
+  const collectGraph = (trees: ComponentTree[]): void => {
+    for (const t of trees) {
+      graphFiles.add(t.entry.filePath);
+      graphImports.push(...(t.entry.moduleImports ?? []));
+      collectGraph(t.children);
+    }
+  };
+  collectGraph(children);
+  for (const mi of graphImports) {
+    // Only a live import loads a module at runtime. The target must be a
+    // project file the analysis never opened — an analysed target's imports
+    // already flow through its own entry — and not a "use server" module:
+    // its mock stubs the WHOLE export surface (exportedNames), not the
+    // per-importer names this extension records.
+    if (mi.isTypeOnly || mi.isServerAction || !mi.resolvedPath) continue;
+    if (mi.resolvedPath.includes("node_modules")) continue;
+    if (graphFiles.has(mi.resolvedPath)) continue;
+    if (cache.hasPrologueDirective(mi.resolvedPath, "use server")) continue;
+    const target = cache.get(mi.resolvedPath);
+    if (!target) continue;
+    for (const up of collectModuleImports(target, collectImports(target))) {
+      // A type-only statement is erased at runtime: the module behind it
+      // never loads, so there is nothing to cover.
+      if (up.isTypeOnly) continue;
+      const upResolved = resolver.resolve(up.specifier, mi.resolvedPath);
+      if (!upResolved || upResolved.includes("node_modules")) continue;
+      if (graphFiles.has(upResolved)) continue;
+      if (cache.hasPrologueDirective(upResolved, "use server")) continue;
+      // Every name the target binds at RUNTIME — `names` minus the
+      // type-specifier ones, default included: the factory the module earns
+      // must answer every one of them for this importer, and none of them
+      // may vote for the mock (that vote belongs to the render's own call
+      // sites).
+      const runtimeNames = up.names.filter((n) => !up.typeOnlyNames?.includes(n));
+      if (runtimeNames.length === 0) continue;
+      const synthetic: ModuleImportInfo = {
+        specifier: up.specifier,
+        names: up.names,
+        ...(up.importedNames?.length > 0 ? { importedNames: up.importedNames } : {}),
+        ...(up.typeOnlyNames ? { typeOnlyNames: up.typeOnlyNames } : {}),
+        kind: up.kind,
+        isTypeOnly: false,
+        hasDefault: up.hasDefault,
+        resolvedPath: upResolved,
+        mergedNames: runtimeNames,
+        graphExtension: true,
+        pos: up.pos,
+      };
+      // A real entry for this module is ALWAYS the merge base: the tree walk
+      // above ran before this extension, so every real view is already in
+      // `extras`. The synthetic can only add names to a real base — which
+      // keeps the real entry's specifier text and evidence on the factory —
+      // or stand raw when no analysed file named the module. A default the
+      // synthetic carries but the base lacks drops out of the merge, exactly
+      // like a late default from any real statement (the documented rule).
+      const key = moduleKey(synthetic);
+      const prev = extras.get(key);
+      if (prev) extras.set(key, mergeImport(prev, synthetic));
+      else extras.set(key, synthetic);
+    }
+  }
+  if (extras.size > 0) info.treeImports = [...extras.values()];
 
   return { entry: info, children };
 }

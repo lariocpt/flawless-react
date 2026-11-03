@@ -749,6 +749,18 @@ export interface ModuleImportInfo {
    * `timeAgo` from it. The mock-decision exemptions read this field.
    */
   mergedNames?: string[];
+  /**
+   * This entry was synthesised by the graph extension (defect #13) rather
+   * than read from an analysed file's statement: a file the analysis never
+   * opened imported this module, and its import lines were folded in so a
+   * factory the module earns covers the non-analysed importer's names too.
+   * Every runtime name it binds is in `mergedNames` — covered, never a vote
+   * for the mock — and it carries no declaration-derived evidence
+   * (importedReturns, dataExports, asyncComponents, isPureModule): the stub
+   * ladder answers for it with the same honesty as for a name no declaration
+   * could read.
+   */
+  graphExtension?: boolean;
   /** "component" iff any local name is used as a JSX tag root in the file. */
   kind: "component" | "value";
   isTypeOnly: boolean;
