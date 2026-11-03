@@ -27,12 +27,16 @@ import { suitePackageJson } from "../src/scaffold-tests/index.ts";
  * imports with.
  *
  * Test 1 runs the aliased-next-app fixture end to end: the app's own
- * pinned react 19.1.0 installs first (defect #3), then ONLY the five
- * runners the emitted specs import, at the suite manifest's ranges (never
- * react or react-dom), then the tool on its standing invocation, then a
- * probe spec that renders the real page with the page spec's own mock
- * block — asserting the stubbed signOff's String({}) reaches the DOM
- * through the real labels lib — and that the whole unit plane runs green.
+ * pinned react 19.1.0 installs first (defect #3), then the five runners
+ * the emitted specs import, at the suite manifest's ranges (never react
+ * or react-dom), then the tool on its standing invocation, then a SECOND
+ * install — the tool writes the suite's own dev deps (msw for the emitted
+ * mock server, @playwright/test and react-scan) into the app's manifest
+ * exactly as it does for a real user's app, and a real user's plane
+ * works only after the post-regen install — then a probe spec that
+ * renders the real page with the page spec's own mock block, asserting
+ * the stubbed signOff's String({}) reaches the DOM through the real
+ * labels lib, and that the whole unit plane runs green.
  *
  * Test 2 is the never-forcing guard, through real analysis: a plain app
  * whose page imports the pure ./utils (cn) and whose child Card imports a
@@ -58,9 +62,10 @@ import { suitePackageJson } from "../src/scaffold-tests/index.ts";
 const FIXTURE = path.resolve(__dirname, "fixtures", "aliased-next-app");
 
 /**
- * The five dev runners the emitted specs import — the only packages added
- * on top of an app that already carries its own react (test 1). Ranges
- * come from the suite manifest, never hand-picked.
+ * The five dev runners the emitted specs import — the PRE-regen install
+ * of the app that already carries its own react (test 1); the post-regen
+ * install then adds whatever the tool writes into the app's manifest.
+ * Ranges come from the suite manifest, never hand-picked.
  */
 const RUNNERS = [
   "vitest",
@@ -320,6 +325,15 @@ describe("defect #13: the factory covers the non-analysed importer's names", () 
       colocate: true,
     });
     expect(result.exitCode).toBe(0);
+
+    // The tool just updated the app's OWN manifest: the emitted mock
+    // server needs msw, and the other planes bring @playwright/test and
+    // react-scan (src/core.ts writes all of them into the app's
+    // devDependencies), exactly as it does for a real user's app. A real
+    // user's plane works only after the post-regen install, so the
+    // fixture's must too: without it the setup file's msw import dies at
+    // collect and every spec in the plane fails before any test runs.
+    await bunRun(["install"], app, "bun install (post-regen: the suite's dev deps)");
 
     // The emitted page spec: the @/lib/data factory carries signOff — the
     // name only the non-analysed labels.ts binds — as the factory's
