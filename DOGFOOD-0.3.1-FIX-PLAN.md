@@ -816,7 +816,7 @@ defect / already resolved). The eslint gap gets a number: **#17**.
 | #10 vitest 4/5 + vite 8 JSX | **fixed** (re-measured; combo and mechanism corrected) | `bun test tests/vitest5AppExecution.test.ts` |
 | #11 `.gitignore` write | closed — intended, already recorded above | `grep -n "ignoreEntries" src/nextjs/detect.ts` |
 | #12 colocated specs dead from the suite dir | reproduces — **fixed this session** | `bun test tests/suiteDirExecution.test.ts` (red without the fix, green with) |
-| #13 mock factory incomplete for non-analysed importers | reproduces exactly as recorded | recipe below |
+| #13 mock factory incomplete for non-analysed importers | reproduces exactly as recorded — **fixed this session** (verification deferred) | `bun test tests/mockFactoryExtension.test.ts` + the baseline's defect-13 test — receipts pending |
 | #14 silent live-spec fetch | recorded text stands (not re-measured this session) | see chunk 5's write-up |
 | #15 GitHub release lagged npm | fixed 2 Nov, already recorded above | `gh release view v0.3.1` |
 | #16 emitted suite leaves lint residue | reproduces — and **grew**: 33 warnings + 13 infos | recipe below |
@@ -904,19 +904,57 @@ point is the emitted `flawless/package.json`'s own `test:unit: "vitest run"` scr
 from exactly that cwd. Pinned by `tests/suiteDirExecution.test.ts`, verified to go red when the
 templates fix is stashed.
 
-### #13 — reproduces exactly as recorded
+### #13 — reproduces exactly as recorded; **fixed this session** (verification deferred)
 
-The hazard is real, not the plan's earlier "did not reproduce as dropped export" hedge. Fixture
-(page spec, mocked `@/lib/data`): **2 failed** with
-`Error: [vitest] No "signOff" export is defined on the "@/lib/data" mock` — the mock factory
-covers only evidenced importers, and the render graph reaches the mocked module through a
-NON-analysed util (`src/lib/labels.ts` via `InboxList` → `signatureLine()` imports `signOff`).
-Recipe: any page whose component graph imports a mocked module through a file the analysis never
-opened. **Chunk it:** the fix is a factory-completeness rule in `src/scaffold-tests/mocks.ts`
-(the `graphOnly`/`mergedNames` machinery is the seam) — every export of a mocked module that is
-reachable through the render graph must exist in the factory, even when no analysed call site
-evidences it. **Acceptance:** a fixture with a mocked module reached only through a non-analysed
-util runs green; the emitted factory contains the reached export; existing mock tests stay green.
+The hazard is real, not the plan's earlier "did not reproduce as dropped export" hedge.
+**Before (the 2 Nov triage's measured receipt):** fixture (page spec, mocked
+`@/lib/data`): **2 failed** with `Error: [vitest] No "signOff" export is defined on the
+"@/lib/data" mock` — the mock factory covered only evidenced importers, and the render graph
+reached the mocked module through a NON-analysed util (`src/lib/labels.ts` via `InboxList` →
+`signatureLine()` imports `signOff`). Recipe: any page whose component graph imports a mocked
+module through a file the analysis never opened.
+
+**Seam — the analysis side, not the mocks side.** The recorded text above placed the fix in
+`src/scaffold-tests/mocks.ts` (the `graphOnly`/`mergedNames` machinery as the seam); that
+candidate lost: `emitModuleMocks` has no resolver or `SourceFileCache` in scope, so it cannot
+read a non-analysed target's import lines at all — it only ever sees the MIs the analysis
+hands it. The extension therefore lives in `analyse/index.ts`, where the resolver, the shared
+cache and the `walkTree`/`mergeImport` merge machinery are all in scope: it reads each
+non-analysed target's import lines through the shared `SourceFileCache` (the only new I/O — no
+new parsing machinery, no new dependencies; `collectModuleImports` was already exported from
+`parseFile.ts`) and folds them into the per-module view as a synthetic whose runtime names all
+land as `mergedNames` with `graphExtension: true` and no purity of its own. One hop only. The
+mocks side then ships two small relaxations that make those names covered without voting:
+`mergeInto` exempts a `graphOnly` binding from the pure/data exemption, and `reachesDataPath`
+admits a `graphExtension` statement. Rule as shipped: every export of a mocked module
+reachable through the render graph exists in the factory even when no analysed call site
+evidences it — a name with no call site earns the graph-only stub (`vi.fn(() => ({}))`) and a
+`TODO(flawless)` guess line, never a real fixture, and never a reason to mock a module that
+stays exempt.
+
+**After — PENDING.** Per operator request nothing was executed on the authoring machine, so
+none of these receipts exists on this branch yet; the verification host must produce them, in
+this order, before `mesh-repo-sync` and the PR:
+
+- `rm -rf node_modules/.cache/biome && bun run check`
+- `bunx tsc --noEmit`
+- `bun test` ×2 — 0 failed; the tally grows by exactly the 3 new tests over the pre-fix tree
+  (1726/11/0 was the pre-fix receipt — read it as the before, not the after)
+- `bun test tests/mockFactoryExtension.test.ts` — the two execution tests (the fixture's
+  regenerated page spec carries `signOff` in the `@/lib/data` factory, leaves `@/lib/labels`
+  real, and its probe renders the real page through the real labels lib; the guard app pins
+  the never-forcing property — pure `./utils` unmocked while async `./data` is mocked, and the
+  probe's "themed card" text is producible only by the real `cn` join). Needs registry access
+  for the bun installs.
+- same-binary-lineage before/after measurement per AGENTS.md — the control rebuilt from the
+  exact pre-fix tree, built the same way, before believing the delta.
+
+**Acceptance (as recorded, unchanged):** a fixture with a mocked module reached only through a
+non-analysed util runs green; the emitted factory contains the reached export; existing mock
+tests stay green. The standing shape now lives in `tests/fixtures/aliased-next-app/` (the
+type-first `InboxList` + `labels.ts` + `signOff`); it is pinned by
+`tests/dogfood-baseline.test.ts` (the text twin) and `tests/mockFactoryExtension.test.ts`
+(the execution twin + the never-forcing guard).
 
 ### #16 — reproduces, and the residue grew
 
@@ -951,11 +989,47 @@ default fetch should exist at all, since it adds 1500 ms to every CI run without
 not a bug patch. **Trigger:** the next user report of a quiet AST-walk fallback, or any decision
 to keep/remove the default fetch, opens the chunk.
 
+### #18 — `mergeImport`'s isTypeOnly inheritance can drop a merged value name (latent)
+
+Where a same-module merge has no unit-own base and its first statement is type-only,
+`mergeImport` inherits the base's `isTypeOnly` into the merged view even though a later
+statement added value names — that is exactly what keeps `@/lib/labels` real in the fixture,
+and it is intended (a value-first order would mock labels and hide the hazard). On a DATA
+module the same inheritance is the hazard: the group pre-pass skips type-only views via
+`reachesDataPath`, so value names arriving only through the merged extra never enter the
+factory's group — and when another value-import path mocks the module, the missing name
+then fails exactly as #13 did. No current fixture orders a mocked data module type-first
+(the fixture's data module is value-first at the unit, so the merge base is a value and the
+view stays a value), which is why this is latent. Recorded from the #13 fix; no chunk
+committed.
+
+### #19 — non-analysed chains past one hop, and `export *` barrels
+
+The shipped extension reads exactly one hop — the non-analysed target's own import lines.
+Deeper chains (non-analysed A importing non-analysed B, which reaches the mocked module) are
+outside the coverage: the names B binds from the mocked module are invisible at A's hop, and
+an `export *` barrel between the graph and the mocked module is equally invisible, because a
+barrel's own import lines do not show the names it re-exports. Both are deliberate scope
+bounds of the one-hop fix; if either bites, the failure reads exactly as #13 did. A separate
+chunk when that happens.
+
+### #20 — client-mode mock inputs ignore the tree (unverified residual)
+
+The client-mode `mockInputs` is the unit's own MIs only — `treeImports`, and with it the
+extension's synthetic, never reach the client-mode view. Read from the template, the client
+loop mocks allowlisted packages only (everything else `continue`s before the data path), so
+the #13 phantom class — a real local importer running against a mocked local data module —
+has no client-mode surface today. If that reading is wrong, or client mode ever grows
+data-path mocking, the unit-only inputs will miss the tree evidence. Verify the template
+before asserting either way; recorded, not chunked.
+
 ### Ordered chunk list (by user-visible cost)
 
 1. **#10** — vitest 4/5 users hit a silent total-red wall. **Fixed** (family-gated jsx
    emission; `tests/fixtures/vitest5-app/`).
-2. **#13** — phantom mock failures on reachable-but-unevidenced exports; erodes trust in green runs.
+2. **#13** — phantom mock failures on reachable-but-unevidenced exports; erodes trust in green
+   runs. **Fixed** (analysis-side one-hop graph extension; `tests/mockFactoryExtension.test.ts`
+   — verification deferred, receipts above).
 3. **#17** — eslint hosts get no style pass; whole class of hosts unverified.
 4. **#16** — lint residue on every generation; noisy but non-blocking.
 5. **#14** — silent fallback; deferred, trigger above.
