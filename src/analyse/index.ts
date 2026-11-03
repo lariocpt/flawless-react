@@ -656,9 +656,7 @@ async function analyseOne(
       mergedNames: [...(base.mergedNames ?? []), ...add.map(({ n }) => n)],
       ...(base.dataExports || extra.dataExports
         ? {
-            dataExports: [
-              ...new Set([...(base.dataExports ?? []), ...(extra.dataExports ?? [])]),
-            ],
+            dataExports: [...new Set([...(base.dataExports ?? []), ...(extra.dataExports ?? [])])],
           }
         : {}),
       ...(baseReturns ? { importedReturns: returns as never } : {}),

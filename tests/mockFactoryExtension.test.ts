@@ -1,12 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -108,10 +101,7 @@ function suitePins(outDir: string, names: string[], reactPinDir?: string): strin
 
 async function bunRun(args: string[], cwd: string, label: string): Promise<void> {
   const proc = Bun.spawn(["bun", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [err, code] = await Promise.all([
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
   if (code !== 0) throw new Error(`${label} failed (needs registry access):\n${err}`);
 }
 
@@ -122,10 +112,7 @@ async function bunRun(args: string[], cwd: string, label: string): Promise<void>
  */
 async function vitestRun(vitestBin: string, args: string[], cwd: string) {
   const proc = Bun.spawn([vitestBin, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [out, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    proc.exited,
-  ]);
+  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   if (code !== 0) console.error(out);
   return { out, code };
 }
