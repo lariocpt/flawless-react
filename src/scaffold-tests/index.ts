@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { appReactPin, mergePackageJson, repairReactPin } from "../packageJson.ts";
 import { harnessAliasBlock, PNPM_SUITE_SETTINGS, tsConfig } from "../scaffold/templates.ts";
 import { SUITE_COMMAND, SUITE_SCRIPT, VITEST_CONFIG } from "../suiteScripts.ts";
@@ -104,8 +105,11 @@ export async function scaffoldUnitBrowser(
     // Only colocated specs (the skipIfExists set) are stamped: the in-outDir
     // files are identified by being rewritten every run, not by provenance.
     // This stamp hashes the raw render; core.ts restamps after the host
-    // project's formatter has had its turn.
-    await Bun.write(abs, f.skipIfExists ? stamp(f.content) : f.content);
+    // project's formatter has had its turn. Imports are canonicalized before
+    // the hash so the emitted bytes are a biome organizeImports fixed point.
+    const ts = /\.m?[jt]sx?$/.test(f.relPath);
+    const content = ts ? finalizeEmittedImports(f.content) : f.content;
+    await Bun.write(abs, f.skipIfExists ? stamp(content) : content);
     written.push(abs);
   }
 

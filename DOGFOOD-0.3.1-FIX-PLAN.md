@@ -993,18 +993,100 @@ type-first `InboxList` + `labels.ts` + `signOff`); it is pinned by
 
 ### #16 — reproduces, and the residue grew
 
-Fresh full-task colocate generation + the host biome gate now measures **0 errors / 33 warnings /
-13 infos** — the recorded 7 + 12 is stale residue growth. By rule: `noUnusedImports` × 18,
-`noUnusedFunctionParameters` × 7, `suppressions/unused` × 7 (a **new regression class** from
-chunk 9: the unconditional `biome-ignore lint/suspicious/noArrayIndexKey` in colocated specs no
-longer fires), `useTemplate` × 12 infos, `noUselessFragments` × 1, `noUnusedVariables` × 1.
-Recipe: generate the full task set colocate against a fixture, then run the repo-pinned biome
-over the suite dir. **Chunk it:** none of these are fixable by `adoptStyle`'s `--write` (every
-fix biome offers is unsafe-for-default), so the fix is conditional emission across 6+ templates
-(emit imports/params/ignores only when used) — that is template work, not "a few edits".
-**Acceptance:** fresh full-task colocate generation + `biome check` over the suite reports
-**0 warnings** (any surviving info is named and justified in the PR body); `suppressions/unused`
-is specifically 0.
+The recorded **0 errors / 33 warnings / 13 infos** (`e827f19`) is stale on
+two axes at once: the tree moved (#17 landed 24 of those warnings away) and
+the receipt was not measured with the recipe's own repo-pinned biome.
+
+**Baseline correction — the 33/13 receipt reproduces on no version.** A
+version sweep over the identical `838c142` tree + fixture copy (the recipe:
+`check . --formatter-enabled=false --reporter=json` from the copy root,
+full tree):
+
+| biome | full tree (`838c142` output) |
+|---|---|
+| 1.9.4 | 68 err / 7 warn / 0 info |
+| 2.0.3 | 3 err / 33 warn / 15 info |
+| 2.3.13 | 3 err / 36 warn / 17 info |
+| **2.5.1 (repo pin)** | **2 err / 36 warn / 17 info** |
+| 2.5.14 (bigcachy's PATH biome) | 2 err / 36 warn / 18 info |
+
+The closest is 2.0.3 (same 33-warning total) but its composition differs
+in three ways at once (a `deserialize` warn where the receipt has
+`noUnusedVariables`; 3 errors where the receipt has 0; `useTemplate` ×15
+with no `noUselessFragments`). The receipt's four-rule warning core does
+match the 2.5.1 run exactly (`noUnusedImports` 18 +
+`noUnusedFunctionParameters` 7 + `suppressions/unused` 7 +
+`noUnusedVariables` 1 = 33), but the exact old version is unrecoverable —
+the plan's own "host biome gate" wording concedes it was a PATH biome.
+The recipe says repo-pinned biome, so **the 2.5.1 numbers are
+authoritative**: on `edd0b62` (post-#17) the fresh full-task colocate regen
+measures **0 err / 12 warn / 16 info** on the tool-written output,
+**2 err / 12 warn / 18 info** full tree. Decomposition: `838c142` = 2/36/17;
+`376023e` = 2/36/18 (+1 info is `labels.ts`, a #13 fixture file);
+`edd0b62` = 2/12/18 (#17 removed 24 warnings: imports 18→0, params 7→1).
+
+**`--write` premise correction.** The plan claimed "none of these are
+fixable by `adoptStyle`'s `--write` (every fix biome offers is
+unsafe-for-default)". Measured on the regenerated tree: the repo-pinned
+**2.5.1 `--write` fixes exactly 3 of the 12** (the `useArrowFunction`
+class; 12→9), and **2.5.14 fixes none** (12→12 — the arrow fix was
+reclassified between 2.5.1 and 2.5.14). The safe-fix set is
+version-dependent across 2.5.x, and a host with no resolvable biome gets
+no pass at all, so the acceptance (a plain `check`) cannot depend on
+`--write` at any version; the templates must emit clean.
+
+**Import-canonicalization correction (third plan correction).** Every
+prompt baseline above was measured on bigcachy, whose PATH biome 2.5.14
+ran the style pass and silently organized the emitted imports. On a host
+with no PATH biome (l-dev-ai, cachyos-mini-mobile) the same regen measured
+**26 err / 3 warn / 18 info** full tree — 24 `organizeImports` errors +
+3 `useImportType` warnings on tool-written files. The emitter's import
+layout was never canonical on its own. Fixed in `src/importCanon.ts`:
+biome 2.5.1's `organizeImports` algorithm ported from its Rust sources
+(chunk runs, statement/specifier sort keys, inverted CLDR collation
+tables, path proximity, natural digits) plus the `useImportType`
+isolated-mode fix for the `vi` binding, applied at the four write sites
+before stamping so the stamp hash covers the final bytes. No-style arm,
+full tree, before → after: **26/3/18 → 2/0/18**.
+
+**Measured — branch `fix/dogfood-031-chunk-16-biome-host` (C1 `2b824f8`,
+C2 `fd11ec1`, C3 `9c22c5b`, C4 `e9a6539` + `5d5e070`) over `main` at
+`edd0b62`**, both arms the same fixture (`tests/fixtures/aliased-next-app`)
+fresh-copied and the same standing invocation (all seven tasks,
+colocated), both binaries built `bun build --compile --minify … src/bin.ts`
+and run on bigcachy (PATH biome 2.5.14 present, style pass ran — 63 files
+"formatted" both arms):
+
+1. **Before (control, `edd0b62`):** tool-written output **0 err / 12 warn /
+   16 info**, full tree **2/12/18**. The 12: 7 `suppressions/unused` (the
+   dead `noArrayIndexKey` suppression in every RSC spec) + 3
+   `useArrowFunction` + 1 `noUnusedVariables` (both `flawless/host/index.html`)
+   + 1 `noUnusedFunctionParameters` (`host/server.ts` next/font callback).
+2. **After (treatment, branch tip):** tool-written output **0 err / 0 warn /
+   16 info**, full tree **2/0/18**. `suppressions/unused` 0,
+   `noUnusedImports` 0, no info delta vs the control. The 16 surviving
+   infos: `useTemplate` ×15 (3 browser specs, `host/main.tsx` ×3,
+   `host/server.ts` ×5, `setup.ts` ×3, `vitest.config.mts` ×1) +
+   `noUselessFragments` ×1 (`provider.tsx`); the full tree's 18 add the
+   fixture's own two (`useTemplate` in `labels.ts`, `deserialize` on its
+   `biome.json`). The 2 errors are the fixture's own pre-existing
+   `organizeImports` (`InboxList.tsx`, `store-provider.tsx`) — out of
+   scope, the repo's biome excludes `tests/fixtures`.
+3. Pins: `tests/biomeHost.test.ts` holds the closed state with the control
+   recorded in its header — PATH biome neutralized during `runCore` so the
+   style pass cannot mask emitter layout, repo-pinned 2.5.1 check from the
+   copy root, 0 warnings tree-wide, errors confined to the two pinned
+   fixture files, required-site non-vacuity list. `tests/importCanon.test.ts`
+   pins 26 cases (Rust test pairs, binary-probe shapes, idempotency).
+   Gates on the committed tree: cold check **0 errors + the 2 pre-existing
+   warnings**, `tsc --noEmit` clean, `bun test` **1767 pass / 11 skip /
+   0 fail** (1778 tests / 118 files = the 1748 baseline + 30 new) twice.
+
+**Acceptance (as recorded, unchanged):** fresh full-task colocate generation
++ `biome check` over the suite reports **0 warnings** (any surviving info
+named and justified in the PR body); `suppressions/unused` specifically 0.
+Met: 0 warnings tree-wide, `suppressions/unused` 0, zero errors on any
+tool-written file; the surviving infos are named above and in the PR.
 
 ### #17 — the eslint gap, numbered
 

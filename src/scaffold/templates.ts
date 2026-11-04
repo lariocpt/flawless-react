@@ -5,6 +5,7 @@ import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { libraryShimSource, referencedLibraryShims } from "../analyse/providerWraps.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { appReactMajor, detectAppReact } from "../packageJson.ts";
 import {
   allocateSpecNames,
@@ -172,7 +173,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
       // what lets a later sweep tell "our own stale output" (safe to remove)
       // from "someone worked on this" (kept). Restamped after the host
       // formatter runs, same as the colocated specs (core.ts restampGenerated).
-      content: stamp(spec(c, opts.variants)),
+      content: stamp(finalizeEmittedImports(spec(c, opts.variants))),
     });
   }
   if (hasMock) {
@@ -1022,7 +1023,7 @@ const stubServerModules: BunPlugin = {
         )
         .replace(
           /import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+(["'])(next\\/font[^"']*)\\2/g,
-          (m, name, quote, spec) => {
+          (_m, name, quote, spec) => {
             const alias = "__flFont" + flFontSeq++;
             return "import " + alias + " from " + quote + spec + quote + "; const " + name + " = " + alias + ";";
           },
@@ -1209,7 +1210,7 @@ function hostHtml(): string {
       // via @nodelib/fs.scandir splitting process.versions.node) ran before
       // it. An inline classic script is the only position that provably
       // precedes the bundle's module script.
-      (function () {
+      (() => {
         var g = globalThis;
         var p = g.process || {};
         g.process = p;
@@ -1223,11 +1224,11 @@ function hostHtml(): string {
           // renderer type is the Electron hatch msw and @mswjs/interceptors
           // built for exactly this: process-shaped-but-in-a-browser.
           if (typeof p.type !== "string") p.type = "renderer";
-          if (typeof p.cwd !== "function") p.cwd = function () { return "/"; };
+          if (typeof p.cwd !== "function") p.cwd = () => "/";
           if (typeof g.global === "undefined") g.global = g;
           if (typeof g.setImmediate === "undefined")
-            g.setImmediate = function (fn) { return setTimeout(fn, 0); };
-        } catch (e) {}
+            g.setImmediate = (fn) => setTimeout(fn, 0);
+        } catch (_e) {}
       })();
     </script>
   </head>

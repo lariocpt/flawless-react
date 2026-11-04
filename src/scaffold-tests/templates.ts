@@ -8,6 +8,7 @@ import {
   referencedLibraryShims,
 } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { appReactMajor } from "../packageJson.ts";
 import { probeServerStream, type ServerStreamProbe } from "../reactDomServerStream.ts";
 import { titleSafe } from "../scaffold/templates.ts";
@@ -334,7 +335,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
         // the host the file is simply no longer rendered, and the stamp is
         // what lets the writer tell "our own stale output" (safe to remove)
         // from "a human worked in here" (never touch).
-        content: stamp(browserSpec(c, specName, opts.todos?.for(target))),
+        content: stamp(finalizeEmittedImports(browserSpec(c, specName, opts.todos?.for(target)))),
       });
     }
   }
@@ -2552,9 +2553,6 @@ async function resolveAsyncUi(
     const keyed: React.ReactNode[] = [];
     for (let i = 0; i < out.length; i++) {
       const k = out[i];
-      // biome-ignore lint/suspicious/noArrayIndexKey: this rebuilt array IS the
-      // element's positional static children; the index is the only honest
-      // witness of position, and nothing reorders this array within one render.
       keyed.push(
         isValidElement(k) && k.key === null
           ? cloneElement(k, { key: \`flawless-async-\${i}\` })
