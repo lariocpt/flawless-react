@@ -862,9 +862,13 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     claimFile: makeFileClaimer(outDir, results, nextCtx ? "unit-browser" : undefined),
     evidenceFor: (taskId) => {
       const rel = (p: string): string => path.relative(outDir, p).split(path.sep).join("/");
+      // Per-finding evidence only: the reports/*.json the task wrote (the
+      // machine-readable findings base), heaps/, load/last-*.json. A task's
+      // other outputs (specs, configs) are not evidence of a finding.
+      const reportsRel = path.join(outDir, "reports") + path.sep;
       const out = results
         .find((r) => r.id === taskId)
-        ?.outputs.filter((o) => /\.(json)$|heaps\//.test(o))
+        ?.outputs.filter((o) => o.startsWith(reportsRel) && o.endsWith(".json"))
         .map(rel);
       const extra: string[] = [];
       if (taskId === "perf-harness" && existsSync(path.join(outDir, "heaps"))) extra.push("heaps/");
