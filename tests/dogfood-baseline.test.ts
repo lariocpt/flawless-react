@@ -283,6 +283,53 @@ test("defect 7 shape (b): the promise-prop page pre-resolves the prop before cre
   expect(spec).toContain("keys are synthesised DELIBERATELY");
 });
 
+test("every emitted RSC spec carries the positional key and no dead suppression", () => {
+  // FIX-PLAN: chunk 16 — the dead `noArrayIndexKey` suppression. Chunk 9
+  // moved the key to the `flawless-async-${i}` template literal, and that rule
+  // fires only on a RAW `key={index}` — so the unconditional biome-ignore
+  // above the push is dead in every emitted spec, and biome flags the ignore
+  // itself (suppressions/unused, one per RSC spec: 7 files in the 2.5.1
+  // measurement over this fixture). The emitter carries a single hardcoded
+  // key shape — no emission path produces a raw-index key — so the
+  // suppression is deleted outright rather than made conditional. What this
+  // pins: the key survives in the template-literal shape, and no emitted RSC
+  // spec carries a suppression line of any kind (the measurement shows these
+  // seven dead lines are the corpus' only biome-ignore occurrences).
+  // The `${i}` stays out of string literals by concatenation
+  // (noTemplateCurlyInString).
+  const KEY_LINE = "cloneElement(k, { key: " + "`flawless-async-" + "$" + "{i}` })";
+  const rscSpecs: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (/\.(flawless\.)?(test|spec)\.[cm]?[jt]sx?$/.test(e.name)) {
+        const text = readFileSync(abs, "utf8");
+        if (text.includes("async function resolveAsyncUi(")) rscSpecs.push(path.relative(app, abs));
+      }
+    }
+  };
+  walk(app);
+  // Non-vacuity: the fixture's seven RSC entries are the required set; a
+  // suite-layout change is a conscious edit of this list.
+  expect(rscSpecs.sort()).toEqual([
+    "src/app/layout.flawless.test.tsx",
+    "src/app/nested/page.flawless.test.tsx",
+    "src/app/page.flawless.test.tsx",
+    "src/app/promise-child/page.flawless.test.tsx",
+    "src/app/promise-prop/page.flawless.test.tsx",
+    "src/components/Inner.flawless.test.tsx",
+    "src/components/Outer.flawless.test.tsx",
+  ]);
+  for (const rel of rscSpecs) {
+    const text = readFileSync(path.join(app, rel), "utf8");
+    expect(text, rel).toContain(KEY_LINE);
+    expect(text, rel).not.toContain("noArrayIndexKey");
+    expect(text, rel).not.toContain("biome-ignore");
+  }
+});
+
 test("defect 7 shape (c): the nested async component recurses to the innermost component", () => {
   const spec = read("src", "app", "nested", "page.flawless.test.tsx");
   expect(spec).toContain('ctor?.constructor?.name === "AsyncFunction"');
