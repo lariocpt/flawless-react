@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { reproCommand } from "../src/core.ts";
@@ -633,5 +633,117 @@ describe("named skips (chunk 9 skip contract)", () => {
     } as never);
     expect(md).toContain("## Named skips");
     expect(md).toContain("No emitted spec skips a test by name.");
+  });
+});
+
+describe("coverage ledger (M1 name-level)", () => {
+  test("absent inventory renders a not-measured line, not silence", () => {
+    const md = renderReportMarkdown(INPUT);
+    expect(md).toContain("### Coverage ledger");
+    expect(md).toContain("Not measured — no export inventory reached the report.");
+  });
+
+  test("an exported symbol with no spec and no analysis is named with not-analysed", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      exportInventory: [
+        {
+          file: "/proj/src/components/ui/select.tsx",
+          symbols: [
+            { name: "Select", exportKind: "named" },
+            { name: "SelectItem", exportKind: "named" },
+          ],
+        },
+      ],
+    });
+    expect(md).toContain("| `SelectItem` | `src/components/ui/select.tsx` | not-analysed:");
+    expect(md).toContain("not a root of this run and not rendered by one");
+    expect(md).toContain("Not analysed: 2.");
+  });
+
+  test("a symbol whose colocated spec exists points at it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-"));
+    const src = path.join(dir, "src/components/ui");
+    await mkdir(src, { recursive: true });
+    await writeFile(path.join(src, "select.Select.flawless.test.tsx"), "// spec\n");
+    const md = renderReportMarkdown({
+      trees: [],
+      results: [],
+      outDir: path.join(dir, "flawless"),
+      projectRoot: dir,
+      exportInventory: [
+        { file: path.join(src, "select.tsx"), symbols: [{ name: "Select", exportKind: "named" }] },
+      ],
+    });
+    expect(md).toContain("spec: `src/components/ui/select.Select.flawless.test.tsx`");
+    expect(md).toContain("With a spec: 1.");
+  });
+
+  test("the file's sole spec target is covered by the stem spec (the SelectGroup case)", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-"));
+    const src = path.join(dir, "src/components/ui");
+    await mkdir(src, { recursive: true });
+    await writeFile(path.join(src, "select.flawless.test.tsx"), "// spec\n");
+    const selectFile = path.join(src, "select.tsx");
+    const md = renderReportMarkdown({
+      trees: [tree(comp("Select", { filePath: selectFile }))],
+      results: [],
+      outDir: path.join(dir, "flawless"),
+      projectRoot: dir,
+      exportInventory: [
+        {
+          file: selectFile,
+          symbols: [
+            { name: "Select", exportKind: "named" },
+            { name: "SelectItem", exportKind: "named" },
+          ],
+        },
+      ],
+    });
+    // Select is the file's only spec target → the stem spec is its spec.
+    expect(md).toContain("spec: `src/components/ui/select.flawless.test.tsx`");
+    // SelectItem is neither analysed nor spec'd → named, with a reason.
+    expect(md).toContain("| `SelectItem` | `src/components/ui/select.tsx` | not-analysed:");
+    expect(md).toContain("With a spec: 1.");
+    expect(md).toContain("Not analysed: 1.");
+  });
+
+  test("a non-exported symbol is covered-through its parent", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      exportInventory: [
+        {
+          file: "/proj/src/Page.tsx",
+          symbols: [
+            { name: "Page", exportKind: "named" },
+            { name: "Hidden", exportKind: "none" },
+          ],
+        },
+      ],
+    });
+    // INPUT has Page as a root (no parent) — the fallback names the primary.
+    expect(md).toContain("covered-through: the file's primary component");
+    expect(md).toContain("Covered through a parent: 1.");
+  });
+
+  test("a non-exported child names its parent", () => {
+    const md = renderReportMarkdown({
+      ...INPUT,
+      trees: [
+        tree(comp("Widget"), [
+          tree(comp("Inner", { exportKind: "none", filePath: "/proj/src/Widget.tsx" })),
+        ]),
+      ],
+      exportInventory: [
+        {
+          file: "/proj/src/Widget.tsx",
+          symbols: [
+            { name: "Widget", exportKind: "named" },
+            { name: "Inner", exportKind: "none" },
+          ],
+        },
+      ],
+    });
+    expect(md).toContain("| `Inner` | `src/Widget.tsx` | covered-through: `Widget` |");
   });
 });

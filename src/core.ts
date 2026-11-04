@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { findUnresolvableImports } from "./analyse/bootability.ts";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
+import { parseFile } from "./analyse/parseFile.ts";
 import { deriveContextProviderWraps, libraryProviderShimsFor } from "./analyse/providerWraps.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import { outDirRel, underOutDir } from "./emitPaths.ts";
@@ -27,6 +28,7 @@ import { configRootFor, detectReactCompiler } from "./reactCompiler.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import {
   collectNamedSkips,
+  type FileExports,
   SPEC_FILE,
   type UnparseableFile,
   writeReportMarkdown,
@@ -896,11 +898,33 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     },
   });
 
+  // The name-level coverage ledger's key: every component symbol each swept
+  // file declares, from the parse (shared cache — the sweep already read them).
+  // This is what the ledger is checked against, not the analyser's component
+  // set: an export that left the component set must still be named (audit C19).
+  const exportInventory: FileExports[] = [];
+  for (const file of [...files].sort()) {
+    try {
+      const parsed = await parseFile(file, analyseShared.cache, { tolerateNoComponents: true });
+      exportInventory.push({
+        file,
+        symbols: parsed.components.map((c) => ({
+          name: c.exportedAs ?? c.componentName,
+          exportKind: c.exportKind,
+        })),
+      });
+    } catch {
+      // A file the parse cannot read is already accounted for in the report's
+      // unparseable section; the ledger simply cannot key on it.
+    }
+  }
   const reportPath = await writeReportMarkdown({
     trees,
     results,
     outDir,
     namedSkips,
+    exportInventory,
+    rootMode: opts.roots ?? "primary",
     projectRoot: nextCtx?.root,
     unparseable,
     unresolvable,
