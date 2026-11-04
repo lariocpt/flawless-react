@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { classifyStamped, hashBody, stamp } from "../scaffold-tests/stamp.ts";
 import type { NextjsApiRoute, NextjsContext } from "../types.ts";
 import { renderBrowserSetup, renderMswHandlers, renderNodeSetup } from "./mswHandlers.ts";
@@ -115,14 +116,27 @@ const SPEC_DIGEST_RE = /^\/\/ @flawless-spec sha256:([0-9a-f]{16})/m;
  * - untouched, spec digest moved  → regenerated from a newer spec
  * - untouched, stamped before spec digests existed → kept (digest unknowable)
  */
+/**
+ * The exact bytes all three handlers.ts write sites put on disk. Finalized
+ * before stamping, like the other four emit paths, so the stamp hash covers
+ * the final bytes: the raw template's import line ({ http, HttpResponse })
+ * is not canonical under biome's collator, and a host that cannot resolve a
+ * biome gets no style pass to fix it after the fact. Exported for the
+ * fixed-point pin in tests/emitterFixedPoint.test.ts.
+ */
+export function renderHandlers(specDigest: string, routes: NextjsApiRoute[]): string {
+  return stamp(
+    finalizeEmittedImports(`// @flawless-spec sha256:${specDigest}\n${renderMswHandlers(routes)}`),
+  );
+}
+
 async function emitHandlers(
   handlersPath: string,
   routes: NextjsApiRoute[],
   specDigest: string,
   force: boolean,
 ): Promise<{ written: boolean; report: string }> {
-  const render = () =>
-    stamp(`// @flawless-spec sha256:${specDigest}\n${renderMswHandlers(routes)}`);
+  const render = () => renderHandlers(specDigest, routes);
   if (!existsSync(handlersPath)) {
     await Bun.write(handlersPath, render());
     return { written: true, report: "created" };

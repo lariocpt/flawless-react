@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { outDirRel, relativeToEmitted, underOutDir } from "../emitPaths.ts";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { devScriptPort, findRouterRoot, pageFileToRoute } from "../nextjs/routes.ts";
 import { emitPlaywrightDispatch, emitPlaywrightSelector } from "../scaffold-tests/selectors.ts";
 import type { ComponentTree, RunContext, Task, TaskResult, TodoTally } from "../types.ts";
@@ -121,7 +122,14 @@ export const e2eRoutes: Task = {
         skipped.push(specPath);
         continue;
       }
-      await Bun.write(specPath, routeSpec(tree, route, outDirRel(ctx.outDir, ctx.nextjs.root)));
+      // Finalized at the write site like the other four emit paths: the raw
+      // template's import line is not biome-canonical ({ test, expect, type
+      // Page } and no blank line before const ROUTE), and a host without a
+      // resolvable biome gets no style pass to fix it after the fact.
+      await Bun.write(
+        specPath,
+        finalizeEmittedImports(routeSpec(tree, route, outDirRel(ctx.outDir, ctx.nextjs.root))),
+      );
       written.push(specPath);
     }
 
@@ -374,6 +382,21 @@ FLAWLESS_E2E_BASEURL=http://localhost:4747 bun run flawless:e2e
 crust -c 'GET :4747/__crust/violations | (v => v.violations.filter(x => x.direction === "response")) | assert (a => a.length === 0)'
 \`\`\`
 `;
+}
+
+/**
+ * Exported for tests ONLY, to pin the bytes: the write site finalizes this
+ * string, and tests/emitterFixedPoint.test.ts pins that the finalized bytes
+ * are a fixed point of finalizeEmittedImports — the two shapes biome flagged
+ * ({ expect, type Page, test } and the missing blank line before const ROUTE)
+ * must stay fixed without a style pass.
+ */
+export function routeSpecForTest(
+  tree: ComponentTree,
+  route: NonNullable<ReturnType<typeof pageFileToRoute>>,
+  rel: string,
+): string {
+  return routeSpec(tree, route, rel);
 }
 
 function routeSpec(
