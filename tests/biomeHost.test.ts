@@ -1,48 +1,67 @@
-// A biome-host regen must land 0-warning under the project's own biome check.
+// A biome-host regen must land 0-warning under the project's own biome check
+// on EVERY host — including the ones with no biome on PATH.
 //
-// Dogfood-031 chunk #16. The control build (edd0b62) measured, on a fresh
-// colocated full-task regen of this fixture with the repo-pinned biome
-// 2.5.1 (`check . --formatter-enabled=false --reporter=json`):
+// Dogfood-031 chunks #16 and #21. Two facts shape this test:
 //
-//   - bigcachy arm (a biome on PATH, 2.5.14, ran the style pass):
-//       tool-written files 0 errors / 12 warnings / 16 infos
-//       full tree          2 errors / 12 warnings / 18 infos
-//     the 12: 7 suppressions/unused + 3 useArrowFunction +
-//     1 noUnusedVariables + 1 noUnusedFunctionParameters.
-//   - no-style arm (no biome on PATH — what every other host sees):
-//       the emitted files carried 24 organizeImports errors and 3
-//       useImportType warnings the style pass had been masking. The
-//       emitter's import layout was never canonical on its own; the
-//       PATH biome was silently fixing it after the fact.
+//  1. The style pass is a mask. On a host that happens to carry a biome on
+//     PATH, adoptStyle runs it over every emitted file, so the emitter's own
+//     import layout never has to be canonical. The control build measured
+//     that directly: with the style pass alive the tool-written files were
+//     0-error, with it off the same bytes carried 24 organizeImports errors
+//     and 3 useImportType warnings. A test that only ever runs on a
+//     biome-carrying host proves the PATH biome works, not the emitter.
 //
-// The treatment (importCanon + the C1–C3 emitter fixes) must reach
-// 0 warnings tree-wide and 0 errors on tool-written files with NO style
-// pass at all, on every host. So this test neutralizes any PATH biome
-// during runCore — the style line still prints (the config is found),
-// but no formatting happens, and the check below runs the repo-pinned
-// biome 2.5.1 binary, never a PATH one.
+//  2. The mask cannot be removed from inside the process. adoptStyle resolves
+//     its binary with `Bun.which("biome")`, and Bun.which reads the PATH the
+//     process STARTED with, not the live process.env.PATH. The previous
+//     version of this test swapped process.env.PATH around runCore and still
+//     formatted — green on bigcachy, red on every host without a PATH biome
+//     (l-dev-ai since PR #159), which is exactly backwards.
 //
-// The two remaining tree errors are pre-existing fixture debt in files
-// the tool never writes (src/components/InboxList.tsx and
-// src/components/providers/store-provider.tsx, both organizeImports
-// under the fixture's own biome.json). They are pinned present: if they
-// ever disappear the fixture changed and this test's accounting must be
-// re-read, not silently widened.
+// So the regen runs as a SUBPROCESS whose PATH carries no biome executable:
+// every PATH directory that contains one is dropped, and a private bin holds
+// a `bun` symlink so the child can still be launched. node stays on PATH on
+// purpose: a11y and react-rules resolve the repo-pinned biome through
+// biomeRunner's own ladder (findProjectRoot's node_modules/.bin first), and
+// that shim is `#!/usr/bin/env node`. Removing node would break the scanner
+// tasks; removing biome directories only starves the style pass, which is the
+// whole point.
 //
-// The surviving infos are the tolerated residue this test does NOT fail
-// on: useTemplate ×15 on tool files (the 3 browser specs ×1 each,
-// host/main.tsx ×3, host/server.ts ×5, setup.ts ×3, vitest.config.mts
-// ×1) + noUselessFragments ×1 (provider.tsx), plus the fixture's own
-// two (useTemplate in src/lib/labels.ts, a deserialize notice on its
-// biome.json). Info severity only, zero behavioral effect; named in the
-// PR as follow-up candidates.
+// Proof that the style pass did nothing: adoptStyle returns
+// `{ formatter: "biome", formatted: 0, warning: "biome config found but no
+// biome binary" }` on exactly that path (adoptStyle.ts), and core.ts prints
+// the warning. The line's presence means the fixture's biome.json WAS found
+// and NO binary was invoked — formatted 0 is the same return value.
+//
+// Measured on this tree, fresh colocated full-task regen of this fixture
+// with the copy's own `bun install` first (a real host always has
+// node_modules, and the emitter's setup.ts variant depends on what is
+// installed), repo-pinned biome 2.5.1
+// (`check . --formatter-enabled=false --reporter=json` from the copy root):
+//
+//   tool-written files  0 errors / 0 warnings / 18 infos
+//   full tree           2 errors / 0 warnings / 21 infos
+//
+// The two errors are pre-existing fixture debt in files the tool never
+// writes (src/components/InboxList.tsx and
+// src/components/providers/store-provider.tsx, both organizeImports under the
+// fixture's own biome.json). They are pinned present: if they ever disappear
+// the fixture changed and this test's accounting must be re-read, not
+// silently widened.
+//
+// The surviving infos are the tolerated residue this test does NOT fail on:
+// useTemplate ×19 on tool files (the 3 browser specs ×1 each, host/main.tsx
+// ×4, host/server.ts ×7, setup.ts ×3, vitest.config.mts ×1) +
+// noUselessFragments ×1 (provider.tsx), plus the fixture's own two
+// (useTemplate in src/lib/labels.ts, a deserialize notice on its
+// biome.json). Info severity only, zero behavioral effect; named in the PR as
+// follow-up candidates.
 
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { runCore } from "../src/core";
 
 const REPO = resolve(import.meta.dir, "..");
 const FIXTURE = join(REPO, "tests/fixtures/aliased-next-app");
@@ -70,6 +89,7 @@ const DIAG_REQUIRED = [
   "src/components/InboxList.tsx",
   "src/components/providers/store-provider.tsx",
 ];
+const TASKS = ["perf-harness", "unit-browser", "perf-static", "a11y", "react-rules", "e2e", "load"];
 
 function copyFixture(): string {
   const root = mkdtempSync(join(tmpdir(), "flawless-biomehost-"));
@@ -92,6 +112,20 @@ function bunInstall(cwd: string): void {
   }
 }
 
+/**
+ * A PATH with no biome executable in it, and a `bun` the child can be
+ * launched with. Everything else (node above all) survives: this is a host
+ * without a biome, not a host without a shell.
+ */
+function pathWithoutBiome(): string {
+  const privBin = mkdtempSync(join(tmpdir(), "flawless-nobiome-"));
+  symlinkSync(process.execPath, join(privBin, "bun"));
+  const kept = (process.env.PATH ?? "")
+    .split(":")
+    .filter((dir) => dir !== "" && !existsSync(join(dir, "biome")));
+  return [privBin, ...kept].join(":");
+}
+
 interface Diag {
   severity?: string;
   category?: string;
@@ -101,6 +135,13 @@ interface Diag {
 interface Summary {
   changed?: number;
   unchanged?: number;
+}
+
+interface CiResult {
+  id: string;
+  ok: boolean;
+  summary?: string;
+  error?: string;
 }
 
 function checkTree(root: string): { diags: Diag[]; summary: Summary } {
@@ -152,68 +193,60 @@ function countSpecs(dir: string): number {
   return n;
 }
 
-test("biome-host regen: style line prints, tree lands 0-warning, no errors on tool files", async () => {
+test("biome-free host regen: no style pass runs, tree lands 0-warning, no errors on tool files", async () => {
   const root = copyFixture();
   try {
     bunInstall(root);
 
-    // Neutralize any PATH biome for the duration of runCore so the style
-    // pass cannot mask emitter layout on hosts that happen to have one
-    // (bigcachy carries 2.5.14 on PATH). A private bin holding only
-    // `bun`: adoptStyle's Bun.which("biome") finds nothing, the copy's
-    // node_modules/.bin has no biome, and the style line still prints
-    // because the fixture's biome.json was found.
-    const savedPath = process.env.PATH;
-    const privBin = mkdtempSync(join(tmpdir(), "flawless-nobiome-"));
-    symlinkSync(process.execPath, join(privBin, "bun"));
-    process.env.PATH = privBin;
-
-    // runCore's narration goes to process.stdout; capture it the way
-    // eslintHost.test.ts does — the style: line leaves no filesystem trace.
-    const out: string[] = [];
-    const original = process.stdout.write.bind(process.stdout);
-    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
-      out.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-      return true;
-    }) as typeof process.stdout.write;
-    let exitCode: number;
-    let runErrors: string[];
+    // --ci, not the human log: stdout is one JSON blob whose per-task `ok`
+    // flags make the exit code explainable, and the run's own narration
+    // (including the style: lines) lands on stderr.
+    const proc = spawnSync(
+      process.execPath,
+      [
+        join(REPO, "src", "bin.ts"),
+        "src/**/*.tsx",
+        "--out",
+        join(root, "flawless"),
+        "--tasks",
+        TASKS.join(","),
+        "--nextjs",
+        root,
+        "--colocate",
+        "--ci",
+      ],
+      {
+        cwd: root,
+        encoding: "utf-8",
+        maxBuffer: 256 * 1024 * 1024,
+        timeout: 300_000,
+        env: { ...process.env, PATH: pathWithoutBiome() },
+      },
+    );
+    let blob: { exitCode?: number; results?: CiResult[] };
     try {
-      const res = await runCore({
-        pattern: join(root, "src", "**", "*.tsx"),
-        outDir: join(root, "flawless"),
-        taskIds: [
-          "perf-harness",
-          "unit-browser",
-          "perf-static",
-          "a11y",
-          "react-rules",
-          "e2e",
-          "load",
-        ],
-        nextjs: root,
-        colocate: true,
-        log: true,
-        inlineSummary: false,
-      });
-      exitCode = res.exitCode;
-      runErrors = res.errors;
-    } finally {
-      process.stdout.write = original;
-      process.env.PATH = savedPath;
-      rmSync(privBin, { recursive: true, force: true });
+      blob = JSON.parse(proc.stdout) as { exitCode?: number; results?: CiResult[] };
+    } catch {
+      throw new Error(
+        `regen produced no --ci JSON (${proc.status}): ${(proc.stderr || proc.stdout || "").slice(-600)}`,
+      );
     }
-    expect(runErrors).toEqual([]);
-    expect(exitCode).toBe(0);
+    const results = blob.results ?? [];
+    const failed = results.filter((r) => !r.ok);
+    expect(
+      failed.map((r) => `${r.id}: ${r.error ?? r.summary ?? "?"}`),
+      "every task must succeed on a host with no biome on PATH",
+    ).toEqual([]);
+    expect(blob.exitCode).toBe(0);
 
-    const styleLine = out
-      .join("")
-      .split("\n")
-      .find((l) => l.startsWith("style:"));
-    if (styleLine === undefined) {
-      throw new Error("the run's stdout carries no style: line — the biome branch never ran");
-    }
-    expect(styleLine).toContain("the project's biome");
+    // The style pass found the config and formatted nothing: that warning is
+    // adoptStyle's `formatted: 0, no biome binary` return, so it is proof of
+    // both halves at once. A host that DID format would print
+    // `style: formatted N …` with N > 0 instead — impossible here, and the
+    // negative check keeps a future log-routing change from hiding it.
+    const logs = `${proc.stdout}\n${proc.stderr}`;
+    expect(logs).toContain("style: biome config found but no biome binary");
+    expect(logs).not.toMatch(/style: formatted [1-9]/);
 
     // Non-vacuity: the regen actually wrote a full suite — 56 files in
     // flawless/ and 10 colocated specs in src/ on this fixture.
