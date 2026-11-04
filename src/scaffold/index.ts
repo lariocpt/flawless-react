@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { detectAppReact, mergePackageJson, repairReactPin } from "../packageJson.ts";
 import { classifyStamped } from "../scaffold-tests/stamp.ts";
 import type { ComponentTree, ScaffoldOptions } from "../types.ts";
@@ -139,7 +140,10 @@ export async function scaffold(
       written.push(abs);
       continue;
     }
-    await Bun.write(abs, f.content);
+    await Bun.write(
+      abs,
+      /\.m?[jt]sx?$/.test(f.relPath) ? finalizeEmittedImports(f.content) : f.content,
+    );
     if (f.executable) await chmod(abs, 0o755);
     written.push(abs);
   }

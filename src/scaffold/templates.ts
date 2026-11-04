@@ -5,6 +5,7 @@ import { requiredAncestors } from "../analyse/htmlContentModel.ts";
 import { libraryShimSource, referencedLibraryShims } from "../analyse/providerWraps.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { appReactMajor, detectAppReact } from "../packageJson.ts";
 import {
   allocateSpecNames,
@@ -172,7 +173,7 @@ export function renderSuite(opts: RenderOptions): RenderedFile[] {
       // what lets a later sweep tell "our own stale output" (safe to remove)
       // from "someone worked on this" (kept). Restamped after the host
       // formatter runs, same as the colocated specs (core.ts restampGenerated).
-      content: stamp(spec(c, opts.variants)),
+      content: stamp(finalizeEmittedImports(spec(c, opts.variants))),
     });
   }
   if (hasMock) {

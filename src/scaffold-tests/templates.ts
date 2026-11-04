@@ -8,6 +8,7 @@ import {
   referencedLibraryShims,
 } from "../analyse/providerWraps.ts";
 import { relativeToEmitted } from "../emitPaths.ts";
+import { finalizeEmittedImports } from "../importCanon.ts";
 import { appReactMajor } from "../packageJson.ts";
 import { probeServerStream, type ServerStreamProbe } from "../reactDomServerStream.ts";
 import { titleSafe } from "../scaffold/templates.ts";
@@ -334,7 +335,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
         // the host the file is simply no longer rendered, and the stamp is
         // what lets the writer tell "our own stale output" (safe to remove)
         // from "a human worked in here" (never touch).
-        content: stamp(browserSpec(c, specName, opts.todos?.for(target))),
+        content: stamp(finalizeEmittedImports(browserSpec(c, specName, opts.todos?.for(target)))),
       });
     }
   }
