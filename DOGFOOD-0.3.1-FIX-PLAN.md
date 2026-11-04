@@ -1345,6 +1345,12 @@ Tally: **15 fixed-and-stays-fixed, 1 closed-as-intended (#11), 3 recorded-only (
 not blocked by the re-audit, and this table is the measured state the design phase is planned
 against.
 
+Re-run cold against `main` @ `903a2e1` (v0.3.2; 2026-11-04, bigcachy, bun 1.4.3, registry
+live): **same tally across the board — no row moved.** All 21 rows measured identically to the
+table above (15 fixed-and-stays-fixed, 1 closed-as-intended #11, 3 recorded-only #18–#20, 1
+trigger-pending #14), and the only diff between `09d83ea` and `903a2e1` is release bookkeeping
+(`CHANGELOG.md`, this plan's re-audit record, the `package.json` version) — no source file.
+
 ---
 
 ## The design-phase contract (recorded at the v0.3.2 release)
