@@ -1344,3 +1344,19 @@ Tally: **15 fixed-and-stays-fixed, 1 closed-as-intended (#11), 3 recorded-only (
 1 trigger-pending (#14); zero reproductions of anything this plan claims fixed.** The release is
 not blocked by the re-audit, and this table is the measured state the design phase is planned
 against.
+
+---
+
+## The design-phase contract (recorded at the v0.3.2 release)
+
+- All other work is in `main` and released as v0.3.2.
+- Before the design phase (`VERDICT-SHAPE-EXPLORATION-PROMPT.md`) starts: the
+  re-audit above stands as the repo's measured state, and a DETAILED
+  implementation plan is authored first — a main plan file plus sequential
+  subfiles, one per sequential step, each independently measurable and
+  landable.
+- The design phase runs on a dedicated `redesign` branch and merges to `main`
+  ONLY if the exploration proves out; otherwise the branch is abandoned and
+  `main` is untouched.
+- #14 stays trigger-gated; #18–#20 stay recorded-only. None of them is folded
+  into the redesign branch.
