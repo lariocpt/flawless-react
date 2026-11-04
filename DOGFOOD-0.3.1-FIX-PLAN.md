@@ -1303,3 +1303,44 @@ every host, with or without a biome on PATH.
 Two loose ends recorded for the record, neither owned here: #11 and #15 stay closed as written
 above (no chunk should reopen them), and the 183 → 119 colocated-web-specs question is owned by
 `VERDICT-SHAPE-EXPLORATION-PROMPT.md`, not by this plan.
+
+---
+
+## Re-audit at release (v0.3.2)
+
+Every numbered finding in this plan — the chunk defects #1–#9 and the candidates #10–#21 — was
+re-run cold against `main` @ `09d83ea` (the tree PR #160 merged; the release branch carried only
+the #21-trigger correction above when these ran). Host: bigcachy, bun 1.4.3, PATH biome 2.5.14,
+registry access live. The fixture-execution tests copy their fixture to a fresh temp dir and
+install before regenerating, so they are cold by construction; `tests/biomeHost.test.ts` runs its
+regen as a subprocess whose PATH carries no biome, so its number is host-independent. **Nothing
+this plan claims fixed reproduced** — one row per finding:
+
+| finding | cold command | measured output (decisive line) | verdict |
+| --- | --- | --- | --- |
+| #1 harness tsconfig drops aliases | `bun test tests/scaffoldTests.test.ts` | 41 pass / 0 fail — the alias cases: rewritten `paths` relative to the app root, `baseUrl` carried, no-alias output byte-identical; the baseline's flipped defect-1 marker asserts the harness tsconfig carries them | fixed-and-stays-fixed |
+| #2 generator breaks the host's type-check | `bun test tests/tsconfigExclude.test.ts` | 17 pass / 0 fail — merge-never-clobber cases a–g, the `extends`-anchoring boundary, byte-identical re-runs | fixed-and-stays-fixed |
+| #3 `renderToReadableStream` specifier | `bun test tests/documentRootStream.test.ts` | 6 pass / 0 fail — the emitted spec imports from `react-dom/server.browser`, and the guard re-derives the export table from the bytes on disk | fixed-and-stays-fixed |
+| #4 async guesses for sync hooks | `bun test tests/dogfood-baseline.test.ts` | 18 pass / 0 fail (81 expect calls) — the page spec mocks `useToasts` sync from its `.map` use site; the layout spec emits no `vi.mock` for the zustand family (left real) | fixed-and-stays-fixed |
+| #5 catch-all flattening + stale handlers | `bun test tests/handlersProvenance.test.ts` | 6 pass / 0 fail — the provenance contract a–f, including the 0.3.1-stamp compatibility case and the catch-all warning naming `--api` | fixed-and-stays-fixed |
+| #6 unbounded browser/perf workers | `bun test tests/emittedConfigs.test.ts` | 18 pass / 0 fail — both emitted configs resolve to the bound (4 local / 1 CI), `FLAWLESS_WORKERS` wins over both, `--disable-dev-shm-usage` present | fixed-and-stays-fixed |
+| #7 RSC specs render an empty container | `bun test tests/dogfood-baseline.test.ts` | 18 pass / 0 fail — the promise-prop/promise-child/nested shapes are emitted awaited inside `Suspense` + `act`, and no emitted spec wraps a resolve or render in a bare `catch { return; }` | fixed-and-stays-fixed |
+| #8 MCP server does not exit | `bun test tests/mcp.test.ts` | 28 pass / 0 fail — the `mcp exit contract` (idle server, piped `flawless_run`, mid-generation signal that must kill) plus the bounded-drain receipts | fixed-and-stays-fixed |
+| #9 `setup.ts` fails the host lint gate | `bun test tests/dogfood-baseline.test.ts` | 18 pass / 0 fail — `setup.ts` carries 0 `: any` occurrences, and the whole emitted suite passes the host's own biome with zero errors | fixed-and-stays-fixed |
+| #10 vitest 4/5 + vite 8 JSX wall | `bun test tests/vitest5AppExecution.test.ts` | 1 pass / 0 fail — the vitest 5 / vite 8 fixture runs its colocated specs green from the suite's own `test:unit` and from the app root, the oxc mechanism pinned, the esbuild spelling absent | fixed-and-stays-fixed |
+| #11 `.gitignore` write | `grep -n "ignoreEntries" src/nextjs/detect.ts` | `119:export function ignoreEntries` — the intended, reported write stands unchanged | closed — intended, as recorded |
+| #12 colocated specs dead from the suite dir | `bun test tests/suiteDirExecution.test.ts` | 1 pass / 0 fail — `cd flawless && vitest run` (the 10-failed shape) runs green from the suite's own `test:unit`; the app-root run is unchanged | fixed-and-stays-fixed |
+| #13 mock factory misses graph-reached exports | `bun test tests/mockFactoryExtension.test.ts` | 2 pass / 0 fail — the `signOff` stub reaches the factory through the non-analysed util, `@/lib/labels` stays unmocked, and the never-forcing guard holds | fixed-and-stays-fixed |
+| #14 silent live-spec fetch | `grep -n 'DEFAULT_URL\|FETCH_TIMEOUT\|ok: false' src/nextjs/liveSpec.ts` + `src/core.ts:307` | `4: const DEFAULT_URL = "http://localhost:3000/api/docs"`, `5: const FETCH_TIMEOUT_MS = 1500`, the `{ ok: false }` returns intact — the default fetch still fires whenever `--swagger-url` is not `off` and warns only when the user passed the flag; the recorded mechanism stands | trigger-pending (the named trigger has not fired) |
+| #15 GitHub release lagged npm | `gh release view v0.3.1` | published `2026-11-02T09:40:13Z` with the four binaries + `SHA256SUMS` — the lag this release's one-session publish exists to keep closed | fixed-and-stays-fixed |
+| #16 emitted suite leaves lint residue | `bun test tests/biomeHost.test.ts` (encodes the recipe: no-biome subprocess regen, installed copy, repo-pinned 2.5.1 check from the copy root) | 1 pass / 0 fail — 0 warnings tree-wide on the no-style regen, errors confined to the two pinned fixture files | fixed-and-stays-fixed |
+| #17 eslint hosts get no style pass | `bun test tests/eslintHost.test.ts` | 1 pass / 0 fail — the host's own eslint exits 0 with 0 errors / 0 warnings over the 40-file set; `src/scaffold/adoptStyle.ts` now detects `eslint.config.*` (lines 9, 16, 21) where the triage's grep found nothing | fixed-and-stays-fixed |
+| #18 `mergeImport` isTypeOnly inheritance | `sed -n '623,665p' src/analyse/index.ts` | `mergeImport` returns `{ ...base, … }` with no `isTypeOnly` override — a type-only base still taints the merged view when a later statement adds value names; latent exactly as recorded, no fixture orders a mocked data module type-first | recorded-only |
+| #19 one-hop bound and `export *` barrels | `grep -n 'collectModuleImports(target' src/analyse/index.ts` | `803: for (const up of collectModuleImports(target, collectImports(target)))` — the extension reads exactly the direct target's own import lines (the synthetic carries `graphExtension: true`, line 836); deeper chains and barrels still invisible, as recorded | recorded-only |
+| #20 client-mode inputs ignore the tree | `sed -n '284,287p' src/scaffold-tests/mocks.ts` | `mockInputs = mode === "rsc" ? [...(info.moduleImports ?? []), ...(info.treeImports ?? [])] : (info.moduleImports ?? [])` — client mode still takes the unit's own MIs only and never the tree's evidence; the recorded reading stands, unchunked | recorded-only |
+| #21 emitter not an `organizeImports` fixed point | `bun test tests/biomeHost.test.ts` + `bun test tests/emitterFixedPoint.test.ts` | 1 pass / 0 fail + 3 pass / 0 fail — the no-style regen leaves 0 errors and 0 warnings on every tool-written file, and the finalized bytes at both write sites are `organizeImports` fixed points | fixed-and-stays-fixed |
+
+Tally: **15 fixed-and-stays-fixed, 1 closed-as-intended (#11), 3 recorded-only (#18–#20),
+1 trigger-pending (#14); zero reproductions of anything this plan claims fixed.** The release is
+not blocked by the re-audit, and this table is the measured state the design phase is planned
+against.
