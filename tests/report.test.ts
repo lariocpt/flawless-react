@@ -480,6 +480,36 @@ describe("a partial run says so", () => {
     expect(md).not.toContain("This run selected");
     expect(md).not.toContain("Not run");
   });
+
+  test("a plane with a verdict entry is never named as Not run (M1 retirement)", () => {
+    // The C16/C31 class: a single-task run after a full one used to declare
+    // six planes "Not run" while their results sat on disk. With the verdict,
+    // only planes that have NEVER run are named.
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/tmp/x",
+      allTaskIds: ALL,
+      results: [{ id: "perf-harness", ok: true, outputs: [], findings: [], summary: "perf" }],
+      verdict: { path: "VERDICT.md", tasks: ALL.filter((id) => id !== "load") },
+    } as never);
+    expect(md).toContain("VERDICT.md");
+    // `load` has no verdict entry — it is the only plane honestly named: the
+    // exact line lists `load` and nothing else.
+    expect(md).toContain("Not run, and therefore not described below: `load`.");
+    expect(md).toContain("ran in an earlier invocation");
+  });
+
+  test("the verdict pointer renders even when every plane ran", () => {
+    const md = renderReportMarkdown({
+      trees: [],
+      outDir: "/tmp/x",
+      allTaskIds: ALL,
+      results: ALL.map((id) => ({ id, ok: true, outputs: [], findings: [], summary: id })),
+      verdict: { path: "VERDICT.md", tasks: ALL },
+    } as never);
+    expect(md).toContain("Run results for every plane, accumulated across runs: `VERDICT.md`");
+    expect(md).not.toContain("This run selected");
+  });
 });
 
 describe("REPORT.md carries a command that reproduces the run", () => {

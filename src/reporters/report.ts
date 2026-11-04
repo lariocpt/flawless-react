@@ -131,6 +131,12 @@ export interface ReportInput {
   exportInventory?: readonly FileExports[];
   /** The run's root mode — the reason a non-root export went unanalysed. */
   rootMode?: string;
+  /**
+   * The accumulated verdict this run just wrote: where it lives (display path)
+   * and which task ids have an entry. The "N of M tasks / Not run" line is
+   * retired for every plane in `tasks` — those are on record, not missing.
+   */
+  verdict?: { path: string; tasks: readonly string[] };
 }
 
 /** One swept file's component symbols, as the file itself declares them. */
@@ -367,13 +373,39 @@ export function renderReportMarkdown(input: ReportInput): string {
   // qualification, so the report read as "this project has one task" rather
   // than "this run selected one". Two sessions reverted a truncated REPORT.md
   // by hand before anyone noticed the file was the thing lying.
+  //
+  // M1 retires the lying half of that line: a plane with a verdict entry is
+  // never "Not run" — its last result is on record in VERDICT.md, and saying
+  // otherwise is what audit C16/C31 caught ("This run selected 1 of 7 tasks"
+  // after a full run). Only planes that have NEVER run are still named.
   const ran = new Set<string>(input.results.map((r) => r.id));
-  const notRun = (input.allTaskIds ?? []).filter((id) => !ran.has(id));
+  const verdictTasks = new Set<string>(input.verdict?.tasks ?? []);
+  const neverHeard = (input.allTaskIds ?? []).filter((id) => !ran.has(id) && !verdictTasks.has(id));
+  const onRecordElsewhere = (input.allTaskIds ?? []).filter(
+    (id) => !ran.has(id) && verdictTasks.has(id),
+  );
   lines.push("## Tasks", "");
-  if (notRun.length > 0) {
+  if (input.verdict) {
+    lines.push(
+      `Run results for every plane, accumulated across runs: \`${input.verdict.path}\` —`,
+      "each plane's last run, keyed by the target it describes.",
+      "",
+    );
+  }
+  if (neverHeard.length > 0) {
     lines.push(
       `This run selected ${input.results.length} of ${(input.allTaskIds ?? []).length} tasks.`,
-      `Not run, and therefore not described below: ${notRun.map((id) => `\`${id}\``).join(", ")}.`,
+      `Not run, and therefore not described below: ${neverHeard.map((id) => `\`${id}\``).join(", ")}.`,
+    );
+    if (onRecordElsewhere.length > 0 && input.verdict) {
+      lines.push(
+        `The other ${onRecordElsewhere.length} ran in an earlier invocation; their last results are in \`${input.verdict.path}\`.`,
+      );
+    }
+    lines.push("");
+  } else if (onRecordElsewhere.length > 0 && input.verdict) {
+    lines.push(
+      `This run selected ${input.results.length} of ${(input.allTaskIds ?? []).length} tasks; the rest ran in an earlier invocation, and their last results are in \`${input.verdict.path}\`.`,
       "",
     );
   }

@@ -33,7 +33,7 @@ import {
   type UnparseableFile,
   writeReportMarkdown,
 } from "./reporters/report.ts";
-import { hashTargetFiles, makeFileClaimer, writeVerdict } from "./reporters/verdict.ts";
+import { hashTargetFiles, makeFileClaimer, VERDICT_MD, writeVerdict } from "./reporters/verdict.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { restampGenerated } from "./scaffold-tests/stamp.ts";
@@ -908,6 +908,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     namedSkips,
     exportInventory,
     rootMode: opts.roots ?? "primary",
+    verdict: { path: VERDICT_MD, tasks: Object.keys(verdict.doc.entries) },
     projectRoot: nextCtx?.root,
     unparseable,
     unresolvable,
