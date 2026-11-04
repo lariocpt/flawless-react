@@ -1209,7 +1209,7 @@ function hostHtml(): string {
       // via @nodelib/fs.scandir splitting process.versions.node) ran before
       // it. An inline classic script is the only position that provably
       // precedes the bundle's module script.
-      (function () {
+      (() => {
         var g = globalThis;
         var p = g.process || {};
         g.process = p;
@@ -1223,11 +1223,11 @@ function hostHtml(): string {
           // renderer type is the Electron hatch msw and @mswjs/interceptors
           // built for exactly this: process-shaped-but-in-a-browser.
           if (typeof p.type !== "string") p.type = "renderer";
-          if (typeof p.cwd !== "function") p.cwd = function () { return "/"; };
+          if (typeof p.cwd !== "function") p.cwd = () => "/";
           if (typeof g.global === "undefined") g.global = g;
           if (typeof g.setImmediate === "undefined")
-            g.setImmediate = function (fn) { return setTimeout(fn, 0); };
-        } catch (e) {}
+            g.setImmediate = (fn) => setTimeout(fn, 0);
+        } catch (_e) {}
       })();
     </script>
   </head>

@@ -148,6 +148,29 @@ describe("renderSuite", () => {
     // without allowJs, so the glob would look like coverage and give none.
     expect(include).not.toContain("scripts/**/*");
   });
+
+  test("the emitted host/index.html carries no function expression", async () => {
+    // FIX-PLAN: chunk 16 — the host's inline Node shim measured 3
+    // useArrowFunction + 1 noUnusedVariables warnings (the IIFE, the
+    // assigned p.cwd and g.setImmediate, and the unused catch binding) on
+    // the aliased fixture. The emitted text is now exactly the form the
+    // repo-pinned biome 2.5.1's own safe --write produces for the three
+    // function expressions (arrow IIFE, arrow-assigned cwd and setImmediate),
+    // with the catch binding renamed _e: a plain --write reports that one
+    // FIXABLE but never applies it, so the emitter must choose the
+    // underscore form itself. The negative assertion is the pin: no
+    // `function (` may remain — the typeof ... !== "function" guards are
+    // quoted strings and do not match that sequence.
+    const tree = await analyse({ entry: DASHBOARD, depth: 0, includeChildren: false });
+    const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: false });
+    const content = files.find((f) => f.relPath === "host/index.html")?.content ?? "";
+    expect(content).not.toContain("function (");
+    // The shim keeps its working form, measured as 2.5.1's safe fix.
+    expect(content).toContain("(() => {");
+    expect(content).toContain('p.cwd = () => "/";');
+    expect(content).toContain("g.setImmediate = (fn) => setTimeout(fn, 0);");
+    expect(content).toContain("} catch (_e) {}");
+  });
 });
 
 describe("renderSuite with --provider", () => {
