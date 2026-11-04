@@ -1221,12 +1221,28 @@ before asserting either way; recorded, not chunked.
 
 ### #21 — the emitter was not an `organizeImports` fixed point, and the pin could not see it
 
-**Trigger.** l-dev-ai has been red since PR #159 merged: `bun test` there
-fails `tests/biomeHost.test.ts` with 5 `organizeImports` errors (4 emitted e2e
-route specs + `flawless/mocks/handlers.ts`) — the same 5 a stripped-PATH
-`bun test` reproduces on a biome-carrying host. Not a host quirk: the two write
-paths those files come from never went through `finalizeEmittedImports`, and
-the test that was supposed to catch that could not see the difference.
+**Trigger (corrected at the v0.3.2 release).** The original wording claimed
+"l-dev-ai has been red since PR #159 merged" and that `bun test` there failed
+`tests/biomeHost.test.ts` with 5 `organizeImports` errors (4 emitted e2e route
+specs + `flawless/mocks/handlers.ts`). Nothing ran on l-dev-ai when PR #159
+merged: the host had no bun at all, which is where this chunk found it. The
+measurements that exist are all on the biome-carrying verification host: a
+startup-PATH-stripped `bun test` reproduces the `tests/biomeHost.test.ts`
+failure — **1766 pass / 11 skip / 1 fail** — with the one failure dying on the
+scanner task's nonzero exit, not on the organizeImports counts; and the 5
+`organizeImports` errors the fix removes come from the compiled-binary
+no-style harness (the `6dcb475` arm: **7 err / 0 warn / 21 info** full tree).
+l-dev-ai's redness was **predicted** from those measurements — a host with no
+biome on PATH is exactly the one the old pin went red on — and confirmed only
+after bun 1.4.4 and crust 0.3.3 were installed on that host. No red run was
+ever recorded on l-dev-ai: nothing could run there before the installs, so the
+confirmation ran against the merged tree, which is what the prediction was
+about — on `09d83ea` `bun test` there is green, **1742 pass / 11 skip /
+0 fail** (1753 tests / 119 files; the gap to bigcachy's 1781 is the
+environment-conditional chromium/expo arms, not a discrepancy). Not a host
+quirk either way: the two write paths those files come from never went
+through `finalizeEmittedImports`, and the test that was supposed to catch that
+could not see the difference.
 
 **Why the pin missed it.** `adoptStyle` resolves its formatter with
 `Bun.which("biome")`, and `Bun.which` reads the PATH the process *started*
