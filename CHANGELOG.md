@@ -11,6 +11,88 @@ deliberately does not claim lives in `docs/limits.md`.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-11-04
+
+The dogfood fix loop, released: all nine defects found by dogfooding 0.3.1
+against a real monorepo, plus the six candidates the loop's re-measurement
+kept — #10, #12, #13, #16, #17 and #21. The plan, every correction to it and
+the release-time re-audit of all 21 findings live in
+`DOGFOOD-0.3.1-FIX-PLAN.md` in the repository. No task, flag or emitted-path
+changes: generation is what changed. What a generation run does differently:
+
+- **The harness tsconfig carries the app's path aliases** — `baseUrl` plus the
+  app's `paths` rewritten relative to the app root — so an aliased Next repo
+  starts its browser and perf planes instead of dying at webServer start
+  (defect #1).
+- **The generator merges the suite dir into the host tsconfig's `exclude`** —
+  merge, never clobber, the file's own formatting preserved, and the run
+  reports it — so a generation no longer breaks the app's own `tsc`/`next
+  build` (defect #2).
+- **Document-root specs import `renderToReadableStream` from the specifier
+  the emitted aliases actually resolve to** — probed against the installed
+  react-dom at generation, preferring `react-dom/server.browser`, and a
+  react-dom that carries the export on neither candidate skips with a named
+  reason instead of failing (defect #3).
+- **Mock shapes follow the call sites** — a hook called synchronously gets a
+  sync mock, a `.map` use site gets a one-element array that witnesses the
+  element shape, and package modules no analysed file calls are left real
+  (defect #4, the `toasts.map is not a function` class).
+- **A catch-all API route that flattens a router into one swagger path is
+  named** — the file, the collapsed count and the way out — and
+  `mocks/handlers.ts` refreshes from a newer spec through a digest line under
+  its generation stamp instead of going stale behind the write-once guard
+  (defect #5: against the real 71-path spec, 2 handlers covering 1 path
+  became 99 covering 71).
+- **Browser and perf planes bound their worker count** — at most 4 locally,
+  1 in CI, `FLAWLESS_WORKERS` overrides — and pass
+  `--disable-dev-shm-usage`, the fix for the `Target crashed` renderer
+  failures at default parallelism (defect #6).
+- **The MCP server's exit contract is written down and its drains are
+  bounded** — it exits when stdin closes and the batch has drained; a
+  straggler in the child's process group gets a 2 s grace and a group kill
+  (measured 2.03 s where it previously never returned), and a signal races
+  the drain against 5 s instead of waiting on the call's watchdog (defect
+  #8).
+- **`flawless/setup.ts` and the whole emitted suite are lint-clean** under a
+  strict host ruleset — the fixture's biome run went 10 `noExplicitAny`
+  errors to 0 with no `biome-ignore` comments — so a first run is
+  committable in a linted repo (defect #9).
+- **Async RSC page specs render real content** — promise-valued props and
+  children are awaited, static children keep their identity, the render
+  settles inside `Suspense` + `act`, and a render that cannot settle skips
+  with a named reason counted in REPORT.md instead of an empty container
+  (defect #7: the dogfood's five async-RSC detail pages, 29 failing content
+  assertions).
+- **Vitest 4/5 hosts with `jsx: "preserve"` no longer hit a silent total-red
+  wall** — the emitted config declares one jsx mechanism chosen from the
+  vite the suite will actually run (oxc from vite 8 up, esbuild below),
+  where every such host previously died with a `Parse failure` on every spec
+  (#10).
+- **Colocated specs run from the suite's own `test:unit`** — the emitted
+  vitest config widens `server.fs.allow` to the project root in the colocate
+  layout, where `cd flawless && npx vitest` used to fail every spec with a
+  phantom "files do not exist" (#12: 10 failed → 16 passed / 1 skipped on
+  the fixture).
+- **Mock factories cover exports the render graph reaches but no analysed
+  call site evidences** — one hop through non-analysed files — so a mocked
+  module reached through a util the analysis never opened no longer fails
+  with "No … export is defined on the … mock" (#13).
+- **The emitted suite leaves 0 warnings on a no-style-pass regen**, and the
+  emitter is an `organizeImports` fixed point at every write site — a host
+  with no biome measures 2 err / 0 warn / 21 info tree-wide (the two errors
+  are in fixture files the tool never writes) where the pre-#16 tree
+  measured 26 err / 15 warn / 21 and the pre-#21 tree 7/0/21; the pin for
+  that now runs the regen in a subprocess whose PATH carries no biome, so it
+  is host-independent (#16, #21).
+- **eslint hosts get a style pass** — adoptStyle detects an eslint config
+  and runs it over the emitted files, where such hosts previously got
+  `formatter: "none"` and an unverified suite (the fixture's host eslint went
+  32 errors / exit 1 to 0 / 0) (#17).
+
+What this release deliberately does not do is recorded in the plan: #14
+(the silent live-spec fallback) stays trigger-gated, and #18–#20 stay
+recorded-only.
+
 ## [0.3.1] — 2026-10-31
 
 Package metadata only — no behaviour change, no new surface.
