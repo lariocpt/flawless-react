@@ -6,6 +6,7 @@ import type { NamedSkip } from "../src/reporters/report.ts";
 import {
   aggregateSkipReasons,
   hashTargetFiles,
+  makeFileClaimer,
   mergeVerdict,
   renderVerdictJson,
   renderVerdictMarkdown,
@@ -175,6 +176,52 @@ describe("renderVerdictJson / renderVerdictMarkdown", () => {
     expect(renderVerdictMarkdown(doc, ["unit-browser"])).toBe(
       renderVerdictMarkdown(doc, ["unit-browser"]),
     );
+  });
+
+  test("a plane whose reason rows do not sum to its Skips column is named", () => {
+    // The totals-equality is a checked claim: a hand-built doc that lies gets
+    // called out instead of printed as a quiet wrong total.
+    const lying: VerdictDoc = {
+      schema: "flawless-verdict/1",
+      tool: "test",
+      entries: {
+        "unit-browser": {
+          targetHash: "sha256:1",
+          ok: true,
+          written: 1,
+          findings: 0,
+          skips: 5,
+          skipReasons: [{ reason: "r", count: 3 }],
+          evidence: [],
+          summary: "",
+        },
+      },
+    };
+    const md = renderVerdictMarkdown(lying, []);
+    expect(md).toContain(
+      "Tally mismatch — `unit-browser`: Skips column says 5, reason rows sum 3.",
+    );
+    expect(md).toContain("do NOT equal");
+  });
+});
+
+describe("makeFileClaimer", () => {
+  const results = [
+    { id: "unit-browser", outputs: ["/s/unit/A.test.tsx"] },
+    { id: "e2e", outputs: ["/s/e2e/route.spec.ts"] },
+  ];
+  test("a file is claimed by the task that wrote it", () => {
+    const claim = makeFileClaimer("/s", results, "unit-browser");
+    expect(claim("/s/unit/A.test.tsx")).toBe("unit-browser");
+    expect(claim("/s/e2e/route.spec.ts")).toBe("e2e");
+  });
+  test("a kept file falls to its plane directory; outside the suite, the colocated plane", () => {
+    const claim = makeFileClaimer("/s", [], "unit-browser");
+    expect(claim("/s/browser/Kept.spec.ts")).toBe("unit-browser");
+    expect(claim("/s/profile/Kept.spec.ts")).toBe("perf-harness");
+    expect(claim("/s/load/last-x.json")).toBe("load");
+    expect(claim("/app/src/kept.flawless.test.tsx")).toBe("unit-browser");
+    expect(makeFileClaimer("/s", [], undefined)("/app/src/kept.flawless.test.tsx")).toBeUndefined();
   });
 });
 

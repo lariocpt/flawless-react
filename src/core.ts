@@ -33,7 +33,7 @@ import {
   type UnparseableFile,
   writeReportMarkdown,
 } from "./reporters/report.ts";
-import { hashTargetFiles, writeVerdict } from "./reporters/verdict.ts";
+import { hashTargetFiles, makeFileClaimer, writeVerdict } from "./reporters/verdict.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { restampGenerated } from "./scaffold-tests/stamp.ts";
@@ -855,28 +855,11 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   // previous run just measured. Written BEFORE the report so the report can
   // point at it and knows which planes have an entry.
   const targetHash = await hashTargetFiles(files);
-  const claimed = new Map<string, string>();
-  for (const r of results) for (const o of r.outputs) claimed.set(path.resolve(o), r.id);
-  const planeDirOf = (file: string): string | undefined => {
-    const relFromOut = path.relative(outDir, path.resolve(file));
-    if (relFromOut.startsWith("..")) return nextCtx ? "unit-browser" : undefined;
-    const top = relFromOut.split(path.sep)[0];
-    if (!top) return undefined;
-    return (
-      {
-        unit: "unit-browser",
-        browser: "unit-browser",
-        profile: "perf-harness",
-        e2e: "e2e",
-        load: "load",
-      } as Record<string, string>
-    )[top];
-  };
   const verdict = await writeVerdict(outDir, {
     targetHash,
     results,
     skipCensus: namedSkips,
-    claimFile: (file) => claimed.get(path.resolve(file)) ?? planeDirOf(file),
+    claimFile: makeFileClaimer(outDir, results, nextCtx ? "unit-browser" : undefined),
     evidenceFor: (taskId) => {
       const rel = (p: string): string => path.relative(outDir, p).split(path.sep).join("/");
       const out = results

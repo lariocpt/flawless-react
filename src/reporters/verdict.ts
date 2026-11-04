@@ -112,6 +112,40 @@ export function skipReasonOf(title: string): string {
   return i === -1 ? title : title.slice(i + 3);
 }
 
+/**
+ * Build the census→task attribution the verdict's per-plane skip tallies need.
+ *
+ * A skip file belongs to the task that wrote it (its outputs); a file no task
+ * claims — a kept write-once spec, not "written" this run — lands under the
+ * plane directory that holds it, because a kept spec is still part of that
+ * plane. That fallback is the TodoCounter pipe's rule, extended: the tallies
+ * must cover the suite, not just this invocation's writes.
+ */
+export function makeFileClaimer(
+  outDir: string,
+  results: readonly { id: string; outputs: readonly string[] }[],
+  colocatedTask: string | undefined,
+): (file: string) => string | undefined {
+  const claimed = new Map<string, string>();
+  for (const r of results) for (const o of r.outputs) claimed.set(path.resolve(o), r.id);
+  const planeDirs: Record<string, string> = {
+    unit: "unit-browser",
+    browser: "unit-browser",
+    profile: "perf-harness",
+    e2e: "e2e",
+    load: "load",
+  };
+  return (file: string) => {
+    const abs = path.resolve(file);
+    const byOutput = claimed.get(abs);
+    if (byOutput) return byOutput;
+    const relFromOut = path.relative(outDir, abs);
+    if (relFromOut.startsWith("..")) return colocatedTask;
+    const top = relFromOut.split(path.sep)[0];
+    return top ? planeDirs[top] : undefined;
+  };
+}
+
 /** Aggregate skip titles by reason-string, sorted by reason then count-stable. */
 export function aggregateSkipReasons(
   titles: readonly string[],
@@ -205,22 +239,37 @@ export function renderVerdictMarkdown(doc: VerdictDoc, thisRunTaskIds: readonly 
   // The chunk-9 skip contract, aggregated: every emitted skip names its reason
   // in its title; here the reasons are counted across every plane on record.
   // The totals below must equal the Skips column above — one census, two views.
+  // The equality is a CHECKED claim: a plane whose reason rows do not sum to
+  // its Skips column is named, because a silently-wrong total is the exact
+  // vacuous green this tool refuses to print.
   const totals = new Map<string, number>();
   let grand = 0;
+  const mismatches: string[] = [];
   for (const id of ids) {
     const e = doc.entries[id] as VerdictEntry;
+    let sum = 0;
     for (const r of e.skipReasons) {
       totals.set(r.reason, (totals.get(r.reason) ?? 0) + r.count);
       grand += r.count;
+      sum += r.count;
+    }
+    if (sum !== e.skips) {
+      mismatches.push(`\`${id}\`: Skips column says ${e.skips}, reason rows sum ${sum}.`);
     }
   }
   lines.push("## Skips by reason", "");
+  if (mismatches.length > 0) {
+    for (const m of mismatches) lines.push(`> Tally mismatch — ${m}`);
+    lines.push("");
+  }
   if (grand === 0) {
     lines.push("No emitted skip on record.", "");
   } else {
     lines.push(
       `${grand} emitted skip(s) across the planes above, aggregated by reason-string.`,
-      "The total equals the Skips column: one census, two views.",
+      mismatches.length > 0
+        ? "The totals do NOT equal the Skips column — see the mismatch lines above."
+        : "The total equals the Skips column: one census, two views.",
       "",
       "| Reason | Count |",
       "| --- | ---: |",
