@@ -171,6 +171,23 @@ describe("renderSuite", () => {
     expect(content).toContain("g.setImmediate = (fn) => setTimeout(fn, 0);");
     expect(content).toContain("} catch (_e) {}");
   });
+
+  test("the emitted host/server.ts names the unused next/font match parameter _m", async () => {
+    // FIX-PLAN: chunk 16 — the next/font `import * as X` rewrite callback
+    // measured 1 noUnusedFunctionParameters warning: `m` (the regex full
+    // match) is never read — only name, quote and spec are. A middle
+    // callback parameter cannot be omitted in JS, so it is renamed `_m`,
+    // which passes 2.5.1's noUnusedFunctionParameters. The sibling
+    // named-import callback keeps its plain `m`: over there the full match
+    // IS returned on the two no-rewrite paths (a type-prefixed clause, a
+    // non-identifier clause), so only the namespace callback's parameter is
+    // unused — and the other onResolve/onLoad callbacks all use their args.
+    const tree = await analyse({ entry: DASHBOARD, depth: 0, includeChildren: false });
+    const files = renderSuite({ tree, outDir: await tmpDir(), variants: 3, report: false });
+    const content = files.find((f) => f.relPath === "host/server.ts")?.content ?? "";
+    expect(content).toContain("(_m, name, quote, spec) => {");
+    expect(content).toContain("(m, def, clause, quote, spec) => {");
+  });
 });
 
 describe("renderSuite with --provider", () => {

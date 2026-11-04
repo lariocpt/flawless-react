@@ -1022,7 +1022,7 @@ const stubServerModules: BunPlugin = {
         )
         .replace(
           /import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+(["'])(next\\/font[^"']*)\\2/g,
-          (m, name, quote, spec) => {
+          (_m, name, quote, spec) => {
             const alias = "__flFont" + flFontSeq++;
             return "import " + alias + " from " + quote + spec + quote + "; const " + name + " = " + alias + ";";
           },
