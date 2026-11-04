@@ -1046,8 +1046,37 @@ biome 2.5.1's `organizeImports` algorithm ported from its Rust sources
 (chunk runs, statement/specifier sort keys, inverted CLDR collation
 tables, path proximity, natural digits) plus the `useImportType`
 isolated-mode fix for the `vi` binding, applied at the four write sites
-before stamping so the stamp hash covers the final bytes. No-style arm,
-full tree, before → after: **26/3/18 → 2/0/18**.
+before stamping so the stamp hash covers the final bytes.
+
+**Receipt correction (#21): the `26/3/18 → 2/0/18` above is superseded.** It
+was recorded on bigcachy with the style pass alive on the treatment arm; its
+warning column counted only the `useImportType` class the fix targeted rather
+than the tree total; and its info column was measured on a copy that had not
+been `bun install`ed before the regen. Re-measured with the style pass
+genuinely dead — the regen runs as a subprocess whose PATH carries no biome
+executable (the recipe `tests/biomeHost.test.ts` now encodes), the copy
+installed first, every arm `bun build --compile --minify … src/bin.ts` from
+its own tree, repo-pinned 2.5.1
+`check . --formatter-enabled=false --reporter=json` from the copy root:
+
+| arm (full tree) | err / warn / info |
+|---|---|
+| `edd0b62` — pre-#16 | **26 / 15 / 21** |
+| `6dcb475` — post-#16, pre-#21 | **7 / 0 / 21** |
+| #21 branch tip | **2 / 0 / 21** |
+
+The 26 errors reproduce exactly (24 `organizeImports` on tool-written files +
+the fixture's own 2). The warning column is 15, not 3: the 3 `useImportType`
+the fix targets plus the 12 the style pass had been hiding
+(`suppressions/unused` ×7, `useArrowFunction` ×3, `noUnusedVariables` ×1,
+`noUnusedFunctionParameters` ×1) — the same 12 the #16 templates remove, which
+is why the post-#16 arm is 0-warning. The info column is 21, not 18: the extra
+3 are `useTemplate` in `flawless/setup.ts`, which only appears when the copy is
+installed before the regen — the emitter's setup.ts variant depends on what the
+host has installed, so an uninstalled copy is not the host any user has. What
+#16 bought, same lineage, no style pass, full tree: **26/15/21 → 7/0/21**. The 7
+survivors are 4 `organizeImports` in the emitted e2e route specs plus
+`flawless/mocks/handlers.ts` — chunk #21 — and the fixture's own 2.
 
 **Measured — branch `fix/dogfood-031-chunk-16-biome-host` (C1 `2b824f8`,
 C2 `fd11ec1`, C3 `9c22c5b`, C4 `e9a6539` + `5d5e070`) over `main` at
@@ -1081,6 +1110,15 @@ and run on bigcachy (PATH biome 2.5.14 present, style pass ran — 63 files
    Gates on the committed tree: cold check **0 errors + the 2 pre-existing
    warnings**, `tsc --noEmit` clean, `bun test` **1767 pass / 11 skip /
    0 fail** (1778 tests / 118 files = the 1748 baseline + 30 new) twice.
+   Two blemishes on that receipt, recorded here rather than edited out:
+   `e9a6539`'s own message claims **1740 pass / 11 skip / 0 fail**, which is
+   not this branch's tally (1740 is the *tests* figure of the #13-era
+   receipt, quoted as a pass count), and the pin above did not in fact
+   neutralize the style pass — `Bun.which` reads the process-startup PATH,
+   so swapping `process.env.PATH` around `runCore` left the host's biome
+   formatting. The test stayed green on a biome host and red on a host
+   without one (l-dev-ai, since this merged); chunk #21 rebuilt it as a
+   subprocess.
 
 **Acceptance (as recorded, unchanged):** fresh full-task colocate generation
 + `biome check` over the suite reports **0 warnings** (any surviving info
@@ -1181,6 +1219,57 @@ has no client-mode surface today. If that reading is wrong, or client mode ever 
 data-path mocking, the unit-only inputs will miss the tree evidence. Verify the template
 before asserting either way; recorded, not chunked.
 
+### #21 — the emitter was not an `organizeImports` fixed point, and the pin could not see it
+
+**Trigger.** l-dev-ai has been red since PR #159 merged: `bun test` there
+fails `tests/biomeHost.test.ts` with 5 `organizeImports` errors (4 emitted e2e
+route specs + `flawless/mocks/handlers.ts`) — the same 5 a stripped-PATH
+`bun test` reproduces on a biome-carrying host. Not a host quirk: the two write
+paths those files come from never went through `finalizeEmittedImports`, and
+the test that was supposed to catch that could not see the difference.
+
+**Why the pin missed it.** `adoptStyle` resolves its formatter with
+`Bun.which("biome")`, and `Bun.which` reads the PATH the process *started*
+with, not the live `process.env.PATH`. The test swapped `process.env.PATH`
+around `runCore` to hide any host biome; on a biome host the style pass ran
+anyway and formatted the emitted bytes, so the assertion measured the host's
+biome, not the emitter. On a host with no biome the same test went red — the
+wrong way round: green where the mask exists, red where the real work happens.
+
+**Measured before (`6dcb475`, no style pass, same lineage).** Full tree
+**7 err / 0 warn / 21 info**: 5 `organizeImports` on tool-written files (the 4
+e2e route specs + `flawless/mocks/handlers.ts`) + the fixture's own 2.
+
+**Fix.** Both write sites finalize before stamping, the way the four #16 sites
+already do, so the stamp hash covers the final bytes: `src/tasks/e2eRoutes.ts`
+(the colocated route specs) and `src/nextjs/emit.ts`, whose render closure now
+runs `finalizeEmittedImports` for the shared handlers body (exported as
+`renderHandlers`). Every other `Bun.write` site was audited and already emits
+canonical bytes. `tests/emitterFixedPoint.test.ts` pins 3 cases: the finalized
+bytes are `organizeImports` fixed points and carry the canonical import shapes
+(`{ expect, type Page, test }`, `{ HttpResponse, http }`).
+
+**Test rebuilt.** `tests/biomeHost.test.ts` now runs the regen as a subprocess
+whose PATH carries no biome executable — every PATH directory containing one is
+dropped, a private bin supplies the `bun` symlink, and node stays because the
+scanner's biome shim is `#!/usr/bin/env node`. `--ci` makes the exit code
+explainable per task; `adoptStyle`'s `biome config found but no biome binary`
+warning is the proof the config was found and nothing was formatted (it is the
+same return value as `formatted: 0`). The copy is installed before the regen,
+because the emitted `setup.ts` variant depends on installed deps.
+
+**Measured after (branch tip, no style pass, same lineage).** Full tree
+**2 err / 0 warn / 21 info** — the fixture's own two and nothing else; 0 errors
+and 0 warnings on every tool-written file. Gates on the committed tree: cold
+check **0 errors + the 2 pre-existing warnings**, `tsc --noEmit` clean,
+`bun test` **1770 pass / 11 skip / 0 fail** (1781 tests / 119 files) with a
+normal PATH **and** with the startup PATH stripped of every biome directory —
+the arm that was **1766 / 11 / 1** before.
+
+**Acceptance met:** a no-style regen leaves 0 `organizeImports` errors on
+tool-written files (only the fixture's own two tree-wide) and 0 warnings, on
+every host, with or without a biome on PATH.
+
 ### Ordered chunk list (by user-visible cost)
 
 1. **#10** — vitest 4/5 users hit a silent total-red wall. **Fixed** (family-gated jsx
@@ -1190,7 +1279,10 @@ before asserting either way; recorded, not chunked.
    — verification deferred, receipts above).
 3. **#17** — eslint hosts get no style pass; whole class of hosts unverified.
 4. **#16** — lint residue on every generation; noisy but non-blocking.
-5. **#14** — silent fallback; deferred, trigger above.
+5. **#21** — emitted suite red on any host without a biome on PATH, and the pin
+   that hid it. **Fixed** (both remaining write sites finalized;
+   `tests/emitterFixedPoint.test.ts`, `tests/biomeHost.test.ts` rebuilt).
+6. **#14** — silent fallback; deferred, trigger above.
 
 Two loose ends recorded for the record, neither owned here: #11 and #15 stay closed as written
 above (no chunk should reopen them), and the 183 → 119 colocated-web-specs question is owned by
