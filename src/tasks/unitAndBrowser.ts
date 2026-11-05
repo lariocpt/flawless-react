@@ -1,9 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { rendersNativeSource } from "../analyse/nativeDialect.ts";
 import { ModuleResolver } from "../analyse/resolveModule.ts";
 import { appPackageRoot, hostViteFamily, jsxTransformFor } from "../packageJson.ts";
+import { census, DEPTH_PLANES, type DepthBlock, depthBlock } from "../reporters/depth.ts";
 import {
   findOrphanUnitSpecs,
   type ScaffoldUnitBrowserOptions,
@@ -57,6 +58,7 @@ export const unitAndBrowser: Task = {
         findings: [],
         summary: `native unit specs for ${names.length} component(s)${keptNote}`,
         handWork: todos.toTallies(),
+        depth: suiteDepth(ctx.outDir),
       };
     }
 
@@ -281,9 +283,54 @@ export const unitAndBrowser: Task = {
       findings: [],
       summary: `unit tests for ${names.length} component(s)${nativeNote}${skippedNote}${editedNote}${legacyNote}${staleRemovedNote}${staleKeptNote}${orphanNote(orphanUnitSpecs)}${shimNote}${browserNote}: ${names.join(", ")}`,
       handWork: todos.toTallies(),
+      depth: suiteDepth(ctx.outDir),
     };
   },
 };
+
+/**
+ * The D0 depth census of the out-dir suite on disk (PLAN-00): every spec file
+ * in the plane directories this task owns, classified by the tier table.
+ * Reads the on-disk suite, not just this run's writes — a kept write-once
+ * spec is part of the suite the census describes, and this is the same file
+ * set scripts/depth-census.ts walks, so report, verdict and script agree by
+ * construction and by test (tests/depthWiring.test.ts).
+ *
+ * Returns undefined when the planes hold no specs at all: the field is then
+ * ABSENT on the TaskResult — unmeasured, never a zero-filled census of an
+ * empty suite (verdict.ts's contract).
+ */
+export function suiteDepth(outDir: string): DepthBlock | undefined {
+  const specs: { path: string; source: string }[] = [];
+  const walk = (dir: string, match: (base: string) => boolean): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of [...names].sort()) {
+      const full = path.join(dir, name);
+      let isDir = false;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) walk(full, match);
+      else if (match(name)) {
+        try {
+          specs.push({ path: full, source: readFileSync(full, "utf8") });
+        } catch {
+          // Unreadable file: the census cannot read it, and neither can vitest.
+        }
+      }
+    }
+  };
+  for (const plane of DEPTH_PLANES) walk(path.join(outDir, plane.dir), plane.match);
+  if (specs.length === 0) return undefined;
+  return depthBlock(census(specs));
+}
 
 /**
  * vitest resolve.alias entries for a Next.js project: the tsconfig path

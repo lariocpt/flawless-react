@@ -31,7 +31,7 @@
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { census, type DepthCensus, type Tier } from "../src/reporters/depth.ts";
+import { census, type DepthCensus, DEPTH_PLANES, type Tier } from "../src/reporters/depth.ts";
 
 function usage(): never {
   console.error("usage: bun run scripts/depth-census.ts <dir-of-emitted-specs> [--json out.json]");
@@ -59,15 +59,11 @@ type Plane = "unit" | "browser" | "native" | "unit-colocated";
 function inPlane(p: string): Plane | null {
   const rel = p.split(path.sep).join("/");
   const base = rel.split("/").pop() ?? "";
-  const under = (dir: string): boolean => rel.includes(`/${dir}/`) || rel.startsWith(`${dir}/`);
-  if (under("flawless/native") && /\.spec\.tsx?$/.test(base)) return "native";
-  if (under("flawless/browser") && /\.spec\.tsx?$/.test(base)) return "browser";
-  if (
-    under("flawless/unit") &&
-    /\.flawless\.test\.tsx?$/.test(base) === false &&
-    /\.test\.tsx?$/.test(base)
-  )
-    return "unit";
+  for (const plane of DEPTH_PLANES) {
+    const dir = `flawless/${plane.dir}`;
+    const under = rel.includes(`/${dir}/`) || rel.startsWith(`${dir}/`);
+    if (under && plane.match(base)) return plane.dir;
+  }
   if (/\.flawless\.test\.tsx?$/.test(base)) return "unit-colocated";
   return null;
 }

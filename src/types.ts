@@ -1,3 +1,5 @@
+import type { DepthBlock } from "./reporters/depth.ts";
+
 /** Bad input from the caller — the CLI maps it to exit 2, internal errors to 1.
  *  Lives here (not core.ts) so leaf modules like nextjs/detect.ts can throw it
  *  without importing core and creating a cycle. */
@@ -1225,6 +1227,15 @@ export interface TaskResult {
     /** Sorted by file, then component. */
     components: SpecQualityBucket[];
   };
+  /**
+   * The D0 depth census of the specs this task emitted (the out-dir planes it
+   * wrote), classified by `src/reporters/depth.ts`. Set only by tasks that
+   * emit specs — unit-browser today (native specs under --expo) — and ABSENT
+   * otherwise: an absent field is an unmeasured field, never a zero
+   * (verdict.ts's contract). Generation-measured, like every verdict tally:
+   * the census reads the emitted text, it does not run the suite.
+   */
+  depth?: DepthBlock;
 }
 
 /**

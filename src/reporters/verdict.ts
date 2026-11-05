@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { TaskResult } from "../types.ts";
 import { VERSION } from "../version.ts";
+import type { DepthBlock } from "./depth.ts";
 import type { NamedSkip } from "./report.ts";
 
 /**
@@ -76,6 +77,13 @@ export interface VerdictEntry {
    * extended to the verdict). Absent means the task does not measure markers.
    */
   todos?: { kind: string; count: number }[];
+  /**
+   * The D0 depth census of the specs this task emitted (PLAN-00): tier
+   * distribution over specs plus the test tallies. Present only on tasks that
+   * emit specs — unit-browser today. Absent means UNMEASURED, never zero:
+   * the same contract as every other field in this file.
+   */
+  depth?: DepthBlock;
   /** Evidence pointers, relative to the suite dir, sorted. */
   evidence: string[];
   /** The task's own summary line, verbatim. */
@@ -182,6 +190,7 @@ export function mergeVerdict(existing: VerdictDoc | null, run: VerdictRunInput):
       skips: skips.length,
       skipReasons: aggregateSkipReasons(skips.map((s) => s.title)),
       ...(r.handWork ? { todos: r.handWork.map((t) => ({ kind: t.kind, count: t.count })) } : {}),
+      ...(r.depth ? { depth: r.depth } : {}),
       evidence: [...new Set(run.evidenceFor(r.id))].sort(),
       summary: r.summary,
     };
@@ -202,6 +211,7 @@ export function renderVerdictJson(doc: VerdictDoc): string {
       skips: e.skips,
       skipReasons: e.skipReasons,
       ...(e.todos ? { todos: e.todos } : {}),
+      ...(e.depth ? { depth: e.depth } : {}),
       evidence: e.evidence,
       summary: e.summary,
     };
@@ -280,6 +290,52 @@ export function renderVerdictMarkdown(doc: VerdictDoc, thisRunTaskIds: readonly 
       lines.push(`| ${reason} | ${count} |`);
     }
     lines.push("");
+  }
+
+  // --- depth ------------------------------------------------------------------
+  // The D0 census (PLAN-00): assertion tiers over the specs each task emitted,
+  // strongest assertion per spec, T0 mount-only → T3 state and payload. Only
+  // tasks that emit specs measure it; an entry without a depth field was not
+  // measured and says nothing about its depth — absence is absence, not zero.
+  // The totals here equal the entry's `depth` object and the census script's
+  // output over the same suite: one census, three views (checked by
+  // tests/depthWiring.test.ts, not assumed).
+  lines.push("## Depth", "");
+  const depthIds = ids.filter((id) => (doc.entries[id] as VerdictEntry).depth !== undefined);
+  if (depthIds.length === 0) {
+    lines.push(
+      "Not measured — no task on record emitted specs the tier table describes.",
+      "Absence here is absence of measurement, not zero depth.",
+      "",
+    );
+  } else {
+    lines.push(
+      "Assertion tiers of the emitted specs on record — the strongest assertion per",
+      "spec, per the D0 tier table (T0 mount-only → T3 state and payload).",
+      "",
+      "| Task | Specs | T0 | T1 | T2 | T3 | Tests classified | Unclaimed | Skipped |",
+      "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    );
+    let sumSpecs = 0;
+    let sumT0 = 0;
+    let sumUnclaimed = 0;
+    for (const id of depthIds) {
+      const d = (doc.entries[id] as VerdictEntry).depth as DepthBlock;
+      sumSpecs += d.specs;
+      sumT0 += d.T0;
+      sumUnclaimed += d.testsUnclaimed;
+      lines.push(
+        `| \`${id}\` | ${d.specs} | ${d.T0} | ${d.T1} | ${d.T2} | ${d.T3} | ${d.testsClassified} | ${d.testsUnclaimed} | ${d.testsSkipped} |`,
+      );
+    }
+    lines.push(
+      "",
+      `${sumT0} of ${sumSpecs} spec(s) on record have T0 — mount-only — as their strongest ` +
+        `tier; ${sumUnclaimed} test(s) are unclaimed placeholders.`,
+      "",
+      "T0 means mount-only — not a failure, the floor this tool guarantees and no more.",
+      "",
+    );
   }
 
   return `${lines.join("\n")}\n`;
