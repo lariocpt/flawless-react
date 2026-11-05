@@ -157,9 +157,10 @@ describe("runCore", () => {
     const summaryPath = path.join(result.outDir, "reports", "summary.json");
     expect(existsSync(summaryPath)).toBe(true);
     const summary = (await Bun.file(summaryPath).json()) as {
-      ts: string;
       results: Array<{ id: string; ok: boolean; findings: number }>;
     };
+    // Byte-stability contract (PLAN-00 D0c): summary.json carries no clock.
+    expect("ts" in summary).toBe(false);
     expect(summary.results.map((r) => r.id)).toContain("perf-static");
     expect(summary.results[0]?.findings).toBe(perf?.findings.length ?? -1);
   });

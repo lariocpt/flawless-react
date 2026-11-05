@@ -639,7 +639,9 @@ zero.
 
 `reports/summary.json` is the machine-readable per-task result, and
 `<Component>.flawless.json` sidecars carry per-component findings unless
-`--no-inline-summary`.
+`--no-inline-summary`. Like the verdict, summary.json carries **no
+timestamps**: a re-run on an unchanged tree rewrites it byte-identically,
+which keeps the idempotence probe honest across the whole emitted tree.
 
 Every path inside a sidecar — `file` and each entry of `reports` — is written
 **relative to the sidecar itself**, so resolve them with
