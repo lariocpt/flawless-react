@@ -8,18 +8,25 @@
  * per-test unclaimed count, and a zero-unclassified-specs assertion (non-zero
  * exit when a spec file was found but no test declaration could be read).
  *
- * Scope — the planes whose assertions the PLAN-00 tier table describes:
- *   - `*.flawless.test.ts(x)`            colocated unit specs (any dir)
+ * Scope — ONE census, ONE denominator. The census subject is the suite THIS
+ * run emitted, i.e. the out-dir planes whose assertions the PLAN-00 tier table
+ * describes:
  *   - `flawless/unit/**.test.ts(x)`      out-dir unit specs
- *   - `flawless/browser/**.spec.ts`      browser (Playwright) specs
+ *   - `flawless/browser/**.spec.ts(x)`   browser (Playwright) specs
  *   - `flawless/native/**.spec.ts(x)`    native (Expo) specs
  * The perf-profile, e2e and load planes measure runtime budgets, not
  * component assertion depth, and are deliberately out of scope.
  *
- * When BOTH colocated and out-dir unit specs exist (a tree generated with
- * --colocate that was later regenerated without it), both are counted and the
- * per-plane table makes the double coverage visible — the census reports what
- * is on disk, it does not guess which copy is canonical.
+ * A tree generated with --colocate (or an older published package) also
+ * carries a committed copy of the unit plane beside the sources
+ * (`*.flawless.test.tsx` anywhere outside the out dir). Counting both copies
+ * double-counts the unit plane and inflates the denominator — the first pinned
+ * baseline read 310 specs where the run emitted 191. Those colocated files
+ * are therefore NOT part of the headline: they are classified separately into
+ * the `crossCheck` field, with its own distribution, explicitly excluded from
+ * `headline`. When the two copies agree, crossCheck is a free cross-check of
+ * the classifier over a second copy of the same suite; when they differ, the
+ * committed copy is stale and the out-dir suite is still the truth.
  */
 
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -42,13 +49,24 @@ if (jsonFlag !== -1) {
 const root = args[0];
 if (!root || args.length > 1) usage();
 
-function inPlane(p: string): "unit-colocated" | "unit" | "browser" | "native" | null {
+/**
+ * Headline planes = the out-dir suite this run emitted. `unit-colocated` is
+ * the crossCheck bucket: a committed copy outside the out dir, never part of
+ * the headline denominator.
+ */
+type Plane = "unit" | "browser" | "native" | "unit-colocated";
+
+function inPlane(p: string): Plane | null {
   const rel = p.split(path.sep).join("/");
   const base = rel.split("/").pop() ?? "";
   const under = (dir: string): boolean => rel.includes(`/${dir}/`) || rel.startsWith(`${dir}/`);
   if (under("flawless/native") && /\.spec\.tsx?$/.test(base)) return "native";
   if (under("flawless/browser") && /\.spec\.tsx?$/.test(base)) return "browser";
-  if (under("flawless/unit") && /\.flawless\.test\.tsx?$/.test(base) === false && /\.test\.tsx?$/.test(base))
+  if (
+    under("flawless/unit") &&
+    /\.flawless\.test\.tsx?$/.test(base) === false &&
+    /\.test\.tsx?$/.test(base)
+  )
     return "unit";
   if (/\.flawless\.test\.tsx?$/.test(base)) return "unit-colocated";
   return null;
@@ -68,10 +86,15 @@ const files: string[] = [];
 walk(root as string, files);
 files.sort();
 
-const specs = files.map((f) => ({ path: f, source: readFileSync(f, "utf8") }));
-const c: DepthCensus = census(specs);
+const headlineFiles = files.filter((f) => inPlane(f) !== "unit-colocated");
+const crossCheckFiles = files.filter((f) => inPlane(f) === "unit-colocated");
 
-// Per-plane breakdown (paths normalised to forward slashes for the lookup).
+const readSpecs = (fs: string[]) => fs.map((f) => ({ path: f, source: readFileSync(f, "utf8") }));
+const c: DepthCensus = census(readSpecs(headlineFiles));
+const cross: DepthCensus = census(readSpecs(crossCheckFiles));
+
+// Per-plane breakdown of the headline census (paths normalised to forward
+// slashes for the lookup).
 const planes = new Map<string, { specs: number; distribution: Record<Tier, number> }>();
 for (const row of c.perSpec) {
   const plane = inPlane(row.path.split(path.sep).join("/")) ?? "other";
@@ -84,20 +107,26 @@ for (const row of c.perSpec) {
   planes.set(plane, entry);
 }
 
-console.log(`depth census over ${c.specs} spec file(s) under ${root}`);
-console.log("");
-console.log("tier   specs   (strongest assertion in the spec)");
-for (const t of ["T0", "T1", "T2", "T3"] as const) {
-  console.log(`${t}    ${String(c.distribution[t]).padStart(5)}`);
+function table(cen: DepthCensus): string[] {
+  const out: string[] = [];
+  out.push("tier   specs   (strongest assertion in the spec)");
+  for (const t of ["T0", "T1", "T2", "T3"] as const) {
+    out.push(`${t}    ${String(cen.distribution[t]).padStart(5)}`);
+  }
+  out.push("");
+  out.push(`specs classified:        ${cen.specsClassified}`);
+  out.push(`specs strongest T0:      ${cen.specsStrongestT0}`);
+  out.push(`tests classified:        ${cen.testsClassified}`);
+  out.push(`tests unclaimed:         ${cen.testsUnclaimed}`);
+  out.push(`tests skipped:           ${cen.testsSkipped}`);
+  out.push(`specs all-skipped:       ${cen.specsAllSkipped.length}`);
+  out.push(`specs unclassified:      ${cen.specsUnclassified.length}`);
+  return out;
 }
+
+console.log(`depth census over ${c.specs} spec file(s) under ${root} — the out-dir suite`);
 console.log("");
-console.log(`specs classified:        ${c.specsClassified}`);
-console.log(`specs strongest T0:      ${c.specsStrongestT0}`);
-console.log(`tests classified:        ${c.testsClassified}`);
-console.log(`tests unclaimed:         ${c.testsUnclaimed}`);
-console.log(`tests skipped:           ${c.testsSkipped}`);
-console.log(`specs all-skipped:       ${c.specsAllSkipped.length}`);
-console.log(`specs unclassified:      ${c.specsUnclassified.length}`);
+for (const line of table(c)) console.log(line);
 if (c.specsUnclassified.length > 0) {
   for (const p of c.specsUnclassified) console.log(`  unclassified: ${p}`);
 }
@@ -109,11 +138,32 @@ for (const [plane, e] of [...planes.entries()].sort()) {
     `  ${plane.padEnd(15)} specs=${String(e.specs).padStart(3)}  T0=${d.T0} T1=${d.T1} T2=${d.T2} T3=${d.T3}`,
   );
 }
+console.log("");
+console.log(
+  `crossCheck — committed colocated copies (*.flawless.test.ts(x) outside the out dir): ` +
+    `${cross.specs} spec file(s), EXCLUDED from the headline above.`,
+);
+const cd = cross.distribution;
+console.log(
+  `  crossCheck distribution: T0=${cd.T0} T1=${cd.T1} T2=${cd.T2} T3=${cd.T3}  ` +
+    `(tests classified=${cross.testsClassified} unclaimed=${cross.testsUnclaimed} skipped=${cross.testsSkipped})`,
+);
+if (cross.specs > 0) {
+  console.log(
+    "  crossCheck is a second copy of the unit plane, not extra coverage: one census,",
+  );
+  console.log("  one denominator — the headline counts only the suite this run emitted.");
+}
 
 if (jsonOut !== undefined) {
   const payload = {
     root,
-    census: c,
+    headline: c,
+    crossCheck: {
+      ...cross,
+      note: "Committed colocated copies (*.flawless.test.ts(x) outside the out dir). " +
+        "Explicitly excluded from `headline`: the census subject is the suite this run emitted.",
+    },
     perPlane: Object.fromEntries([...planes.entries()].sort()),
   };
   writeFileSync(jsonOut, `${JSON.stringify(payload, null, 2)}\n`);

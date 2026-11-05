@@ -1,5 +1,5 @@
 {
-  "_comment": "D0 depth baseline (PLAN-00 acceptance 2). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below; paths are relative to apps/web. Scope: *.flawless.test.ts(x) + flawless/unit + flawless/browser + flawless/native \u2014 the planes the PLAN-00 tier table describes. The perf-profile, e2e and load planes measure runtime budgets, not component assertion depth, and are out of scope.",
+  "_comment": "D0 depth baseline (PLAN-00 acceptance 2), corrected scope. The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below; paths are relative to apps/web. Headline scope: the out-dir suite only — flawless/unit + flawless/browser + flawless/native — the planes the PLAN-00 tier table describes. The committed colocated copy (src/**/*.flawless.test.ts(x), generated with --colocate by the published package) is classified separately under `crossCheck` and explicitly EXCLUDED from `headline`: one census, one denominator. The perf-profile, e2e and load planes measure runtime budgets, not component assertion depth, and are out of scope.",
   "target": "mybodycorpai",
   "treeHash": "c00697f",
   "binary": "fl-bintest-0e6bb75",
@@ -8,21 +8,55 @@
   "generationCommand": "cd /tmp/opencode/mbc-c00697f-d0/apps/web && /tmp/opencode/fl-bintest-0e6bb75 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
   "censusCommand": "cd /tmp/opencode/mbc-c00697f-d0/apps/web && bun run <flawless-react>/scripts/depth-census.ts . --json <out>",
   "date": "2026-11-05",
+  "scopeFix": {
+    "previousHeadline": {
+      "specs": 310,
+      "distribution": {
+        "T0": 128,
+        "T1": 90,
+        "T2": 84,
+        "T3": 0
+      },
+      "specsStrongestT0": 128,
+      "specsUnclassified": 0,
+      "specsAllSkipped": 8,
+      "testsClassified": 720,
+      "testsUnclaimed": 46,
+      "testsSkipped": 110
+    },
+    "reason": "The first baseline counted the unit plane twice: the out-dir suite this run emitted (flawless/unit, 119 specs) AND the committed --colocate copy at src/**/*.flawless.test.tsx (119 specs, emitted by the published package at an earlier generation). The census subject is the suite THIS run emitted, so the colocated copy moved to `crossCheck` and the headline denominator dropped 310 -> 191 specs (T0 128 -> 100, T1 90 -> 45, T2 84 -> 42, T3 0 -> 0; tests classified 720 -> 433, unclaimed 46 -> 23, skipped 110 -> 60, all-skipped 8 -> 4). The two unit copies classify identically (28/45/42/0), which is the cross-check the colocated copy is now named for."
+  },
   "headline": {
-    "specs": 310,
+    "specs": 191,
     "distribution": {
-      "T0": 128,
-      "T1": 90,
-      "T2": 84,
+      "T0": 100,
+      "T1": 45,
+      "T2": 42,
       "T3": 0
     },
-    "specsStrongestT0": 128,
+    "specsStrongestT0": 100,
     "specsUnclassified": 0,
-    "specsAllSkipped": 8,
-    "testsClassified": 720,
-    "testsUnclaimed": 46,
-    "testsSkipped": 110,
-    "note": "T3 == 0 on the DOM plane, as PLAN-00/D0a expects: no DOM T3 assertion is emitted today. The unit plane appears twice (unit-colocated = the suite committed at c00697f, generated with --colocate by the published package; unit = this run's out-dir emission); the two copies classify identically, which is the cross-check."
+    "specsAllSkipped": 4,
+    "testsClassified": 433,
+    "testsUnclaimed": 23,
+    "testsSkipped": 60,
+    "note": "T3 == 0 on the DOM plane, as PLAN-00/D0a expects: no DOM T3 assertion is emitted today. The headline is the out-dir suite this run emitted: unit 119 + browser 72 = 191 specs."
+  },
+  "crossCheck": {
+    "specs": 119,
+    "distribution": {
+      "T0": 28,
+      "T1": 45,
+      "T2": 42,
+      "T3": 0
+    },
+    "specsStrongestT0": 28,
+    "specsUnclassified": 0,
+    "specsAllSkipped": 4,
+    "testsClassified": 287,
+    "testsUnclaimed": 23,
+    "testsSkipped": 50,
+    "note": "Committed colocated copies (*.flawless.test.ts(x) outside the out dir). Explicitly excluded from `headline`: the census subject is the suite this run emitted."
   },
   "perPlane": {
     "browser": {
@@ -42,41 +76,28 @@
         "T2": 42,
         "T3": 0
       }
-    },
-    "unit-colocated": {
-      "specs": 119,
-      "distribution": {
-        "T0": 28,
-        "T1": 45,
-        "T2": 42,
-        "T3": 0
-      }
     }
   },
   "census": {
-    "specs": 310,
-    "specsClassified": 302,
+    "specs": 191,
+    "specsClassified": 187,
     "distribution": {
-      "T0": 128,
-      "T1": 90,
-      "T2": 84,
+      "T0": 100,
+      "T1": 45,
+      "T2": 42,
       "T3": 0
     },
-    "specsStrongestT0": 128,
+    "specsStrongestT0": 100,
     "specsUnclassified": [],
     "specsAllSkipped": [
       "flawless/unit/DashboardSidebar.test.tsx",
       "flawless/unit/ForgotPasswordForm.test.tsx",
       "flawless/unit/JobControls.test.tsx",
-      "flawless/unit/ResetPasswordForm.test.tsx",
-      "src/app/(auth)/_components/forgot-password-form.flawless.test.tsx",
-      "src/app/(auth)/_components/reset-password-form.flawless.test.tsx",
-      "src/app/dashboard/_components/dashboard-sidebar.flawless.test.tsx",
-      "src/app/dashboard/buildings/[id]/maintenance/[jobId]/_components/job-controls.flawless.test.tsx"
+      "flawless/unit/ResetPasswordForm.test.tsx"
     ],
-    "testsClassified": 720,
-    "testsUnclaimed": 46,
-    "testsSkipped": 110,
+    "testsClassified": 433,
+    "testsUnclaimed": 23,
+    "testsSkipped": 60,
     "perSpec": [
       {
         "path": "flawless/browser/ActionItems.spec.ts",
@@ -1412,839 +1433,6 @@
         "path": "flawless/unit/WorkflowCard.test.tsx",
         "tier": "T0",
         "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/_components/forgot-password-form.flawless.test.tsx",
-        "tier": null,
-        "tests": 0,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/(auth)/_components/login-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/_components/oauth-buttons.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/_components/reset-password-form.flawless.test.tsx",
-        "tier": null,
-        "tests": 0,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/(auth)/_components/signup-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/error.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 1,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/forgot-password/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/layout.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/login/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/reset-password/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/(auth)/signup/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/_components/dashboard-header.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 1,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/_components/dashboard-sidebar.flawless.test.tsx",
-        "tier": null,
-        "tests": 0,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/_components/session-hydrator.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/_components/theme-toggle.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 5,
-        "unclaimed": 3,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/_components/user-menu.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/_components/insights-card.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/_components/invite-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/contractors/new/_components/add-contractor-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/contractors/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/contractors/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 2
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/finance/invoices/[invoiceId]/_components/record-payment.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 2,
-        "unclaimed": 1,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/finance/invoices/[invoiceId]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 2
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/finance/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/finance/runs/new/_components/levy-run-wizard.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/finance/runs/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/rate-buttons.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/ticket-status-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/ticket-update-composer.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 5,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/new/_components/create-ticket-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/helpdesk/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 3
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/layout.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/maintenance/[jobId]/_components/comment-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/maintenance/[jobId]/_components/job-controls.flawless.test.tsx",
-        "tier": null,
-        "tests": 0,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/maintenance/[jobId]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 5,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/maintenance/new/_components/report-job-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/maintenance/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/maintenance/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/_components/action-items.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/_components/minutes-editor.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/_components/rsvp-buttons.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 3
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/new/_components/schedule-meeting-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 5,
-        "unclaimed": 2,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/meetings/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 3
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/messages/[convId]/_components/message-composer.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/messages/[convId]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 2
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/messages/new/_components/create-conversation-form.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/messages/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/messages/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/_components/close-poll-button.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/_components/comment-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/_components/vote-card.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 2
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 5,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/new/_components/create-poll-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 5,
-        "unclaimed": 2,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/new/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/buildings/[id]/polls/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 3
-      },
-      {
-        "path": "src/app/dashboard/buildings/new/_components/add-building-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/new/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/buildings/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/error.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 1,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/layout.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/settings/_components/change-password-form.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 1,
-        "skipped": 1
-      },
-      {
-        "path": "src/app/dashboard/settings/_components/password-section.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/settings/_components/profile-form.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/dashboard/settings/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/error.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 1,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/global-error.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/invite/[token]/page.flawless.test.tsx",
-        "tier": "T2",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/layout.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/app/page.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/asha-rail.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 11,
-        "unclaimed": 9,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/notifications-bell.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 1,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/page-header.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/status-pill.InvoiceStatusPill.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/status-pill.PollStatusPill.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/status-pill.StatusPill.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/status-pill.TicketStatusPill.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/workflow-card.StatCard.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/mbc/workflow-card.WorkflowCard.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/providers/store-provider.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/providers/theme-provider.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/toaster.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 1
-      },
-      {
-        "path": "src/components/ui/alert-dialog.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/alert.Alert.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 5,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/alert.AlertDescription.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/alert.AlertTitle.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/avatar.Avatar.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/avatar.AvatarFallback.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/badge.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/button.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/card.Card.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 4,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/card.CardContent.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/card.CardDescription.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/card.CardHeader.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/card.CardTitle.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dialog.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenu.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenuContent.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenuGroup.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenuItem.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenuLabel.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenuSeparator.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/dropdown-menu.DropdownMenuTrigger.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/input.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/label.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/select.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/separator.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/sheet.Sheet.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/sheet.SheetContent.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/sheet.SheetHeader.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 3,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/sheet.SheetTitle.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/sonner.flawless.test.tsx",
-        "tier": "T0",
-        "tests": 1,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/table.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
-        "unclaimed": 0,
-        "skipped": 0
-      },
-      {
-        "path": "src/components/ui/textarea.flawless.test.tsx",
-        "tier": "T1",
-        "tests": 2,
         "unclaimed": 0,
         "skipped": 0
       }
