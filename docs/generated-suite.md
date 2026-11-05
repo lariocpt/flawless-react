@@ -608,12 +608,34 @@ plus up to three interactions harvested from the page's component tree.
 
 crust pipes per route and per API operation. Run with `bun run flawless:load`.
 
-### Every run → `REPORT.md` and `reports/`
+### Every run → `REPORT.md`, `VERDICT.md` and `reports/`
 
 `REPORT.md` accounts for every component the analyser found: how many can mount
 in the browser host, how many cannot and why, and which files yielded no
-component at all. It carries no timestamp and every list is sorted, so a second
-identical run leaves `git status` empty.
+component at all. Its coverage ledger is **name-level**: every exported symbol
+of every analysed file is named, carrying a pointer to its spec or a named
+reason — `covered-through: <parent>` (a spec'd parent renders it),
+`not-analysed: <reason>`, or `not-spec'd: <reason>`. A count of dropped
+components is what let whole shadcn files vanish silently once; a ledger where
+every symbol answers for itself is what prevents a repeat. It carries no
+timestamp and every list is sorted, so a second identical run leaves
+`git status` empty.
+
+`VERDICT.md` (and `VERDICT.json` for machines) is the **accumulated** verdict:
+one entry per task — each plane's LAST run — keyed by (task, target-hash), where
+the target-hash is a content hash of the analysed files. A run rewrites only the
+entries for the planes it selected; the other planes keep their previous entries
+on record, so a single-task run never claims the other six were "not run" when
+an earlier run just ran them. Each entry carries the run's tallies (files
+written, findings, emitted skips), its evidence pointers (`reports/*.json`,
+`heaps/`, `load/last-*.json`), and the skip census aggregated by reason-string —
+the reason table's total is checked against the per-plane Skips column, so the
+two views cannot drift. There are no timestamps: a re-run against an unchanged
+tree rewrites the verdict byte-identically, which is what makes the file safe to
+commit and the idempotence check meaningful. The tallies are **generation**
+tallies — what the tool measured while writing the suite; runtime pass/fail
+belongs to the test runner, and an unmeasured field stays absent rather than
+zero.
 
 `reports/summary.json` is the machine-readable per-task result, and
 `<Component>.flawless.json` sidecars carry per-component findings unless

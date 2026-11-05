@@ -396,8 +396,18 @@ through a child gets no `next/link` mock in its own spec.
 
 Every run writes `flawless/REPORT.md`, which accounts for every component found:
 how many can mount in the browser profiling host, how many cannot and why, and
-which files yielded no component at all. Read it before quoting a coverage
-number — a file count is not coverage.
+which files yielded no component at all. Its coverage ledger is name-level —
+every exported symbol carries a spec pointer or a named reason
+(`covered-through: <parent>` / `not-analysed: <reason>`). Read it before quoting
+a coverage number — a file count is not coverage.
+
+`flawless/VERDICT.md` (+ `VERDICT.json`) is the accumulated cross-run record:
+one entry per task — each plane's LAST run — keyed by (task, target-hash), with
+tallies, evidence pointers (`reports/*.json`, `heaps/`, `load/last-*.json`) and
+the skip census aggregated by reason-string. A run only rewrites the entries for
+the planes it selected, so a one-plane run never erases the other planes' record;
+an unchanged target rewrites the verdict byte-identically. The tallies are
+generation tallies — runtime pass/fail belongs to the runner.
 
 A green generated suite means "nothing obviously broken", not "covered" — the
 value is in the scaffolding you harden, and in the findings.
