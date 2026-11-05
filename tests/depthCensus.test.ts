@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { census, classifyAssertionAtLine, classifySpec, type Tier } from "../src/reporters/depth.ts";
+import {
+  census,
+  classifyAssertionAtLine,
+  classifySpec,
+  type Tier,
+} from "../src/reporters/depth.ts";
 
 /**
  * Guard-the-guard tests for the D0 depth classifier (PLAN-00 acceptance 1).
@@ -354,9 +359,9 @@ describe("census", () => {
 
 describe("classifyAssertionAtLine — the probe's line-level question", () => {
   const spec = [
-    'test("Button fires onClick when \'Save\' (click)", async () => {',
+    "test(\"Button fires onClick when 'Save' (click)\", async () => {",
     "  const { container } = renderTarget();",
-    "  fireEvent.click(screen.getByText(\"Save\"));",
+    '  fireEvent.click(screen.getByText("Save"));',
     "  expect(handlers.onClick).toHaveBeenCalled();",
     "});",
     'test("renders copy", () => {',
