@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { findUnresolvableImports } from "./analyse/bootability.ts";
 import { analyseFile, createAnalyseSharedContext } from "./analyse/index.ts";
+import { parseFile } from "./analyse/parseFile.ts";
 import { deriveContextProviderWraps, libraryProviderShimsFor } from "./analyse/providerWraps.ts";
 import { affectedSpecs, changedFiles, findRepoRoot } from "./changed.ts";
 import { outDirRel, underOutDir } from "./emitPaths.ts";
@@ -27,10 +28,12 @@ import { configRootFor, detectReactCompiler } from "./reactCompiler.ts";
 import { printFindings, writeInlineSummaries, writeSummaryJson } from "./reporters/findings.ts";
 import {
   collectNamedSkips,
+  type FileExports,
   SPEC_FILE,
   type UnparseableFile,
   writeReportMarkdown,
 } from "./reporters/report.ts";
+import { hashTargetFiles, makeFileClaimer, VERDICT_MD, writeVerdict } from "./reporters/verdict.ts";
 import { runAffectedTests, runGeneratedTests } from "./runner/runTests.ts";
 import { adoptProjectStyle } from "./scaffold/adoptStyle.ts";
 import { restampGenerated } from "./scaffold-tests/stamp.ts";
@@ -828,27 +831,88 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
         `collect, before any test runs. REPORT.md lists them.`,
     );
   }
+  // The chunk-9 skip census: every test.skip generation emitted into a
+  // spec file, counted here so REPORT.md can say how many tests skip and
+  // why without running the suite. The suite dirs are scanned as well as
+  // the run's outputs, because a write-once colocated spec that was kept
+  // is not "written" this run but is still part of the suite.
+  const namedSkips = collectNamedSkips(
+    results.flatMap((r) => r.outputs),
+    [
+      // Everything the suite itself holds: in-outDir specs by name, and in
+      // the app tree only the tool's own colocated specs — the host's own
+      // *.test.tsx files are not this suite's skips.
+      { dir: outDir, pattern: SPEC_FILE },
+      ...(nextCtx
+        ? [{ dir: nextCtx.root, pattern: /\.flawless\.(test|spec)\.[cm]?[jt]sx?$/ }]
+        : []),
+    ],
+  );
+
+  // The accumulated verdict (M1): one entry per task, keyed by (task,
+  // target-hash), so the last run of every plane is always on record and the
+  // per-invocation report's "1 of 7 tasks" can never again erase a plane a
+  // previous run just measured. Written BEFORE the report so the report can
+  // point at it and knows which planes have an entry.
+  const targetHash = await hashTargetFiles(files);
+  const verdict = await writeVerdict(outDir, {
+    targetHash,
+    results,
+    skipCensus: namedSkips,
+    claimFile: makeFileClaimer(outDir, results, nextCtx ? "unit-browser" : undefined),
+    evidenceFor: (taskId) => {
+      const rel = (p: string): string => path.relative(outDir, p).split(path.sep).join("/");
+      // Per-finding evidence only: the reports/*.json the task wrote (the
+      // machine-readable findings base), heaps/, load/last-*.json. A task's
+      // other outputs (specs, configs) are not evidence of a finding.
+      const reportsRel = path.join(outDir, "reports") + path.sep;
+      const out = results
+        .find((r) => r.id === taskId)
+        ?.outputs.filter((o) => o.startsWith(reportsRel) && o.endsWith(".json"))
+        .map(rel);
+      const extra: string[] = [];
+      if (taskId === "perf-harness" && existsSync(path.join(outDir, "heaps"))) extra.push("heaps/");
+      if (taskId === "load") {
+        try {
+          for (const f of readdirSync(path.join(outDir, "load"))) {
+            if (f.startsWith("last-") && f.endsWith(".json")) extra.push(`load/${f}`);
+          }
+        } catch {
+          // No load/ dir yet — nothing to point at.
+        }
+      }
+      return [...(out ?? []), ...extra];
+    },
+  });
+
+  // The name-level coverage ledger's key: every component symbol each swept
+  // file declares, from the parse (shared cache — the sweep already read them).
+  // This is what the ledger is checked against, not the analyser's component
+  // set: an export that left the component set must still be named (audit C19).
+  const exportInventory: FileExports[] = [];
+  for (const file of [...files].sort()) {
+    try {
+      const parsed = await parseFile(file, analyseShared.cache, { tolerateNoComponents: true });
+      exportInventory.push({
+        file,
+        symbols: parsed.components.map((c) => ({
+          name: c.exportedAs ?? c.componentName,
+          exportKind: c.exportKind,
+        })),
+      });
+    } catch {
+      // A file the parse cannot read is already accounted for in the report's
+      // unparseable section; the ledger simply cannot key on it.
+    }
+  }
   const reportPath = await writeReportMarkdown({
     trees,
     results,
     outDir,
-    // The chunk-9 skip census: every test.skip generation emitted into a
-    // spec file, counted here so REPORT.md can say how many tests skip and
-    // why without running the suite. The suite dirs are scanned as well as
-    // the run's outputs, because a write-once colocated spec that was kept
-    // is not "written" this run but is still part of the suite.
-    namedSkips: collectNamedSkips(
-      results.flatMap((r) => r.outputs),
-      [
-        // Everything the suite itself holds: in-outDir specs by name, and in
-        // the app tree only the tool's own colocated specs — the host's own
-        // *.test.tsx files are not this suite's skips.
-        { dir: outDir, pattern: SPEC_FILE },
-        ...(nextCtx
-          ? [{ dir: nextCtx.root, pattern: /\.flawless\.(test|spec)\.[cm]?[jt]sx?$/ }]
-          : []),
-      ],
-    ),
+    namedSkips,
+    exportInventory,
+    rootMode: opts.roots ?? "primary",
+    verdict: { path: VERDICT_MD, tasks: Object.keys(verdict.doc.entries) },
     projectRoot: nextCtx?.root,
     unparseable,
     unresolvable,
@@ -870,6 +934,10 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
   const styleRoot = nextCtx?.root ?? outDir;
   const writtenFiles = [
     reportPath,
+    // The verdict joins the report here: same committed-file contract, so the
+    // host's formatter sees it and never churns it back on the next run.
+    verdict.jsonPath,
+    verdict.mdPath,
     // Written on every run like swagger.json below: if it lands in the host's
     // own style, its formatter never churns it back. (Measured: emitted with
     // two-space indent, a biome-default-tabs host flagged it as a format

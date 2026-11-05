@@ -1,7 +1,8 @@
-import { type Dirent, readdirSync, readFileSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { UnresolvableImport } from "../analyse/bootability.ts";
-import { flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
+import { hasSpec } from "../analyse/bootability.ts";
+import { type FlatComponent, flattenTrees, hostEligibility } from "../scaffold-tests/registry.ts";
 import type { ComponentTree, TaskId, TaskResult, TodoKind } from "../types.ts";
 import { VERSION } from "../version.ts";
 
@@ -120,6 +121,145 @@ export interface ReportInput {
    * go quietly yellow. Collected from the written spec files (collectNamedSkips).
    */
   namedSkips?: readonly NamedSkip[];
+  /**
+   * Every component symbol each swept file exports (or hides), from the parse.
+   * The name-level coverage ledger is keyed on this — the file's own symbols —
+   * not on the analyser's component set, which is exactly what let 54 shadcn
+   * subcomponents vanish between runs without a word (audit C19). Absent means
+   * not measured; the ledger says so rather than rendering an empty truth.
+   */
+  exportInventory?: readonly FileExports[];
+  /** The run's root mode — the reason a non-root export went unanalysed. */
+  rootMode?: string;
+  /**
+   * The accumulated verdict this run just wrote: where it lives (display path)
+   * and which task ids have an entry. The "N of M tasks / Not run" line is
+   * retired for every plane in `tasks` — those are on record, not missing.
+   */
+  verdict?: { path: string; tasks: readonly string[] };
+}
+
+/** One swept file's component symbols, as the file itself declares them. */
+export interface FileExports {
+  file: string;
+  symbols: { name: string; exportKind: "default" | "named" | "none" }[];
+}
+
+/** First path that exists, or undefined. */
+function firstExisting(paths: readonly string[]): string | undefined {
+  for (const p of paths) if (existsSync(p)) return p;
+  return undefined;
+}
+
+interface LedgerRow {
+  name: string;
+  file: string;
+  status: string;
+}
+
+/**
+ * The name-level coverage ledger: every component symbol of every swept file,
+ * keyed on the file's own exports, each with its coverage named.
+ *
+ * The count table this replaces let 54 exported subcomponents go from spec'd
+ * to neither spec'd nor accounted for in one scoping change, invisibly
+ * (audit C19). The ledger makes the scoping visible: a symbol with a spec
+ * points at the file that holds it; one without carries a named reason —
+ * `covered-through: <parent>` when a spec'd parent renders it, `not-analysed`
+ * when this run never analysed it, `not-spec'd` when it was analysed but no
+ * spec file stands on disk.
+ */
+function coverageLedger(
+  input: ReportInput,
+  flat: readonly FlatComponent[],
+  rel: (p: string) => string,
+): LedgerRow[] {
+  const inventory = input.exportInventory;
+  if (!inventory || inventory.length === 0) return [];
+
+  // Which symbols this run analysed, per file; which of them are spec targets;
+  // and each analysed symbol's nearest parent (for the covered-through name).
+  const analysed = new Map<string, Set<string>>();
+  const targets = new Map<string, string[]>();
+  const parentOf = new Map<string, string | undefined>();
+  for (const c of flat) {
+    const f = c.info.filePath;
+    const pub = c.info.exportedAs ?? c.info.componentName;
+    let set = analysed.get(f);
+    if (!set) {
+      set = new Set();
+      analysed.set(f, set);
+    }
+    set.add(pub);
+    parentOf.set(`${f}::${pub}`, c.parentName);
+    if (hasSpec(c.info)) {
+      let list = targets.get(f);
+      if (!list) {
+        list = [];
+        targets.set(f, list);
+      }
+      list.push(pub);
+    }
+  }
+
+  const notAnalysedReason =
+    input.rootMode === "exported"
+      ? "not analysed by this run"
+      : "not a root of this run and not rendered by one — the sweep analysed each " +
+        "file's primary component and the components its JSX renders";
+
+  const rows: LedgerRow[] = [];
+  for (const fe of inventory) {
+    const dir = path.dirname(fe.file);
+    const base = path.basename(fe.file).replace(/\.(tsx|jsx|ts|js)$/, "");
+    const fileTargets = targets.get(fe.file) ?? [];
+    for (const sym of fe.symbols
+      .slice()
+      .sort((a, b) => (a.name === b.name ? 0 : a.name < b.name ? -1 : 1))) {
+      const pub = sym.name;
+      let status: string;
+      if (sym.exportKind === "none") {
+        const parent = parentOf.get(`${fe.file}::${pub}`);
+        status = parent
+          ? `covered-through: \`${parent}\``
+          : "covered-through: the file's primary component";
+      } else {
+        const ownSpec = firstExisting([
+          path.join(dir, `${base}.${pub}.flawless.test.tsx`),
+          path.join(input.outDir, "unit", `${base}.${pub}.test.tsx`),
+          path.join(input.outDir, "unit", `${pub}.test.tsx`),
+        ]);
+        if (ownSpec) {
+          status = `spec: \`${rel(ownSpec)}\``;
+        } else if (fileTargets.includes(pub)) {
+          const stem =
+            fileTargets.length === 1
+              ? firstExisting([
+                  path.join(dir, `${base}.flawless.test.tsx`),
+                  path.join(input.outDir, "unit", `${base}.test.tsx`),
+                ])
+              : undefined;
+          status = stem
+            ? `spec: \`${rel(stem)}\``
+            : "not-spec'd: analysed this run; no spec file on disk — the unit-browser plane writes it";
+        } else {
+          status = `not-analysed: ${notAnalysedReason}`;
+        }
+      }
+      rows.push({ name: pub, file: rel(fe.file), status });
+    }
+  }
+  return rows.sort((a, b) =>
+    a.file === b.file
+      ? a.name === b.name
+        ? 0
+        : a.name < b.name
+          ? -1
+          : 1
+      : a.file < b.file
+        ? -1
+        : 1,
+  );
 }
 
 export function renderReportMarkdown(input: ReportInput): string {
@@ -233,13 +373,39 @@ export function renderReportMarkdown(input: ReportInput): string {
   // qualification, so the report read as "this project has one task" rather
   // than "this run selected one". Two sessions reverted a truncated REPORT.md
   // by hand before anyone noticed the file was the thing lying.
+  //
+  // M1 retires the lying half of that line: a plane with a verdict entry is
+  // never "Not run" — its last result is on record in VERDICT.md, and saying
+  // otherwise is what audit C16/C31 caught ("This run selected 1 of 7 tasks"
+  // after a full run). Only planes that have NEVER run are still named.
   const ran = new Set<string>(input.results.map((r) => r.id));
-  const notRun = (input.allTaskIds ?? []).filter((id) => !ran.has(id));
+  const verdictTasks = new Set<string>(input.verdict?.tasks ?? []);
+  const neverHeard = (input.allTaskIds ?? []).filter((id) => !ran.has(id) && !verdictTasks.has(id));
+  const onRecordElsewhere = (input.allTaskIds ?? []).filter(
+    (id) => !ran.has(id) && verdictTasks.has(id),
+  );
   lines.push("## Tasks", "");
-  if (notRun.length > 0) {
+  if (input.verdict) {
+    lines.push(
+      `Run results for every plane, accumulated across runs: \`${input.verdict.path}\` —`,
+      "each plane's last run, keyed by the target it describes.",
+      "",
+    );
+  }
+  if (neverHeard.length > 0) {
     lines.push(
       `This run selected ${input.results.length} of ${(input.allTaskIds ?? []).length} tasks.`,
-      `Not run, and therefore not described below: ${notRun.map((id) => `\`${id}\``).join(", ")}.`,
+      `Not run, and therefore not described below: ${neverHeard.map((id) => `\`${id}\``).join(", ")}.`,
+    );
+    if (onRecordElsewhere.length > 0 && input.verdict) {
+      lines.push(
+        `The other ${onRecordElsewhere.length} ran in an earlier invocation; their last results are in \`${input.verdict.path}\`.`,
+      );
+    }
+    lines.push("");
+  } else if (onRecordElsewhere.length > 0 && input.verdict) {
+    lines.push(
+      `This run selected ${input.results.length} of ${(input.allTaskIds ?? []).length} tasks; the rest ran in an earlier invocation, and their last results are in \`${input.verdict.path}\`.`,
       "",
     );
   }
@@ -482,6 +648,41 @@ export function renderReportMarkdown(input: ReportInput): string {
     )) {
       lines.push(`| \`${e.name}\` | \`${e.file}\` | ${e.reason} |`);
     }
+    lines.push("");
+  }
+
+  // --- coverage ledger ------------------------------------------------------
+  // The name-level ledger (audit C19 sharpening): keyed on each file's own
+  // exports, so a scoping change that drops symbols from the analyser's set
+  // shows up as named `not-analysed` rows instead of silence.
+  const ledger = coverageLedger(input, flat, rel);
+  if (input.exportInventory === undefined) {
+    lines.push(
+      "### Coverage ledger",
+      "",
+      "Not measured — no export inventory reached the report. Absence of a",
+      "ledger here is absence of measurement, not absence of uncovered symbols.",
+      "",
+    );
+  } else if (ledger.length > 0) {
+    const count = (prefix: string): number =>
+      ledger.filter((r) => r.status.startsWith(prefix)).length;
+    lines.push(
+      "### Coverage ledger",
+      "",
+      `${ledger.length} component symbol(s) across ${new Set(ledger.map((r) => r.file)).size} file(s), keyed on each`,
+      "file's own exports — not on what this run analysed. Every symbol is named;",
+      "a symbol with a spec points at it, one without carries a named reason:",
+      "`covered-through: <parent>` (a spec'd parent renders it), `not-analysed: <reason>`",
+      "(this run did not analyse it), or `not-spec'd: <reason>`.",
+      "",
+      `With a spec: ${count("spec:")}. Covered through a parent: ${count("covered-through:")}. ` +
+        `Not analysed: ${count("not-analysed:")}. Analysed, no spec file: ${count("not-spec'd:")}.`,
+      "",
+      "| Symbol | File | Coverage |",
+      "| --- | --- | --- |",
+    );
+    for (const r of ledger) lines.push(`| \`${r.name}\` | \`${r.file}\` | ${r.status} |`);
     lines.push("");
   }
 
