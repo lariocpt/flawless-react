@@ -20,6 +20,12 @@ and pins their first reading.
   unambiguous (preferred: none; the classifier reads emitted text, so the emitted suite
   stays the source of truth and cannot lie about itself).
 - `scripts/depth-probe.ts` (new, maintainer tooling): the mutation probe.
+- `scripts/depth-census.ts` (new, maintainer tooling): the census over an emitted suite —
+  the out-dir planes (`flawless/unit|browser|native`) are the headline; a committed
+  colocated copy (`*.flawless.test.ts(x)` outside the out dir) is classified separately
+  as a cross-check and excluded from the headline denominator. Added by D0a as the
+  reproducible surface for the pinned baseline; declared here so the subfile's scope
+  matches the shipped tree.
 - `docs/plans/baselines/` (new): the pinned baseline readings, committed.
 - `tests/depthCensus.test.ts`, `tests/depthProbe.test.ts` (new).
 
@@ -35,7 +41,22 @@ its tests; the census is the distribution over specs.
 | T0 | `not.toThrow()`, `innerHTML.length > 0`, `toJSON()).not.toBeNull()`, `toBeTruthy()` on a locator, `expect(calls).toBeGreaterThan(0)` with nothing after it | True of nearly any component; falsifies almost nothing |
 | T1 | `querySelector("<tag>")`, `getAllByText`/`getByText` on a literal, `toHaveValue` after a fill, `getAllByText(<CHILD_TEXT>)`, `.flawless-cls`, variant `outerHTML` comparison | Falsified by markup/copy changes |
 | T2 | `expect(handlers.onX).toHaveBeenCalled()`, `vi.mocked(...).toHaveBeenCalled()`, `routerMock.push` assertions, `rejects.toThrow(/notFound/)`, inversion legs' presence/absence pairs, `toBeDisabled()`, `getPathname()).toBe(` | Falsified by behaviour changes, not markup |
-| T3 | `toHaveBeenCalledWith(...)`, `getAllByText(<fixture value>)`, `toHaveBeenCalledTimes(n)` where n > 1 derived from a call site, call-count **deltas** between two legs, `toHaveDisplayValue` after a state transition | Falsified by data-flow changes |
+| T3 | `toHaveBeenCalledWith(...)`, `getAllByText(<fixture value>)`, `toHaveBeenCalledTimes(n)` where n > 1 derived from a call site, call-count **deltas** between two legs — a delta keyed on a flipped input and carrying a distinguishing marker, which nothing emitted today does (see the note below), `toHaveDisplayValue` after a state transition | Falsified by data-flow changes |
+
+Note on the call-count row (amended 2026-11-05 against the emitted suite, D0b): the only
+call-count shape the emitter produces today is the predicate-inversion counter —
+`src/scaffold-tests/templates.ts:3005-3010` emits `const nXb = vi.mocked(f).mock.calls.length;`
+before the flip and `expect(vi.mocked(f).mock.calls.length).toBe(nXb)` /
+`.toBeGreaterThan(nXf)` after it (present in the pinned suite at
+`flawless/unit/FinancePage.test.tsx:347-349`). That is a **single-leg count** against a
+counter captured in the same test, not a delta between two legs: the number asserted is
+the same variable the test itself sampled, nothing keys it on the flipped input, and no
+marker distinguishes it as a data-flow claim. A T3 call-count claim therefore requires an
+emitted shape whose asserted number is the **difference between two legs keyed on a
+flipped input, with a distinguishing marker** — until such a shape is emitted, every
+call-count assertion classifies T2. The conservative reading won because the classifier's
+contract is asymmetric: it may under-read (an unknown shape lands low until this table
+grows) and must never over-read — a census that inflates a tier is a census that lies.
 
 Two rules the classifier must enforce, because they are where a census can lie:
 
