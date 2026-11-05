@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { census, classifySpec, type Tier } from "../src/reporters/depth.ts";
+import { census, classifyAssertionAtLine, classifySpec, type Tier } from "../src/reporters/depth.ts";
 
 /**
  * Guard-the-guard tests for the D0 depth classifier (PLAN-00 acceptance 1).
@@ -349,5 +349,43 @@ describe("census", () => {
     const c = census(specs);
     const tiers: (Tier | null)[] = c.perSpec.map((s) => s.tier);
     for (const t of tiers) expect(t === null || ["T0", "T1", "T2", "T3"].includes(t)).toBe(true);
+  });
+});
+
+describe("classifyAssertionAtLine — the probe's line-level question", () => {
+  const spec = [
+    'test("Button fires onClick when \'Save\' (click)", async () => {',
+    "  const { container } = renderTarget();",
+    "  fireEvent.click(screen.getByText(\"Save\"));",
+    "  expect(handlers.onClick).toHaveBeenCalled();",
+    "});",
+    'test("renders copy", () => {',
+    "  renderTarget();",
+    '  expect(screen.getAllByText("Save").length).toBeGreaterThan(0);',
+    "});",
+  ].join("\n");
+
+  test("a spy assertion on its line reads T2", () => {
+    const c = classifyAssertionAtLine(spec, 4);
+    expect(c?.tier).toBe("T2");
+    expect(c?.evidence).toContain("spy");
+  });
+
+  test("a literal text query on its line reads T1", () => {
+    const c = classifyAssertionAtLine(spec, 8);
+    expect(c?.tier).toBe("T1");
+  });
+
+  test("a line with no assertion site returns null, never a guessed tier", () => {
+    expect(classifyAssertionAtLine(spec, 3)).toBeNull();
+    expect(classifyAssertionAtLine(spec, 1)).toBeNull();
+    // a line past the end of the file
+    expect(classifyAssertionAtLine(spec, 999)).toBeNull();
+  });
+
+  test("comment-stripping applies: an expect named in a comment is not a site", () => {
+    const commented = `test("x", () => {\n  // expect(handlers.onX).toHaveBeenCalled();\n  expect(true).toBe(true);\n});`;
+    expect(classifyAssertionAtLine(commented, 2)).toBeNull();
+    expect(classifyAssertionAtLine(commented, 3)?.tier).toBe("T0");
   });
 });
