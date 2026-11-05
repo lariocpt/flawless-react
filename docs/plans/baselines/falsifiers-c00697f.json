@@ -1,0 +1,347 @@
+{
+  "target": "mybodycorpai",
+  "tree": "c00697f",
+  "date": "2026-11-05",
+  "binary": {
+    "path": "/tmp/opencode/fl-bintest-bb80343",
+    "sha256": "be83378377ae9e6501c8ebbe2338302515ae0c46238a3ed14dbdffc134fd7f73"
+  },
+  "generateCommand": null,
+  "falsifierRate": {
+    "caught": 9,
+    "scored": 16,
+    "rate": 0.5625
+  },
+  "controls": {
+    "total": 2,
+    "green": 2
+  },
+  "missed": [
+    "login-signin-ternary-swap",
+    "login-email-payload-key",
+    "login-drop-disabled",
+    "finance-variant-class",
+    "invite-roles-payload-key",
+    "invite-success-copy",
+    "rate-payload-arg"
+  ],
+  "results": [
+    {
+      "name": "login-forgot-copy",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "change static link copy",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/LoginForm.test.tsx",
+          "test": "LoginForm static content renders \"Forgot password?\"",
+          "line": 114,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "login-email-label",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/LoginForm.test.tsx",
+          "test": "LoginForm static content renders \"Email\"",
+          "line": 114,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "login-signin-ternary-swap",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "swap a ternary branch (pending-state copy)",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "login-email-payload-key",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "change a submitted payload key",
+      "expectedTier": "T3",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "login-drop-disabled",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "remove a disabled attribute on the submit button",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "control-login-banner-rename",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "CONTROL: internal variable rename with no observable effect — must stay green",
+      "expectedTier": "T1",
+      "control": true,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null,
+      "controlGreen": true
+    },
+    {
+      "name": "finance-invert-trustee",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "invert a predicate that decides which data and copy render",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 331,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "literal copy: \"Issued runs roll up invoices for eve..."
+        }
+      ],
+      "tierMatch": false
+    },
+    {
+      "name": "finance-invoice-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "swap a ternary branch (which invoice list is fetched)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 347,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "mock.calls.length toBe(n3b) — inversion leg"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-arrears-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "swap a ternary branch (arrears fetched on the wrong side)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 349,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "mock.calls.length toBe(n4b) — inversion leg"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-cardtitle-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "swap a ternary branch (card title copy keyed on the predicate)",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 332,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "literal copy: \"All invoices\""
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-subtitle-copy",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "change static copy",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 331,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "literal copy: \"Issued runs roll up invoices for eve..."
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-variant-class",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "change a variant class on the action button",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "invite-roles-label",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/InviteForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/InviteForm.test.tsx",
+          "test": "InviteForm static content renders \"Roles\"",
+          "line": 99,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "invite-roles-payload-key",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "intent": "change a submitted payload key",
+      "expectedTier": "T3",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/InviteForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "invite-success-copy",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "intent": "change static copy of the success banner",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/InviteForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "profile-postcode-copy",
+      "file": "src/app/dashboard/settings/_components/profile-form.tsx",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/ProfileForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/ProfileForm.test.tsx",
+          "test": "ProfileForm static content renders \"Postcode\"",
+          "line": 108,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "rate-payload-arg",
+      "file": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/rate-buttons.tsx",
+      "intent": "change a submitted payload value (off-by-one star rating)",
+      "expectedTier": "T3",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/RateButtons.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "control-asha-comment",
+      "file": "src/components/mbc/asha-rail.tsx",
+      "intent": "CONTROL: comment edit with no observable effect — must stay green",
+      "expectedTier": "T1",
+      "control": true,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/AshaRail.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null,
+      "controlGreen": true
+    }
+  ]
+}
