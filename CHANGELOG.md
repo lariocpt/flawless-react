@@ -11,6 +11,33 @@ deliberately does not claim lives in `docs/limits.md`.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-11-05
+
+The first redesign step (M1): the run report stops being the whole record.
+
+- **`VERDICT.md` + `VERDICT.json`** — an accumulated, cross-run verdict beside
+  `REPORT.md`: one entry per task — each plane's LAST run — keyed by
+  (task, target-hash), where the target-hash is a content hash of the analysed
+  files. A run rewrites only the entries for the planes it selected, so a
+  one-plane run no longer erases the other six from the record. Each entry
+  carries its tallies, evidence pointers (`reports/*.json`, `heaps/`,
+  `load/last-*.json`) and the skip census aggregated by reason-string, whose
+  total is checked against the per-plane Skips column. No timestamps: an
+  unchanged target rewrites the verdict byte-identically, so the file is safe
+  to commit and churn is a determinism bug.
+- **The name-level coverage ledger** — `REPORT.md`'s coverage section now names
+  every exported symbol of every analysed file, each carrying a spec pointer or
+  a named reason (`covered-through: <parent>`, `not-analysed: <reason>`,
+  `not-spec'd: <reason>`). The old count-only ledger let whole shadcn-style files
+  vanish silently; now every unspecced export answers for itself.
+- **The "This run selected N of M tasks / Not run" class is retired** for any
+  plane that has a verdict entry; `REPORT.md` keeps its coverage role and points
+  at the verdict instead.
+
+The step's contract, acceptance receipts and the dogfood measurements (a full
+7-plane run on a pinned corpus tree, a regen idempotence probe, and the 54-name
+ledger derivation) live in `docs/redesign/REDESIGN-01-verdict-doc.md`.
+
 ## [0.3.2] — 2026-11-04
 
 The dogfood fix loop, released: all nine defects found by dogfooding 0.3.1
