@@ -464,8 +464,10 @@ async function main(): Promise<void> {
   }
 
   const outFile = path.join("/tmp/opencode", `depth-probe-vitest-${process.pid}.json`);
-  const result = await runProbe(table, (specRel) =>
-    vitestRunner(app, table.suiteDir, specRel, outFile),
+  const result = await runProbe(
+    table,
+    (specRel) => vitestRunner(app, table.suiteDir, specRel, outFile),
+    app,
   );
 
   // ---- the table ----
