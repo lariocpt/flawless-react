@@ -290,6 +290,9 @@ Suppressing stdout is not a vow of silence: **diagnostics still reach stderr und
 ├── budgets.json          # per-component mount/update budgets (warn-only by default)
 ├── scripts/report.mjs    # only if --report
 ├── heaps/                # populated at test time — V8 .heapsnapshot files
+├── REPORT.md             # this run's accounting: coverage ledger (by name), skips, standing gaps
+├── VERDICT.md            # accumulated verdict: every plane's LAST run, keyed by (task, target-hash)
+├── VERDICT.json          # the same verdict, machine-readable
 └── README.md             # how to run + customise the suite
 ```
 

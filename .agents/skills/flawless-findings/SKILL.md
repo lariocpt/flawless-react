@@ -36,6 +36,10 @@ Regenerated every run: it describes the **last run**, not the suite on disk.
 - The components table accounts for every component in exactly one render-mode row
   (client / rsc / compound-part / document-root / null), split by mountable or not.
 - "Not covered, and why" names each gap. **A file count is not coverage.**
+- The coverage ledger is name-level: every exported symbol of every analysed file
+  appears by name with a spec pointer or a named reason (`covered-through:
+  <parent>`, `not-analysed: <reason>`, `not-spec'd: <reason>`). When a component
+  has no spec, the ledger — not a count — tells you why.
 - "Imports that will not resolve" appears only on a run that wrote specs, and only
   when an analysed import names a package nothing on disk answers for. It is why
   those files fail at collect: **a file that never collected reports no tests.**
@@ -43,6 +47,24 @@ Regenerated every run: it describes the **last run**, not the suite on disk.
   perf-harness sat in the suite lifecycle (generated / refreshed / kept).
 - Its hand-work table names the files only you can finish — `e2e/global-setup.ts`
   while still the emitted stub, `e2e/params.json` while an id is blank.
+
+## Reading VERDICT.md
+
+The accumulated record beside REPORT.md: one entry per task — each plane's
+**last** run — keyed by (task, target-hash), so the seven planes' results
+accumulate across runs instead of each invocation describing only itself.
+
+- Each entry: result, files written, findings, emitted skips, and evidence
+  pointers (`reports/*.json`, `heaps/`, `load/last-*.json`) — the machine-readable
+  base behind every claim in the entry.
+- The skip block aggregates every emitted skip by reason-string, and its total is
+  checked against the per-plane Skips column: one census, two views. If a skip
+  has no reason row, that is a tool bug, not a clean run.
+- Tallies are **generation** tallies (what the tool measured writing the suite);
+  runtime pass/fail belongs to the runner. An absent field is unmeasured, not zero.
+- No timestamps: re-running against an unchanged tree rewrites the verdict
+  byte-identically. A verdict entry that churns without the target changing is a
+  determinism bug.
 
 ## Triage order
 
