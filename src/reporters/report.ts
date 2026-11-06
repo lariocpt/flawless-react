@@ -486,6 +486,46 @@ export function renderReportMarkdown(input: ReportInput): string {
     lines.push("");
   }
 
+  // --- depth -----------------------------------------------------------------
+  // The D0 census (PLAN-00): assertion tiers over the specs this run's
+  // spec-emitting task wrote, classified by what it takes to falsify each
+  // assertion — T0 mount-only up to T3 state and payload. The numbers ride on
+  // the task's own `depth` tally (the same census scripts/depth-census.ts
+  // computes and VERDICT.json records: one census, three views, checked by
+  // tests/depthWiring.test.ts). Rendered in three states like the hand-work
+  // section, because a silently absent table reads as zero depth.
+  {
+    const withDepth = input.results.find((r) => r.depth !== undefined);
+    lines.push("## Depth", "");
+    if (withDepth === undefined || withDepth.depth === undefined) {
+      lines.push(
+        "Not measured — no task in this run emitted specs the tier table describes.",
+        "Absence here is absence of measurement, not zero depth.",
+        "",
+      );
+    } else {
+      const d = withDepth.depth;
+      lines.push(
+        `Assertion tiers over the specs \`${withDepth.id}\` emitted — the strongest`,
+        "assertion per spec, per the D0 tier table (T0 mount-only → T3 state and payload).",
+        "",
+        "| Tier | Specs | What falsifies it |",
+        "| --- | ---: | --- |",
+        `| T0 | ${d.T0} | almost nothing — mount-only |`,
+        `| T1 | ${d.T1} | markup and copy changes |`,
+        `| T2 | ${d.T2} | behaviour changes, not markup |`,
+        `| T3 | ${d.T3} | data-flow changes |`,
+        "",
+        `${d.specs} spec(s) censused; ${d.T0} have T0 as their strongest tier; ` +
+          `${d.testsClassified} test(s) classified, ${d.testsUnclaimed} unclaimed, ` +
+          `${d.testsSkipped} skipped.`,
+        "",
+        "T0 means mount-only — not a failure, the floor this tool guarantees and no more.",
+        "",
+      );
+    }
+  }
+
   // --- hand-work remaining --------------------------------------------------
   // The one adoption-cost number the component table cannot show: how many
   // TODO(flawless) markers the emitters planted, and of what kind. Counted at

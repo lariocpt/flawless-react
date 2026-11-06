@@ -68,6 +68,58 @@ export interface SpecInput {
   source: string;
 }
 
+/**
+ * The verdict/report shape of a census: the numbers a reader needs, without
+ * the per-spec rows. This is what rides on a TaskResult and lands in
+ * VERDICT.json's `depth` field — the field is ABSENT when a task emitted no
+ * specs (verdict.ts's contract: absent means unmeasured, never zero).
+ */
+export interface DepthBlock {
+  /** Spec files fed to the census (the out-dir suite this run emitted). */
+  specs: number;
+  T0: number;
+  T1: number;
+  T2: number;
+  T3: number;
+  testsClassified: number;
+  testsUnclaimed: number;
+  testsSkipped: number;
+}
+
+/** Project a census onto the verdict shape. Pure, total. */
+export function depthBlock(c: DepthCensus): DepthBlock {
+  return {
+    specs: c.specs,
+    T0: c.distribution.T0,
+    T1: c.distribution.T1,
+    T2: c.distribution.T2,
+    T3: c.distribution.T3,
+    testsClassified: c.testsClassified,
+    testsUnclaimed: c.testsUnclaimed,
+    testsSkipped: c.testsSkipped,
+  };
+}
+
+/**
+ * The out-dir plane directories the tier table describes, with the filename
+ * rule for each. Shared by scripts/depth-census.ts and the unit-browser task
+ * so the census, the verdict and the report read exactly one file set —
+ * one census, three views. A colocated `*.flawless.test.tsx` under the unit
+ * dir belongs to the colocated copy, not the out-dir suite (the census
+ * script classifies it as crossCheck), so the unit rule excludes it.
+ */
+export const DEPTH_PLANES: readonly {
+  dir: "unit" | "browser" | "native";
+  match: (base: string) => boolean;
+}[] = [
+  {
+    dir: "unit",
+    match: (b) => /\.test\.tsx?$/.test(b) && !/\.flawless\.test\.tsx?$/.test(b),
+  },
+  { dir: "browser", match: (b) => /\.spec\.tsx?$/.test(b) },
+  { dir: "native", match: (b) => /\.spec\.tsx?$/.test(b) },
+];
+
 export interface CensusSpecRow {
   path: string;
   tier: Tier | null;
