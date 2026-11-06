@@ -179,6 +179,14 @@ test("Search form #0 accepts input and submits", async () => {
 });
 `;
 
+const attrSpec = `
+test("UploadButton: static aria-label on the asserted element", () => {
+  const { getByRole } = renderTarget();
+  const el = getByRole("button");
+  expect(el).toHaveAttribute("aria-label", "Submit upload");
+});
+`;
+
 describe("classifySpec — one case per tier", () => {
   test("T0: a mount-only spec classifies its one test at T0", () => {
     const c = classifySpec(mountOnlySpec);
@@ -241,6 +249,11 @@ describe("classifySpec — one case per tier", () => {
 
   test("T1: fill + toHaveValue read-back classifies at T1", () => {
     const c = classifySpec(fillSpec);
+    expect(c.tier).toBe("T1");
+  });
+
+  test("T1: toHaveAttribute on a static literal value classifies at T1", () => {
+    const c = classifySpec(attrSpec);
     expect(c.tier).toBe("T1");
   });
 });
@@ -310,6 +323,22 @@ describe("Badge static content", () => {
     const c = classifySpec(withReal);
     expect(c.tier).toBe("T1");
     expect(c.unclaimed).toBe(0);
+  });
+
+  test("GUARD: toHaveAttribute with its expected value deleted drops to T0", () => {
+    expect(classifySpec(attrSpec).tier).toBe("T1");
+    // Delete the literal — presence-only is not a falsifiable claim.
+    const presenceOnly = attrSpec.replace(
+      'toHaveAttribute("aria-label", "Submit upload")',
+      'toHaveAttribute("aria-label")',
+    );
+    expect(classifySpec(presenceOnly).tier).toBe("T0");
+    // A computed (non-literal) value is equally not a static claim.
+    const computed = attrSpec.replace(
+      'toHaveAttribute("aria-label", "Submit upload")',
+      'toHaveAttribute("aria-label", labelFromProps)',
+    );
+    expect(classifySpec(computed).tier).toBe("T0");
   });
 });
 
