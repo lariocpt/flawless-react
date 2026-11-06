@@ -151,4 +151,82 @@ assertions to D2.
 
 ## Receipts
 
-_None yet._
+**D1a — items 1, 2 shipped; item 7 retired.** Branch `feat/d1a-attribute-claims`
+off `main` @ `07072ac`. Control = `main` @ merge-base binary; treatment = this
+branch tip (`e492b6b`) binary, both `bun build --compile --minify` per *Measure
+with the newest code*. Pinned tree: mybodycorpai @ `c00697f`.
+
+### Item 1 — `expect(<el>).toBeDisabled()` on an always-disabled control — SHIPPED
+
+`emitClickTest` (`templates.ts:3247`) now intercepts `click.hints.disabled ===
+"always"` and emits `expect(<target>).toBeDisabled()` (a T1 claim) in place of the
+`disabled-control` skip and the false-red prop-spy that followed it. A
+`"conditional"` control is untouched and still falls through to the skip.
+
+- **Falsifier** (`tests/attributeClaimsExecution.test.ts`, runs vitest): a fixture
+  with an always-disabled control generates a spec containing `toBeDisabled()`, runs
+  **green** (exit 0), and the spec contains no `disabled-control` skip for it;
+  removing `disabled` from the markup turns that test **red** on `toBeDisabled`.
+- **Census movement on the pinned tree: none.** The D1a census is byte-identical to
+  the D0 baseline (specs 191; T0 100 / T1 45 / T2 42 / T3 0; testsClassified 433;
+  testsSkipped 60). mybodycorpai ships no control that is statically
+  `disabled` at DEFAULTS on the unit plane — every one of its `disabled-control`
+  skips reduces to `"conditional"` (`decidePostDispatch` skips any
+  `disabled !== undefined`; the two unit-plane skips under that reason did not
+  convert, which is exactly what a conditional control does). Per the Acceptance
+  rule, a step whose census does not move on the pinned tree **ships as a
+  report-only census change**; the depth witness here is the green→red execution
+  falsifier, which proves the claim is real and falsifiable rather than the
+  census, which cannot see a pattern this app does not contain.
+
+### Item 2 — `toHaveAttribute(<attr>, <initial>)` for a string→host-attribute state — SHIPPED
+
+`initialAttrWitness` (`templates.ts:2141`) emits
+`expect(container.querySelector("<tag>[<attr>]")).toHaveAttribute("<attr>", <initial>)`
+for a non-empty (≥2-char) string `useState` initial that the analyser saw flow into
+a **lowercase host tag's** attribute (`via: "attr"`, `extractState.ts:337`).
+`via: "condition"` (D3's subject) and uppercase component tags stay out — the latter
+would emit a `querySelector` matching nothing and passing vacuously.
+
+- **Falsifier** (same file): a fixture with `useState("Enter your email")` rendered
+  into `placeholder` generates `toHaveAttribute("placeholder", "Enter your email")`,
+  runs **green**; changing the initial string turns it **red** on `toHaveAttribute`.
+- **Census movement on the pinned tree: none.** The app's only string `useState`
+  initials are the empty string `""` (every other initial is `false`, `0`, or a
+  non-literal), all excluded by the ≥2-char guard, so zero attribute witnesses are
+  emitted here and the tier distribution is unchanged. Same report-only-census
+  clause as item 1; the green→red falsifier carries the depth proof.
+
+### Item 7 — static accessibility attributes on the asserted element — RETIRED (with reason)
+
+`extractChildAttrs` (`src/types.ts:474`) records attribute name and `valueKind` only
+on **UPPERCASE child components**, never on a host element. Three measurements make
+the emitted assertion unsound, so the item is retired rather than shipped:
+
+1. There is no host element to assert on — the attrs live on a child component the
+   unit spec **mocks**, so the attribute is not in the rendered DOM.
+2. The only static attrs the analyser sees sit on already-mocked children
+   (`<Icon name=…>`), which a unit spec stubs to a pass-through — asserting their
+   attributes tests the mock, not the component.
+3. The plan's own locator usage (`templates.ts:3302`) already *finds* the element by
+   that attribute; emitting `expect(el).toHaveAttribute("aria-label", <the same
+   value>)` on the element located by `aria-label` is tautological — it is red-free
+   by construction (a false-red/vacuous claim), the exact class PLAN-00 M1 retired.
+
+Retired per *Moot vs required*: "an item that turns out to be unsound … is retired
+here with the measurement that killed it." No code path emits for item 7.
+
+### Acceptance gate 5 — emitted specs type-check
+
+`tests/emittedTypes.test.ts` gained three cases in
+`describe("the D1a attribute assertions type-check")`: the `toBeDisabled()` /
+`toHaveAttribute(attr, value)` shapes type-check clean, and two guard-the-guard
+mutations (`screenBogus`, `containerBogus`) each produce a diagnostic.
+
+### Skip census balance (gate 3)
+
+On the D1a `VERDICT.json`: `unit-browser.skips = 132 == Σ skipReasons = 132`
+(the `disabled-control` family — "its control is disabled at these props" ×2,
+"its submit control is disabled at these props" ×3 — is present in the reason
+table and, on this tree, unchanged, because neither shipped item fired).
+
