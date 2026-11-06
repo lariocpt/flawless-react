@@ -842,7 +842,7 @@ export function CheckoutForm() {
   test("guard the guard: the toBeDisabled line's selector is checked", async () => {
     const { root, spec, content } = await emitCheckoutUnit();
     const line = content.split("\n").find((l) => l.includes(".toBeDisabled()"));
-    if (!line || !line.includes("screen.")) throw new Error("no screen.* toBeDisabled selector to break");
+    if (!line?.includes("screen.")) throw new Error("no screen.* toBeDisabled selector to break");
     const broken = line.replace("screen.", "screenBogus.");
     const errors = checkUnit(root, spec, content.replace(line, broken));
     expect(errors.join(" | ")).toContain("Cannot find name 'screenBogus'");
@@ -850,10 +850,8 @@ export function CheckoutForm() {
 
   test("guard the guard: the toHaveAttribute line's selector is checked", async () => {
     const { root, spec, content } = await emitCheckoutUnit();
-    const line = content
-      .split("\n")
-      .find((l) => l.includes('toHaveAttribute("placeholder"'));
-    if (!line || !line.includes("container."))
+    const line = content.split("\n").find((l) => l.includes('toHaveAttribute("placeholder"'));
+    if (!line?.includes("container."))
       throw new Error("no container.* toHaveAttribute selector to break");
     const broken = line.replace("container.", "containerBogus.");
     const errors = checkUnit(root, spec, content.replace(line, broken));

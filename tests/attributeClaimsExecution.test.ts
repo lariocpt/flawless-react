@@ -144,7 +144,10 @@ describe("D1a attribute claims, executed", () => {
 
     // M1 — the disabled attribute removed: the control is now enabled, so
     // toBeDisabled must go red. The spec is untouched; only the markup moved.
-    writeFileSync(checkoutPath, CHECKOUT.replace('type="button" disabled onClick', 'type="button" onClick'));
+    writeFileSync(
+      checkoutPath,
+      CHECKOUT.replace('type="button" disabled onClick', 'type="button" onClick'),
+    );
     const noDisabled = await vitest();
     expect(noDisabled.code).not.toBe(0);
     expect(noDisabled.output).toContain("toBeDisabled");
