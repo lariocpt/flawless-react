@@ -6,7 +6,7 @@
     "path": "/tmp/opencode/fl-bintest-bb80343",
     "sha256": "be83378377ae9e6501c8ebbe2338302515ae0c46238a3ed14dbdffc134fd7f73"
   },
-  "generateCommand": null,
+  "generateCommand": "cd /tmp/opencode/mbc-c00697f-d0c/apps/web && /tmp/opencode/fl-bintest-bb80343 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
   "falsifierRate": {
     "caught": 9,
     "scored": 16,
