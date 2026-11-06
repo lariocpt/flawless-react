@@ -2074,6 +2074,23 @@ test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")
   expect(screen.queryAllByText(${JSON.stringify(witness)}).length).toBeGreaterThan(0);
 });`);
     }
+    // A string initial value that flows into a host element's ATTRIBUTE — not
+    // its children — was left unasserted: initialWitness accepted only
+    // `via === "child"`, so useState("Search…") rendered into `placeholder`
+    // said nothing while the same value in a child was asserted.
+    // `querySelector("<tag>[<attr>]")` locates the element carrying the
+    // attribute (robust when several <tag> render): it returns null when the
+    // attribute is removed, and the value matcher goes red when the literal
+    // changes — a Tier-1 claim either way (see PLAN-00). `via: "condition"` is
+    // D3's subject, not this one, so it stays out.
+    const attr = initialAttrWitness(s);
+    if (attr) {
+      parts.push(`
+test("${name} initial state: ${s.varName} = ${escapeTestName(s.initialRaw ?? "")} is rendered as ${attr.attr} on <${attr.tag}>", () => {
+  const { container } = renderTarget();
+  expect(container.querySelector(${JSON.stringify(`${attr.tag}[${attr.attr}]`)})).toHaveAttribute(${JSON.stringify(attr.attr)}, ${JSON.stringify(attr.value)});
+});`);
+    }
   }
 
   // Interaction → state change: a click bound to a local handler that calls a setter.
@@ -2112,6 +2129,27 @@ function initialWitness(s: StateInfo): string | undefined {
   if (typeof s.initialValue !== "string" || s.initialValue.trim().length < 2) return undefined;
   if (!s.flowsToJsx.some((f) => f.via === "child")) return undefined;
   return s.initialValue;
+}
+
+/**
+ * A string initial value that the analyser saw flow into a host element's
+ * ATTRIBUTE (`{ via: "attr", attr }`), with the attribute name and the literal.
+ * Present only when such a flow exists — `via: "condition"` is deliberately
+ * excluded (that is D3's subject), and the same string-≥-2-chars guard as the
+ * child witness keeps a one-char or non-string initial from generating noise.
+ */
+function initialAttrWitness(
+  s: StateInfo,
+): { tag: string; attr: string; value: string } | undefined {
+  if (typeof s.initialValue !== "string" || s.initialValue.trim().length < 2) return undefined;
+  const flow = s.flowsToJsx.find((f) => f.via === "attr" && typeof f.attr === "string");
+  if (!flow || typeof flow.attr !== "string") return undefined;
+  // The tag is the JSX element name verbatim: a lowercase host tag ("input") is a
+  // real CSS selector, but an uppercase component ("<Input>", "<dynamic>") renders
+  // to unknown markup and cannot be addressed — leave those unasserted rather than
+  // emit a querySelector that matches nothing and passes vacuously.
+  if (!/^[a-z][a-z0-9-]*$/.test(flow.tag)) return undefined;
+  return { tag: flow.tag, attr: flow.attr, value: s.initialValue };
 }
 
 /** Safe inside a double-quoted test name: no quotes, no newlines, bounded. */
@@ -3198,6 +3236,22 @@ test.skip("${name}: ${click.event} on ${labelDesc} #${idx} — <${click.tag}> ho
     : prelude
       ? `\n  ${prelude}\n  for (const v of Object.values(handlers)) v.mockClear();`
       : "";
+  // A control the source ALWAYS renders disabled cannot be clicked at these
+  // props, so the dispatch test below (a prop-spy, or the post-dispatch claim)
+  // would assert on a click that never fires — a false red, or a skip that
+  // claimed nothing. What this props set does prove is that the element renders
+  // disabled, and `expect(el).toBeDisabled()` is falsified the moment the markup
+  // stops disabling it: a Tier-1 claim (see PLAN-00). A conditionally-disabled
+  // control is NOT claimed here — under DEFAULTS it may render enabled — and
+  // still falls through to the `disabled-control` skip below.
+  if (click.hints.disabled === "always") {
+    const target = gateSelector ? awaitSelector(selector) : selector;
+    return `test("${name}: ${labelDesc} is disabled at these props", async () => {
+  const { container } = renderTarget();
+  void container;${preludeLines}
+  expect(${target}).toBeDisabled();
+});`;
+  }
   if (click.binding.kind === "prop") {
     const propName = click.binding.propName;
     const others = allHandlers.filter((h) => h !== propName);
