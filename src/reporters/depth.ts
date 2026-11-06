@@ -341,6 +341,8 @@ function findBodyStart(stripped: string, from: number): number {
 // ---------------------------------------------------------------------------
 
 interface Site {
+  /** Index of the `expect` keyword in the comment-stripped source. */
+  offset: number;
   /** The expect(...) argument text, comments stripped. */
   arg: string;
   /** The matcher name without the `not.` prefix, e.g. "toBe". */
@@ -367,6 +369,7 @@ function findSites(strippedBody: string): Site[] {
       const afterMatcherArg = skipBracket(strippedBody, matcherOpen);
       const matcherArg = strippedBody.slice(matcherOpen + 1, afterMatcherArg - 1).trim();
       sites.push({
+        offset: m.index,
         arg,
         matcher: mm[2] as string,
         not: mm[1] !== undefined || mm[0].includes(".not"),
@@ -629,6 +632,44 @@ export function classifySpec(source: string): SpecClassification {
 
   perTest.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return { tier, perTest, unclaimed, skipped, unclassified: decls.length === 0 };
+}
+
+/**
+ * Classify the assertion site that starts on a given 1-based line of a spec
+ * file. This is the mutation probe's question (scripts/depth-probe.ts): a
+ * spec went red at line N — what TIER is the assertion that failed, by the
+ * same table the census uses? Returns null when no `expect(...)` site starts
+ * on that line (the failure was thrown before/outside an assertion, or the
+ * reported line names a helper call — the probe then falls back to the
+ * failing test's own tier and says so).
+ *
+ * Same contract as classifySpec: comment-stripped scanning, conservative
+ * default, no I/O.
+ */
+export function classifyAssertionAtLine(
+  source: string,
+  line: number,
+): { tier: Tier; evidence: string } | null {
+  const stripped = stripComments(source);
+  // Start offset of the 1-based line, and of the line after it.
+  let lineStart = 0;
+  for (let i = 0, l = 1; l < line && i < stripped.length; i++) {
+    if (stripped[i] === "\n") {
+      lineStart = i + 1;
+      l++;
+    }
+  }
+  if (line > 1 && lineStart === 0) return null;
+  let lineEnd = stripped.indexOf("\n", lineStart);
+  if (lineEnd === -1) lineEnd = stripped.length;
+  const bound = literalBindings(stripped);
+  let best: { tier: Tier; evidence: string } | null = null;
+  for (const site of findSites(stripped)) {
+    if (site.offset < lineStart || site.offset >= lineEnd) continue;
+    const c = classifySite(site, stripped, bound);
+    if (best === null || TIER_ORDER.indexOf(c.tier) > TIER_ORDER.indexOf(best.tier)) best = c;
+  }
+  return best;
 }
 
 /**

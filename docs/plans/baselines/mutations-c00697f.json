@@ -1,0 +1,155 @@
+{
+  "target": "mybodycorpai",
+  "tree": "c00697f",
+  "appDir": "apps/web",
+  "suiteDir": "flawless/unit",
+  "note": "The D0 falsifier mutation table (PLAN-00 acceptance 3). Mechanical, named mutations on the pinned tree; oldText is unique in its file — scripts/depth-probe.ts refuses a missing or non-unique match rather than guessing. expectedTier is the tier whose assertions SHOULD be the ones that catch it, per the PLAN-00 tier table; a catch by a different tier is a finding. The two control mutations must stay green: a red control means the probe is noisy. The suite is generated once from the UNMUTATED tree and never regenerated between mutations.",
+  "mutations": [
+    {
+      "name": "login-forgot-copy",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "oldText": "Forgot password?",
+      "newText": "Forgot your password?",
+      "intent": "change static link copy",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "login-email-label",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "oldText": ">Email<",
+      "newText": ">Email address<",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "login-signin-ternary-swap",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "oldText": "{pending ? \"Signing in…\" : \"Sign in\"}",
+      "newText": "{pending ? \"Sign in\" : \"Signing in…\"}",
+      "intent": "swap a ternary branch (pending-state copy)",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "login-email-payload-key",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "oldText": "name=\"email\"",
+      "newText": "name=\"email_address\"",
+      "intent": "change a submitted payload key",
+      "expectedTier": "T3"
+    },
+    {
+      "name": "login-drop-disabled",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "oldText": "<Button type=\"submit\" disabled={pending}>",
+      "newText": "<Button type=\"submit\">",
+      "intent": "remove a disabled attribute on the submit button",
+      "expectedTier": "T2"
+    },
+    {
+      "name": "control-login-banner-rename",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "oldText": "\tconst banner = formError ?? initialError;\n\n\treturn (\n\t\t<form action={action} className=\"flex flex-col gap-4\">\n\t\t\t{banner ? (\n\t\t\t\t<Alert variant=\"destructive\">\n\t\t\t\t\t<AlertDescription>{banner}</AlertDescription>",
+      "newText": "\tconst bannerText = formError ?? initialError;\n\n\treturn (\n\t\t<form action={action} className=\"flex flex-col gap-4\">\n\t\t\t{bannerText ? (\n\t\t\t\t<Alert variant=\"destructive\">\n\t\t\t\t\t<AlertDescription>{bannerText}</AlertDescription>",
+      "intent": "CONTROL: internal variable rename with no observable effect — must stay green",
+      "expectedTier": "T1",
+      "control": true
+    },
+    {
+      "name": "finance-invert-trustee",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "oldText": "isTrustee(myMembership.roles)",
+      "newText": "!isTrustee(myMembership.roles)",
+      "intent": "invert a predicate that decides which data and copy render",
+      "expectedTier": "T2"
+    },
+    {
+      "name": "finance-invoice-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "oldText": "\t\tuserIsTrustee\n\t\t\t? listInvoicesForBuilding(db, id)\n\t\t\t: listMyInvoices(db, id, user.id),",
+      "newText": "\t\tuserIsTrustee\n\t\t\t? listMyInvoices(db, id, user.id)\n\t\t\t: listInvoicesForBuilding(db, id),",
+      "intent": "swap a ternary branch (which invoice list is fetched)",
+      "expectedTier": "T2"
+    },
+    {
+      "name": "finance-arrears-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "oldText": "userIsTrustee ? listArrearsForBuilding(db, id) : []",
+      "newText": "userIsTrustee ? [] : listArrearsForBuilding(db, id)",
+      "intent": "swap a ternary branch (arrears fetched on the wrong side)",
+      "expectedTier": "T2"
+    },
+    {
+      "name": "finance-cardtitle-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "oldText": "{userIsTrustee ? \"All invoices\" : \"My invoices\"}",
+      "newText": "{userIsTrustee ? \"My invoices\" : \"All invoices\"}",
+      "intent": "swap a ternary branch (card title copy keyed on the predicate)",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "finance-subtitle-copy",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "oldText": "Issued runs roll up invoices for every unit.",
+      "newText": "Issued runs roll up invoices for all units.",
+      "intent": "change static copy",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "finance-variant-class",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "oldText": "hover:bg-saffron-2",
+      "newText": "hover:bg-saffron-3",
+      "intent": "change a variant class on the action button",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "invite-roles-label",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "oldText": "<Label>Roles</Label>",
+      "newText": "<Label>Role</Label>",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "invite-roles-payload-key",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "oldText": "name=\"proposedRoles\"",
+      "newText": "name=\"roles\"",
+      "intent": "change a submitted payload key",
+      "expectedTier": "T3"
+    },
+    {
+      "name": "invite-success-copy",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "oldText": "Invitation sent.",
+      "newText": "Invite sent.",
+      "intent": "change static copy of the success banner",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "profile-postcode-copy",
+      "file": "src/app/dashboard/settings/_components/profile-form.tsx",
+      "oldText": ">Postcode<",
+      "newText": ">Postal code<",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1"
+    },
+    {
+      "name": "rate-payload-arg",
+      "file": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/rate-buttons.tsx",
+      "oldText": "rateTicketAction(buildingId, ticketId, n)",
+      "newText": "rateTicketAction(buildingId, ticketId, n + 1)",
+      "intent": "change a submitted payload value (off-by-one star rating)",
+      "expectedTier": "T3"
+    },
+    {
+      "name": "control-asha-comment",
+      "file": "src/components/mbc/asha-rail.tsx",
+      "oldText": "// Transient fetch failure — keep whatever messages are showing.",
+      "newText": "// Transient fetch failure — keep the messages already on screen.",
+      "intent": "CONTROL: comment edit with no observable effect — must stay green",
+      "expectedTier": "T1",
+      "control": true
+    }
+  ]
+}

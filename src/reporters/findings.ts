@@ -39,8 +39,15 @@ export async function writeSummaryJson(outDir: string, results: TaskResult[]): P
   const reportsDir = path.join(outDir, "reports");
   await mkdir(reportsDir, { recursive: true });
   const out = path.join(reportsDir, "summary.json");
+  // No `ts`: summary.json joins VERDICT.json's byte-stability contract
+  // (docs/generated-suite.md: a re-run on an unchanged tree rewrites the file
+  // byte-identically). It was the one emitted file whose bytes moved between
+  // two runs on an unchanged tree (PLAN-00 D0b receipt 5), and no consumer
+  // read the clock: src/mcp/analysisTools.ts passes the whole blob through
+  // as `last_run` without touching `ts`, and tests/core.test.ts only typed
+  // it. Dropped per PLAN-00's merge-back criterion 3: a criterion-3
+  // divergence ships as a named fix, not a loosened probe.
   const body = {
-    ts: new Date().toISOString(),
     results: results.map((r) => ({
       id: r.id,
       ok: r.ok,
