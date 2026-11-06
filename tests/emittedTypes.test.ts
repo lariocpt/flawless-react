@@ -777,3 +777,86 @@ void render;
     }
   });
 });
+
+/**
+ * D1a added two assertion shapes to the unit emitter that were previously
+ * dropped: `expect(<el>).toBeDisabled()` for an always-disabled control, and
+ * `expect(container.querySelector(...)).toHaveAttribute(attr, initial)` for a
+ * string initial value that flows into an attribute. PLAN-01 acceptance 5 wants
+ * the type gate to cover each new form — a clean pass over the real emitted
+ * line, plus a mutation on that same line that produces a diagnostic, so a green
+ * run means the checker actually read these lines rather than skipping them.
+ *
+ * `expect` is the vitest stub and is `any`-typed, so the matcher name itself is
+ * not where a type error can land; the load-bearing, checkable part of each new
+ * line is its element-expression selector. Each case breaks the selector the
+ * line actually uses and requires the checker to say so.
+ */
+describe("the D1a attribute assertions type-check", () => {
+  const CHECKOUT_FORM = `"use client";
+import { useState } from "react";
+export function CheckoutForm() {
+  const [placeholder] = useState("Enter your email");
+  function addToCart() {}
+  return (
+    <div>
+      <input placeholder={placeholder} />
+      <button type="button" disabled onClick={addToCart}>
+        Add to cart
+      </button>
+    </div>
+  );
+}
+`;
+
+  async function emitCheckoutUnit(): Promise<{ root: string; spec: string; content: string }> {
+    const root = stubProject();
+    const app = path.join(root, "app");
+    mkdirSync(app, { recursive: true });
+    const comp = path.join(app, "CheckoutForm.tsx");
+    writeFileSync(comp, CHECKOUT_FORM);
+    const outDir = path.join(app, "flawless");
+    const tree = await analyse({ entry: comp, depth: 0, includeChildren: false });
+    const files = renderUnitBrowser({ trees: [tree], outDir, variants: 3, browserSpecs: true });
+    const unit = files.find((f) => f.relPath === "unit/CheckoutForm.test.tsx");
+    if (!unit) throw new Error("unit/CheckoutForm.test.tsx was not emitted");
+    return { root: outDir, spec: path.join(outDir, unit.relPath), content: unit.content };
+  }
+
+  function checkUnit(root: string, spec: string, content: string): string[] {
+    mkdirSync(path.dirname(spec), { recursive: true });
+    writeFileSync(spec, content);
+    const { errors, unresolved } = checkTypes(root, [spec]);
+    expect(unresolved, "the mutation did not break module resolution instead").toEqual([]);
+    return errors;
+  }
+
+  test("the emitted spec carries both new shapes and type-checks clean", async () => {
+    const { root, spec, content } = await emitCheckoutUnit();
+    // Both D1a assertions really landed in the file the checker reads.
+    expect(content).toContain("toBeDisabled()");
+    expect(content).toContain('toHaveAttribute("placeholder", "Enter your email")');
+    expect(checkUnit(root, spec, content)).toEqual([]);
+  });
+
+  test("guard the guard: the toBeDisabled line's selector is checked", async () => {
+    const { root, spec, content } = await emitCheckoutUnit();
+    const line = content.split("\n").find((l) => l.includes(".toBeDisabled()"));
+    if (!line || !line.includes("screen.")) throw new Error("no screen.* toBeDisabled selector to break");
+    const broken = line.replace("screen.", "screenBogus.");
+    const errors = checkUnit(root, spec, content.replace(line, broken));
+    expect(errors.join(" | ")).toContain("Cannot find name 'screenBogus'");
+  });
+
+  test("guard the guard: the toHaveAttribute line's selector is checked", async () => {
+    const { root, spec, content } = await emitCheckoutUnit();
+    const line = content
+      .split("\n")
+      .find((l) => l.includes('toHaveAttribute("placeholder"'));
+    if (!line || !line.includes("container."))
+      throw new Error("no container.* toHaveAttribute selector to break");
+    const broken = line.replace("container.", "containerBogus.");
+    const errors = checkUnit(root, spec, content.replace(line, broken));
+    expect(errors.join(" | ")).toContain("Cannot find name 'containerBogus'");
+  });
+});
