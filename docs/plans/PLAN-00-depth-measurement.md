@@ -107,4 +107,16 @@ already, which is why the census lands here and not in a report-only form.
 
 ## Receipts
 
-_None yet._
+Measured 2026-11-05 on branch tip `0e6bb75` with `/tmp/opencode/fl-bintest-0e6bb75`
+(sha256 `c4727c7117adad7ec60c2ed0086c3508e7ce81e9ab87251894255e7f26194d45`,
+`bun build --compile --minify` from that exact tree), on the fresh worktree
+`/tmp/opencode/mbc-c00697f-d0` (`git worktree add … c00697f` in the pinned
+`mybodycorpai` repo), command run from `apps/web`:
+`fl-bintest-0e6bb75 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load`.
+
+2. Census over the emitted suite (`cd /tmp/opencode/mbc-c00697f-d0/apps/web && bun run <repo>/scripts/depth-census.ts .`): distribution over **310** spec files — T0 **128** / T1 **90** / T2 **84** / T3 **0**; per plane: unit-colocated 28/45/42/0, unit (out-dir) 28/45/42/0, browser 72/0/0/0. Decisive lines: `specs unclassified:      0` and `specs strongest T0:      128`; also `tests classified: 720`, `tests unclaimed: 46`, `tests skipped: 110`, `specs all-skipped: 8`. T3 == 0 on the DOM plane, as expected — no DOM T3 assertion is emitted today. Committed as `docs/plans/baselines/depth-c00697f.json` (binary hash, tree hash `c00697f`, command and date inside).
+
+1. _Not yet measured — later D0 chunk._
+3. _Not yet measured — later D0 chunk._
+4. _Not yet measured — later D0 chunk._
+5. _Not yet measured — later D0 chunk._
