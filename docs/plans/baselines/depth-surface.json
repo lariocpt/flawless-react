@@ -1,0 +1,329 @@
+{
+  "_comment": "D1 depth-surface baseline (PLAN-01 chunk 5). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below, generated NON-colocated (the D0-mirrored shape: the out-dir planes only — flawless/unit + flawless/browser). The subject is the committed depth-surface fixture (tests/fixtures/depthapp): one component per pattern the track-D plans measure (P1–P10 present/absent shapes, N1/N2 refusal controls, plus the home page and the document-root layout). `patterns` pins, per id, the emitted spec path, the assertion text found there — or 'not emitted — <reason>' naming the plan item that owns the missing behaviour — and the tier the classifier measures. tests/depthSurface.test.ts generates the same fixture colocated and cross-checks this file: a found assertion must still be emitted and every tier must still hold. Two fresh copies of the fixture generated with the binary below produced byte-identical census JSON (sha256 038c3eb0d3f77cd0a6073660b67243a78c744e1add8b332451d98a0bfaa6574d) — the census is deterministic. The binary was built from the branch tip; src/ is byte-identical to 5ae6d01 (git diff 5ae6d01..7711f6b -- src/ is empty), so this census carries exactly the item-7 salvage lineage.",
+  "target": "depth-surface fixture (tests/fixtures/depthapp)",
+  "treeHash": "7711f6b",
+  "binary": "fl-bintest-7711f6b",
+  "binarySha256": "59783866d468f8f258d44023d7a7f3cb68b4291409f800cf04dbade3ccabc58f",
+  "binaryBuiltFrom": "feat/d1-surface-fixture @ 7711f6b (bun build --compile --minify --outfile /tmp/opencode/fl-bintest-7711f6b src/bin.ts)",
+  "generationCommand": "cd <copy-of-tests/fixtures/depthapp> && /tmp/opencode/fl-bintest-7711f6b 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
+  "censusCommand": "cd <copy-of-tests/fixtures/depthapp> && bun run <flawless-react>/scripts/depth-census.ts . --json <out>",
+  "date": "2026-11-07",
+  "patterns": {
+    "P1": {
+      "spec": "flawless/unit/P1AlwaysDisabled.test.tsx",
+      "assertion": "expect(screen.getAllByRole(\"button\", { name: \"Pay now\" })[0] as HTMLElement).toBeDisabled();",
+      "tier": "T2",
+      "note": "D1 item 1 (shipped). The classifier reads toBeDisabled as T2 (src/reporters/depth.ts:521); the D1a receipt calls it T1 — the census records the classifier's reading."
+    },
+    "P2": {
+      "spec": "flawless/unit/P2StateToAttribute.test.tsx",
+      "assertion": "  expect(container.querySelector(\"input[placeholder]\")).toHaveAttribute(\n    \"placeholder\",\n    \"Enter your email\",\n  );",
+      "tier": "T1",
+      "note": "D1 item 2 (shipped). The multi-line byte shape is what biome's formatter emits; the assertion is the string→attribute initial."
+    },
+    "P3": {
+      "spec": "flawless/unit/P3HostAriaLabel.test.tsx",
+      "assertion": "expect(screen.getByTestId(\"p3-submit\")).toHaveAttribute(\"aria-label\", \"Submit document\");",
+      "tier": "T1",
+      "note": "D1 item 7 (salvaged on this branch). Button A (testid rung) also asserts toHaveAttribute(\"role\", \"button\"); button B (label rung) asserts ONLY the role — expect(screen.getAllByLabelText(\"Open menu\")[0] as HTMLElement).toHaveAttribute(\"role\", \"button\") — exactly one aria-label assert exists in the spec (anti-tautology)."
+    },
+    "P4": {
+      "spec": "flawless/unit/P4ClickFetch.test.tsx",
+      "assertion": "not emitted — D1 item 3 (PLAN-01) unshipped: the emitter filters fetch tests to inEffect, so a fetch fired from onClick gets no fetch test; the click is a role-rung canary (getAllByRole button 'Load items')",
+      "tier": "T1"
+    },
+    "P5": {
+      "spec": "flawless/unit/P5PropPredicate.test.tsx",
+      "assertion": "not emitted — D1 item 4 (PLAN-01) unshipped: the flipped branch's witness ('No items yet') is consumed only by the RSC spec; the client spec renders the DEFAULTS-branch statics only",
+      "tier": "T1"
+    },
+    "P6": {
+      "spec": "flawless/unit/GuardedPage.test.tsx",
+      "assertion": "not emitted — D1 item 5 (PLAN-01) unshipped: classifyLogical yields a trigger only when both operands name the SAME single dep, so emitGuardTests skips the two-dep guard; the spec carries only the generic RSC contract (T0 non-empty render)",
+      "tier": "T0"
+    },
+    "P7": {
+      "spec": "flawless/unit/P7CappedVariants.test.tsx",
+      "assertion": "not emitted — D1 item 6 (PLAN-01) unshipped: the variant matrix is capped at five options (xs–xl emitted); '2xl'/'3xl'/'4xl' appear nowhere in the spec",
+      "tier": "T1"
+    },
+    "P8": {
+      "spec": "flawless/unit/P8EffectFetch.test.tsx",
+      "assertion": "not emitted — D2 (PLAN-02) unshipped: the four msw fetch-state tests exist (FIXTURE = { greeting: \"Hello from the API\" }, waitFor call-count) but the fixture value is never asserted — every test ends in TODO(flawless)",
+      "tier": "T1"
+    },
+    "P9": {
+      "spec": "flawless/unit/P9SetterTransition.test.tsx",
+      "assertion": "not emitted — D3 (PLAN-03) unshipped: no text witness for the setter transition; 'No visits'/'Visited' appear nowhere (ternary branch texts are not extracted as static text); the click is a canary",
+      "tier": "T1"
+    },
+    "P10": {
+      "spec": "flawless/unit/P10ActionForm.test.tsx",
+      "assertion": "not emitted — D4 (PLAN-04) unshipped: client mock mode is allowlist-only so the server-action module stays real; the form test fills and reads back (toHaveValue) but asserts nothing about the action call (no toHaveBeenCalledWith, no vi.mocked)",
+      "tier": "T1"
+    },
+    "N1": {
+      "spec": "flawless/unit/N1ConditionalDisabled.test.tsx",
+      "assertion": "not emitted — refusal control: `pending || flags?.pending` does not reduce at any generated DEFAULTS (flags is a Pick both resolvers refuse, floored to {}), so the emitter names the skip ('its control is disabled at these props') and asserts no toBeDisabled",
+      "tier": "T1"
+    },
+    "N2": {
+      "spec": "flawless/unit/N2ComputedAriaLabel.test.tsx",
+      "assertion": "not emitted — refusal control: readStringInitializer is literals-only, so the template-literal aria-label is never recorded; the locator falls to the role rung (getAllByRole button 'Save') and no aria-label is asserted",
+      "tier": "T1"
+    },
+    "home": {
+      "spec": "flawless/unit/HomePage.test.tsx",
+      "assertion": "test(\"HomePage renders a <main>\", () => {",
+      "tier": "T1",
+      "note": "The composed page: no props, no interactions of its own, no static-content describe (its JSX is all component references)."
+    },
+    "root": {
+      "spec": "flawless/unit/RootLayout.test.tsx",
+      "assertion": "test(\"RootLayout returns a document root containing its children\", async () => {",
+      "tier": "T1",
+      "note": "Document-root contract checked as server markup (renderToReadableStream), not mounted."
+    }
+  },
+  "census": {
+    "root": ".",
+    "headline": {
+      "specs": 26,
+      "specsClassified": 26,
+      "distribution": {
+        "T0": 12,
+        "T1": 12,
+        "T2": 2,
+        "T3": 0
+      },
+      "specsStrongestT0": 12,
+      "specsUnclassified": [],
+      "specsAllSkipped": [],
+      "testsClassified": 63,
+      "testsUnclaimed": 9,
+      "testsSkipped": 1,
+      "perSpec": [
+        {
+          "path": "flawless/browser/HomePage.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/N1ConditionalDisabled.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/N2ComputedAriaLabel.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P10ActionForm.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P1AlwaysDisabled.spec.ts",
+          "tier": "T2",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P2StateToAttribute.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P3HostAriaLabel.spec.ts",
+          "tier": "T0",
+          "tests": 3,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P4ClickFetch.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P5PropPredicate.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P7CappedVariants.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P8EffectFetch.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/browser/P9SetterTransition.spec.ts",
+          "tier": "T0",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/GuardedPage.test.tsx",
+          "tier": "T0",
+          "tests": 1,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/HomePage.test.tsx",
+          "tier": "T1",
+          "tests": 1,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/N1ConditionalDisabled.test.tsx",
+          "tier": "T1",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 1
+        },
+        {
+          "path": "flawless/unit/N2ComputedAriaLabel.test.tsx",
+          "tier": "T1",
+          "tests": 3,
+          "unclaimed": 1,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P10ActionForm.test.tsx",
+          "tier": "T1",
+          "tests": 3,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P1AlwaysDisabled.test.tsx",
+          "tier": "T2",
+          "tests": 3,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P2StateToAttribute.test.tsx",
+          "tier": "T1",
+          "tests": 3,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P3HostAriaLabel.test.tsx",
+          "tier": "T1",
+          "tests": 5,
+          "unclaimed": 2,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P4ClickFetch.test.tsx",
+          "tier": "T1",
+          "tests": 3,
+          "unclaimed": 1,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P5PropPredicate.test.tsx",
+          "tier": "T1",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P7CappedVariants.test.tsx",
+          "tier": "T1",
+          "tests": 2,
+          "unclaimed": 0,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P8EffectFetch.test.tsx",
+          "tier": "T1",
+          "tests": 6,
+          "unclaimed": 4,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/P9SetterTransition.test.tsx",
+          "tier": "T1",
+          "tests": 3,
+          "unclaimed": 1,
+          "skipped": 0
+        },
+        {
+          "path": "flawless/unit/RootLayout.test.tsx",
+          "tier": "T1",
+          "tests": 1,
+          "unclaimed": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    "crossCheck": {
+      "specs": 0,
+      "specsClassified": 0,
+      "distribution": {
+        "T0": 0,
+        "T1": 0,
+        "T2": 0,
+        "T3": 0
+      },
+      "specsStrongestT0": 0,
+      "specsUnclassified": [],
+      "specsAllSkipped": [],
+      "testsClassified": 0,
+      "testsUnclaimed": 0,
+      "testsSkipped": 0,
+      "perSpec": [],
+      "note": "Committed colocated copies (*.flawless.test.ts(x) outside the out dir). Explicitly excluded from `headline`: the census subject is the suite this run emitted."
+    },
+    "perPlane": {
+      "browser": {
+        "specs": 12,
+        "distribution": {
+          "T0": 11,
+          "T1": 0,
+          "T2": 1,
+          "T3": 0
+        }
+      },
+      "unit": {
+        "specs": 14,
+        "distribution": {
+          "T0": 1,
+          "T1": 12,
+          "T2": 1,
+          "T3": 0
+        }
+      }
+    }
+  }
+}
