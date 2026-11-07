@@ -10,6 +10,37 @@ const TAG_TO_ROLE: Record<string, string> = {
 };
 
 /**
+ * The rung of the locator ladder that addresses the click — the first source
+ * fact that names the element: a testid, then an aria-label, then a role with
+ * a text-ish label, then an id, then the label text itself, then the bare
+ * host tag when it is the only one of its kind. undefined means nothing in
+ * the source identifies the element.
+ *
+ * The ORDER is load-bearing for callers that reason about what the locator
+ * reads: a click that reaches the "role" rung cannot carry a recorded
+ * aria-label (the "label" rung sits above it), so which attributes the
+ * located element can be asserted on INDEPENDENTLY of the locator derives
+ * from the rung — the testid rung can assert both, the label rung only the
+ * role, the role rung neither.
+ */
+export type VitestSelectorRung = "testid" | "label" | "role" | "id" | "text" | "tag";
+
+export function vitestSelectorRung(h: ClickHandler): VitestSelectorRung | undefined {
+  if (h.hints.testid) return "testid";
+  if (h.hints.ariaLabel) return "label";
+  const role = roleFor(h);
+  if (
+    role &&
+    (h.label.kind === "text" || h.label.kind === "text-partial" || h.label.kind === "prop")
+  )
+    return "role";
+  if (h.hints.id) return "id";
+  if (h.label.kind === "text" || h.label.kind === "text-partial") return "text";
+  if (isHostTag(h.tag) && !h.ambiguousTag) return "tag";
+  return undefined;
+}
+
+/**
  * A Vitest/Testing-Library expression resolving to the target element, or
  * undefined when nothing in the source identifies it.
  *
@@ -20,12 +51,13 @@ const TAG_TO_ROLE: Record<string, string> = {
  * green test that never touched the DOM.
  */
 export function emitVitestSelector(h: ClickHandler): string | undefined {
-  if (h.hints.testid) return `screen.getByTestId(${JSON.stringify(h.hints.testid)})`;
-  if (h.hints.ariaLabel) {
+  const rung = vitestSelectorRung(h);
+  if (rung === "testid") return `screen.getByTestId(${JSON.stringify(h.hints.testid)})`;
+  if (rung === "label") {
     return `screen.getAllByLabelText(${JSON.stringify(h.hints.ariaLabel)})[0] as HTMLElement`;
   }
-  const role = roleFor(h);
-  if (role) {
+  if (rung === "role") {
+    const role = roleFor(h);
     if (h.label.kind === "text") {
       return `screen.getAllByRole(${JSON.stringify(role)}, { name: ${JSON.stringify(h.label.value)} })[0] as HTMLElement`;
     }
@@ -39,15 +71,17 @@ export function emitVitestSelector(h: ClickHandler): string | undefined {
       return `screen.getAllByRole(${JSON.stringify(role)}, { name: String(DEFAULTS[${JSON.stringify(h.label.propName)}] ?? "") })[0] as HTMLElement`;
     }
   }
-  if (h.hints.id) return `container.querySelector(${JSON.stringify(`#${h.hints.id}`)})!`;
-  if (h.label.kind === "text")
-    return `screen.getAllByText(${JSON.stringify(h.label.value)})[0] as HTMLElement`;
-  if (h.label.kind === "text-partial")
-    return `screen.getAllByText(${partialRegex(h.label.value)})[0] as HTMLElement`;
+  if (rung === "id") return `container.querySelector(${JSON.stringify(`#${h.hints.id}`)})!`;
+  if (rung === "text") {
+    if (h.label.kind === "text")
+      return `screen.getAllByText(${JSON.stringify(h.label.value)})[0] as HTMLElement`;
+    if (h.label.kind === "text-partial")
+      return `screen.getAllByText(${partialRegex(h.label.value)})[0] as HTMLElement`;
+  }
   // A lowercase host tag is a real CSS selector; an uppercase component name is
   // not, and querying it silently yields null. It still only NAMES the element
   // when it is the only one of its kind in the render.
-  if (isHostTag(h.tag) && !h.ambiguousTag) {
+  if (rung === "tag") {
     return `container.querySelector(${JSON.stringify(h.tag)})!`;
   }
   return undefined;
@@ -472,7 +506,7 @@ export function propNameRegex(label: Extract<LabelSource, { kind: "prop" }>, fla
 }
 
 /** JSX lowercases host elements; anything capitalised is a component reference. */
-function isHostTag(tag: string): boolean {
+export function isHostTag(tag: string): boolean {
   return /^[a-z][a-z0-9-]*$/.test(tag);
 }
 

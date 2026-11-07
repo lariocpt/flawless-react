@@ -14,6 +14,19 @@ running the tool, asserts the emitted config declares the oxc mechanism for the
 vite that will actually run, and runs the colocated specs green from the app root
 and from the suite's own `test:unit` entry point.
 
+`depthapp/` — the depth-surface fixture from
+`docs/plans/PLAN-01-depth-free-derivation.md` (chunk 5): one component per
+D1/D2/D3/D4 pattern (P1–P10) plus the two refusal controls (N1 conditional
+disabled, N2 computed aria-label). `tests/depthSurface.test.ts` generates a
+suite against a copy of it and checks, per pattern, which assertion is — or
+must not be — in the emitted spec; the census of that suite is
+`docs/plans/baselines/depth-surface.json`. Unlike `aliased-next-app` (whose
+files carry `// @ts-nocheck` over `@/…` imports the repo's tsconfig cannot
+resolve), every source file here uses relative imports, so the repo's own
+`bunx tsc --noEmit` typechecks the fixture for real; `react-shims.d.ts`
+stands in only for `useActionState`, which the repo's @types/react 18.3
+predates (the fixture's package.json declares react 19, where it is stable).
+
 ## Why each file exists
 
 | file | shape it carries | defect |

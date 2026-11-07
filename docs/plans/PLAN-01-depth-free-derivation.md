@@ -2,9 +2,13 @@
 
 ## Scope
 
-`src/scaffold-tests/templates.ts` (six emitter sites), `src/scaffold-tests/postDispatch.ts`
-(one rung), `src/analyse/extractChildAttrs.ts` (one field, item 7 only), the matching
-execution tests, and this subfile. No new extractor, no new task, no new flag.
+`src/scaffold-tests/templates.ts` (the emitter sites of items 1–6, plus item 7's
+host-attribute site), `src/scaffold-tests/postDispatch.ts` (one rung),
+`src/scaffold-tests/selectors.ts` (the locator rung, item 7's bound), the matching
+execution tests, and this subfile. No new extractor, no new task, no new flag — item
+7's salvage emits only what `collectHints` already carried. `src/analyse/extractChildAttrs.ts`
+was the retired item 7's planned wiring (one field); it is touched by no D1 commit,
+and the halves that stay dead are recorded below with the lines that keep them dead.
 
 ## Premise
 
@@ -151,7 +155,8 @@ assertions to D2.
 
 ## Receipts
 
-**D1a — items 1, 2 shipped; item 7 retired.** Branch `feat/d1a-attribute-claims`
+**D1a — items 1, 2 shipped; item 7 retired here, salvaged on
+`feat/d1-surface-fixture` (host case only).** Branch `feat/d1a-attribute-claims`
 off `main` @ `07072ac`. Control = `main` @ merge-base binary; treatment = this
 branch tip (`e492b6b`) binary, both `bun build --compile --minify` per *Measure
 with the newest code*. Pinned tree: mybodycorpai @ `c00697f`.
@@ -197,24 +202,68 @@ would emit a `querySelector` matching nothing and passing vacuously.
   emitted here and the tier distribution is unchanged. Same report-only-census
   clause as item 1; the green→red falsifier carries the depth proof.
 
-### Item 7 — static accessibility attributes on the asserted element — RETIRED (with reason)
+### Item 7 — static accessibility attributes on the asserted element — SALVAGED (host case)
 
-`extractChildAttrs` (`src/types.ts:474`) records attribute name and `valueKind` only
-on **UPPERCASE child components**, never on a host element. Three measurements make
-the emitted assertion unsound, so the item is retired rather than shipped:
+D1a retired this item: the static-attr recorder `extractChildAttrs` never sees a
+host element, the attrs it does see sit on children the unit spec mocks, and
+asserting the value a locator already matches on is a tautology. All three still
+hold — of the halves the analyser does not carry. What the measurement did not
+cover is that the analyser carries a host element's static attrs through a second
+path: `collectHints` runs on every walked element and attaches its result to every
+click. The half a handler carries was carried all along; `feat/d1-surface-fixture`
+(commit `5ae6d01`) ships its emitter, bounded by the locator's rung.
 
-1. There is no host element to assert on — the attrs live on a child component the
-   unit spec **mocks**, so the attribute is not in the rendered DOM.
-2. The only static attrs the analyser sees sit on already-mocked children
-   (`<Icon name=…>`), which a unit spec stubs to a pass-through — asserting their
-   attributes tests the mock, not the component.
-3. The plan's own locator usage (`templates.ts:3302`) already *finds* the element by
-   that attribute; emitting `expect(el).toHaveAttribute("aria-label", <the same
-   value>)` on the element located by `aria-label` is tautological — it is red-free
-   by construction (a false-red/vacuous claim), the exact class PLAN-00 M1 retired.
+**What the analyser already carried.** `collectHints` (extractInteractions.ts:529)
+is called for every walked element (:292) and records `data-testid` (:602),
+`aria-label` (:605), `role` (:608), `id` (:611) — string literals only, via
+`readStringInitializer` (:661–667), so a template-literal aria-label is never
+recorded (the fixture's N2 refusal). The hints reach the emitter only through
+`clicks.push` (:324), which requires an event attribute matching `eventPattern`
+(:319–320) — a handler is REQUIRED. For a handler-less element they serve only
+`extractLabel` (:298, the aria-label as accessible name) and are discarded.
 
-Retired per *Moot vs required*: "an item that turns out to be unsound … is retired
-here with the measurement that killed it." No code path emits for item 7.
+**What stays dead — the D1a measurement, unchanged.**
+
+1. **Child components** (old reasons 1–2): `extractChildAttrs`
+   (extractChildAttrs.ts:15) records attrs on UPPERCASE tags only —
+   `componentTagName` (:56–58) rejects a lowercase tag — and the unit spec mocks
+   the child, so its attributes are not in the rendered DOM.
+2. **Handler-less host elements**: `collectHints` runs, but its result is used
+   only for label resolution and then discarded — nothing carries the attribute
+   to the emitter.
+3. **Form fields**: `collectFields` (:998) builds `FieldInfo` (types.ts:230–247),
+   which has `label` (a `<label htmlFor>` lookup, :1039–1046) but no aria-label
+   member — the field's own value is dropped. `findSubmitControl` (:967) records
+   the submit control's `label` (:985) and `disabled` (:987) only.
+
+**What the salvage emits.** `emitHostAttrTest` (templates.ts), unit plane only —
+`emitInteractionTests` is called only from `unitSpec`, so rsc and constrained
+specs cannot reach it. For each click on a locatable host element it adds a
+render-only test asserting the static attributes the locator does NOT read,
+bounded by `vitestSelectorRung` (f1523ed):
+
+- **testid rung** — both `aria-label` and `role`; the locator reads neither.
+- **label rung** — `role` only. The locator matches on the aria-label, so
+  asserting it would be old reason 3 — a tautology, red-free by construction —
+  now enforced as a bound instead of feared as a failure.
+- **role rung and below** — nothing: a recorded aria-label is structurally absent
+  (the label rung sits above), and a role INFERRED from the tag (`<button>` →
+  "button") answers `getAttribute("role")` with null, so it must never be
+  asserted. Gated elements, component tags and unlocatable clicks refuse.
+
+**Evidence.** The falsifier (`tests/hostA11yAttrsExecution.test.ts`) runs both
+rung shapes green, then mutates the aria-label literal WITHOUT regenerating the
+spec and the run goes red on `toHaveAttribute` — the assertion reads the markup.
+The pinned dogfood census is byte-identical (the baseline hashes every emitted
+spec), so no pinned-app component fires the new site. The depth-surface fixture's
+P3 is the one spec that moves — button A (testid rung) gains both asserts,
+button B (label rung) the role assert only — and P3 is this item's row in
+`docs/plans/baselines/depth-surface.json`.
+
+Retired per *Moot vs required*: "an item that turns out to be unsound … is
+retired here with the measurement that killed it." That measurement killed the
+halves above and is kept; the handler-carrying host half was never unsound — it
+was unwired — and now ships with its own measurement.
 
 ### Acceptance gate 5 — emitted specs type-check
 
@@ -229,4 +278,25 @@ On the D1a `VERDICT.json`: `unit-browser.skips = 132 == Σ skipReasons = 132`
 (the `disabled-control` family — "its control is disabled at these props" ×2,
 "its submit control is disabled at these props" ×3 — is present in the reason
 table and, on this tree, unchanged, because neither shipped item fired).
+
+### The depth-surface fixture is the movement metric (chunk 5)
+
+Items 1 and 2 shipped with *census movement on the pinned tree: none* — not
+because the emitter does not fire, but because the pinned app cannot exhibit
+their patterns: mybodycorpai has no always-disabled control with a locatable
+element on the unit plane (every `disabled` reduces to `"conditional"`), and
+no string `useState` initial that flows into an attribute (its only string
+initials are `""`, excluded by the ≥2-char guard). A real-app census cannot
+measure a pattern the app does not contain.
+
+`tests/fixtures/depthapp/` closes that gap: a committed app with exactly one
+component per pattern (P1–P10 present/absent shapes, N1/N2 refusal controls),
+guarded by `tests/depthSurface.test.ts` and pinned by
+`docs/plans/baselines/depth-surface.json`. It is the movement metric for
+track D: each pattern's emitted bytes and tier are pinned, every unshipped
+behaviour is an EXPECTED-ABSENT row naming its owning item, and when an item
+ships its row reddens by name. The pinned census stays the real-app reading —
+the surface fixture measures *did the emitter fire on a shape known to carry
+the fact*; the pinned census measures *what the real app gets*. Both run;
+neither replaces the other.
 
