@@ -39,7 +39,7 @@ its tests; the census is the distribution over specs.
 | Tier | Emitted shape (what the classifier greps for) | Why this tier |
 | --- | --- | --- |
 | T0 | `not.toThrow()`, `innerHTML.length > 0`, `toJSON()).not.toBeNull()`, `toBeTruthy()` on a locator, `expect(calls).toBeGreaterThan(0)` with nothing after it | True of nearly any component; falsifies almost nothing |
-| T1 | `querySelector("<tag>")`, `getAllByText`/`getByText` on a literal, `toHaveValue` after a fill, `getAllByText(<CHILD_TEXT>)`, `.flawless-cls`, variant `outerHTML` comparison | Falsified by markup/copy changes |
+| T1 | `querySelector("<tag>")`, `getAllByText`/`getByText` on a literal, `toHaveValue` after a fill, `getAllByText(<CHILD_TEXT>)`, `.flawless-cls`, variant `outerHTML` comparison, `toHaveAttribute(<attr>, <literal>)` on a static value | Falsified by markup/copy changes |
 | T2 | `expect(handlers.onX).toHaveBeenCalled()`, `vi.mocked(...).toHaveBeenCalled()`, `routerMock.push` assertions, `rejects.toThrow(/notFound/)`, inversion legs' presence/absence pairs, `toBeDisabled()`, `getPathname()).toBe(` | Falsified by behaviour changes, not markup |
 | T3 | `toHaveBeenCalledWith(...)`, `getAllByText(<fixture value>)`, `toHaveBeenCalledTimes(n)` where n > 1 derived from a call site, call-count **deltas** between two legs — a delta keyed on a flipped input and carrying a distinguishing marker, which nothing emitted today does (see the note below), `toHaveDisplayValue` after a state transition | Falsified by data-flow changes |
 
@@ -57,6 +57,15 @@ flipped input, with a distinguishing marker** — until such a shape is emitted,
 call-count assertion classifies T2. The conservative reading won because the classifier's
 contract is asymmetric: it may under-read (an unknown shape lands low until this table
 grows) and must never over-read — a census that inflates a tier is a census that lies.
+
+Note on the `toHaveAttribute` row (amended 2026-11-06 against D1a): `toHaveAttribute(<attr>, <literal>)`
+with a **static string** expected value is T1, not T2 — it is falsified by a markup/attribute
+change (rename the value, drop the attribute), exactly the T1 criterion, and it claims nothing
+about behaviour. It is deliberately the *same* shape as the literal-copy T1 rows, not a derived
+one. `toHaveAttribute(<attr>)` with no expected value (presence only) and `toHaveAttribute(<attr>,
+<computed>)` with a non-literal both stay T0 — the classifier never over-reads, so a matcher that
+asserts no static value asserts no falsifiable literal. The D1a control confirms this rule matched
+nothing already in the pinned suite (the census is byte-identical before any emitter change).
 
 Two rules the classifier must enforce, because they are where a census can lie:
 

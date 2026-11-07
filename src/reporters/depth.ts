@@ -543,6 +543,24 @@ function classifySite(
   if ((matcher === "toHaveValue" || matcher === "toHaveDisplayValue") && !not) {
     return { tier: "T1", evidence: `${matcher} — value read-back` };
   }
+  if (matcher === "toHaveAttribute" && !not) {
+    // PLAN-00 T1 row (D1a amendment): a static attribute value. T1 only when the
+    // EXPECTED value is a literal (or a loop/const-bound literal) the source names;
+    // presence-only (one arg) or a computed value asserts no falsifiable literal, so
+    // it drops to T0 — the classifier never over-reads. This is the guard-the-guard.
+    const parts = splitTopLevel(matcherArg);
+    const value = parts[1]?.trim();
+    if (value !== undefined && (isStringLiteral(value) || bound.has(value))) {
+      return {
+        tier: "T1",
+        evidence: `toHaveAttribute(${short(matcherArg)}) — static attribute value`,
+      };
+    }
+    return {
+      tier: "T0",
+      evidence: `toHaveAttribute(${short(matcherArg)}) — no static expected value`,
+    };
+  }
   if (matcher === "toContain" && !not) {
     if (isStringLiteral(matcherArg) || bound.has(matcherArg)) {
       return { tier: "T1", evidence: `literal copy: ${short(matcherArg)}` };
