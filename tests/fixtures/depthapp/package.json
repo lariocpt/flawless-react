@@ -1,0 +1,11 @@
+{
+  "name": "depthapp",
+  "scripts": {
+    "dev": "next dev -p 3125"
+  },
+  "dependencies": {
+    "next": "15.0.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  }
+}
