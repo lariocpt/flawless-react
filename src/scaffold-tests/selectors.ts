@@ -506,7 +506,7 @@ export function propNameRegex(label: Extract<LabelSource, { kind: "prop" }>, fla
 }
 
 /** JSX lowercases host elements; anything capitalised is a component reference. */
-function isHostTag(tag: string): boolean {
+export function isHostTag(tag: string): boolean {
   return /^[a-z][a-z0-9-]*$/.test(tag);
 }
 

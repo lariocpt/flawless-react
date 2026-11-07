@@ -61,6 +61,8 @@ import {
   emitVitestSelector,
   emitVitestSubmit,
   firstOf,
+  isHostTag,
+  vitestSelectorRung,
 } from "./selectors.ts";
 import { stamp } from "./stamp.ts";
 
@@ -3154,6 +3156,11 @@ test.skip("${name}: interactions need a fixture — an early return may render n
     // Later interactions often live behind UI state the first click opens.
     const prelude = i !== firstClickIdx && trigger ? trigger : undefined;
     parts.push(emitClickTest(name, click, allHandlers, i, claimCtx, prelude, todo));
+    // The click test DRIVES the element; the static host attributes it carries
+    // (aria-label, role) get a render-only assertion of their own — nothing
+    // else in the spec reads them (item 7, PLAN-01).
+    const hostAttrs = emitHostAttrTest(name, click, i);
+    if (hostAttrs !== "") parts.push(hostAttrs);
   }
   for (let i = 0; i < info.forms.length; i++) {
     const form = info.forms[i];
@@ -3344,6 +3351,53 @@ ${isolationAsserts || "  // no other handlers to isolate"}
   }
   expect(escaped, "the ${click.event} threw out of its handler").toEqual([]);${isolation}
 });`;
+}
+
+/**
+ * Item 7 (PLAN-01, salvaged): the static host attributes the analyser already
+ * carries on a click — `aria-label` and `role`, string literals only
+ * (collectHints, extractInteractions) — get a render-only test of their own,
+ * because no other test in the spec reads them: the click test drives the
+ * element (and may skip), and variant and static-text tests never inspect
+ * attributes.
+ *
+ * What may be asserted is bounded by the rung the locator sits on:
+ *   - aria-label only on the testid rung. Every other rung is either
+ *     unreachable WITH a recorded aria-label (the label rung sits above it,
+ *     so at the role/id/text/tag rungs ariaLabel is structurally absent) or
+ *     would match on the very value asserted (the label rung), which is a
+ *     tautology, not a check.
+ *   - role on every rung but the role rung, and only for a static `role`
+ *     ATTRIBUTE: a role inferred from the tag (`<button>` → "button") answers
+ *     getAttribute("role") with null, so asserting it would be a false claim.
+ * A gated element never mounts at render and a component tag has no host
+ * element this file could assert on — both refuse.
+ */
+function emitHostAttrTest(name: string, click: ClickHandler, idx: number): string {
+  if (click.gatedBy !== undefined) return "";
+  if (!isHostTag(click.tag)) return "";
+  const selector = emitVitestSelector(click);
+  if (selector === undefined) return "";
+  const rung = vitestSelectorRung(click);
+  const ariaLabel = click.hints.ariaLabel;
+  const role = click.hints.role;
+  const asserts: string[] = [];
+  if (rung === "testid" && ariaLabel !== undefined) {
+    asserts.push(
+      `  expect(${selector}).toHaveAttribute("aria-label", ${JSON.stringify(ariaLabel)});`,
+    );
+  }
+  if (role !== undefined && rung !== "role") {
+    asserts.push(`  expect(${selector}).toHaveAttribute("role", ${JSON.stringify(role)});`);
+  }
+  if (asserts.length === 0) return "";
+  return [
+    `test("${name}: ${describeClickLabel(click)} #${idx} carries its host attributes", () => {`,
+    `  const { container } = renderTarget();`,
+    `  void container;`,
+    ...asserts,
+    `});`,
+  ].join("\n");
 }
 
 function describeClickLabel(c: ClickHandler): string {
