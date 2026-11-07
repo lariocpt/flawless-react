@@ -279,3 +279,24 @@ On the D1a `VERDICT.json`: `unit-browser.skips = 132 == Σ skipReasons = 132`
 "its submit control is disabled at these props" ×3 — is present in the reason
 table and, on this tree, unchanged, because neither shipped item fired).
 
+### The depth-surface fixture is the movement metric (chunk 5)
+
+Items 1 and 2 shipped with *census movement on the pinned tree: none* — not
+because the emitter does not fire, but because the pinned app cannot exhibit
+their patterns: mybodycorpai has no always-disabled control with a locatable
+element on the unit plane (every `disabled` reduces to `"conditional"`), and
+no string `useState` initial that flows into an attribute (its only string
+initials are `""`, excluded by the ≥2-char guard). A real-app census cannot
+measure a pattern the app does not contain.
+
+`tests/fixtures/depthapp/` closes that gap: a committed app with exactly one
+component per pattern (P1–P10 present/absent shapes, N1/N2 refusal controls),
+guarded by `tests/depthSurface.test.ts` and pinned by
+`docs/plans/baselines/depth-surface.json`. It is the movement metric for
+track D: each pattern's emitted bytes and tier are pinned, every unshipped
+behaviour is an EXPECTED-ABSENT row naming its owning item, and when an item
+ships its row reddens by name. The pinned census stays the real-app reading —
+the surface fixture measures *did the emitter fire on a shape known to carry
+the fact*; the pinned census measures *what the real app gets*. Both run;
+neither replaces the other.
+

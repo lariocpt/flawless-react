@@ -47,7 +47,10 @@ at the exact SHA, builds the binary from the **measured tree** with the exact
 and writes a receipt JSON: binary hash, tree hash, command, per-plane tallies, TODO and
 skip censuses, and the D0 depth census. `--control <sha>` runs the same thing on a second
 tree and emits the delta, which is what makes the *same binary lineage* rule
-self-enforcing instead of remembered.
+self-enforcing instead of remembered. (The depth census in that receipt measures the real
+app; the depth-surface fixture — `tests/fixtures/depthapp/`, PLAN-01 chunk 5 — is the
+movement metric for track D, and the pinned census stays the real-app reading, not
+replaced by it.)
 
 The scratch convention stops being tribal: the binary lives in the cache directory, named
 by tree hash, and the receipt names it.
