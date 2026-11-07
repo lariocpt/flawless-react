@@ -632,6 +632,15 @@ export interface PredicateSiteInfo {
   /** The site's own position is reachable under that leg's env. */
   reachableAtDefaults: boolean;
   reachableWhenFlipped: boolean;
+  /**
+   * D1b (client plane): the FLIPPED leg's witness may be asserted absent at
+   * defaults — it appears nowhere in the baseline arm. Only a return-branch
+   * site (the whole render is one arm or the other) can prove this; a ternary
+   * inside a larger page cannot, and leaves the staticText rule to the emitter.
+   */
+  flippedAbsenceSafe?: true;
+  /** D1b (client plane): the baseline leg's witness may be asserted absent when flipped. */
+  baselineAbsenceSafe?: true;
   pos: SourcePosition;
 }
 

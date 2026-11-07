@@ -418,20 +418,22 @@ async function analyseOne(
   });
 
   // B-19: predicates a spec can invert, certified against the same values the
-  // emitted mocks will hold. Async server components only — the same gate as
-  // dataDeps/guards, and the plane where the one-mount-all-true problem lives.
-  const predicates = unit.isAsync
-    ? extractPredicates({
-        bodyNode: unit.bodyNode,
-        sourceFile: parsed.sourceFile,
-        dataDeps,
-        guards,
-        moduleImports,
-        propsShape,
-        unresolvedProps,
-        staticText,
-      })
-    : { inversions: [], refusals: [] };
+  // emitted mocks will hold. Async server components carry the dep-backed
+  // flips (the plane where the one-mount-all-true problem lives); D1b opened
+  // the PROP-keyed flips to the unit plane too — dataDeps/guards stay async-
+  // only, so a client component can only ever certify prop controls, and the
+  // client emitter (emitClientInversionTests) is their only consumer there.
+  const predicates = extractPredicates({
+    bodyNode: unit.bodyNode,
+    sourceFile: parsed.sourceFile,
+    dataDeps,
+    guards,
+    moduleImports,
+    propsShape,
+    unresolvedProps,
+    staticText,
+    clientPlane: !unit.isAsync,
+  });
 
   const info: ComponentInfo = {
     componentName: unit.componentName,
