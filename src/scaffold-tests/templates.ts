@@ -1800,17 +1800,32 @@ function unitSpec(
 
   const stateTests = emitStateTests(name, info, todo);
   const staticTextTests = emitStaticTextTests(name, info, "unit");
-  const effectFetches = (info.fetchCalls ?? []).filter((f) => f.inEffect);
+  // D1 item 3 (PLAN-01): a fetch fired from an event handler — not an effect —
+  // gets the same four fetch tests an effect-fetch gets, driven by the derived
+  // dispatch instead of the mount. Attribution is the analyser's
+  // (extractFetchCalls' handlerName / inlineHandlerEvent) resolved against the
+  // clicks the interaction walk already found; a fetch no click provably
+  // reaches stays exactly as unemitted as it was — never a false red.
+  const hardDispatch = clickFetchDispatch(info);
+  const fetchSubjects = (info.fetchCalls ?? []).filter((f) => f.inEffect || hardDispatch.has(f));
   const fetchTests =
-    mocksImport && effectFetches.length > 0
-      ? emitFetchTests(name, info, effectFetches, apiRoutes, firstClickTrigger(info), todo)
+    mocksImport && fetchSubjects.length > 0
+      ? emitFetchTests(
+          name,
+          info,
+          fetchSubjects,
+          apiRoutes,
+          firstClickTrigger(info),
+          todo,
+          hardDispatch,
+        )
       : "";
 
   const providerLine =
     (providerImport ? `import AppProvider from "${providerImport}";\n` : "") +
     (autoProv?.imports ?? "");
   const mswImports =
-    mocksImport && effectFetches.length > 0
+    mocksImport && fetchSubjects.length > 0
       ? `import { http, HttpResponse, delay } from "msw";\nimport { server } from "${mocksImport}";\n`
       : "";
 
@@ -2194,6 +2209,46 @@ function firstClickTrigger(info: ComponentInfo): string | undefined {
     if (trigger) await userEvent.click(trigger as HTMLElement);`;
 }
 
+/**
+ * D1 item 3 (PLAN-01): the fetches this spec can DRIVE — non-effect fetches
+ * whose enclosing handler is a click the interaction walk already found and
+ * can address. The claim is only as strong as the attribution, so every link
+ * that cannot be proven refuses and the fetch stays unemitted (the status quo,
+ * never a false red): no enclosing handler name, no click bound to it (an
+ * inline handler only counts when it is the component's ONLY inline click for
+ * that event), a non-click event, a gated element that never mounts at
+ * render, an always-disabled control, an unlocatable target, a guarded render
+ * that may produce nothing.
+ */
+function clickFetchDispatch(info: ComponentInfo): Map<FetchCallInfo, string> {
+  const out = new Map<FetchCallInfo, string>();
+  const clicks = info.interactions?.clicks ?? [];
+  if (clicks.length === 0 || info.renderGuarded === true) return out;
+  for (const f of info.fetchCalls ?? []) {
+    if (f.inEffect) continue;
+    let click: ClickHandler | undefined;
+    if (f.handlerName !== undefined) {
+      click = clicks.find(
+        (c) => c.binding.kind === "local" && c.binding.localName === f.handlerName,
+      );
+    } else if (f.inlineHandlerEvent !== undefined) {
+      const candidates = clicks.filter(
+        (c) => c.binding.kind === "inline" && c.event === f.inlineHandlerEvent,
+      );
+      if (candidates.length === 1) click = candidates[0];
+    }
+    if (!click || click.event !== "onClick") continue;
+    if (click.gatedBy !== undefined) continue;
+    if (click.hints.disabled === "always") continue;
+    const selector = emitVitestSelector(click);
+    if (!selector) continue;
+    const dispatch = emitVitestDispatch(click.event, selector, { tag: click.tag });
+    if (!dispatch) continue;
+    out.set(f, dispatch);
+  }
+  return out;
+}
+
 function emitFetchTests(
   name: string,
   info: ComponentInfo,
@@ -2201,10 +2256,21 @@ function emitFetchTests(
   apiRoutes: NextjsApiRoute[] | undefined,
   trigger: string | undefined,
   todo?: TodoRecorder,
+  hardDispatch?: Map<FetchCallInfo, string>,
 ): string {
-  const triggerLines = trigger
-    ? `\n    // Effects can be gated behind UI state — fire the first detected click.\n    ${trigger}`
-    : "";
+  // D1 item 3: a fetch the click fires is DRIVEN by the dispatch — an
+  // unconditional `await userEvent.click(…)`, not the conditional mount-hedge
+  // trigger. The request count after it is the T2 claim PLAN-00's amended
+  // request-count row names; the same shape at mount stays the T0 floor.
+  const triggerLinesFor = (f: FetchCallInfo): string => {
+    const hard = hardDispatch?.get(f);
+    if (hard !== undefined) {
+      return `\n    // The fetch is fired by this click, not by the mount — dispatch it.\n    ${hard};`;
+    }
+    return trigger
+      ? `\n    // Effects can be gated behind UI state — fire the first detected click.\n    ${trigger}`
+      : "";
+  };
   // Every marker below goes through this helper so the tally and the emitted
   // text cannot drift apart when a scenario is added or removed.
   const todoLine = (text: string): string => {
@@ -2216,6 +2282,7 @@ function emitFetchTests(
   for (const f of fetches) {
     const mswPath = f.urlTemplate;
     const method = f.method.toLowerCase();
+    const drive = hardDispatch?.has(f) ? "click" : "mount";
     const fixture = apiRouteFixture(f.urlTemplate, f.method, apiRoutes);
     const fixtureLiteral = fixture !== undefined ? JSON.stringify(fixture) : "{}";
     const fixtureComment =
@@ -2235,11 +2302,11 @@ describe("${name} ${f.method} ${mswPath}", () => {
   ${fixtureComment}
   const FIXTURE: unknown = ${fixtureLiteral};
 
-  test("mount fetches and renders with a successful response", async () => {
+  test("${drive} fetches and renders with a successful response", async () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert rendered content derived from FIXTURE.")}
   });
@@ -2248,7 +2315,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     let calls = 0;
     server.use(http.${method}(URL, async () => { calls++; await delay(150); return HttpResponse.json(FIXTURE as never); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert the loading indicator while the response is pending.")}
   });
@@ -2257,7 +2324,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return new HttpResponse(null, { status: 500 }); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert the error-state UI.")}
   });
@@ -2266,7 +2333,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(${emptyPayloadFor(fixture)}); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert the empty-state copy.")}
   });

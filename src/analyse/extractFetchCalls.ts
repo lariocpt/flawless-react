@@ -25,6 +25,7 @@ export function extractFetchCalls(bodyNode: ts.Node, sourceFile: ts.SourceFile):
           method: readMethod(n.arguments[1]),
           pos: posOf(n, sourceFile),
           inEffect: isInsideEffect(n, bodyNode),
+          ...(!isInsideEffect(n, bodyNode) ? classifyHandler(n, bodyNode) : {}),
         });
       }
     }
@@ -78,4 +79,57 @@ function isInsideEffect(call: ts.Node, bodyNode: ts.Node): boolean {
     cur = cur.parent;
   }
   return false;
+}
+
+/**
+ * D1 item 3: which handler (if any) a NON-effect fetch sits in, so the emitter
+ * can attribute the request to the click bound to that handler. The outermost
+ * function boundary strictly below the component body decides — the same
+ * ladder extractState's classifyContext walks:
+ *
+ *   function ask() { fetch(…) }        → handlerName "ask"
+ *   const ask = () => fetch(…)        → handlerName "ask"
+ *   onClick={() => fetch(…)}          → inlineHandlerEvent "onClick"
+ *
+ * Anything else (a useCallback, a nested helper, a bare call in render) names
+ * no handler: the fetch stays unattributed and unemitted, exactly as before
+ * this field existed. An attributed fetch is a CLAIM only when the emitter also
+ * finds the click that reaches it.
+ */
+function classifyHandler(
+  call: ts.Node,
+  bodyNode: ts.Node,
+): { handlerName?: string; inlineHandlerEvent?: string } {
+  let outermostFn: ts.Node | undefined;
+  for (let p = call.parent; p && p !== bodyNode; p = p.parent) {
+    if (ts.isArrowFunction(p) || ts.isFunctionExpression(p) || ts.isFunctionDeclaration(p)) {
+      outermostFn = p;
+    }
+  }
+  if (!outermostFn) return {};
+  if (ts.isFunctionDeclaration(outermostFn) && outermostFn.name) {
+    return { handlerName: outermostFn.name.text };
+  }
+  const parent = outermostFn.parent;
+  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+    return { handlerName: parent.name.text };
+  }
+  // onClick={() => fetch(…)} — the arrow is the attribute initializer itself.
+  if (parent && ts.isJsxAttribute(parent) && ts.isIdentifier(parent.name)) {
+    if (/^on[A-Z]/.test(parent.name.text)) return { inlineHandlerEvent: parent.name.text };
+    return {};
+  }
+  // onClick={<expr>} through a JSX expression container (the shape
+  // extractState's classifyContext matches for wrapped handlers).
+  if (
+    parent &&
+    ts.isJsxExpression(parent) &&
+    parent.parent &&
+    ts.isJsxAttribute(parent.parent) &&
+    ts.isIdentifier(parent.parent.name) &&
+    /^on[A-Z]/.test(parent.parent.name.text)
+  ) {
+    return { inlineHandlerEvent: parent.parent.name.text };
+  }
+  return {};
 }
