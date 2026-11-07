@@ -463,6 +463,30 @@ function isLiteralArg(s: string): boolean {
 
 const TEXT_QUERY = /\b(?:getByText|getAllByText|queryAllByText|queryByText|findAllByText)\s*\(/;
 
+/**
+ * D1b (PLAN-00 amendment): does an UNCONDITIONAL event dispatch happen in this
+ * test body before offset `offset`?
+ *
+ * The detection is line-anchored: a line whose trimmed text starts with
+ * `await userEvent.` or `await fireEvent.` is a dispatch the test actually
+ * performs. A line that merely CONTAINS one is not enough — the effect-fetch
+ * trigger (`if (trigger) await userEvent.click(…)`; templates.ts
+ * firstClickTrigger) is a conditional hedge in front of a MOUNT fetch: the
+ * request may have fired without the click ever landing, so a request count
+ * after it is still the mount floor. Only a dispatch the test performs
+ * unconditionally makes "the request count is > 0" falsified by deleting the
+ * fetch — which is behaviour, i.e. T2.
+ */
+function hasDispatchBefore(body: string, offset: number): boolean {
+  let pos = 0;
+  for (const line of body.split("\n")) {
+    if (pos >= offset) break;
+    if (/^await\s+(?:userEvent|fireEvent)\./.test(line.trimStart())) return true;
+    pos += line.length + 1;
+  }
+  return false;
+}
+
 function textQueryArg(arg: string): string | undefined {
   const m = new RegExp(`${TEXT_QUERY.source}\\s*([^,)]+)`).exec(arg);
   return m?.[1]?.trim();
@@ -582,6 +606,15 @@ function classifySite(
   if (matcher === "toBeTruthy") return { tier: "T0", evidence: "toBeTruthy — vacuous tail" };
   if (matcher === "toThrow" && not) return { tier: "T0", evidence: "not.toThrow — mount-only" };
   if (matcher === "toBeGreaterThan" && !not && /\b(calls|rootHtml|innerHTML)/.test(arg)) {
+    // PLAN-00 T2 row (D1b amendment): a REQUEST-count claim read after a
+    // dispatch is a behaviour claim — deleting the fetch the dispatch fired
+    // turns it red. At mount the same shape is the fetch floor it always was.
+    if (/\bcalls\b/.test(arg) && hasDispatchBefore(body, site.offset)) {
+      return {
+        tier: "T2",
+        evidence: `${short(arg)} > ${matcherArg} — request count read after a dispatch`,
+      };
+    }
     return { tier: "T0", evidence: `${short(arg)} > ${matcherArg} — non-empty/made-a-request` };
   }
   return { tier: "T0", evidence: `${not ? "not." : ""}${matcher} — uncatalogued, default T0` };

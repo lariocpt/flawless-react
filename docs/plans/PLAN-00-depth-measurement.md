@@ -38,9 +38,9 @@ its tests; the census is the distribution over specs.
 
 | Tier | Emitted shape (what the classifier greps for) | Why this tier |
 | --- | --- | --- |
-| T0 | `not.toThrow()`, `innerHTML.length > 0`, `toJSON()).not.toBeNull()`, `toBeTruthy()` on a locator, `expect(calls).toBeGreaterThan(0)` with nothing after it | True of nearly any component; falsifies almost nothing |
+| T0 | `not.toThrow()`, `innerHTML.length > 0`, `toJSON()).not.toBeNull()`, `toBeTruthy()` on a locator, `expect(calls).toBeGreaterThan(0)` with nothing after it (see the request-count note — at mount only) | True of nearly any component; falsifies almost nothing |
 | T1 | `querySelector("<tag>")`, `getAllByText`/`getByText` on a literal, `toHaveValue` after a fill, `getAllByText(<CHILD_TEXT>)`, `.flawless-cls`, variant `outerHTML` comparison, `toHaveAttribute(<attr>, <literal>)` on a static value | Falsified by markup/copy changes |
-| T2 | `expect(handlers.onX).toHaveBeenCalled()`, `vi.mocked(...).toHaveBeenCalled()`, `routerMock.push` assertions, `rejects.toThrow(/notFound/)`, inversion legs' presence/absence pairs, `toBeDisabled()`, `getPathname()).toBe(` | Falsified by behaviour changes, not markup |
+| T2 | `expect(handlers.onX).toHaveBeenCalled()`, `vi.mocked(...).toHaveBeenCalled()`, `routerMock.push` assertions, `rejects.toThrow(/notFound/)`, inversion legs' presence/absence pairs, `toBeDisabled()`, `getPathname()).toBe(`, `expect(calls).toBeGreaterThan(0)` read after a dispatch (see the request-count note) | Falsified by behaviour changes, not markup |
 | T3 | `toHaveBeenCalledWith(...)`, `getAllByText(<fixture value>)`, `toHaveBeenCalledTimes(n)` where n > 1 derived from a call site, call-count **deltas** between two legs — a delta keyed on a flipped input and carrying a distinguishing marker, which nothing emitted today does (see the note below), `toHaveDisplayValue` after a state transition | Falsified by data-flow changes |
 
 Note on the call-count row (amended 2026-11-05 against the emitted suite, D0b): the only
@@ -66,6 +66,20 @@ one. `toHaveAttribute(<attr>)` with no expected value (presence only) and `toHav
 <computed>)` with a non-literal both stay T0 — the classifier never over-reads, so a matcher that
 asserts no static value asserts no falsifiable literal. The D1a control confirms this rule matched
 nothing already in the pinned suite (the census is byte-identical before any emitter change).
+
+Note on the request-count row (amended 2026-11-07 against D1b): `expect(calls).toBeGreaterThan(0)`
+is tiered by **where the counter is read**, not by its shape. Read from a mount-effect test it is
+the fetch floor it has always been — T0, because a mount fetch is basically a mount claim. Read
+after a **dispatch the test actually performs** — an unconditional `await userEvent.*` /
+`await fireEvent.*` line earlier in the same test body — the same matcher is T2: deleting the fetch
+the dispatch fired turns it red, which is behaviour, not mounting. The conditional trigger the
+effect-fetch tests carry (`if (trigger) await userEvent.click(…)`, `templates.ts`
+`firstClickTrigger`) is NOT a dispatch for this rule: it is a hedge in front of a mount fetch, and
+the request may have fired without the click ever landing. The classifier detects the distinction
+line-anchored in `src/reporters/depth.ts` (`hasDispatchBefore`): a line whose trimmed text starts
+with `await userEvent.` or `await fireEvent.` before the counter's `expect` site. The D1b control
+confirms the rule matched nothing already in the pinned suite or the depth-surface fixture (both
+censuses byte-identical before any emitter change).
 
 Two rules the classifier must enforce, because they are where a census can lie:
 
