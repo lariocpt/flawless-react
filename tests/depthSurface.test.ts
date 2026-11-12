@@ -185,7 +185,9 @@ test("P4 — a click-fired fetch gets the fetch tests, driven by the dispatch (D
   // The request count after a dispatch is T2 (PLAN-00 amended request-count
   // row); the mount-fetch shape (P8) stays T0.
   expect(specTier(SPEC_BY_ID.P4)).toBe("T2");
-  expect(testTier(SPEC_BY_ID.P4, "click fetches and renders with a successful response")).toBe("T2");
+  expect(testTier(SPEC_BY_ID.P4, "click fetches and renders with a successful response")).toBe(
+    "T2",
+  );
 });
 
 test("P5 — both prop-keyed branches assert their witness (D1 item 4, shipped)", () => {

@@ -2239,7 +2239,7 @@ function clickFetchDispatch(info: ComponentInfo): Map<FetchCallInfo, string> {
       );
       if (candidates.length === 1) click = candidates[0];
     }
-    if (!click || click.event !== "onClick") continue;
+    if (click?.event !== "onClick") continue;
     if (click.gatedBy !== undefined) continue;
     if (click.hints.disabled === "always") continue;
     const selector = emitVitestSelector(click);
