@@ -632,6 +632,15 @@ export interface PredicateSiteInfo {
   /** The site's own position is reachable under that leg's env. */
   reachableAtDefaults: boolean;
   reachableWhenFlipped: boolean;
+  /**
+   * D1b (client plane): the FLIPPED leg's witness may be asserted absent at
+   * defaults — it appears nowhere in the baseline arm. Only a return-branch
+   * site (the whole render is one arm or the other) can prove this; a ternary
+   * inside a larger page cannot, and leaves the staticText rule to the emitter.
+   */
+  flippedAbsenceSafe?: true;
+  /** D1b (client plane): the baseline leg's witness may be asserted absent when flipped. */
+  baselineAbsenceSafe?: true;
   pos: SourcePosition;
 }
 
@@ -711,6 +720,20 @@ export interface FetchCallInfo {
   pos: SourcePosition;
   /** Call sits inside a useEffect/useLayoutEffect callback. */
   inEffect: boolean;
+  /**
+   * D1 item 3: for a NON-effect fetch, the component-level function the call
+   * sits in (`function ask() { fetch(…) }` / `const ask = () => fetch(…)`).
+   * The emitter attributes the request to the click bound to this handler and
+   * gives it the fetch tests an effect-fetch gets — driven by the dispatch,
+   * not by the mount.
+   */
+  handlerName?: string;
+  /**
+   * D1 item 3: for a NON-effect fetch inside an inline JSX handler
+   * (`onClick={() => fetch(…)}`), the event attribute name. Attributed only
+   * when the component has exactly one inline-bound click for that event.
+   */
+  inlineHandlerEvent?: string;
 }
 
 /** A top-level import declaration of the analysed file, classified for scaffolding. */

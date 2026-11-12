@@ -858,3 +858,64 @@ export function CheckoutForm() {
     expect(errors.join(" | ")).toContain("Cannot find name 'containerBogus'");
   });
 });
+
+/**
+ * D1b item 4: the branch-witness mirror pair — two mounts, one prop override,
+ * each leg asserting its own branch's literal present and the other's absent.
+ * (Item 3's dispatch-driven fetch test adds no new matcher form — the same
+ * `expect(calls).toBeGreaterThan(0)` the effect-fetch tests already type-check,
+ * behind a `userEvent.click` the click tests already type-check — and its
+ * behaviour is covered by tests/d1bInteractionClaimsExecution.test.ts.)
+ */
+describe("the D1b branch-witness assertions type-check", () => {
+  const STOCK_PANEL = `"use client";
+export function StockPanel({ empty }: { empty?: boolean }) {
+  if (empty) {
+    return <p>No items yet</p>;
+  }
+  return <p>3 items in stock</p>;
+}
+`;
+
+  async function emitPanelUnit(): Promise<{ root: string; spec: string; content: string }> {
+    const root = stubProject();
+    const app = path.join(root, "app");
+    mkdirSync(app, { recursive: true });
+    const comp = path.join(app, "StockPanel.tsx");
+    writeFileSync(comp, STOCK_PANEL);
+    const outDir = path.join(app, "flawless");
+    const tree = await analyse({ entry: comp, depth: 0, includeChildren: false });
+    const files = renderUnitBrowser({ trees: [tree], outDir, variants: 3, browserSpecs: true });
+    const unit = files.find((f) => f.relPath === "unit/StockPanel.test.tsx");
+    if (!unit) throw new Error("unit/StockPanel.test.tsx was not emitted");
+    return { root: outDir, spec: path.join(outDir, unit.relPath), content: unit.content };
+  }
+
+  function checkUnit(root: string, spec: string, content: string): string[] {
+    mkdirSync(path.dirname(spec), { recursive: true });
+    writeFileSync(spec, content);
+    const { errors, unresolved } = checkTypes(root, [spec]);
+    expect(unresolved, "the mutation did not break module resolution instead").toEqual([]);
+    return errors;
+  }
+
+  test("the emitted mirror pair type-checks clean", async () => {
+    const { root, spec, content } = await emitPanelUnit();
+    // The full presence/absence pair really landed in the file the checker reads.
+    expect(content).toContain('expect(t0).toContain("3 items in stock");');
+    expect(content).toContain('expect(t0).not.toContain("No items yet");');
+    expect(content).toContain("const second = renderTarget({ empty: true });");
+    expect(content).toContain('expect(t1).toContain("No items yet");');
+    expect(content).toContain('expect(t1).not.toContain("3 items in stock");');
+    expect(checkUnit(root, spec, content)).toEqual([]);
+  });
+
+  test("guard the guard: the leg-1 text read is checked", async () => {
+    const { root, spec, content } = await emitPanelUnit();
+    const line = content.split("\n").find((l) => l.includes("const t0 = (first.container"));
+    if (!line?.includes("first.container")) throw new Error("no first.container read to break");
+    const broken = line.replace("first.container", "firstBogus.container");
+    const errors = checkUnit(root, spec, content.replace(line, broken));
+    expect(errors.join(" | ")).toContain("Cannot find name 'firstBogus'");
+  });
+});

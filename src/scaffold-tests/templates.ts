@@ -1800,17 +1800,32 @@ function unitSpec(
 
   const stateTests = emitStateTests(name, info, todo);
   const staticTextTests = emitStaticTextTests(name, info, "unit");
-  const effectFetches = (info.fetchCalls ?? []).filter((f) => f.inEffect);
+  // D1 item 3 (PLAN-01): a fetch fired from an event handler — not an effect —
+  // gets the same four fetch tests an effect-fetch gets, driven by the derived
+  // dispatch instead of the mount. Attribution is the analyser's
+  // (extractFetchCalls' handlerName / inlineHandlerEvent) resolved against the
+  // clicks the interaction walk already found; a fetch no click provably
+  // reaches stays exactly as unemitted as it was — never a false red.
+  const hardDispatch = clickFetchDispatch(info);
+  const fetchSubjects = (info.fetchCalls ?? []).filter((f) => f.inEffect || hardDispatch.has(f));
   const fetchTests =
-    mocksImport && effectFetches.length > 0
-      ? emitFetchTests(name, info, effectFetches, apiRoutes, firstClickTrigger(info), todo)
+    mocksImport && fetchSubjects.length > 0
+      ? emitFetchTests(
+          name,
+          info,
+          fetchSubjects,
+          apiRoutes,
+          firstClickTrigger(info),
+          todo,
+          hardDispatch,
+        )
       : "";
 
   const providerLine =
     (providerImport ? `import AppProvider from "${providerImport}";\n` : "") +
     (autoProv?.imports ?? "");
   const mswImports =
-    mocksImport && effectFetches.length > 0
+    mocksImport && fetchSubjects.length > 0
       ? `import { http, HttpResponse, delay } from "msw";\nimport { server } from "${mocksImport}";\n`
       : "";
 
@@ -1854,6 +1869,8 @@ function unitSpec(
   // import. Allowlist only — see mocks.ts for why a blanket mock is wrong here.
   const mocks = emitModuleMocks(info, "client", specDir, todo).statements;
   const mockBlock = mocks.length > 0 ? `${mocks.join("\n")}\n` : "";
+
+  const clientInversions = emitClientInversionTests(name, info);
 
   const spec = `import { describe, test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor${fireEventImport} } from "@testing-library/react";
@@ -1900,7 +1917,7 @@ void VARIANTS;`
 }
 
 ${interactionTests}
-${staticTextTests}${stateTests}${fetchTests}`;
+${staticTextTests}${stateTests}${fetchTests}${clientInversions}`;
   // describe/screen/waitFor/userEvent have call sites that can be absent
   // WHOLESALE — a component with no variants, no interactions and no static
   // copy uses none of them — and an import the body never references is a
@@ -2194,6 +2211,46 @@ function firstClickTrigger(info: ComponentInfo): string | undefined {
     if (trigger) await userEvent.click(trigger as HTMLElement);`;
 }
 
+/**
+ * D1 item 3 (PLAN-01): the fetches this spec can DRIVE — non-effect fetches
+ * whose enclosing handler is a click the interaction walk already found and
+ * can address. The claim is only as strong as the attribution, so every link
+ * that cannot be proven refuses and the fetch stays unemitted (the status quo,
+ * never a false red): no enclosing handler name, no click bound to it (an
+ * inline handler only counts when it is the component's ONLY inline click for
+ * that event), a non-click event, a gated element that never mounts at
+ * render, an always-disabled control, an unlocatable target, a guarded render
+ * that may produce nothing.
+ */
+function clickFetchDispatch(info: ComponentInfo): Map<FetchCallInfo, string> {
+  const out = new Map<FetchCallInfo, string>();
+  const clicks = info.interactions?.clicks ?? [];
+  if (clicks.length === 0 || info.renderGuarded === true) return out;
+  for (const f of info.fetchCalls ?? []) {
+    if (f.inEffect) continue;
+    let click: ClickHandler | undefined;
+    if (f.handlerName !== undefined) {
+      click = clicks.find(
+        (c) => c.binding.kind === "local" && c.binding.localName === f.handlerName,
+      );
+    } else if (f.inlineHandlerEvent !== undefined) {
+      const candidates = clicks.filter(
+        (c) => c.binding.kind === "inline" && c.event === f.inlineHandlerEvent,
+      );
+      if (candidates.length === 1) click = candidates[0];
+    }
+    if (click?.event !== "onClick") continue;
+    if (click.gatedBy !== undefined) continue;
+    if (click.hints.disabled === "always") continue;
+    const selector = emitVitestSelector(click);
+    if (!selector) continue;
+    const dispatch = emitVitestDispatch(click.event, selector, { tag: click.tag });
+    if (!dispatch) continue;
+    out.set(f, dispatch);
+  }
+  return out;
+}
+
 function emitFetchTests(
   name: string,
   info: ComponentInfo,
@@ -2201,10 +2258,21 @@ function emitFetchTests(
   apiRoutes: NextjsApiRoute[] | undefined,
   trigger: string | undefined,
   todo?: TodoRecorder,
+  hardDispatch?: Map<FetchCallInfo, string>,
 ): string {
-  const triggerLines = trigger
-    ? `\n    // Effects can be gated behind UI state — fire the first detected click.\n    ${trigger}`
-    : "";
+  // D1 item 3: a fetch the click fires is DRIVEN by the dispatch — an
+  // unconditional `await userEvent.click(…)`, not the conditional mount-hedge
+  // trigger. The request count after it is the T2 claim PLAN-00's amended
+  // request-count row names; the same shape at mount stays the T0 floor.
+  const triggerLinesFor = (f: FetchCallInfo): string => {
+    const hard = hardDispatch?.get(f);
+    if (hard !== undefined) {
+      return `\n    // The fetch is fired by this click, not by the mount — dispatch it.\n    ${hard};`;
+    }
+    return trigger
+      ? `\n    // Effects can be gated behind UI state — fire the first detected click.\n    ${trigger}`
+      : "";
+  };
   // Every marker below goes through this helper so the tally and the emitted
   // text cannot drift apart when a scenario is added or removed.
   const todoLine = (text: string): string => {
@@ -2216,6 +2284,7 @@ function emitFetchTests(
   for (const f of fetches) {
     const mswPath = f.urlTemplate;
     const method = f.method.toLowerCase();
+    const drive = hardDispatch?.has(f) ? "click" : "mount";
     const fixture = apiRouteFixture(f.urlTemplate, f.method, apiRoutes);
     const fixtureLiteral = fixture !== undefined ? JSON.stringify(fixture) : "{}";
     const fixtureComment =
@@ -2235,11 +2304,11 @@ describe("${name} ${f.method} ${mswPath}", () => {
   ${fixtureComment}
   const FIXTURE: unknown = ${fixtureLiteral};
 
-  test("mount fetches and renders with a successful response", async () => {
+  test("${drive} fetches and renders with a successful response", async () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert rendered content derived from FIXTURE.")}
   });
@@ -2248,7 +2317,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     let calls = 0;
     server.use(http.${method}(URL, async () => { calls++; await delay(150); return HttpResponse.json(FIXTURE as never); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert the loading indicator while the response is pending.")}
   });
@@ -2257,7 +2326,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return new HttpResponse(null, { status: 500 }); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert the error-state UI.")}
   });
@@ -2266,7 +2335,7 @@ describe("${name} ${f.method} ${mswPath}", () => {
     let calls = 0;
     server.use(http.${method}(URL, () => { calls++; return HttpResponse.json(${emptyPayloadFor(fixture)}); }));
     const { container } = renderTarget(${renderArg});
-    void container;${triggerLines}
+    void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
     ${todoLine("assert the empty-state copy.")}
   });
@@ -3101,6 +3170,95 @@ test.skip("${name}: ${r.varName} inversion refused — ${reason[r.reason]}", () 
   );
   // vi.mock is hoisted, so these resolve to the mocks declared above.
   return `\n${importLines.join("\n")}\n${parts.join("\n")}\n`;
+}
+
+/**
+ * D1 item 4 (PLAN-01): a client component whose render branches key on a PROP
+ * predicate asserts BOTH branches — the presence/absence pair PLAN-00's T2 row
+ * already names ("inversion legs' presence/absence pairs"). Two mounts, one
+ * prop override: the defaults leg proves the baseline witness actually renders
+ * (an absence over text that never rendered passes vacuously — B-26's lesson),
+ * the flipped leg asserts the other side's witness present and the baseline's
+ * absent, and the mirror holds. The witnesses are BRANCH literals keyed to the
+ * predicate's polarity — they never join the unconditional static-text pool
+ * (extractStaticText excludes branch text on purpose; promoting it would
+ * assert branch content always renders and produce false reds).
+ *
+ * Refusals are named, never silent (the renderUndecidable rule): a predicate
+ * that keys on server data is item 5's subject, a branch with no assertable
+ * literal on one side has nothing falsifiable to move, and a predicate the
+ * spec cannot override from a prop is out of reach.
+ */
+function emitClientInversionTests(name: string, info: ComponentInfo): string {
+  if (info.renderGuarded === true) return "";
+  const controls = info.predicateInversions ?? [];
+  if (controls.length === 0) return "";
+  const staticText = info.staticText ?? [];
+  const parts: string[] = [];
+  const refuse = (what: string, why: string): string =>
+    `test.skip("${name}: ${what} inversion refused — ${why}", () => {});`;
+
+  for (const c of controls) {
+    if (c.kind !== "prop") {
+      parts.push(
+        refuse(
+          c.varName,
+          "it keys on server data, not a prop; flipping a fetched value needs its dep mock (D1 item 5 owns that flip)",
+        ),
+      );
+      continue;
+    }
+    const path = c.propPath ?? [];
+    if (path.length !== 1) {
+      parts.push(
+        refuse(
+          c.varName,
+          "the predicate is not reachable from a prop override this spec can build",
+        ),
+      );
+      continue;
+    }
+    const leg1: string[] = [];
+    const leg2: string[] = [];
+    for (const s of c.sites) {
+      const bw = s.baselineSide ? s.trueWitness : s.falseWitness;
+      const fw = s.baselineSide ? s.falseWitness : s.trueWitness;
+      if (bw === undefined || fw === undefined) continue;
+      // Absence safety: a return-branch site proves the two arms are disjoint
+      // and carries the flags; a ternary inside a larger render keeps the
+      // staticText rule — text the page also renders unconditionally cannot be
+      // claimed absent.
+      const fwSafe = s.flippedAbsenceSafe === true || !staticText.some((t) => t.includes(fw));
+      const bwSafe = s.baselineAbsenceSafe === true || !staticText.some((t) => t.includes(bw));
+      leg1.push(`  expect(t0).toContain(${JSON.stringify(bw)});`);
+      if (fwSafe) leg1.push(`  expect(t0).not.toContain(${JSON.stringify(fw)});`);
+      leg2.push(`  expect(t1).toContain(${JSON.stringify(fw)});`);
+      if (bwSafe) leg2.push(`  expect(t1).not.toContain(${JSON.stringify(bw)});`);
+    }
+    if (leg2.length === 0) {
+      parts.push(refuse(c.varName, "a branch it moves carries no assertable literal on one side"));
+      continue;
+    }
+    const lit = c.flip === undefined ? "undefined" : JSON.stringify(c.flip);
+    parts.push(`
+test("${name}: ${c.varName} flipped — ${c.sites.length} branch site(s) change side", () => {
+  // Leg 1 — defaults. Asserting the witness HERE is what keeps the flipped
+  // leg's absence honest: text that never rendered cannot meaningfully go
+  // absent.
+  const first = renderTarget();
+  const t0 = (first.container.textContent ?? "").replace(/\\s+/g, " ");
+${leg1.join("\n")}
+  first.unmount();
+  // Leg 2 — one prop override, the other side. The flip was certified to
+  // change this branch, so an exit here is a tool gap and must be red, never
+  // skipped.
+  const second = renderTarget({ ${path[0]}: ${lit} });
+  const t1 = (second.container.textContent ?? "").replace(/\\s+/g, " ");
+${leg2.join("\n")}
+});`);
+  }
+  if (parts.length === 0) return "";
+  return `\n${parts.join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------

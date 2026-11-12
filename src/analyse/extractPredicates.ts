@@ -55,13 +55,21 @@ interface ExtractArgs {
   propsShape: PropsShape;
   unresolvedProps: string[];
   staticText: string[];
+  /**
+   * D1b (item 4): the component renders on the UNIT plane (a client component
+   * or a sync server component — anything unitSpec mounts). Two additions ride
+   * on it, both bounded so the RSC plane's emitted bytes cannot move:
+   * early-return branch pairs are collected as sites, and a boolean prop's
+   * own negation joins the flip candidates.
+   */
+  clientPlane?: boolean;
 }
 
 export function extractPredicates(args: ExtractArgs): {
   inversions: PredicateInversionInfo[];
   refusals: PredicateRefusal[];
 } {
-  const { bodyNode, sourceFile, dataDeps, guards, staticText } = args;
+  const { bodyNode, sourceFile, dataDeps, guards, staticText, clientPlane } = args;
   const none = { inversions: [], refusals: [] };
 
   const props = withRouteParams(args.propsShape);
@@ -74,6 +82,11 @@ export function extractPredicates(args: ExtractArgs): {
 
   const jsxSites = collectJsxSites(render.expr);
   const bodySites = collectBodySites(bodyNode);
+  // D1b (item 4): `if (prop) return <A/>; return <B/>;` — the branch pair the
+  // early return forms is the same claim a ternary in JSX-child position makes,
+  // one statement level up. Collected only on the client plane, so the RSC
+  // plane's certified sites (and emitted bytes) cannot move.
+  const returnSites = clientPlane ? collectReturnBranchSites(bodyNode) : [];
   const guardVars = guardTaintedVars(bodyNode, guards, sourceFile);
   const callCounts = countCallSites(bodyNode, sourceFile);
 
@@ -89,6 +102,10 @@ export function extractPredicates(args: ExtractArgs): {
     }
     for (const site of bodySites) {
       const s = certifyBodySite(site, env, flipped, args.moduleImports, sourceFile);
+      if (s) sites.push(s);
+    }
+    for (const site of returnSites) {
+      const s = certifyReturnSite(site, env, flipped, sourceFile);
       if (s) sites.push(s);
     }
     if (sites.length === 0) {
@@ -184,7 +201,13 @@ export function extractPredicates(args: ExtractArgs): {
   }
 
   // --- prop controls --------------------------------------------------------
-  for (const { control, local } of propControls(jsxSites, env, aliasPaths, sourceFile)) {
+  for (const { control, local } of propControls(
+    [...jsxSites, ...returnSites],
+    env,
+    aliasPaths,
+    sourceFile,
+    clientPlane === true,
+  )) {
     certify(control, local);
   }
 
@@ -338,13 +361,17 @@ function depControlKind(
 /**
  * Sites whose condition the DEFAULTS alone decide, flipped by overriding one
  * prop (or destructured awaited-prop field). Candidates per condition: every
- * literal it strictly compares the name against, plus absence.
+ * literal it strictly compares the name against, plus absence. On the client
+ * plane (D1b) a boolean prop's own negation leads the list — `empty: false`
+ * flips to `true`, not to a placeholder string: the emitted override should
+ * read like the prop's own type.
  */
 function propControls(
-  sites: JsxSite[],
+  sites: { condition: ts.Expression; pos: ts.Node }[],
   env: RenderEnv,
   aliasPaths: Map<string, string[]>,
   sourceFile: ts.SourceFile,
+  clientPlane: boolean,
 ): { control: PredicateInversionInfo; local: string }[] {
   const out = new Map<string, { control: PredicateInversionInfo; local: string }>();
   for (const site of sites) {
@@ -359,7 +386,9 @@ function propControls(
     // Every literal the condition compares the name against, absence, and a
     // truthy string — the last is what flips a bare `token ?` whose default
     // is empty.
+    const current = env.state.has(name) ? env.state.get(name) : env.props.get(name);
     const candidates: (PropValue | undefined)[] = [
+      ...(clientPlane && typeof current === "boolean" ? [!current] : []),
       ...comparedLiterals(site.condition, name),
       undefined,
       `flawless-${path[path.length - 1]}`,
@@ -517,6 +546,77 @@ interface BodySite {
   pos: ts.Node;
 }
 
+/**
+ * D1b (item 4): the branch pair an early return forms —
+ *
+ *   if (cond) return <A/>;      or      if (cond) return <A/>; else return <B/>;
+ *   return <B/>;
+ *
+ * is the same claim a ternary in JSX-child position makes, one statement level
+ * up. Collected only when the pair is the function's ONLY branching return and
+ * the two returns are adjacent (or joined by else): with a second branching
+ * return anywhere else, the first pair's false side is "whatever the rest of
+ * the function renders", not <B/>, and the witness would be a guess.
+ */
+interface ReturnBranchSite {
+  condition: ts.Expression;
+  whenTrue: ts.Expression;
+  whenFalse: ts.Expression;
+  pos: ts.Node;
+}
+
+function collectReturnBranchSites(bodyNode: ts.Node): ReturnBranchSite[] {
+  const stmts = bodyStatements(bodyNode);
+  const out: ReturnBranchSite[] = [];
+  const renderReturn = (n: ts.Statement | undefined): ts.ReturnStatement | undefined => {
+    if (n === undefined) return undefined;
+    if (ts.isBlock(n)) {
+      const inner = n.statements;
+      return inner.length === 1 ? renderReturn(inner[0]) : undefined;
+    }
+    if (!ts.isReturnStatement(n) || n.expression === undefined) return undefined;
+    const e = n.expression;
+    return ts.isJsxElement(e) || ts.isJsxFragment(e) || ts.isJsxSelfClosingElement(e)
+      ? n
+      : undefined;
+  };
+  // Any branching return besides the pair under test makes the false side
+  // "the rest of the function", not the sibling return.
+  const branchingReturns = stmts.filter(
+    (s) => (ts.isReturnStatement(s) && s.expression) || (ts.isIfStatement(s) && hasReturn(s)),
+  );
+  for (let i = 0; i < stmts.length; i++) {
+    const s = stmts[i] as ts.Statement;
+    if (!ts.isIfStatement(s) || s.expression === undefined) continue;
+    const thenRet = renderReturn(s.thenStatement);
+    if (!thenRet) continue;
+    const elseRet =
+      s.elseStatement !== undefined
+        ? renderReturn(s.elseStatement)
+        : renderReturn(stmts[i + 1]) !== undefined && i + 1 === stmts.length - 1
+          ? renderReturn(stmts[i + 1])
+          : undefined;
+    if (!elseRet) continue;
+    if (branchingReturns.length !== 2) continue;
+    out.push({
+      condition: s.expression,
+      whenTrue: thenRet.expression as ts.Expression,
+      whenFalse: elseRet.expression as ts.Expression,
+      pos: s,
+    });
+  }
+  return out;
+}
+
+function hasReturn(n: ts.Node): boolean {
+  if (ts.isReturnStatement(n)) return true;
+  let found = false;
+  n.forEachChild((c) => {
+    if (!found && (ts.isReturnStatement(c) || (ts.isBlock(c) && hasReturn(c)))) found = true;
+  });
+  return found;
+}
+
 /** Data-selection ternaries in top-level initializers: `c ? f(…) : g(…)`. */
 function collectBodySites(bodyNode: ts.Node): BodySite[] {
   const out: BodySite[] = [];
@@ -581,6 +681,97 @@ function certifyJsxSite(
     reachableWhenFlipped,
     pos: posOf(site.pos, sourceFile),
   };
+}
+
+/**
+ * D1b (item 4): certify an early-return branch pair. The condition must settle
+ * under both envs and disagree — the same certification a ternary gets. The
+ * witnesses are the arms' branch literals, keyed to the predicate's polarity:
+ * `trueWitness` is what the TRUE branch renders, `falseWitness` the FALSE one.
+ * Because the whole render is one arm or the other, absence is decidable
+ * locally: a witness may be asserted absent in the leg that does not render it
+ * iff its text appears NOWHERE in that leg's arm — recorded on the site as
+ * `flippedAbsenceSafe` / `baselineAbsenceSafe` for the emitter. These witnesses
+ * never join the unconditional static-text pool (extractStaticText excludes
+ * branch text on purpose — promoting it would assert branch content always
+ * renders and produce false reds).
+ */
+function certifyReturnSite(
+  site: ReturnBranchSite,
+  env: RenderEnv,
+  flipped: RenderEnv,
+  sourceFile: ts.SourceFile,
+): PredicateSiteInfo | undefined {
+  const before = evaluate(site.condition, env);
+  const after = evaluate(site.condition, flipped);
+  if (before === undefined || after === undefined) return undefined;
+  if (truthy(before) === truthy(after)) return undefined;
+
+  const trueWitness = harvestWitness(site.whenTrue, sourceFile);
+  const falseWitness = harvestWitness(site.whenFalse, sourceFile);
+  const pair =
+    trueWitness !== undefined &&
+    falseWitness !== undefined &&
+    (trueWitness.includes(falseWitness) || falseWitness.includes(trueWitness))
+      ? {}
+      : { trueWitness, falseWitness };
+
+  const trueArmTexts = harvestArmTexts(site.whenTrue);
+  const falseArmTexts = harvestArmTexts(site.whenFalse);
+  const baselineSide = truthy(before);
+  // bw is harvested from the baseline arm, fw from the flipped arm. Each may
+  // be asserted ABSENT in the leg that does not render it iff its text is
+  // nowhere in that leg's arm — the arms are the whole render, so this is a
+  // complete check, not a heuristic.
+  const bw = baselineSide ? pair.trueWitness : pair.falseWitness;
+  const fw = baselineSide ? pair.falseWitness : pair.trueWitness;
+  const baselineArmTexts = baselineSide ? trueArmTexts : falseArmTexts;
+  const flippedArmTexts = baselineSide ? falseArmTexts : trueArmTexts;
+  const out: PredicateSiteInfo = {
+    baselineSide,
+    ...(pair.trueWitness !== undefined ? { trueWitness: pair.trueWitness } : {}),
+    ...(pair.falseWitness !== undefined ? { falseWitness: pair.falseWitness } : {}),
+    reachableAtDefaults: true,
+    reachableWhenFlipped: true,
+    pos: posOf(site.pos, sourceFile),
+  };
+  if (fw !== undefined && !baselineArmTexts.includes(fw)) out.flippedAbsenceSafe = true;
+  if (bw !== undefined && !flippedArmTexts.includes(bw)) out.baselineAbsenceSafe = true;
+  return out;
+}
+
+/** Every assertable text an arm renders — the same harvest rules as the witness. */
+function harvestArmTexts(arm: ts.Expression): string[] {
+  const found: string[] = [];
+  const note = (raw: string): void => {
+    const decoded = decodeJsxEntities(raw);
+    if (decoded === undefined) return;
+    const text = decoded.replace(/\s+/g, " ").trim();
+    if (text.length >= 3 && /\w/.test(text)) found.push(text);
+  };
+  const node = unwrap(arm);
+  if (ts.isStringLiteral(node)) note(node.text);
+  const visit = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n)) return;
+    if (ts.isJsxAttribute(n)) return;
+    if (ts.isJsxText(n)) {
+      note(n.text);
+      return;
+    }
+    if (
+      ts.isStringLiteral(n) &&
+      n.parent &&
+      ts.isJsxExpression(n.parent) &&
+      n.parent.parent &&
+      (ts.isJsxElement(n.parent.parent) || ts.isJsxFragment(n.parent.parent))
+    ) {
+      note(n.text);
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
 }
 
 function certifyBodySite(

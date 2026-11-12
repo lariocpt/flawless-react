@@ -26,7 +26,9 @@ import { classifySpec, type Tier } from "../src/reporters/depth.ts";
  * as the fix.
  *
  * The pinned bytes were measured on the tree at 5ae6d01 (the item-7 salvage);
- * P3's two host-attribute tests are that salvage's surface rows. Tier notes:
+ * P3's two host-attribute tests are that salvage's surface rows. Re-pinned at
+ * 2c262d9 by D1b: P4 and P5 flipped from EXPECTED-ABSENT to pinned-present
+ * (items 3 and 4 shipped), each now a T2 surface row. Tier notes:
  * the classifier reads toBeDisabled as T2 (src/reporters/depth.ts:521) while
  * the D1a receipt calls it T1 — the census records the classifier's reading,
  * so P1 is pinned T2 here.
@@ -163,18 +165,51 @@ test("P3 — host static attributes are asserted on rungs that do not read them 
   expect(testTier(SPEC_BY_ID.P3, "#1 carries its host attributes")).toBe("T1");
 });
 
-test("P4 — a click-fired fetch is a canary only (D1 item 3, unshipped)", () => {
+test("P4 — a click-fired fetch gets the fetch tests, driven by the dispatch (D1 item 3, shipped)", () => {
   const spec = read(SPEC_BY_ID.P4);
   expect(spec).toContain(`screen.getAllByRole("button", { name: "Load items" })[0]`);
-  expect(specTier(SPEC_BY_ID.P4)).toBe("T1");
+  // The fetch describe is entered (msw is imported) and every test is DRIVEN:
+  // an unconditional dispatch, never the conditional mount-hedge trigger.
+  expect(spec).toContain(`import { delay, HttpResponse, http } from "msw";`);
+  expect(spec).toContain(`describe("P4ClickFetch GET /api/items", () => {`);
+  expect(spec).toContain(
+    `  test("click fetches and renders with a successful response", async () => {`,
+  );
+  expect(spec).toContain(
+    `    await userEvent.click(screen.getAllByRole("button", { name: "Load items" })[0] as HTMLElement);`,
+  );
+  expect(spec).toContain(
+    `    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });`,
+  );
+  expect(spec).not.toContain(`if (trigger) await userEvent.click`);
+  // The request count after a dispatch is T2 (PLAN-00 amended request-count
+  // row); the mount-fetch shape (P8) stays T0.
+  expect(specTier(SPEC_BY_ID.P4)).toBe("T2");
+  expect(testTier(SPEC_BY_ID.P4, "click fetches and renders with a successful response")).toBe(
+    "T2",
+  );
 });
 
-test("P5 — the DEFAULTS branch renders; the flipped branch's witness is absent (D1 item 4, unshipped)", () => {
+test("P5 — both prop-keyed branches assert their witness (D1 item 4, shipped)", () => {
   const spec = read(SPEC_BY_ID.P5);
   expect(spec).toContain(`const DEFAULTS: Record<string, unknown> = { empty: false };`);
   expect(spec).toContain(`for (const t of ["3 items in stock"]) {`);
   expect(spec).toContain(`// no interactions detected — render-only smoke is above.`);
-  expect(specTier(SPEC_BY_ID.P5)).toBe("T1");
+  // The presence/absence mirror pair: each leg renders its own branch's
+  // literal and asserts the other's absent. The witnesses are branch
+  // literals — "No items yet" appears ONLY in the inversion legs, never in
+  // the unconditional static-content loop above.
+  expect(spec).toContain(
+    `test("P5PropPredicate: empty flipped — 1 branch site(s) change side", () => {`,
+  );
+  expect(spec).toContain(`  expect(t0).toContain("3 items in stock");`);
+  expect(spec).toContain(`  expect(t0).not.toContain("No items yet");`);
+  expect(spec).toContain(`  const second = renderTarget({ empty: true });`);
+  expect(spec).toContain(`  expect(t1).toContain("No items yet");`);
+  expect(spec).toContain(`  expect(t1).not.toContain("3 items in stock");`);
+  expect(spec.match(/"No items yet"/g) ?? []).toHaveLength(2);
+  expect(specTier(SPEC_BY_ID.P5)).toBe("T2");
+  expect(testTier(SPEC_BY_ID.P5, "empty flipped")).toBe("T2");
 });
 
 test("P6 — a two-dep guard gets the generic RSC contract, no guard fixture (D1 item 5, unshipped)", () => {
@@ -328,32 +363,6 @@ test("the root layout is checked as a server document root, not mounted", () => 
  * re-pinned in the same PR as the fix.
  */
 const EXPECTED_ABSENT: Array<{ id: keyof typeof SPEC_BY_ID; absent: string; owner: string }> = [
-  {
-    id: "P4",
-    absent: `from "msw"`,
-    owner:
-      "D1 item 3 (PLAN-01) — event-triggered fetches: the emitter filters fetch tests to " +
-      "inEffect, so a fetch fired from onClick gets no fetch test",
-  },
-  {
-    id: "P4",
-    absent: "GET /",
-    owner:
-      "D1 item 3 (PLAN-01) — the effect-fetch describe shape (P8's) must not appear for a " +
-      "click-fired fetch",
-  },
-  {
-    id: "P4",
-    absent: "Hello from the API",
-    owner: "D1 item 3 (PLAN-01) — no OpenAPI fixture reaches a spec the fetch test never entered",
-  },
-  {
-    id: "P5",
-    absent: "No items yet",
-    owner:
-      "D1 item 4 (PLAN-01) — predicate inversion: the flipped branch's witness is consumed " +
-      "only by the RSC spec; the client plane renders the DEFAULTS branch only",
-  },
   {
     id: "P6",
     absent: "lib/data",

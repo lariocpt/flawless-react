@@ -164,7 +164,10 @@ with the newest code*. Pinned tree: mybodycorpai @ `c00697f`.
 ### Item 1 — `expect(<el>).toBeDisabled()` on an always-disabled control — SHIPPED
 
 `emitClickTest` (`templates.ts:3247`) now intercepts `click.hints.disabled ===
-"always"` and emits `expect(<target>).toBeDisabled()` (a T1 claim) in place of the
+"always"` and emits `expect(<target>).toBeDisabled()` (a T2 claim — the classifier
+reads `toBeDisabled()` as T2, `depth.ts:521`, and the normative table puts it in the
+T2 row; the original receipt text called it T1, corrected 2026-11-12 against the
+table, which is the source of truth) in place of the
 `disabled-control` skip and the false-red prop-spy that followed it. A
 `"conditional"` control is untouched and still falls through to the skip.
 
@@ -300,3 +303,101 @@ the surface fixture measures *did the emitter fire on a shape known to carry
 the fact*; the pinned census measures *what the real app gets*. Both run;
 neither replaces the other.
 
+
+**D1b — items 3, 4 shipped.** Branch `feat/d1b-interaction-claims` off `main` @
+`94c6121` (#170 merged). Control = `main` @ `94c6121` binaries; treatment = this
+branch tip binary (`fl-bintest-2c262d9`, sha256 `52b167be…`). Pinned tree:
+mybodycorpai @ `c00697f` (fresh worktree `mbc-c00697f-d1b`); movement metric:
+the depth-surface fixture.
+
+### Item 3 — request-count after a derived dispatch is T2 — SHIPPED
+
+The ruler first (commit `c83ba17`): PLAN-00's request-count row was amended —
+`expect(calls).toBeGreaterThan(0)` is tiered by **where the counter is read**:
+T0 at mount (a mount fetch is basically a mount claim), T2 when an unconditional
+`await userEvent.*` / `await fireEvent.*` line precedes the counter site in the
+same test body. The classifier rule is `hasDispatchBefore`
+(`src/reporters/depth.ts:480`, call site :612); the conditional effect-fetch
+trigger (`if (trigger) await userEvent.click(…)`) is a mount hedge, not a
+dispatch, and keeps mount tests T0. **Control:** classifier change alone, no
+emitter change — pinned census sha256 `9bae8c13…` and surface census sha256
+`038c3eb0…` byte-identical before and after; the rule matched no existing
+emitted shape. Guard-the-guard (`tests/depthCensus.test.ts`): mount fetch behind
+the conditional trigger stays T0; the same counter after an unconditional
+dispatch is T2; deleting the dispatch drops it back to T0; a dispatch *after*
+the read does not lift the claim.
+
+The emitter (commit `0da0416`): `extractFetchCalls` records the enclosing
+handler of a NON-effect fetch (`handlerName` / `inlineHandlerEvent`);
+`clickFetchDispatch` (`templates.ts:2225`) resolves it against the clicks the
+interaction walk already found and refuses every unprovable link (gated element,
+always-disabled control, non-click event, unlocatable target, guarded render) —
+an unattributed fetch stays exactly as unemitted as before. `emitFetchTests`
+(`templates.ts:2254`) drives the attributed fetch with the unconditional
+dispatch instead of the conditional mount-hedge trigger.
+
+- **Falsifier** (`tests/d1bInteractionClaimsExecution.test.ts`, spec generated
+  once, only component source mutated between green and red): deleting
+  `void fetch("/api/items")…` from the handler turns all four request-count legs
+  red — `AssertionError: expected 0 to be greater than 0` on
+  `click fetches and renders with a successful response` — and green returns on
+  revert (`Test Files 2 passed, Tests 10 passed`).
+- **Surface movement:** P4 `flawless/unit/P4ClickFetch.test.tsx` T1→T2 (3→7
+  tests); P8's mount-fetch tests stay T0 behind the conditional trigger.
+- **Pinned movement — the item fired on the real app:**
+  `flawless/unit/NotificationsBell.test.tsx` T1→T2 (2→6 tests) — a
+  `POST /api/me/notifications/read-all` fired from a click handler now gets the
+  four dispatch-driven state tests. Census 191 specs: T1 45→44, T2 42→43;
+  testsClassified 433→437.
+
+### Item 4 — prop-keyed client branches assert the presence/absence mirror pair — SHIPPED (new derivation, not free)
+
+PLAN-01 assumed item 4 was wiring. It is a derivation, and the honest cost is
+commit `263eb0b` (+312 lines). Three gaps had to close: (1) `extractPredicates`
+never ran for client components (`analyse/index.ts` gated it on `unit.isAsync`) —
+it now runs on the unit plane with a `clientPlane` flag (`index.ts:425`),
+dataDeps/guards staying async-only so a client component can only certify prop
+controls; (2) the analyser modelled ternary/`&&` in JSX-child position only —
+P5's shape (`if (prop) return <A/>; return <B/>`) is the same claim one statement
+level up, collected by `collectReturnBranchSites` (`extractPredicates.ts:568`)
+iff the pair is the function's ONLY branching return and the returns are adjacent
+(or joined by `else`), with `certifyReturnSite` (:699) harvesting the arms'
+literals as witnesses keyed to the predicate's polarity and proving absence
+safety locally (`flippedAbsenceSafe`/`baselineAbsenceSafe`, :738–739); (3) a
+boolean prop's flip candidate was a placeholder string — on the client plane the
+prop's own negation now leads the candidates. The witnesses NEVER join the
+unconditional static-text pool — `extractStaticText.ts:15` excludes branch text
+on purpose; promoting it would assert branch content always renders and produce
+false reds.
+
+- **Falsifier** (same file): swapping the branch literals turns the mirror pair
+  red — `AssertionError: expected 'No items yet' to contain '3 items in stock'`
+  on `PropPredicate: empty flipped — 1 branch site(s) change side` — green again
+  on revert.
+- **Named refusals** (never silent, asserted as emitted bytes): keys on server
+  data → "it keys on server data, not a prop; flipping a fetched value needs its
+  dep mock (D1 item 5 owns that flip)" (`templates.ts:3206`); not reachable from
+  a prop override → "the predicate is not reachable from a prop override this
+  spec can build" (:3216); one-sided branch → "a branch it moves carries no
+  assertable literal on one side" (:3239).
+- **Surface movement:** P5 `flawless/unit/P5PropPredicate.test.tsx` T1→T2
+  (2→3 tests) — the full mirror pair; every other pattern spec byte-identical.
+- **Pinned movement — no mirror pair fired; the refusals did:** four new named
+  refusal skips, all "a branch it moves carries no assertable literal on one
+  side" — `ActionItems` (items, canManage), `CreateConversationForm`
+  (candidates), `TicketUpdateComposer` (canPostInternal). The app's prop-keyed
+  client branches are one-sided (a loading/empty branch opposite a rendered
+  list), so the certifiable pair shape does not occur; testsSkipped 60→64.
+  The pre-existing "X flipped — N branch site(s) change side" legs on the RSC
+  pages are the async-plane inversions, unchanged by this item.
+
+### D1b census accounting
+
+Surface: 26 specs, T0 12 / T1 12→10 / T2 2→4 / T3 0 — exactly the P4/P5 rows the
+items own; two fresh fixture copies produced byte-identical census JSON (sha256
+`eb32f861…`). Pinned: 191 specs, T0 100 / T1 45→44 / T2 42→43 / T3 0,
+testsClassified 433→437, testsSkipped 60→64 (census JSON sha256 `827db40b…`);
+the three pinned c00697f baseline files stay untouched on this branch
+(`git diff --stat main..HEAD -- docs/plans/baselines/` shows only
+depth-surface.json) — the movement is recorded here, and the D1 aggregate
+baseline (chunk 7) owns any re-pin of the pinned tree.

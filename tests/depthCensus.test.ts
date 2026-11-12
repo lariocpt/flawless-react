@@ -315,6 +315,66 @@ describe("Badge static content", () => {
     expect(c.perTest.length).toBe(1);
   });
 
+  // D1b (PLAN-00 request-count amendment): the identical matcher shape is T0 at
+  // mount and T2 after a dispatch the test actually performs. The soft trigger
+  // the effect-fetch tests carry is conditional — the request may have fired at
+  // mount — so it must NOT lift the claim.
+  const mountFetchSoftTriggerSpec = `
+describe("ListPage GET /api/items", () => {
+  test("mount fetches and renders with a successful response", async () => {
+    let calls = 0;
+    server.use(http.get(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
+    const { container } = renderTarget();
+    void container;
+    // Effects can be gated behind UI state — fire the first detected click.
+    const trigger = screen.queryAllByRole("button", { name: "Load items" })[0];
+    if (trigger) await userEvent.click(trigger as HTMLElement);
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
+  });
+});
+`;
+
+  const clickFetchSpec = `
+describe("Loader GET /api/items", () => {
+  test("click fetches and renders with a successful response", async () => {
+    let calls = 0;
+    server.use(http.get(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
+    const { container } = renderTarget();
+    void container;
+    await userEvent.click(screen.getAllByRole("button", { name: "Load items" })[0] as HTMLElement);
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
+  });
+});
+`;
+
+  test("GUARD: a mount fetch behind the conditional trigger stays T0", () => {
+    const c = classifySpec(mountFetchSoftTriggerSpec);
+    expect(c.tier).toBe("T0");
+    expect(c.perTest[0]?.evidence.join(" ")).toContain("made-a-request");
+  });
+
+  test("GUARD: the same counter after an unconditional dispatch is T2", () => {
+    const c = classifySpec(clickFetchSpec);
+    expect(c.tier).toBe("T2");
+    expect(c.perTest[0]?.evidence.join(" ")).toContain("request count read after a dispatch");
+  });
+
+  test("GUARD: deleting the dispatch from the T2 test drops it back to T0", () => {
+    const noDispatch = clickFetchSpec.replace(
+      '    await userEvent.click(screen.getAllByRole("button", { name: "Load items" })[0] as HTMLElement);\n',
+      "",
+    );
+    expect(classifySpec(noDispatch).tier).toBe("T0");
+  });
+
+  test("GUARD: a dispatch AFTER the counter read does not lift the claim", () => {
+    const dispatchAfter = clickFetchSpec.replace(
+      '    await userEvent.click(screen.getAllByRole("button", { name: "Load items" })[0] as HTMLElement);\n    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });',
+      '    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });\n    await userEvent.click(screen.getAllByRole("button", { name: "Load items" })[0] as HTMLElement);',
+    );
+    expect(classifySpec(dispatchAfter).tier).toBe("T0");
+  });
+
   test("GUARD: a real assertion next to a TODO marker is NOT unclaimed", () => {
     const withReal = fetchTodoSpec.replace(
       "await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });",
