@@ -212,34 +212,75 @@ test("P5 — both prop-keyed branches assert their witness (D1 item 4, shipped)"
   expect(testTier(SPEC_BY_ID.P5, "empty flipped")).toBe("T2");
 });
 
-test("P6 — a two-dep guard gets the generic RSC contract, no guard fixture (D1 item 5, unshipped)", () => {
+test("P6 — a two-dep guard gets one leg per operand, each asserting the guard's own throw (D1 item 5, shipped)", () => {
   const spec = read(SPEC_BY_ID.P6);
-  // Exactly one test declaration: emitGuardTests skipped the page (the guard's
-  // two operands name different deps), so only the generic RSC contract runs.
-  expect(spec.match(/^test\(/gm) ?? []).toHaveLength(1);
+  // Three test declarations: the generic RSC contract plus one leg per OR
+  // operand. The legs are the falsifier — deleting an operand reds exactly
+  // the leg that operand owned (tests/d1cGuardsVariantsExecution.test.ts).
+  expect(spec.match(/^test\(/gm) ?? []).toHaveLength(3);
   expect(spec).toContain(
     `test("GuardedPage (RSC): resolves, or takes one of its declared guard paths", async () => {`,
   );
+  // The extended regex no longer fits the formatter's line width, so the
+  // pinned bytes are the wrapped form the emitter writes out.
   expect(spec).toContain(
-    `    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;`,
+    `    if (\n` +
+      `      /notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_UNAUTHORIZED|NEXT_FORBIDDEN/.test(\n` +
+      `        String(err),\n` +
+      `      )\n` +
+      `    )\n` +
+      `      return;`,
   );
   expect(spec).toContain(`  expect(rendered?.container.innerHTML.length ?? 0).toBeGreaterThan(0);`);
   expect(spec).toContain(`  void screen;`);
-  expect(specTier(SPEC_BY_ID.P6)).toBe("T0");
+  // The legs: one per operand, each flipping its own dep to its own trigger
+  // and asserting the guard's OWN message — the discrimination the falsifier
+  // needs (a bare rejects.toThrow() would let the post-mutation TypeError off
+  // the unchecked dep pass as the guard).
+  expect(spec).toContain(
+    `test("GuardedPage: throw() when getUser returns undefined (operand 1 of 2: !user)", async () => {\n` +
+      `  vi.mocked(getUser).mockResolvedValueOnce(undefined as never);\n` +
+      `  await expect(GuardedPage()).rejects.toThrow("user and org are required");\n` +
+      `});`,
+  );
+  expect(spec).toContain(
+    `test("GuardedPage: throw() when getOrg returns undefined (operand 2 of 2: !org)", async () => {\n` +
+      `  vi.mocked(getOrg).mockResolvedValueOnce(undefined as never);\n` +
+      `  await expect(GuardedPage()).rejects.toThrow("user and org are required");\n` +
+      `});`,
+  );
+  // The data module is mocked AND imported by the spec now — the old
+  // EXPECTED-ABSENT row for lib/data flipped to this positive pin.
+  expect(spec).toContain(`import { getOrg, getUser } from "../../lib/data";`);
+  // The classifier reads the message-specific rejects.toThrow as T2.
+  expect(specTier(SPEC_BY_ID.P6)).toBe("T2");
 });
 
-test("P7 — the variant matrix is the five-option prefix (D1 item 6, unshipped)", () => {
+test("P7 — the variant matrix names what the cap cut, as skips (D1 item 6, shipped)", () => {
   const spec = read(SPEC_BY_ID.P7);
   expect(spec).toContain(`const DEFAULTS: Record<string, unknown> = { size: "xs" };`);
   expect(spec).toContain(
     `const VARIANTS: Array<Record<string, unknown>> = [\n` +
       `  { size: "xs" },\n  { size: "sm" },\n  { size: "md" },\n  { size: "lg" },\n  { size: "xl" },\n];`,
   );
+  // The cap says so, in the spec: how many of how many, what enforces it, and
+  // where the cut options went. A silent five-option prefix was the dishonesty
+  // class this item retired.
+  expect(spec).toContain(
+    `// variant cap: 5 of 8 exercised — the cap is --variants;\n` +
+      `// the cut options are skipped by name below, never dropped.`,
+  );
   expect(spec).toContain(`describe("P7CappedVariants variants", () => {`);
   expect(spec).toContain(
     '      expect(\n        container.querySelector("span"),\n' +
       `        \`\${JSON.stringify(v)} rendered no <span>\`,\n      ).not.toBeNull();`,
   );
+  // The three cap-cut options are named skips, reason exactly `not-analysed`
+  // (the skip-reason table's category). Single quotes: the host's biome keeps
+  // the double quotes inside the title unescaped.
+  expect(spec).toContain(`test.skip('renders with {"size":"2xl"} — not-analysed', () => {});`);
+  expect(spec).toContain(`test.skip('renders with {"size":"3xl"} — not-analysed', () => {});`);
+  expect(spec).toContain(`test.skip('renders with {"size":"4xl"} — not-analysed', () => {});`);
   expect(specTier(SPEC_BY_ID.P7)).toBe("T1");
 });
 
@@ -363,23 +404,10 @@ test("the root layout is checked as a server document root, not mounted", () => 
  * re-pinned in the same PR as the fix.
  */
 const EXPECTED_ABSENT: Array<{ id: keyof typeof SPEC_BY_ID; absent: string; owner: string }> = [
-  {
-    id: "P6",
-    absent: "lib/data",
-    owner:
-      "D1 item 5 (PLAN-01) — multi-dep guards: classifyLogical yields a trigger only when " +
-      "both operands name the SAME single dep, so emitGuardTests skips the page and its data " +
-      "module is never mocked in the spec",
-  },
-  {
-    id: "P7",
-    absent: '"2xl"',
-    owner:
-      "D1 item 6 (PLAN-01) — full variant coverage: the emitter caps the variant matrix at " +
-      "five options; the three it never sees appear nowhere",
-  },
-  { id: "P7", absent: '"3xl"', owner: "D1 item 6 (PLAN-01) — full variant coverage (same cap)" },
-  { id: "P7", absent: '"4xl"', owner: "D1 item 6 (PLAN-01) — full variant coverage (same cap)" },
+  // The old P6 `lib/data` row and the three P7 `"2xl"`/`"3xl"`/`"4xl"` rows
+  // retired with D1 items 5 and 6: the data module is now imported by the
+  // guard legs and the cap-cut options appear as named skips — both flipped
+  // to positive pins in their pattern tests above.
   {
     id: "P7",
     absent: "flawless-cls",

@@ -1,5 +1,8 @@
 # D1 — depth the analyser already knows and the emitter drops
 
+**Status: DONE-WITH-CAVEATS** — closed 2026-11-13 by chunk 7 (`feat/d1c-guards-variants-close`).
+The caveats are named, with their measurements, in the D1c receipts at the end of this file.
+
 ## Scope
 
 `src/scaffold-tests/templates.ts` (the emitter sites of items 1–6, plus item 7's
@@ -401,3 +404,145 @@ the three pinned c00697f baseline files stay untouched on this branch
 (`git diff --stat main..HEAD -- docs/plans/baselines/` shows only
 depth-surface.json) — the movement is recorded here, and the D1 aggregate
 baseline (chunk 7) owns any re-pin of the pinned tree.
+
+## D1c — items 5 and 6 shipped; the step closes DONE-WITH-CAVEATS (chunk 7)
+
+Branch `feat/d1c-guards-variants-close` off `main` @ `3220686`. Measurement binary
+`fl-bintest-df865c7` (sha256 `89ff0e57…`), built from the tip being measured; pinned
+tree mybodycorpai @ `c00697f` on a fresh worktree, seven-plane regen, worktree left
+clean.
+
+### Item 5 — guard tests for multi-dep guards — SHIPPED (per-dep legs; the plan's wording deviated)
+
+The plan said "flipping them together to their empty values". Shipped instead: **one
+leg per canonical OR operand** — each leg flips only its own operand's dep to its own
+trigger value (`mockResolvedValueOnce`) while every other dep keeps its base mock, and
+asserts the guard's own effect. The deviation is forced by the plan's own falsifier:
+with flip-all, deleting one operand of `!user || !org` still trips the guard through
+the remaining flipped dep and the test stays green; per-dep legs red exactly the leg
+whose operand was deleted.
+
+- The per-operand triggers are recorded, not re-derived: `classifyLogical` already
+  computed each operand's falsy form and discarded it unless every operand shared one
+  trigger; `GuardInfo.operandTriggers` (types.ts) keeps them, plus `rawCondition` text
+  for the refusal wording and `throwMessage` when the source states one (read, never
+  invented). `== null` joins the canonical trigger forms (loose-null).
+- The planned emission gate (`inferredDepReturn !== undefined`) was **refuted before
+  shipping**: `resolveDepReturns` legitimately leaves `inferredReturn` absent for deps
+  whose shape is usage-derived (P6's `getUser`/`getOrg` — object shape inferred from
+  `user.name`), so the planned gate would have refused the very fixture the plan names.
+  Replaced by `guardLegPlan` (mocks.ts): per operand, (1) canonical single-dep trigger,
+  (2) dep resolvable to a specifier + callee root, (3) base mock truthy. Any failed gate
+  emits a `test.skip` with a STABLE named reason — `not-single-dep` / `unresolved` /
+  `falsy-base` — never a silent absence, and the skip title carries the guard's own
+  condition text.
+- Abort-shape decision (the chunk-5 open question): `return null` is NOT a recorded
+  guard effect — `classifyEffect` (extractGuards.ts:79–106) records only the nav exits
+  and `throw`. This chunk does not widen the effect set; guards that abort with
+  `return null` never reach the emitter, and that is the recorded reason.
+- The four emitted `next/navigation` stand-ins now define all six guard exits
+  (`190d911`), and the shared effect→assertion map retires the pre-D1c throw→
+  `NEXT_REDIRECT` false red (throw legs assert the guard's own message when the source
+  states one).
+- **Falsifier** (`tests/d1cGuardsVariantsExecution.test.ts`, generate→run→mutate→run):
+  baseline 3/3 green; deleting the `!org` operand reds exactly the `getOrg` leg (the
+  `getUser` leg and the contract test stay green); the mirror mutation reds exactly the
+  `getUser` leg. The legs go red through the guard's own message — the post-mutation
+  page still rejects with a TypeError, and only the message-specific assertion tells
+  them apart.
+- **Pinned-tree movement: none, and that is measured, not assumed.** The pinned tree
+  carries 10 multi-dep OR guards and ALL 10 are refused by name — 5 because an
+  operand's dep is not a mockable data dep (`myMembership` is a computed local), 5
+  because an operand is not a single-dep null/empty trigger (`x.building_id !== id`
+  names no trigger). The falsifier row `polls-new-drop-guard-dep` is therefore MISSED
+  on the pinned tree by construction; the legs are falsifiable where they exist, which
+  the execution falsifier proves on a fixture that carries the shape.
+
+### Item 6 — full variant coverage instead of a capped prefix — SHIPPED (honesty, not depth)
+
+The matrix rendered a silent prefix of the derived option list. Now, when the cap
+bites: the spec carries a comment (`variant cap: 5 of 8 exercised — the cap is
+--variants; the cut options are skipped by name below, never dropped.`), every cut
+option gets a `test.skip` titled like the matrix test it would have been with reason
+exactly `not-analysed`, and REPORT.md gains a Variant cap section naming every
+component the cap bit. No new assertion tier is claimed: a named skip is disclosure,
+not a test.
+
+- **Falsifier** (same execution file): renaming an EXERCISED option (union member and
+  value-table entry together) reds its matrix test; renaming a CUT option stays green
+  — the cap's honest limit, visible in the skip title. The P7 fixture carries a value
+  table + module-scope validation so the rename has a runtime witness; an in-body throw
+  would have demoted the matrix to mount-only asserts.
+- **Pinned movement:** Button 5 of 14 and Badge 5 of 6 exercised → 10 `not-analysed`
+  skips, visible in the VERDICT reason table.
+
+### Aggregate closure
+
+**A. Falsifier re-score** (`falsifiers-d1-df865c7.json`, table `mutations-d1-df865c7.json`;
+the three c00697f files byte-identical). The 18 D0 rows re-probed on the D1c tip:
+**9/16 → 9/16, zero transitions, zero regressions**, same single tier finding
+(finance-invert-trustee expected T2, caught by T1 — pre-existing). The brief's expected
+candidate did not materialize: `finance-variant-class` stays MISSED because item 6
+discloses cap-cut options without asserting variant classes. Three post-D1 rows added:
+`bell-drop-read-all-fetch` **CAUGHT** at T2 (matched) by the four click-fetch tests
+item 3 emits — the table's first new falsifier; `polls-new-drop-guard-dep` MISSED (the
+refusal consequence above); `button-rename-capcut-variant` MISSED (disclosure is not a
+test). Rate with the new rows: **10/19**. Two independent probe runs produced
+byte-equal results for the shared 18 rows.
+
+**B. Census closure** (`depth-d1-df865c7.json`, two identical runs, sha256 `318d5ec9…`):
+
+```
+D0 baseline:  191 specs, T0 100 / T1 45 / T2 42 / T3 0  (testsClassified 433, skipped 60)
+end-of-D1:    191 specs, T0 100 / T1 44 / T2 43 / T3 0  (testsClassified 437, skipped 84)
+```
+
+**Acceptance item 2, faced honestly: T0 did NOT go down — 100 → 100.** The plan's own
+clause is invoked, not a redefinition: *the step ships report-only on this criterion.
+Measured reason: the pinned app's T0 population is mount/marker tests (renders-without-
+throwing, provider smoke, layout mounts) that no D1 item claims — every D1 item converts
+a T1 shape to T2 (P4/P5 crossings, guard legs, dispatch request counts) or converts
+silence to a named refusal; none converts a T0.* The +24 skips are all named and all in
+the VERDICT reason table: 4 one-sided prop-keyed branches (item 4), 10 multi-dep guard
+refusals (item 5, 5+5 by reason), 10 cap-cut `not-analysed` (item 6).
+
+**C. Acceptance walk — the seven items:**
+
+1. **SHIPPED** — always-disabled `toBeDisabled()`; falsifier green→red on removing
+   `disabled` (`attributeClaimsExecution.test.ts`); pinned census movement none, the
+   app ships no statically-disabled control at DEFAULTS (report-only, recorded above).
+2. **SHIPPED** — initial-string→attribute `toHaveAttribute`; falsifier green→red on
+   changing the initial string.
+3. **SHIPPED** — event-fetch gets the four fetch tests; falsifier green→red on renaming
+   the URL; now independently confirmed on the pinned tree by `bell-drop-read-all-fetch`
+   CAUGHT in the re-scored falsifier table.
+4. **SHIPPED (new derivation, not free)** — prop-keyed mirror pair; falsifier green→red
+   on swapping branch literals; pinned tree fired only the named refusals (four
+   one-sided branches).
+5. **SHIPPED (per-dep legs, deviation recorded above)** — falsifier reds exactly the
+   deleted operand's leg; pinned tree has no canonical multi-dep guard, refusal-only.
+6. **SHIPPED (honesty-only)** — exercised-option rename reds the matrix; cut-option
+   rename stays green by design; `not-analysed` visible in the reason table.
+7. **RETIRED in D1a, SALVAGED on the surface fixture (host case)** — unchanged since
+   the D1a receipt.
+
+**Acceptance criteria:** (1) every shipped item has an execution falsifier with the
+plan's named mutation — met, items 5/6 in `d1cGuardsVariantsExecution.test.ts`,
+emittedTypes gained a case per new assertion form with a diagnostic-producing mutation
+(df865c7). (2) census movement — **report-only**, invoked verbatim above. (3) skip
+balance — met: pinned unit-browser 156 skips == Σ skipReasons 156, perf-harness
+193 == 193, all other planes 0 == 0; fixture 6 == 6 and 33 == 33. Removed-category
+visibility: `disabled-control` appears in neither tree (every pinned instance reduces
+to `conditional` — the D1a receipt), guard refusals are the two new reason rows (5+5),
+`not-analysed` 0 → 10. (4) TODO tally — control binary (main @ 3220686) 143 → treatment
+135 on the pinned tree: ≤ pre-step, and down 8. (5) emitted specs type-check — the D1c
+describe in `emittedTypes.test.ts` covers the leg spec and the cap spec on the out-dir
+layout, each new form with a mutation that produces a diagnostic.
+
+**Status: DONE-WITH-CAVEATS.** The caveats, named so a reader cannot mistake silence
+for success: (i) Acceptance item 2 is report-only — pinned T0 never moved (100 → 100)
+and the reason is measured above; (ii) item 5's legs are fixture-proven only — the
+pinned tree's 10 multi-dep guards are all refused by name, so the pinned falsifier row
+is MISSED by construction; (iii) item 5 deviates from the plan's "flipping them
+together" wording — per-dep legs, because the plan's own falsifier mutation refutes
+flip-all.

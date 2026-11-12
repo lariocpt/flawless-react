@@ -17,8 +17,10 @@ import type {
   ClickHandler,
   ComponentInfo,
   ComponentTree,
+  DataDepInfo,
   FetchCallInfo,
   FormInfo,
+  GuardEffect,
   LabelSource,
   NextjsApiRoute,
   PredicateSiteInfo,
@@ -32,6 +34,7 @@ import {
   apiRouteFixture,
   dottedMockConflicts,
   emitModuleMocks,
+  guardLegPlan,
   inferredDepReturn,
   mockSpecifier,
 } from "./mocks.ts";
@@ -1038,6 +1041,8 @@ ${pinImports}import * as __flNodeModule from "node:module";
     "export function notFound(){throw new Error('notFound() called')}" +
     "export function redirect(){throw new Error('NEXT_REDIRECT')}" +
     "export function permanentRedirect(){throw new Error('NEXT_REDIRECT')}" +
+    "export function unauthorized(){throw new Error('NEXT_UNAUTHORIZED')}" +
+    "export function forbidden(){throw new Error('NEXT_FORBIDDEN')}" +
     "export function usePathname(){return '/'}" +
     "export function useRouter(){return{push:noop,replace:noop,refresh:noop,back:noop,forward:noop,prefetch:noop}}" +
     "export function useSearchParams(){return new URLSearchParams()}" +
@@ -1497,8 +1502,12 @@ if (typeof window !== "undefined") {
  // internally. Per-test mocks still override for specific components.
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("notFound() called"); }),
+  // Every guard exit raises a stable, nameable string: a guard test asserts the
+  // exact string its own effect raises, so an unrelated crash cannot pass it.
   redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  unauthorized: vi.fn(() => { throw new Error("NEXT_UNAUTHORIZED"); }),
+  forbidden: vi.fn(() => { throw new Error("NEXT_FORBIDDEN"); }),
   usePathname: vi.fn(() => "/"),
   useRouter: vi.fn(() => ({
     push: vi.fn(),
@@ -1735,7 +1744,15 @@ function unitSpec(
   // the analyser saw it used via member access, stand it up as {} so the read
   // yields undefined (renders as nothing) instead of crashing the spec.
   const propsLiteral = defaultsJson(synthesiseDefaults(info));
-  const variantsLiteral = JSON.stringify(info.variants.slice(0, variants));
+  // D1 item 6: the cap is honest. The full derived list is computed anyway
+  // (info.variants is the cartesian of every literal-union option); the cap
+  // decides how many the matrix RENDERS, and every option the cap cuts is
+  // skipped by name below — a silent prefix is the same class of dishonesty
+  // M1 retired for plane tallies.
+  const allVariants = info.variants;
+  const shownVariants = allVariants.slice(0, variants);
+  const cutVariants = allVariants.slice(variants);
+  const variantsLiteral = JSON.stringify(shownVariants);
   const promiseProps = info.promiseProps ?? [];
   const interactions = info.interactions;
 
@@ -1857,6 +1874,18 @@ function unitSpec(
     ? `const { container } = renderTarget(v);\n      expect(container.querySelector(${JSON.stringify(variantRootTag)}), \`\${JSON.stringify(v)} rendered no <${variantRootTag}>\`).not.toBeNull();`
     : // biome-ignore lint/suspicious/noTemplateCurlyInString: emitted-spec text — the placeholder interpolates when the SPEC runs, and must survive this generator untouched
       "expect(() => renderTarget(v), `${JSON.stringify(v)} threw on mount`).not.toThrow();";
+  // D1 item 6: one named skip per cut option — the skip contract says a skip
+  // must NAME what it cannot do, and the reason after the " — " is what the
+  // census aggregates: `not-analysed` is the category variant-capped cases
+  // belong to (PLAN-01 acceptance 3). The title mirrors the matrix test the
+  // option would have had, so the cut reads as what it is: the same test,
+  // withheld by the cap, not a different one.
+  const variantSkipLines = cutVariants
+    .map(
+      (v) =>
+        `test.skip(${JSON.stringify(`renders with ${JSON.stringify(v)} — not-analysed`)}, () => {});`,
+    )
+    .join("\n");
 
   // `Props` exists only to type the props spread, and the React import exists
   // only to declare it. A zero-prop component renders bare, so emitting either
@@ -1880,7 +1909,7 @@ ${assertedImports.join("\n")}
 ${propsAlias}${childTextConst}
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
-const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
+${cutVariants.length > 0 ? `// variant cap: ${shownVariants.length} of ${allVariants.length} exercised — the cap is --variants;\n// the cut options are skipped by name below, never dropped.\n` : ""}const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
 const handlers: Record<string, ReturnType<typeof vi.fn>> = ${handlerObjectLiteral};
 
 beforeEach(() => {
@@ -1904,7 +1933,7 @@ function renderTarget(extra: Record<string, unknown> = {}) {
 
 ${emitContractTests(name, info)}
 ${
-  info.variants.slice(0, variants).length > 0
+  shownVariants.length > 0
     ? `describe("${name} variants", () => {
   for (const v of VARIANTS) {
     test(\`renders with \${JSON.stringify(v)}\`, () => {
@@ -1912,9 +1941,13 @@ ${
     });
   }
 });`
-    : `// no literal-union props — no variant matrix (VARIANTS kept for hand-written rows).
+    : allVariants.length > 0
+      ? `// the --variants cap cut every derived option — each is skipped by name below.
+void VARIANTS;`
+      : `// no literal-union props — no variant matrix (VARIANTS kept for hand-written rows).
 void VARIANTS;`
 }
+${variantSkipLines}
 
 ${interactionTests}
 ${staticTextTests}${stateTests}${fetchTests}${clientInversions}`;
@@ -2674,7 +2707,13 @@ async function resolveAsyncUi(
   const el = node as React.ReactElement;
   const ctor = el.type as unknown as { constructor?: { name?: string } } | null;
   if (typeof el.type === "function" && ctor?.constructor?.name === "AsyncFunction") {
-    const inner = await (el.type as (props: unknown) => Promise<React.ReactNode>)(el.props);
+    // The double cast is deliberate: JSXElementConstructor covers class
+    // components too, and strict tsc refuses the single cast as
+    // non-overlapping (TS2352). The AsyncFunction probe above is the real
+    // discriminator; the cast only tells the checker what that probe proved.
+    const inner = await (el.type as unknown as (props: unknown) => Promise<React.ReactNode>)(
+      el.props,
+    );
     return resolveAsyncUi(inner, depth + 1);
   }
   // Walk EVERY prop, not just children: children is one key of props, and
@@ -2683,7 +2722,7 @@ async function resolveAsyncUi(
   const next: Record<string, unknown> = {};
   let changed = false;
   for (const key of Object.keys(props)) {
-    const resolved = await resolveAsyncUi(props[key], depth + 1);
+    const resolved = await resolveAsyncUi(props[key] as React.ReactNode, depth + 1);
     if (resolved !== props[key]) changed = true;
     next[key] = resolved;
   }
@@ -2789,8 +2828,15 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   const guardSummary =
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
   const staticTextTests = emitStaticTextTests(name, info, "rsc", providerImport, autoProv);
-  const guardTests = emitGuardTests(name, info);
-  const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir, autoProv);
+  const guardTests = emitGuardTests(name, info, apiRoutes, specDir);
+  const inversionTests = emitPredicateInversionTests(
+    name,
+    info,
+    providerImport,
+    specDir,
+    autoProv,
+    apiRoutes,
+  );
   // The escape needs the per-test api to skip itself from inside the catch,
   // so the callback's parameter exists only when the escape is emitted: an
   // unused `t` is a no-unused-vars error in the host, and a missing one is a
@@ -2817,9 +2863,9 @@ test("${name} (RSC): resolves, or takes one of its declared guard paths", async 
     const ui: React.ReactNode = await resolveAsyncUi(await ${name}(${callArgs}));
     ${renderExpr};
   } catch (err) {
-    // notFound()/redirect() are legitimate outcomes when the mocked data layer
-    // returns nothing — this component declares ${guardSummary}.
-    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;
+    // notFound()/redirect()/unauthorized()/forbidden() are legitimate outcomes
+    // when the mocked data layer returns nothing — this component declares ${guardSummary}.
+    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_UNAUTHORIZED|NEXT_FORBIDDEN/.test(String(err))) return;
 ${esc}    // Not a guard and not an admitted gap: a real failure, reported as itself
     // rather than as a confusing "expected TypeError to match /notFound/".
     throw err;
@@ -2916,12 +2962,12 @@ function emitStaticTextTests(
       try {
         ui = await resolveAsyncUi(await ${name}(${callArgs}));
       } catch (err) {
-        // A declared guard path (notFound()/redirect() against empty mocks):
-        // the main test already asserts that outcome, so this one has no text
-        // to assert — but it says so by NAME. A bare \`catch { return; }\`
-        // here is how a red suite pretends to be green.
-        if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) {
-          console.warn(\`[flawless] ${name} takes a guard path (notFound/redirect) at these props — no static text renders\`);
+        // A declared guard path (notFound()/redirect()/unauthorized()/forbidden()
+        // against empty mocks): the main test already asserts that outcome, so
+        // this one has no text to assert — but it says so by NAME. A bare
+        // \`catch { return; }\` here is how a red suite pretends to be green.
+        if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_UNAUTHORIZED|NEXT_FORBIDDEN/.test(String(err))) {
+          console.warn(\`[flawless] ${name} takes a guard path (notFound/redirect/unauthorized/forbidden) at these props — no static text renders\`);
           ctx.skip();
           return;
         }
@@ -2945,55 +2991,135 @@ describe("${name} static content", () => {
 }
 
 /**
+ * What each guard effect throws, as the emitted next/navigation mock raises
+ * it. The spec asserts the mock's own string, so a guard test cannot pass on
+ * an unrelated crash that merely mentions the right word — the pre-D1c map
+ * sent every non-notFound effect (including throw) to /NEXT_REDIRECT/, a
+ * false red for a component that threw its own message. `throw` has no entry
+ * in the map: the component decides the message. When the source states that
+ * message with a string literal (GuardInfo.throwMessage, read — never
+ * invented), emitGuardTests matches it anyway, because a bare
+ * rejects.toThrow() is a false green for the delete-one-operand falsifier:
+ * the operand deleted, the page still rejects, on a later line (a TypeError
+ * off the now-unchecked dep), and ANY throw would satisfy the bare form.
+ * Only a throw whose message the source does not state stays bare.
+ */
+const GUARD_EFFECT_ERROR: Record<GuardEffect, string | undefined> = {
+  notFound: "/notFound\\(\\) called/",
+  redirect: "/NEXT_REDIRECT/",
+  permanentRedirect: "/NEXT_REDIRECT/",
+  unauthorized: "/NEXT_UNAUTHORIZED/",
+  forbidden: "/NEXT_FORBIDDEN/",
+  throw: undefined,
+};
+
+/**
  * A guard whose trigger value is known can be asserted directly: make the dep
  * it guards return nothing, and the component must abort the way its own
  * source says it will.
  */
-function emitGuardTests(name: string, info: ComponentInfo): string {
+function emitGuardTests(
+  name: string,
+  info: ComponentInfo,
+  apiRoutes?: NextjsApiRoute[],
+  specDir?: string,
+): string {
   const deps = info.dataDeps ?? [];
   const callArgs = rscCallArgs(info);
   const parts: string[] = [];
+  const importNames = new Map<string, string>(); // calleeRoot → specifier
+  const addImport = (dep: DataDepInfo): void => {
+    if (dep.specifier === undefined || importNames.has(dep.calleeRoot)) return;
+    // Rebase exactly like the vi.mock line for the same module (mockSpecifier)
+    // — the legs assert through THAT mock, so the import and the mock must
+    // name one module. In colocate mode the two forms are identical; in the
+    // out-dir layout the raw specifier pointed at the component's directory,
+    // not the spec's, and died as TS2307/collect failure (the pre-D1c
+    // single-dep import carried the same latent gap).
+    const mi = (info.moduleImports ?? []).find((m) => m.specifier === dep.specifier);
+    importNames.set(dep.calleeRoot, mi !== undefined ? mockSpecifier(mi, specDir) : dep.specifier);
+  };
   for (const g of info.guards ?? []) {
-    if (g.triggerValue === undefined || g.depVars.length !== 1) continue;
-    const varName = g.depVars[0] as string;
-    const dep = deps.find((d) => d.varName === varName);
-    if (!dep?.specifier || dep.calleeRoot.length === 0) continue;
-    const value =
-      g.triggerValue === "empty-array" ? "[]" : g.triggerValue === "null" ? "null" : "undefined";
     // Emitted verbatim into the spec, so the escaping here is the escaping the
     // generated regex literal gets — double-escaping produced /notFound\\(\\)/,
     // which matches nothing.
-    const expected = g.effect === "notFound" ? "/notFound\\(\\) called/" : "/NEXT_REDIRECT/";
-    parts.push(`
+    //
+    // A `throw` guard matches its OWN message when the source states it with a
+    // literal (GUARD_EFFECT_ERROR has no throw entry for exactly this reason).
+    // A bare rejects.toThrow() would be a false green for the leg that owns a
+    // deleted operand: the page still rejects, on a later line, and any throw
+    // satisfies the bare form. A message the source does not state stays bare.
+    const expected =
+      GUARD_EFFECT_ERROR[g.effect] ??
+      (g.effect === "throw" && g.throwMessage !== undefined
+        ? JSON.stringify(g.throwMessage)
+        : undefined);
+    const assertReject = expected
+      ? `await expect(${name}(${callArgs})).rejects.toThrow(${expected});`
+      : `await expect(${name}(${callArgs})).rejects.toThrow();`;
+    if (g.triggerValue !== undefined && g.depVars.length === 1) {
+      // The single-dep trigger: one mocked value trips the guard.
+      const varName = g.depVars[0] as string;
+      const dep = deps.find((d) => d.varName === varName);
+      if (!dep?.specifier || dep.calleeRoot.length === 0) continue;
+      addImport(dep);
+      const value =
+        g.triggerValue === "empty-array" ? "[]" : g.triggerValue === "null" ? "null" : "undefined";
+      parts.push(`
 test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () => {
   vi.mocked(${dep.calleeRoot}).mockResolvedValueOnce(${value} as never);
-  await expect(${name}(${callArgs})).rejects.toThrow(${expected});
+  ${assertReject}
 });`);
+      continue;
+    }
+    // D1 item 5: a top-level OR whose operands name different deps (or values)
+    // has no consolidated trigger — but each canonical operand is a LEG: it
+    // flips its own dep to its own trigger value and asserts the effect, so
+    // the delete-one-operand mutation reds exactly the leg that operand
+    // owned. A guard that cannot be stated that way skips by name with its
+    // reason, the predicateRefusals precedent: a refusal is evidence, not a
+    // silent absence.
+    const plan = guardLegPlan(g, info, apiRoutes);
+    if (plan.kind === "none") continue;
+    if (plan.kind === "refusal") {
+      const bt = String.fromCharCode(96); // the backtick code-quote for the condition
+      const line = `${name}: ${g.effect}() on ${bt}${g.conditionRaw}${bt} — ${plan.reason}`;
+      parts.push(`
+test.skip(${JSON.stringify(line)}, () => {});`);
+      continue;
+    }
+    const n = plan.legs.length;
+    plan.legs.forEach((leg, i) => {
+      addImport(leg.dep);
+      parts.push(`
+test("${name}: ${g.effect}() when ${leg.dep.calleeRoot} returns ${leg.value} (operand ${i + 1} of ${n}: ${leg.operand.raw})", async () => {
+  vi.mocked(${leg.dep.calleeRoot}).mockResolvedValueOnce(${leg.value} as never);
+  ${assertReject}
+});`);
+    });
   }
   if (parts.length === 0) return "";
-  const imports = [
-    ...new Set(
-      (info.guards ?? [])
-        .filter((g) => g.triggerValue !== undefined && g.depVars.length === 1)
-        .map((g) => deps.find((d) => d.varName === g.depVars[0]))
-        .filter((d): d is NonNullable<typeof d> => Boolean(d?.specifier))
-        .map((d) => `import { ${d.calleeRoot} } from ${JSON.stringify(d.specifier)};`),
-    ),
-  ];
+  const imports = [...importNames].map(
+    ([callee, spec]) => `import { ${callee} } from ${JSON.stringify(spec)};`,
+  );
   // vi.mock is hoisted, so these resolve to the mocks declared above.
   return `\n${imports.join("\n")}\n${parts.join("\n")}\n`;
 }
 
 /** The import names emitGuardTests already emitted, so nothing binds twice. */
-function guardTestImportNames(info: ComponentInfo): Set<string> {
+function guardTestImportNames(info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): Set<string> {
   const deps = info.dataDeps ?? [];
-  return new Set(
-    (info.guards ?? [])
-      .filter((g) => g.triggerValue !== undefined && g.depVars.length === 1)
-      .map((g) => deps.find((d) => d.varName === g.depVars[0]))
-      .filter((d): d is NonNullable<typeof d> => Boolean(d?.specifier))
-      .map((d) => d.calleeRoot),
-  );
+  const names = new Set<string>();
+  for (const g of info.guards ?? []) {
+    if (g.triggerValue !== undefined && g.depVars.length === 1) {
+      const dep = deps.find((d) => d.varName === g.depVars[0]);
+      if (dep?.specifier !== undefined) names.add(dep.calleeRoot);
+      continue;
+    }
+    const plan = guardLegPlan(g, info, apiRoutes);
+    if (plan.kind === "legs") for (const leg of plan.legs) names.add(leg.dep.calleeRoot);
+  }
+  return names;
 }
 
 /**
@@ -3012,6 +3138,7 @@ function emitPredicateInversionTests(
   providerImport: string | undefined,
   specDir?: string,
   autoProv?: AutoProvBits,
+  apiRoutes?: NextjsApiRoute[],
 ): string {
   const controls = info.predicateInversions ?? [];
   const refusals = info.predicateRefusals ?? [];
@@ -3033,7 +3160,7 @@ function emitPredicateInversionTests(
   const mountProof = staticText[0];
   const parts: string[] = [];
   const importNames = new Map<string, string>(); // callee → import specifier
-  const already = guardTestImportNames(info);
+  const already = guardTestImportNames(info, apiRoutes);
 
   // The import must spell the module the way the vi.mock above did — a
   // relative specifier re-based onto the spec's own directory — or an

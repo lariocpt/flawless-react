@@ -1,5 +1,5 @@
 import ts from "typescript";
-import type { GuardEffect, GuardInfo } from "../types.ts";
+import type { GuardEffect, GuardInfo, GuardOperandTrigger } from "../types.ts";
 import type { ImportBinding } from "./parseFile.ts";
 import { posOf } from "./pos.ts";
 import { bodyStatements, collectRefs, hookCalleeName } from "./refs.ts";
@@ -49,7 +49,9 @@ export function extractGuards(
       pos: posOf(stmt, sourceFile),
     };
     if (effect.specifier !== undefined) guard.specifier = effect.specifier;
+    if (effect.throwMessage !== undefined) guard.throwMessage = effect.throwMessage;
     if (condition.triggerValue !== undefined) guard.triggerValue = condition.triggerValue;
+    if (condition.operandTriggers !== undefined) guard.operandTriggers = condition.operandTriggers;
     out.push(guard);
   }
 
@@ -74,6 +76,7 @@ interface EffectMatch {
   effect: GuardEffect;
   callee: string;
   specifier?: string;
+  throwMessage?: string;
 }
 
 function classifyEffect(
@@ -84,7 +87,12 @@ function classifyEffect(
   if (!stmt) return undefined;
 
   // A throw needs no provenance check: whatever it constructs, the render aborts.
-  if (ts.isThrowStatement(stmt)) return { effect: "throw", callee: throwCallee(stmt) };
+  if (ts.isThrowStatement(stmt)) {
+    const match: EffectMatch = { effect: "throw", callee: throwCallee(stmt) };
+    const message = throwMessage(stmt);
+    if (message !== undefined) match.throwMessage = message;
+    return match;
+  }
 
   const call = exitCall(stmt);
   if (!call) return undefined;
@@ -133,6 +141,25 @@ function throwCallee(stmt: ts.ThrowStatement): string {
   return "throw";
 }
 
+/**
+ * The message a thrown error carries, only when the source states it with a
+ * string literal: `throw new Error("…")` (any error constructor — the
+ * matcher checks the message, not the class) and a bare `throw "…"`. An
+ * interpolated template or an expression says nothing readable, so undefined
+ * — the emitted assertion then stays bare rather than invented.
+ */
+function throwMessage(stmt: ts.ThrowStatement): string | undefined {
+  const expr = stmt.expression;
+  if (ts.isNewExpression(expr)) {
+    const args = expr.arguments;
+    const arg = args === undefined ? undefined : args[0];
+    if (arg !== undefined && ts.isStringLiteral(arg)) return arg.text;
+    return undefined;
+  }
+  if (ts.isStringLiteral(expr)) return expr.text;
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Condition
 // ---------------------------------------------------------------------------
@@ -141,6 +168,7 @@ interface ConditionMatch {
   kind: GuardInfo["conditionKind"];
   depVars: string[];
   triggerValue?: GuardInfo["triggerValue"];
+  operandTriggers?: GuardOperandTrigger[];
 }
 
 function classifyCondition(
@@ -150,14 +178,22 @@ function classifyCondition(
 ): ConditionMatch {
   const depVars = referencedDeps(expr, sourceFile, depVarNames);
   const shape = classifyShape(expr, sourceFile, depVarNames);
-  return { kind: shape.kind, depVars, triggerValue: shape.triggerValue };
+  const match: ConditionMatch = { kind: shape.kind, depVars, triggerValue: shape.triggerValue };
+  if (shape.operandTriggers !== undefined) match.operandTriggers = shape.operandTriggers;
+  return match;
 }
+
+type ShapeMatch = {
+  kind: GuardInfo["conditionKind"];
+  triggerValue?: GuardInfo["triggerValue"];
+  operandTriggers?: GuardOperandTrigger[];
+};
 
 function classifyShape(
   expr: ts.Expression,
   sourceFile: ts.SourceFile,
   depVarNames: Set<string>,
-): { kind: GuardInfo["conditionKind"]; triggerValue?: GuardInfo["triggerValue"] } {
+): ShapeMatch {
   const node = unwrapParens(expr);
 
   if (ts.isIdentifier(node)) return { kind: "truthy" };
@@ -171,13 +207,21 @@ function classifyShape(
 
   if (ts.isBinaryExpression(node)) {
     const op = node.operatorToken.kind;
-    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.AmpersandAmpersandToken) {
-      return classifyLogical(node, sourceFile, depVarNames);
+    if (op === ts.SyntaxKind.BarBarToken)
+      return classifyLogical(node, sourceFile, depVarNames, true);
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return classifyLogical(node, sourceFile, depVarNames, false);
     }
     if (op === ts.SyntaxKind.EqualsEqualsEqualsToken) {
       return { kind: "comparison", triggerValue: strictEqualityTrigger(node) };
     }
-    // `!==`, `==`, `<` … are recognisably comparisons, but none of them names a
+    // `==` is loose equality: the one loose comparison that names a single
+    // mock value is `x == null`, which fires on null AND undefined — "null"
+    // is the canonical trigger. `x == undefined` is the looseness itself.
+    if (op === ts.SyntaxKind.EqualsEqualsToken) {
+      return { kind: "comparison", triggerValue: looseNullTrigger(node) };
+    }
+    // `!==`, `<` … are recognisably comparisons, but none of them names a
     // single mock value that makes the guard fire, so no trigger is invented.
     if (isComparisonOperator(op)) return { kind: "comparison" };
   }
@@ -186,22 +230,88 @@ function classifyShape(
 }
 
 /**
- * `a || b` is always "complex": the operands are separate conditions. A trigger
- * survives only when every operand fires on the same mocked value of the same
- * single dep — otherwise no one value is known to trip the guard.
+ * OR: the guard fires when ANY operand fires. A left-associative chain
+ * (`a || b || c`) parses as `(a || b) || c` — it is flattened so the operand
+ * list is what a reader sees, and each operand keeps its own match: the
+ * consolidated trigger survives only when every operand fires on the same
+ * mocked value of the same single dep, which is the stricter bar no single
+ * operand needs — that gap is what `operandTriggers` fills (D1 item 5).
+ *
+ * AND is the other polarity: one value must satisfy EVERY operand, so the
+ * old rule stands unchanged and no operand list is recorded — a dep flip
+ * that satisfied one AND operand while breaking another would be a lie.
  */
 function classifyLogical(
   node: ts.BinaryExpression,
   sourceFile: ts.SourceFile,
   depVarNames: Set<string>,
-): { kind: GuardInfo["conditionKind"]; triggerValue?: GuardInfo["triggerValue"] } {
-  const left = classifyCondition(node.left, sourceFile, depVarNames);
-  const right = classifyCondition(node.right, sourceFile, depVarNames);
+  isOr: boolean,
+): ShapeMatch {
+  if (!isOr) {
+    const left = classifyCondition(node.left, sourceFile, depVarNames);
+    const right = classifyCondition(node.right, sourceFile, depVarNames);
+    const sameDep =
+      left.depVars.length === 1 &&
+      right.depVars.length === 1 &&
+      left.depVars[0] === right.depVars[0];
+    const sameTrigger = left.triggerValue !== undefined && left.triggerValue === right.triggerValue;
+    if (sameDep && sameTrigger) return { kind: "complex", triggerValue: left.triggerValue };
+    return { kind: "complex" };
+  }
+
+  const operands: ts.Expression[] = [];
+  const collect = (expr: ts.Expression): void => {
+    const n = unwrapParens(expr);
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+      collect(n.left);
+      collect(n.right);
+      return;
+    }
+    operands.push(n);
+  };
+  collect(node);
+
+  const operandTriggers: GuardOperandTrigger[] = [];
+  for (const operand of operands) {
+    const m = classifyCondition(operand, sourceFile, depVarNames);
+    const op: GuardOperandTrigger = { depVars: m.depVars };
+    if (m.triggerValue !== undefined) op.triggerValue = m.triggerValue;
+    op.raw = rawCondition(operand, sourceFile);
+    operandTriggers.push(op);
+  }
+
+  // An OR binary expression always flattens to >= 2 leaves — the bail is an
+  // impossible-shape guard so `first` is total, not a claim.
+  const first = operandTriggers[0];
+  if (first === undefined) return { kind: "complex" };
   const sameDep =
-    left.depVars.length === 1 && right.depVars.length === 1 && left.depVars[0] === right.depVars[0];
-  const sameTrigger = left.triggerValue !== undefined && left.triggerValue === right.triggerValue;
-  if (sameDep && sameTrigger) return { kind: "complex", triggerValue: left.triggerValue };
-  return { kind: "complex" };
+    first.depVars.length === 1 &&
+    operandTriggers.every((op) => op.depVars.length === 1 && op.depVars[0] === first.depVars[0]);
+  const sameTrigger =
+    first.triggerValue !== undefined &&
+    operandTriggers.every((op) => op.triggerValue === first.triggerValue);
+  const match: ShapeMatch = { kind: "complex", operandTriggers };
+  if (sameDep && sameTrigger) match.triggerValue = first.triggerValue;
+  return match;
+}
+
+/**
+ * The one loose comparison that names a single mock value: `x == null`
+ * fires on null AND undefined, and a dep returning null trips it, so "null"
+ * is the canonical trigger. `x == undefined` is the looseness itself and
+ * names no canonical value.
+ */
+function looseNullTrigger(node: ts.BinaryExpression): GuardInfo["triggerValue"] | undefined {
+  const pairs: Array<[ts.Expression, ts.Expression]> = [
+    [node.left, node.right],
+    [node.right, node.left],
+  ];
+  for (const [subject, literal] of pairs) {
+    const target = unwrapParens(subject);
+    const value = unwrapParens(literal);
+    if (ts.isIdentifier(target) && value.kind === ts.SyntaxKind.NullKeyword) return "null";
+  }
+  return undefined;
 }
 
 function strictEqualityTrigger(node: ts.BinaryExpression): GuardInfo["triggerValue"] | undefined {
@@ -226,7 +336,6 @@ function strictEqualityTrigger(node: ts.BinaryExpression): GuardInfo["triggerVal
 function isComparisonOperator(op: ts.SyntaxKind): boolean {
   return (
     op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-    op === ts.SyntaxKind.EqualsEqualsToken ||
     op === ts.SyntaxKind.ExclamationEqualsToken ||
     op === ts.SyntaxKind.LessThanToken ||
     op === ts.SyntaxKind.LessThanEqualsToken ||

@@ -912,6 +912,7 @@ export async function runCore(opts: CoreOptions): Promise<CoreResult> {
     namedSkips,
     exportInventory,
     rootMode: opts.roots ?? "primary",
+    variants: opts.variants ?? 5,
     verdict: { path: VERDICT_MD, tasks: Object.keys(verdict.doc.entries) },
     projectRoot: nextCtx?.root,
     unparseable,

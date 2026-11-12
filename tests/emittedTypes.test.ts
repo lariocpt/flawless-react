@@ -919,3 +919,122 @@ export function StockPanel({ empty }: { empty?: boolean }) {
     expect(errors.join(" | ")).toContain("Cannot find name 'firstBogus'");
   });
 });
+
+/**
+ * D1c adds two assertion shapes: the per-dep guard LEG (flip one dep to its
+ * trigger value, assert the guard's own throw message) and the named
+ * variant-cap skip (`test.skip` titled like the matrix test the cap
+ * withheld). PLAN-01 acceptance 5: each new form gets a clean pass over the
+ * real emitted line plus a mutation that produces a diagnostic.
+ *
+ * The guard-leg case also pins the import rebase: the leg's `import { getUser
+ * }` must resolve from the OUT-DIR layout (the spec sits under the suite, not
+ * beside the component) — the clean pass with `unresolved == []` is that
+ * proof; the raw component-relative specifier was TS2307 here.
+ */
+describe("the D1c guard-leg and variant-cap assertions type-check", () => {
+  const GUARDED_PAGE = `import { getOrg, getUser } from "./data";
+
+export default async function GuardedPage() {
+  const [user, org] = await Promise.all([getUser(), getOrg()]);
+  if (!user || !org) throw new Error("user and org are required");
+  return <h1>{user.name} @ {org.name}</h1>;
+}
+`;
+  const DATA = `export function getUser(): Promise<{ name: string }> {
+  return Promise.resolve({ name: "Ada" });
+}
+
+export function getOrg(): Promise<{ name: string }> {
+  return Promise.resolve({ name: "Acme" });
+}
+`;
+  const CHIP = `type ChipProps = {
+  size: "xs" | "sm" | "md" | "lg" | "xl" | "2xl" | "3xl";
+};
+
+export function Chip({ size }: ChipProps) {
+  return <span>{size}</span>;
+}
+`;
+
+  async function emitGuarded(): Promise<{ root: string; spec: string; content: string }> {
+    const root = stubProject();
+    const app = path.join(root, "app");
+    mkdirSync(app, { recursive: true });
+    writeFileSync(path.join(app, "GuardedPage.tsx"), GUARDED_PAGE);
+    writeFileSync(path.join(app, "data.ts"), DATA);
+    const outDir = path.join(root, "flawless");
+    const tree = await analyse({
+      entry: path.join(app, "GuardedPage.tsx"),
+      depth: 0,
+      includeChildren: false,
+    });
+    const files = renderUnitBrowser({ trees: [tree], outDir, variants: 3, browserSpecs: true });
+    const unit = files.find((f) => f.relPath === "unit/GuardedPage.test.tsx");
+    if (!unit) throw new Error("unit/GuardedPage.test.tsx was not emitted");
+    return { root: outDir, spec: path.join(outDir, unit.relPath), content: unit.content };
+  }
+
+  async function emitChip(): Promise<{ root: string; spec: string; content: string }> {
+    const root = stubProject();
+    const app = path.join(root, "app");
+    mkdirSync(app, { recursive: true });
+    const comp = path.join(app, "Chip.tsx");
+    writeFileSync(comp, CHIP);
+    const outDir = path.join(root, "flawless");
+    const tree = await analyse({ entry: comp, depth: 0, includeChildren: false });
+    const files = renderUnitBrowser({ trees: [tree], outDir, variants: 3, browserSpecs: true });
+    const unit = files.find((f) => f.relPath === "unit/Chip.test.tsx");
+    if (!unit) throw new Error("unit/Chip.test.tsx was not emitted");
+    return { root: outDir, spec: path.join(outDir, unit.relPath), content: unit.content };
+  }
+
+  function checkUnit(root: string, spec: string, content: string): string[] {
+    mkdirSync(path.dirname(spec), { recursive: true });
+    writeFileSync(spec, content);
+    const { errors, unresolved } = checkTypes(root, [spec]);
+    expect(unresolved, "the mutation did not break module resolution instead").toEqual([]);
+    return errors;
+  }
+
+  test("the emitted guard legs type-check clean, imports resolved from the out-dir", async () => {
+    const { root, spec, content } = await emitGuarded();
+    // Both legs really landed, each asserting the guard's own message — and
+    // the leg import is the REBASED specifier (../../app/data, not ./data):
+    // the clean `unresolved == []` inside checkUnit is the rebase proof.
+    expect(content).toContain("vi.mocked(getUser).mockResolvedValueOnce(undefined as never);");
+    expect(content).toContain('rejects.toThrow("user and org are required")');
+    expect(content).toContain('import { getUser } from "../../app/data";');
+    expect(checkUnit(root, spec, content)).toEqual([]);
+  });
+
+  test("guard the guard: the leg's mocked binding is checked", async () => {
+    const { root, spec, content } = await emitGuarded();
+    const line = content.split("\n").find((l) => l.includes("vi.mocked(getUser)"));
+    if (!line) throw new Error("no vi.mocked(getUser) leg line to break");
+    const broken = line.replace("vi.mocked(getUser)", "vi.mocked(getUserBogus)");
+    const errors = checkUnit(root, spec, content.replace(line, broken));
+    expect(errors.join(" | ")).toContain("Cannot find name 'getUserBogus'");
+  });
+
+  test("the emitted variant-cap skips type-check clean", async () => {
+    const { root, spec, content } = await emitChip();
+    // The cap statement and the named skips really landed (3 of 7 exercised
+    // at variants: 3 — lg/xl/2xl/3xl are each skipped by name).
+    expect(content).toContain("// variant cap: 3 of 7 exercised — the cap is --variants;");
+    expect(content).toContain(
+      'test.skip("renders with {\\"size\\":\\"lg\\"} — not-analysed", () => {});',
+    );
+    expect(checkUnit(root, spec, content)).toEqual([]);
+  });
+
+  test("guard the guard: the skip's test binding is checked", async () => {
+    const { root, spec, content } = await emitChip();
+    const line = content.split("\n").find((l) => l.includes('test.skip("renders with'));
+    if (!line) throw new Error("no variant-cap test.skip line to break");
+    const broken = line.replace("test.skip(", "testBogus.skip(");
+    const errors = checkUnit(root, spec, content.replace(line, broken));
+    expect(errors.join(" | ")).toContain("Cannot find name 'testBogus'");
+  });
+});

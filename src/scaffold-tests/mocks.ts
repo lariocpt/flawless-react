@@ -20,12 +20,15 @@ import path from "node:path";
 import type {
   ComponentInfo,
   DataDepInfo,
+  GuardInfo,
+  GuardOperandTrigger,
   ModuleImportInfo,
   NextjsApiRoute,
+  PropsShape,
   PropValue,
   TodoRecorder,
 } from "../types.ts";
-import { type DepFieldResolver, fieldValueLiteral, mockLiteral } from "./mockValues.ts";
+import { type DepFieldResolver, fieldValueLiteral, mockLiteral, mockValue } from "./mockValues.ts";
 import { withRouteParams } from "./registry.ts";
 
 export type MockMode = "client" | "rsc";
@@ -258,6 +261,108 @@ export function inferredDepReturn(
   return undefined;
 }
 
+/**
+ * D1 item 5 — one leg of a multi-dep OR guard: the operand, the dep whose
+ * flip trips the OR through it, and the literal that flip is.
+ */
+export interface GuardLeg {
+  operand: GuardOperandTrigger;
+  dep: DataDepInfo;
+  /** The literal the leg's mockResolvedValueOnce gets: "[]", "null" or "undefined". */
+  value: "[]" | "null" | "undefined";
+}
+
+/**
+ * What ONE guard contributes to the spec (D1 item 5). `legs` — every operand
+ * is canonical and every gate holds; `refusal` — the guard is a top-level OR
+ * but no per-dep leg can be stated honestly (the reason is a STABLE string:
+ * the verdict's skipReasons aggregates it, and the specifics sit in the
+ * skip's title, the predicateRefusals precedent); `none` — AND chains and
+ * plain conditions record no operand list and keep the old single-dep rule
+ * only (a flip that satisfies one AND operand while breaking another is a
+ * lie, so AND emits legs never).
+ */
+export type GuardLegPlan =
+  | { kind: "none" }
+  | { kind: "legs"; legs: GuardLeg[] }
+  | { kind: "refusal"; reason: string };
+
+const REASON_NOT_SINGLE_DEP =
+  "multi-dep guard refused: an operand is not a single-dep null/empty trigger, so no one-dep flip isolates this guard";
+const REASON_UNRESOLVED =
+  "multi-dep guard refused: an operand's dep is not a mockable data dep, so it cannot be flipped";
+const REASON_FALSY_BASE =
+  "multi-dep guard refused: an operand's base mock is falsy, so the guard would trip without the flip";
+
+/**
+ * The value the dep's base mock resolves to — the value-mirror of what
+ * depStub writes into the module factory (mockValue is its VALUE twin: same
+ * fixtures, so the mirror cannot claim a truthiness the mount does not
+ * take). A leg's OTHER operands see exactly this, which is what the
+ * falsy-base gate below tests against.
+ */
+function baseMockValue(
+  dep: DataDepInfo,
+  props: PropsShape | undefined,
+  apiRoutes?: NextjsApiRoute[],
+): PropValue {
+  if (dep.uncertain || dep.shape.kind === "unknown") {
+    return inferredDepReturn(dep, apiRoutes)?.value ?? {};
+  }
+  return mockValue(dep.shape, dep.calleeRoot, props);
+}
+
+/**
+ * The three gates a leg must hold, in order — the first failure is the
+ * refusal's reason, so one stable string per failure mode:
+ *
+ * 1. CANONICAL — the operand names exactly one dep and that dep's trigger
+ *    is a single mock value. `!isTrustee(x.roles)` and `x.id !== id` name
+ *    predicates and comparisons, not values: flipping the dep cannot target
+ *    them, so no leg can own the operand.
+ * 2. RESOLVABLE — the dep is an awaited import with a specifier and a
+ *    callee: only such a dep has a vi.fn for the Once-flip to land on.
+ * 3. FALSY-BASE — every operand's base mock must be TRUTHY. A leg asserts
+ *    the guard fires through ITS OWN flip; if another operand's base mock
+ *    is falsy the guard trips regardless, and the delete-one-operand
+ *    mutation keeps the test green — the falsifier the item exists for.
+ *
+ * The gate deliberately does NOT require inferredReturn: a usage-derived
+ * shape (mockValue's object/array/string/number mirrors) is every bit as
+ * good a base mock as an annotation, and requiring the annotation would
+ * refuse the very fixtures this item exists to pin.
+ */
+export function guardLegPlan(
+  g: GuardInfo,
+  info: ComponentInfo,
+  apiRoutes?: NextjsApiRoute[],
+): GuardLegPlan {
+  const ops = g.operandTriggers;
+  if (ops === undefined || ops.length < 2) return { kind: "none" };
+  const deps = info.dataDeps ?? [];
+  const legs: GuardLeg[] = [];
+  for (const op of ops) {
+    const dep = deps.find((d) => d.varName === op.depVars[0]);
+    if (op.depVars.length !== 1 || op.triggerValue === undefined)
+      return { kind: "refusal", reason: REASON_NOT_SINGLE_DEP };
+    if (dep === undefined || dep.specifier === undefined || dep.calleeRoot.length === 0)
+      return { kind: "refusal", reason: REASON_UNRESOLVED };
+    if (!baseMockValue(dep, info.propsShape, apiRoutes))
+      return { kind: "refusal", reason: REASON_FALSY_BASE };
+    legs.push({
+      operand: op,
+      dep,
+      value:
+        op.triggerValue === "empty-array"
+          ? "[]"
+          : op.triggerValue === "null"
+            ? "null"
+            : "undefined",
+    });
+  }
+  return { kind: "legs", legs };
+}
+
 export function emitModuleMocks(
   info: ComponentInfo,
   mode: MockMode,
@@ -307,6 +412,19 @@ export function emitModuleMocks(
         continue;
       }
       mergeInto(dataGroups, mi, mockSpecifier(mi, specDir));
+    }
+  }
+
+  // D1 item 5: the specifiers of the deps every surviving leg flips. The
+  // keep-real exemption below must not fire for any of these modules —
+  // computed here, from the same guardLegPlan the test emitter consults, so
+  // the mock and the leg can never disagree about which module is mocked.
+  const legDepSpecifiers = new Set<string>();
+  for (const g of info.guards ?? []) {
+    const plan = guardLegPlan(g, info, apiRoutes);
+    if (plan.kind !== "legs") continue;
+    for (const leg of plan.legs) {
+      if (leg.dep.specifier !== undefined) legDepSpecifiers.add(leg.dep.specifier);
     }
   }
 
@@ -367,7 +485,16 @@ export function emitModuleMocks(
     // lib/utils (pure `cn` for the unit) gained a graph-only `timeAgo` and
     // was mocked `async () => ({})`; a promise rendered as a child suspends
     // the tree and the spec asserted against an empty container.
-    if (group.bindings.length > 0 && group.bindings.every((b) => b.pure || b.data || b.graphOnly))
+    // D1 item 5: a multi-dep guard's leg answers that question YES — its
+    // mockResolvedValueOnce must land on the factory's vi.fn, and a pure
+    // data module left real hands the leg a function the flip cannot reach
+    // (a TypeError on the real getUser, not the guard's own throw). The
+    // exemption therefore never applies to a module that carries a leg's dep.
+    if (
+      group.bindings.length > 0 &&
+      group.bindings.every((b) => b.pure || b.data || b.graphOnly) &&
+      ![...group.specifiers].some((s) => legDepSpecifiers.has(s))
+    )
       continue;
     // Module-factory completeness, guard half (defect #4, mechanism 2). A
     // vi.mock factory REPLACES the whole module; for a package the real
@@ -564,8 +691,12 @@ vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("notFound() called"); }),
   // These abort rendering in Next; a plain vi.fn() would let a guarded
   // component run straight past its own guard and crash on the data it guards.
+  // Every exit has a stable, nameable error string — a guard test asserts the
+  // exact string its own effect raises, so an unrelated crash cannot pass it.
   redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  unauthorized: vi.fn(() => { throw new Error("NEXT_UNAUTHORIZED"); }),
+  forbidden: vi.fn(() => { throw new Error("NEXT_FORBIDDEN"); }),
   usePathname: vi.fn(() => "/"),
   useRouter: vi.fn(() => routerMock),
   useSearchParams: vi.fn(() => new URLSearchParams()),
@@ -823,14 +954,21 @@ function dataModuleMock(
     // MODULE-side name. A renamed import ({ Toaster as SonnerToaster }) under
     // the local key would leave the real importer facing a missing export.
     const key = b.isDefault ? "default" : b.moduleName || b.local;
+    const deps = depsHere.filter((d) => d.calleeRoot === b.local);
     // The factory replaces the whole module, so a pure class-string helper
     // beside the data exports has to be re-supplied here — synchronously.
-    if (b.pure) return `${key}: ${PURE_UTILITY_STUB}`;
+    // D1 item 5: a binding that IS a data dep gets the dep stub even on a
+    // pure module. A pure module was kept real by the exemption until a
+    // guard leg's dep forced it into the factory — and the sync string
+    // stub would hand a leg an empty-string base mock where it needs the
+    // awaited value its guard tests against: the guard would trip through
+    // the UN-flipped dep, and a delete-one-operand mutation kept green.
+    // Non-dep pure bindings keep the stub — that is what it exists for.
+    if (b.pure && deps.length === 0) return `${key}: ${PURE_UTILITY_STUB}`;
     // A default-imported dep is still a dep: its calleeRoot is the local
     // binding name. The old `default: vi.fn()` shortcut resolved undefined —
     // worse than {} — and, once deps could be enriched, dropped the very
     // fixture whose presence had suppressed the RSC skip escape.
-    const deps = depsHere.filter((d) => d.calleeRoot === b.local);
     const dep = deps[0];
     if (!dep) {
       if (b.isDefault) return "default: vi.fn()";

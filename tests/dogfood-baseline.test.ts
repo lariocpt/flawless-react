@@ -276,7 +276,10 @@ test("defect 7 shape (b): the promise-prop page pre-resolves the prop before cre
   // the suspended-resource act line). The page passes a promise as a prop;
   // the emitted resolver must walk props.
   const spec = read("src", "app", "promise-prop", "page.flawless.test.tsx");
-  expect(spec).toContain("const resolved = await resolveAsyncUi(props[key], depth + 1);");
+  // The prop read, in the D1c form: the `as React.ReactNode` cast is what the
+  // emitted resolver's strict-tsc pass needed (props is Record<string, unknown>).
+  expect(spec).toContain("const resolved = await resolveAsyncUi(");
+  expect(spec).toContain("props[key] as React.ReactNode,");
   // A synthesised children array carries deliberate positional keys — the
   // plan's "synthesise deliberately and say why", with the why in the comment.
   expect(spec).toContain("cloneElement(k, { key: `flawless-async-" + "${i}` })");

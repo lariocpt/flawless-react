@@ -1,13 +1,13 @@
 {
-  "_comment": "D1 depth-surface baseline (PLAN-01 chunk 5; re-pinned by chunk 6 / D1b). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below, generated NON-colocated (the D0-mirrored shape: the out-dir planes only — flawless/unit + flawless/browser). The subject is the committed depth-surface fixture (tests/fixtures/depthapp): one component per pattern the track-D plans measure (P1–P10 present/absent shapes, N1/N2 refusal controls, plus the home page and the document-root layout). `patterns` pins, per id, the emitted spec path, the assertion text found there — or 'not emitted — <reason>' naming the plan item that owns the missing behaviour — and the tier the classifier measures. tests/depthSurface.test.ts generates the same fixture colocated and cross-checks this file: a found assertion must still be emitted and every tier must still hold. Two fresh copies of the fixture generated with the binary below produced byte-identical census JSON (sha256 eb32f861cd4ce219ef91eb625d3b54c4301b0e36344d26538c34343b7d79cc5c) — the census is deterministic. D1b delta vs the chunk-5 pin (T0 12 / T1 12 / T2 2 / T3 0): P4 and P5 crossed T1→T2 — item 3's dispatch-driven request count and item 4's branch mirror pair are behaviour claims under the amended tier table; T1 12→10, T2 2→4, T0 unchanged.",
+  "_comment": "D1 depth-surface baseline (PLAN-01 chunk 5; re-pinned by chunk 6 / D1b and chunk 7 / D1c). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below, generated NON-colocated (the D0-mirrored shape: the out-dir planes only — flawless/unit + flawless/browser). The subject is the committed depth-surface fixture (tests/fixtures/depthapp): one component per pattern the track-D plans measure (P1–P10 present/absent shapes, N1/N2 refusal controls, plus the home page and the document-root layout). `patterns` pins, per id, the emitted spec path, the assertion text found there — or 'not emitted — <reason>' naming the plan item that owns the missing behaviour — and the tier the classifier measures. tests/depthSurface.test.ts generates the same fixture colocated and cross-checks this file: a found assertion must still be emitted and every tier must still hold. Two fresh copies of the fixture generated with the binary below produced byte-identical census JSON (sha256 2461763f9bd26c015a6efe88b9d72ca5567a1446950e3cffcb4cb3712d48404d) — the census is deterministic. D1b delta vs the chunk-5 pin (T0 12 / T1 12 / T2 2 / T3 0): P4 and P5 crossed T1→T2 — item 3's dispatch-driven request count and item 4's branch mirror pair are behaviour claims under the amended tier table; T1 12→10, T2 2→4, T0 unchanged. D1c delta vs the D1b pin (T0 12 / T1 10 / T2 4 / T3 0): P6 crossed T0→T2 — the per-dep guard legs each flip one operand and assert the guard's own throw message, a behaviour claim the classifier reads as T2 (depth-census classifies a message-specific rejects.toThrow as a behaviour change, the same reading as the P5 inversion legs); P7 stays T1 and gains the cap comment plus three named `not-analysed` skips for the cap-cut options. Headline: T0 12→11, T2 4→5, testsClassified 68→70, testsSkipped 1→4.",
   "target": "depth-surface fixture (tests/fixtures/depthapp)",
-  "treeHash": "2c262d9",
-  "binary": "fl-bintest-2c262d9",
-  "binarySha256": "52b167bed5a24bbdfd58723851f0455c929f67d4e9fff0389f361019ce2976c3",
-  "binaryBuiltFrom": "feat/d1b-interaction-claims @ 2c262d9 (bun build --compile --minify --outfile /tmp/opencode/fl-bintest-2c262d9 src/bin.ts)",
-  "generationCommand": "cd <copy-of-tests/fixtures/depthapp> && /tmp/opencode/fl-bintest-2c262d9 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
+  "treeHash": "df865c7",
+  "binary": "fl-bintest-df865c7",
+  "binarySha256": "89ff0e5713b0ee49c05dd3ad4846f429ecdf35b8b7ce42baf373b6e57f2ed28d",
+  "binaryBuiltFrom": "feat/d1c-guards-variants-close @ df865c7 (bun build --compile --minify --outfile /tmp/opencode/fl-bintest-df865c7 src/bin.ts)",
+  "generationCommand": "cd <copy-of-tests/fixtures/depthapp> && /tmp/opencode/fl-bintest-df865c7 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
   "censusCommand": "cd <copy-of-tests/fixtures/depthapp> && bun run <flawless-react>/scripts/depth-census.ts . --json <out>",
-  "date": "2026-11-12",
+  "date": "2026-11-13",
   "patterns": {
     "P1": {
       "spec": "flawless/unit/P1AlwaysDisabled.test.tsx",
@@ -41,12 +41,12 @@
     },
     "P6": {
       "spec": "flawless/unit/GuardedPage.test.tsx",
-      "assertion": "not emitted — D1 item 5 (PLAN-01) unshipped: classifyLogical yields a trigger only when both operands name the SAME single dep, so emitGuardTests skips the two-dep guard; the spec carries only the generic RSC contract (T0 non-empty render)",
-      "tier": "T0"
+      "assertion": "test(\"GuardedPage: throw() when getUser returns undefined (operand 1 of 2: !user)\", async () => {\n  vi.mocked(getUser).mockResolvedValueOnce(undefined as never);\n  await expect(GuardedPage()).rejects.toThrow(\"user and org are required\");\n});",
+      "tier": "T2"
     },
     "P7": {
       "spec": "flawless/unit/P7CappedVariants.test.tsx",
-      "assertion": "not emitted — D1 item 6 (PLAN-01) unshipped: the variant matrix is capped at five options (xs–xl emitted); '2xl'/'3xl'/'4xl' appear nowhere in the spec",
+      "assertion": "// variant cap: 5 of 8 exercised — the cap is --variants;\n// the cut options are skipped by name below, never dropped.",
       "tier": "T1"
     },
     "P8": {
@@ -93,17 +93,17 @@
       "specs": 26,
       "specsClassified": 26,
       "distribution": {
-        "T0": 12,
+        "T0": 11,
         "T1": 10,
-        "T2": 4,
+        "T2": 5,
         "T3": 0
       },
-      "specsStrongestT0": 12,
+      "specsStrongestT0": 11,
       "specsUnclassified": [],
       "specsAllSkipped": [],
-      "testsClassified": 68,
+      "testsClassified": 70,
       "testsUnclaimed": 9,
-      "testsSkipped": 1,
+      "testsSkipped": 4,
       "perSpec": [
         {
           "path": "flawless/browser/HomePage.spec.ts",
@@ -191,8 +191,8 @@
         },
         {
           "path": "flawless/unit/GuardedPage.test.tsx",
-          "tier": "T0",
-          "tests": 1,
+          "tier": "T2",
+          "tests": 3,
           "unclaimed": 0,
           "skipped": 0
         },
@@ -264,7 +264,7 @@
           "tier": "T1",
           "tests": 2,
           "unclaimed": 0,
-          "skipped": 0
+          "skipped": 3
         },
         {
           "path": "flawless/unit/P8EffectFetch.test.tsx",
@@ -320,9 +320,9 @@
       "unit": {
         "specs": 14,
         "distribution": {
-          "T0": 1,
+          "T0": 0,
           "T1": 10,
-          "T2": 3,
+          "T2": 4,
           "T3": 0
         }
       }

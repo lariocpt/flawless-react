@@ -737,6 +737,8 @@ function hostServer(
     'export const notFound = () => { throw new Error("notFound() called"); };',
     'export const redirect = () => { throw new Error("NEXT_REDIRECT"); };',
     'export const permanentRedirect = () => { throw new Error("NEXT_REDIRECT"); };',
+    'export const unauthorized = () => { throw new Error("NEXT_UNAUTHORIZED"); };',
+    'export const forbidden = () => { throw new Error("NEXT_FORBIDDEN"); };',
     'export const usePathname = () => "/";',
     "export const useRouter = () => __noopRouter;",
     "export const useSearchParams = () => new URLSearchParams();",

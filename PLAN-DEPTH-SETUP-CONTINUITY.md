@@ -40,6 +40,10 @@ the order is a dependency chain.
 | C3 — onboarding + prose-to-tests | `docs/plans/PLAN-10-onboarding-and-knowledge.md` | The clone-to-green path exists only as tribal knowledge; the incident rules that no test enforces are the next maintainer's landmines. |
 | C4 — reproducible dogfood | `docs/plans/PLAN-11-dogfood-reproducible.md` | Every acceptance receipt in this repo is measured on a private repo at a pinned SHA a stranger cannot fetch. |
 
+**Status (2026-11-13):** D0 — DONE. D1 — DONE-WITH-CAVEATS (Acceptance item 2 shipped
+report-only — pinned T0 never moved; the caveats are named in the PLAN-01 D1c receipts).
+D2–D4, S1–S3, C1–C4 not started.
+
 ## What "depth" means here, operationally
 
 The evaluation's complaint is unfalsifiable as stated, so the plan defines it. Every

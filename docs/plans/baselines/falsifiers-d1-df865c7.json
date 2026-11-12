@@ -1,0 +1,429 @@
+{
+  "_comment": "D1 falsifier re-score + post-D1 mutations (PLAN-01 chunk 7 / D1c). The same 18-row D0 table (mutations-c00697f.json, byte-identical) re-probed on the same pinned tree with a binary built from the D1c tip, plus 3 new rows that target shapes which only exist post-D1 (mutations-d1-df865c7.json). Re-score of the original 18: 9/16 → 9/16 — zero transitions, zero regressions, and the same single tier finding (finance-invert-trustee expected T2, caught by T1 — pre-existing, unchanged). D1's movement is tier crossings in the census, not new falsifiable shapes on these 18 rows: the MISSED rows are the payload trio (D4 owns T3), login-drop-disabled (the app has no always-disabled control), login-signin-ternary-swap (pending-state copy — D3) and finance-variant-class (variant classes are not asserted). New rows: bell-drop-read-all-fetch CAUGHT at T2, matched, by the four click-fetch tests D1b item 3 emits — the first new falsifier this table has gained; polls-new-drop-guard-dep MISSED — every one of the pinned tree's 10 multi-dep OR guards is refused by name (no per-dep legs exist on this tree), so deleting an operand from a refused guard changes nothing the frozen suite asserts; button-rename-capcut-variant MISSED — the cap-cut option is named in a skip title (disclosure, exactly as item 6 ships it) but a named skip is not a test. Rate with the new rows: 10/19. Two independent probe runs (the 18-row table, then the 21-row table, each generating its suite once) produced byte-equal results for the shared 18 rows.",
+  "target": "mybodycorpai",
+  "tree": "c00697f",
+  "date": "2026-11-13",
+  "binary": {
+    "path": "/tmp/opencode/fl-bintest-df865c7",
+    "sha256": "89ff0e5713b0ee49c05dd3ad4846f429ecdf35b8b7ce42baf373b6e57f2ed28d"
+  },
+  "generateCommand": "cd /tmp/opencode/mbc-c00697f-d1c/apps/web && /tmp/opencode/fl-bintest-df865c7 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
+  "table": "docs/plans/baselines/mutations-d1-df865c7.json (the 18 D0 rows verbatim + 3 post-D1 rows)",
+  "falsifierRate": {
+    "caught": 10,
+    "scored": 19,
+    "rate": 0.5263
+  },
+  "rescoreOfD0Rows": {
+    "caught": 9,
+    "scored": 16,
+    "rate": 0.5625,
+    "transitions": "none — identical status, catching spec, catching test and tier on all 18 rows vs falsifiers-c00697f.json"
+  },
+  "controls": {
+    "total": 2,
+    "green": 2
+  },
+  "missed": [
+    "login-signin-ternary-swap",
+    "login-email-payload-key",
+    "login-drop-disabled",
+    "finance-variant-class",
+    "invite-roles-payload-key",
+    "invite-success-copy",
+    "rate-payload-arg",
+    "polls-new-drop-guard-dep",
+    "button-rename-capcut-variant"
+  ],
+  "results": [
+    {
+      "name": "login-forgot-copy",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "change static link copy",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/LoginForm.test.tsx",
+          "test": "LoginForm static content renders \"Forgot password?\"",
+          "line": 114,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "login-email-label",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/LoginForm.test.tsx",
+          "test": "LoginForm static content renders \"Email\"",
+          "line": 114,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "login-signin-ternary-swap",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "swap a ternary branch (pending-state copy)",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "login-email-payload-key",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "change a submitted payload key",
+      "expectedTier": "T3",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "login-drop-disabled",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "remove a disabled attribute on the submit button",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "control-login-banner-rename",
+      "file": "src/app/(auth)/_components/login-form.tsx",
+      "intent": "CONTROL: internal variable rename with no observable effect — must stay green",
+      "expectedTier": "T1",
+      "control": true,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/LoginForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null,
+      "controlGreen": true
+    },
+    {
+      "name": "finance-invert-trustee",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "invert a predicate that decides which data and copy render",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 350,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "literal copy: \"Issued runs roll up invoices for eve..."
+        }
+      ],
+      "tierMatch": false
+    },
+    {
+      "name": "finance-invoice-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "swap a ternary branch (which invoice list is fetched)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 366,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "mock.calls.length toBe(n3b) — inversion leg"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-arrears-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "swap a ternary branch (arrears fetched on the wrong side)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 368,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "mock.calls.length toBe(n4b) — inversion leg"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-cardtitle-ternary-swap",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "swap a ternary branch (card title copy keyed on the predicate)",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 351,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "literal copy: \"All invoices\""
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-subtitle-copy",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "change static copy",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/FinancePage.test.tsx",
+          "test": "FinancePage: userIsTrustee flipped — 5 branch site(s) change side",
+          "line": 350,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "literal copy: \"Issued runs roll up invoices for eve..."
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "finance-variant-class",
+      "file": "src/app/dashboard/buildings/[id]/finance/page.tsx",
+      "intent": "change a variant class on the action button",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/FinancePage.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "invite-roles-label",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/InviteForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/InviteForm.test.tsx",
+          "test": "InviteForm static content renders \"Roles\"",
+          "line": 99,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "invite-roles-payload-key",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "intent": "change a submitted payload key",
+      "expectedTier": "T3",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/InviteForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "invite-success-copy",
+      "file": "src/app/dashboard/buildings/[id]/_components/invite-form.tsx",
+      "intent": "change static copy of the success banner",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/InviteForm.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "profile-postcode-copy",
+      "file": "src/app/dashboard/settings/_components/profile-form.tsx",
+      "intent": "rename a rendered field label",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/ProfileForm.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/ProfileForm.test.tsx",
+          "test": "ProfileForm static content renders \"Postcode\"",
+          "line": 108,
+          "tier": "T1",
+          "tierSource": "assertion-line",
+          "evidence": "loop/const-bound literal copy: t"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "rate-payload-arg",
+      "file": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/rate-buttons.tsx",
+      "intent": "change a submitted payload value (off-by-one star rating)",
+      "expectedTier": "T3",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/RateButtons.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "control-asha-comment",
+      "file": "src/components/mbc/asha-rail.tsx",
+      "intent": "CONTROL: comment edit with no observable effect — must stay green",
+      "expectedTier": "T1",
+      "control": true,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/AshaRail.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null,
+      "controlGreen": true
+    },
+    {
+      "name": "bell-drop-read-all-fetch",
+      "file": "src/components/mbc/notifications-bell.tsx",
+      "intent": "delete the click-triggered mark-all-read fetch (post-D1 dispatch-driven request count)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/NotificationsBell.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all click fetches and renders with a successful response",
+          "line": 121,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        },
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all stays stable while the response is delayed (loading state)",
+          "line": 140,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        },
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all survives a 500 without crashing (error state)",
+          "line": 158,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        },
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all renders the empty state for an empty payload",
+          "line": 176,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "polls-new-drop-guard-dep",
+      "file": "src/app/dashboard/buildings/[id]/polls/new/page.tsx",
+      "intent": "delete one operand from a two-dep exit guard (post-D1 per-dep guard legs)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/NewPollPage.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "button-rename-capcut-variant",
+      "file": "src/components/ui/button.tsx",
+      "intent": "rename a variant option the cap cuts — post-D1 it is named in a skip title, never rendered",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/Button.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    }
+  ]
+}
