@@ -17,6 +17,7 @@ import type {
   ClickHandler,
   ComponentInfo,
   ComponentTree,
+  DataDepInfo,
   FetchCallInfo,
   FormInfo,
   GuardEffect,
@@ -33,6 +34,7 @@ import {
   apiRouteFixture,
   dottedMockConflicts,
   emitModuleMocks,
+  guardLegPlan,
   inferredDepReturn,
   mockSpecifier,
 } from "./mocks.ts";
@@ -2796,8 +2798,15 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   const guardSummary =
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
   const staticTextTests = emitStaticTextTests(name, info, "rsc", providerImport, autoProv);
-  const guardTests = emitGuardTests(name, info);
-  const inversionTests = emitPredicateInversionTests(name, info, providerImport, specDir, autoProv);
+  const guardTests = emitGuardTests(name, info, apiRoutes);
+  const inversionTests = emitPredicateInversionTests(
+    name,
+    info,
+    providerImport,
+    specDir,
+    autoProv,
+    apiRoutes,
+  );
   // The escape needs the per-test api to skip itself from inside the catch,
   // so the callback's parameter exists only when the escape is emitted: an
   // unused `t` is a no-unused-vars error in the host, and a missing one is a
@@ -2956,9 +2965,14 @@ describe("${name} static content", () => {
  * it. The spec asserts the mock's own string, so a guard test cannot pass on
  * an unrelated crash that merely mentions the right word — the pre-D1c map
  * sent every non-notFound effect (including throw) to /NEXT_REDIRECT/, a
- * false red for a component that threw its own message. `throw` has no entry:
- * the component decides the message, so the assertion stays bare
- * (rejects.toThrow()) rather than invented.
+ * false red for a component that threw its own message. `throw` has no entry
+ * in the map: the component decides the message. When the source states that
+ * message with a string literal (GuardInfo.throwMessage, read — never
+ * invented), emitGuardTests matches it anyway, because a bare
+ * rejects.toThrow() is a false green for the delete-one-operand falsifier:
+ * the operand deleted, the page still rejects, on a later line (a TypeError
+ * off the now-unchecked dep), and ANY throw would satisfy the bare form.
+ * Only a throw whose message the source does not state stays bare.
  */
 const GUARD_EFFECT_ERROR: Record<GuardEffect, string | undefined> = {
   notFound: "/notFound\\(\\) called/",
@@ -2974,54 +2988,96 @@ const GUARD_EFFECT_ERROR: Record<GuardEffect, string | undefined> = {
  * it guards return nothing, and the component must abort the way its own
  * source says it will.
  */
-function emitGuardTests(name: string, info: ComponentInfo): string {
+function emitGuardTests(name: string, info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): string {
   const deps = info.dataDeps ?? [];
   const callArgs = rscCallArgs(info);
   const parts: string[] = [];
+  const importNames = new Map<string, string>(); // calleeRoot → specifier
+  const addImport = (dep: DataDepInfo): void => {
+    if (dep.specifier !== undefined && !importNames.has(dep.calleeRoot))
+      importNames.set(dep.calleeRoot, dep.specifier);
+  };
   for (const g of info.guards ?? []) {
-    if (g.triggerValue === undefined || g.depVars.length !== 1) continue;
-    const varName = g.depVars[0] as string;
-    const dep = deps.find((d) => d.varName === varName);
-    if (!dep?.specifier || dep.calleeRoot.length === 0) continue;
-    const value =
-      g.triggerValue === "empty-array" ? "[]" : g.triggerValue === "null" ? "null" : "undefined";
     // Emitted verbatim into the spec, so the escaping here is the escaping the
     // generated regex literal gets — double-escaping produced /notFound\\(\\)/,
     // which matches nothing.
-    const expected = GUARD_EFFECT_ERROR[g.effect];
+    //
+    // A `throw` guard matches its OWN message when the source states it with a
+    // literal (GUARD_EFFECT_ERROR has no throw entry for exactly this reason).
+    // A bare rejects.toThrow() would be a false green for the leg that owns a
+    // deleted operand: the page still rejects, on a later line, and any throw
+    // satisfies the bare form. A message the source does not state stays bare.
+    const expected =
+      GUARD_EFFECT_ERROR[g.effect] ??
+      (g.effect === "throw" && g.throwMessage !== undefined
+        ? JSON.stringify(g.throwMessage)
+        : undefined);
     const assertReject = expected
       ? `await expect(${name}(${callArgs})).rejects.toThrow(${expected});`
       : `await expect(${name}(${callArgs})).rejects.toThrow();`;
-    parts.push(`
+    if (g.triggerValue !== undefined && g.depVars.length === 1) {
+      // The single-dep trigger: one mocked value trips the guard.
+      const varName = g.depVars[0] as string;
+      const dep = deps.find((d) => d.varName === varName);
+      if (!dep?.specifier || dep.calleeRoot.length === 0) continue;
+      addImport(dep);
+      const value =
+        g.triggerValue === "empty-array" ? "[]" : g.triggerValue === "null" ? "null" : "undefined";
+      parts.push(`
 test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () => {
   vi.mocked(${dep.calleeRoot}).mockResolvedValueOnce(${value} as never);
   ${assertReject}
 });`);
+      continue;
+    }
+    // D1 item 5: a top-level OR whose operands name different deps (or values)
+    // has no consolidated trigger — but each canonical operand is a LEG: it
+    // flips its own dep to its own trigger value and asserts the effect, so
+    // the delete-one-operand mutation reds exactly the leg that operand
+    // owned. A guard that cannot be stated that way skips by name with its
+    // reason, the predicateRefusals precedent: a refusal is evidence, not a
+    // silent absence.
+    const plan = guardLegPlan(g, info, apiRoutes);
+    if (plan.kind === "none") continue;
+    if (plan.kind === "refusal") {
+      const bt = String.fromCharCode(96); // the backtick code-quote for the condition
+      const line = `${name}: ${g.effect}() on ${bt}${g.conditionRaw}${bt} — ${plan.reason}`;
+      parts.push(`
+test.skip(${JSON.stringify(line)}, () => {});`);
+      continue;
+    }
+    const n = plan.legs.length;
+    plan.legs.forEach((leg, i) => {
+      addImport(leg.dep);
+      parts.push(`
+test("${name}: ${g.effect}() when ${leg.dep.calleeRoot} returns ${leg.value} (operand ${i + 1} of ${n}: ${leg.operand.raw})", async () => {
+  vi.mocked(${leg.dep.calleeRoot}).mockResolvedValueOnce(${leg.value} as never);
+  ${assertReject}
+});`);
+    });
   }
   if (parts.length === 0) return "";
-  const imports = [
-    ...new Set(
-      (info.guards ?? [])
-        .filter((g) => g.triggerValue !== undefined && g.depVars.length === 1)
-        .map((g) => deps.find((d) => d.varName === g.depVars[0]))
-        .filter((d): d is NonNullable<typeof d> => Boolean(d?.specifier))
-        .map((d) => `import { ${d.calleeRoot} } from ${JSON.stringify(d.specifier)};`),
-    ),
-  ];
+  const imports = [...importNames].map(
+    ([callee, spec]) => `import { ${callee} } from ${JSON.stringify(spec)};`,
+  );
   // vi.mock is hoisted, so these resolve to the mocks declared above.
   return `\n${imports.join("\n")}\n${parts.join("\n")}\n`;
 }
 
 /** The import names emitGuardTests already emitted, so nothing binds twice. */
-function guardTestImportNames(info: ComponentInfo): Set<string> {
+function guardTestImportNames(info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): Set<string> {
   const deps = info.dataDeps ?? [];
-  return new Set(
-    (info.guards ?? [])
-      .filter((g) => g.triggerValue !== undefined && g.depVars.length === 1)
-      .map((g) => deps.find((d) => d.varName === g.depVars[0]))
-      .filter((d): d is NonNullable<typeof d> => Boolean(d?.specifier))
-      .map((d) => d.calleeRoot),
-  );
+  const names = new Set<string>();
+  for (const g of info.guards ?? []) {
+    if (g.triggerValue !== undefined && g.depVars.length === 1) {
+      const dep = deps.find((d) => d.varName === g.depVars[0]);
+      if (dep?.specifier !== undefined) names.add(dep.calleeRoot);
+      continue;
+    }
+    const plan = guardLegPlan(g, info, apiRoutes);
+    if (plan.kind === "legs") for (const leg of plan.legs) names.add(leg.dep.calleeRoot);
+  }
+  return names;
 }
 
 /**
@@ -3040,6 +3096,7 @@ function emitPredicateInversionTests(
   providerImport: string | undefined,
   specDir?: string,
   autoProv?: AutoProvBits,
+  apiRoutes?: NextjsApiRoute[],
 ): string {
   const controls = info.predicateInversions ?? [];
   const refusals = info.predicateRefusals ?? [];
@@ -3061,7 +3118,7 @@ function emitPredicateInversionTests(
   const mountProof = staticText[0];
   const parts: string[] = [];
   const importNames = new Map<string, string>(); // callee → import specifier
-  const already = guardTestImportNames(info);
+  const already = guardTestImportNames(info, apiRoutes);
 
   // The import must spell the module the way the vi.mock above did — a
   // relative specifier re-based onto the spec's own directory — or an

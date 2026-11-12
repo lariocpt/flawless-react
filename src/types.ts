@@ -694,6 +694,20 @@ export type GuardEffect =
   | "forbidden"
   | "throw";
 
+/**
+ * One operand of a top-level OR condition, as `classifyLogical` read it.
+ * The field's presence is the "this condition is an OR" signal: AND chains
+ * and plain conditions never record operands.
+ */
+export interface GuardOperandTrigger {
+  /** The deps this operand references, in source order — exactly one when the operand is canonical. */
+  depVars: string[];
+  /** The mocked value that makes THIS operand true on its own; undefined when the operand names no single value (a call, an un-named comparison). */
+  triggerValue?: "undefined" | "null" | "empty-array";
+  /** The operand's source text, one line, <= 80 chars — names the proof in the emitted leg. */
+  raw?: string;
+}
+
 /** An early-exit guard in a component body: `if (!x) notFound()`. */
 export interface GuardInfo {
   effect: GuardEffect;
@@ -707,6 +721,24 @@ export interface GuardInfo {
   depVars: string[];
   /** The mocked return value that makes this guard fire. */
   triggerValue?: "undefined" | "null" | "empty-array";
+  /**
+   * D1 item 5: the operands of a top-level OR, in source order — one entry
+   * per operand, canonical or not. An operand with a single depVar and a
+   * triggerValue is a leg on its own: flipping just that dep trips the OR
+   * through it, which no single consolidated trigger can say when the
+   * operands name different deps (or different values of one dep).
+   */
+  operandTriggers?: GuardOperandTrigger[];
+  /**
+   * D1 item 5: the literal message the guard's `throw new Error("…")` (or a
+   * bare `throw "…"`) raises, when the source says it with a string literal.
+   * The emitted assertion matches THIS message — read from the source, never
+   * invented — because a bare rejects.toThrow() is a false green for a leg:
+   * when the operand the leg owns is deleted, the page often still rejects,
+   * on a later line (a TypeError off the now-unchecked dep), and any throw
+   * would satisfy the bare form.
+   */
+  throwMessage?: string;
   pos: SourcePosition;
 }
 
