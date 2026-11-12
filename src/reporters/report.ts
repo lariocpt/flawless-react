@@ -132,6 +132,13 @@ export interface ReportInput {
   /** The run's root mode — the reason a non-root export went unanalysed. */
   rootMode?: string;
   /**
+   * The variant cap this run used (the `--variants` value, default 5). When a
+   * component's derived option list exceeds it, the report names the shortfall
+   * — the spec carries the same statement in its comment and its named skips
+   * (D1 item 6: a silent prefix is the dishonesty this retires).
+   */
+  variants?: number;
+  /**
    * The accumulated verdict this run just wrote: where it lives (display path)
    * and which task ids have an entry. The "N of M tasks / Not run" line is
    * retired for every plane in `tasks` — those are on record, not missing.
@@ -523,6 +530,35 @@ export function renderReportMarkdown(input: ReportInput): string {
         "T0 means mount-only — not a failure, the floor this tool guarantees and no more.",
         "",
       );
+    }
+  }
+
+  // --- variant cap ----------------------------------------------------------
+  // D1 item 6: the matrix renders at most `--variants` of each component's
+  // derived option list. When the cap bites, the report says so per component
+  // — the cut options are skipped by name in the spec, and a reader of the
+  // report alone must be able to find that out. Rendered only when something
+  // was cut: with nothing cut there is no shortfall to name.
+  {
+    const cap = input.variants ?? 5;
+    const capped = flat
+      .filter((c) => c.info.variants.length > cap)
+      .sort((a, b) => (a.info.componentName < b.info.componentName ? -1 : 1));
+    if (capped.length > 0) {
+      lines.push("## Variant cap", "");
+      lines.push(
+        `${capped.length} component(s) have more derived variant options than the cap renders.`,
+        "The cut options are skipped by name in the spec, never dropped.",
+        "",
+        "| Component | Exercised | |",
+        "| --- | ---: | --- |",
+      );
+      for (const c of capped) {
+        lines.push(
+          `| \`${c.info.componentName}\` | ${Math.min(cap, c.info.variants.length)} of ${c.info.variants.length} | the cap is \`--variants\` |`,
+        );
+      }
+      lines.push("");
     }
   }
 

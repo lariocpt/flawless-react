@@ -1744,7 +1744,15 @@ function unitSpec(
   // the analyser saw it used via member access, stand it up as {} so the read
   // yields undefined (renders as nothing) instead of crashing the spec.
   const propsLiteral = defaultsJson(synthesiseDefaults(info));
-  const variantsLiteral = JSON.stringify(info.variants.slice(0, variants));
+  // D1 item 6: the cap is honest. The full derived list is computed anyway
+  // (info.variants is the cartesian of every literal-union option); the cap
+  // decides how many the matrix RENDERS, and every option the cap cuts is
+  // skipped by name below — a silent prefix is the same class of dishonesty
+  // M1 retired for plane tallies.
+  const allVariants = info.variants;
+  const shownVariants = allVariants.slice(0, variants);
+  const cutVariants = allVariants.slice(variants);
+  const variantsLiteral = JSON.stringify(shownVariants);
   const promiseProps = info.promiseProps ?? [];
   const interactions = info.interactions;
 
@@ -1866,6 +1874,18 @@ function unitSpec(
     ? `const { container } = renderTarget(v);\n      expect(container.querySelector(${JSON.stringify(variantRootTag)}), \`\${JSON.stringify(v)} rendered no <${variantRootTag}>\`).not.toBeNull();`
     : // biome-ignore lint/suspicious/noTemplateCurlyInString: emitted-spec text — the placeholder interpolates when the SPEC runs, and must survive this generator untouched
       "expect(() => renderTarget(v), `${JSON.stringify(v)} threw on mount`).not.toThrow();";
+  // D1 item 6: one named skip per cut option — the skip contract says a skip
+  // must NAME what it cannot do, and the reason after the " — " is what the
+  // census aggregates: `not-analysed` is the category variant-capped cases
+  // belong to (PLAN-01 acceptance 3). The title mirrors the matrix test the
+  // option would have had, so the cut reads as what it is: the same test,
+  // withheld by the cap, not a different one.
+  const variantSkipLines = cutVariants
+    .map(
+      (v) =>
+        `test.skip(${JSON.stringify(`renders with ${JSON.stringify(v)} — not-analysed`)}, () => {});`,
+    )
+    .join("\n");
 
   // `Props` exists only to type the props spread, and the React import exists
   // only to declare it. A zero-prop component renders bare, so emitting either
@@ -1889,7 +1909,7 @@ ${assertedImports.join("\n")}
 ${propsAlias}${childTextConst}
 const DEFAULTS: Record<string, unknown> = ${propsLiteral};
 const PROMISE_PROPS: string[] = ${JSON.stringify(promiseProps)};
-const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
+${cutVariants.length > 0 ? `// variant cap: ${shownVariants.length} of ${allVariants.length} exercised — the cap is --variants;\n// the cut options are skipped by name below, never dropped.\n` : ""}const VARIANTS: Array<Record<string, unknown>> = ${variantsLiteral};
 const handlers: Record<string, ReturnType<typeof vi.fn>> = ${handlerObjectLiteral};
 
 beforeEach(() => {
@@ -1913,7 +1933,7 @@ function renderTarget(extra: Record<string, unknown> = {}) {
 
 ${emitContractTests(name, info)}
 ${
-  info.variants.slice(0, variants).length > 0
+  shownVariants.length > 0
     ? `describe("${name} variants", () => {
   for (const v of VARIANTS) {
     test(\`renders with \${JSON.stringify(v)}\`, () => {
@@ -1921,9 +1941,13 @@ ${
     });
   }
 });`
-    : `// no literal-union props — no variant matrix (VARIANTS kept for hand-written rows).
+    : allVariants.length > 0
+      ? `// the --variants cap cut every derived option — each is skipped by name below.
+void VARIANTS;`
+      : `// no literal-union props — no variant matrix (VARIANTS kept for hand-written rows).
 void VARIANTS;`
 }
+${variantSkipLines}
 
 ${interactionTests}
 ${staticTextTests}${stateTests}${fetchTests}${clientInversions}`;
