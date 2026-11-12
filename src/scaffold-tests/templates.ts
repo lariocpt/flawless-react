@@ -2707,7 +2707,13 @@ async function resolveAsyncUi(
   const el = node as React.ReactElement;
   const ctor = el.type as unknown as { constructor?: { name?: string } } | null;
   if (typeof el.type === "function" && ctor?.constructor?.name === "AsyncFunction") {
-    const inner = await (el.type as (props: unknown) => Promise<React.ReactNode>)(el.props);
+    // The double cast is deliberate: JSXElementConstructor covers class
+    // components too, and strict tsc refuses the single cast as
+    // non-overlapping (TS2352). The AsyncFunction probe above is the real
+    // discriminator; the cast only tells the checker what that probe proved.
+    const inner = await (el.type as unknown as (props: unknown) => Promise<React.ReactNode>)(
+      el.props,
+    );
     return resolveAsyncUi(inner, depth + 1);
   }
   // Walk EVERY prop, not just children: children is one key of props, and
@@ -2716,7 +2722,7 @@ async function resolveAsyncUi(
   const next: Record<string, unknown> = {};
   let changed = false;
   for (const key of Object.keys(props)) {
-    const resolved = await resolveAsyncUi(props[key], depth + 1);
+    const resolved = await resolveAsyncUi(props[key] as React.ReactNode, depth + 1);
     if (resolved !== props[key]) changed = true;
     next[key] = resolved;
   }
