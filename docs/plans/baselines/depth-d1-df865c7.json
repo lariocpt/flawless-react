@@ -1,0 +1,2264 @@
+{
+  "_comment": "D1 end-of-step pinned census (PLAN-01 chunk 7 / D1c, Acceptance item 2 and the aggregate closure). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below; paths are relative to apps/web. Headline scope: the out-dir suite only — flawless/unit + flawless/browser + flawless/native — exactly the D0 scopeFix shape (depth-c00697f.json), so the two files are directly comparable. D0 baseline → end-of-D1: 191 specs, T0 100 / T1 45 → 44 / T2 42 → 43 / T3 0; testsClassified 433 → 437; testsSkipped 60 → 84 (the +24 are named refusals and disclosures, all in the VERDICT skip-reason table: 4 prop-keyed one-sided branches (D1b item 4), 10 multi-dep guard refusals (D1c item 5, 5+5 by reason), 10 cap-cut variant `not-analysed` skips (D1c item 6)). T0 is unchanged — the report-only clause of Acceptance item 2 is invoked in the PLAN-01 D1c receipts with the measured reason. Two fresh census runs over this suite produced byte-identical JSON (sha256 318d5ec9889025b0cc9288f73f2e97888917df090ad4cf18c3b410f086e882b4) — the census is deterministic. The three c00697f baseline files stay byte-identical; this is an additional reading, not a re-pin.",
+  "target": "mybodycorpai",
+  "treeHash": "c00697f",
+  "binary": "fl-bintest-df865c7",
+  "binarySha256": "89ff0e5713b0ee49c05dd3ad4846f429ecdf35b8b7ce42baf373b6e57f2ed28d",
+  "binaryBuiltFrom": "feat/d1c-guards-variants-close @ df865c7 (bun build --compile --minify --outfile /tmp/opencode/fl-bintest-df865c7 src/bin.ts)",
+  "generationCommand": "cd /tmp/opencode/mbc-c00697f-d1c/apps/web && /tmp/opencode/fl-bintest-df865c7 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
+  "censusCommand": "cd /tmp/opencode/mbc-c00697f-d1c/apps/web && bun run <flawless-react>/scripts/depth-census.ts . --json <out>",
+  "date": "2026-11-13",
+  "headline": {
+    "specs": 191,
+    "distribution": {
+      "T0": 100,
+      "T1": 44,
+      "T2": 43,
+      "T3": 0
+    },
+    "specsStrongestT0": 100,
+    "specsUnclassified": 0,
+    "specsAllSkipped": 4,
+    "testsClassified": 437,
+    "testsUnclaimed": 23,
+    "testsSkipped": 84,
+    "note": "End-of-D1 pinned census (PLAN-01 chunk 7 / D1c). The headline is the out-dir suite this run emitted: unit 119 + browser 72 = 191 specs. T0 did not move (100 → 100): the pinned app's T0 population is mount/marker tests no D1 item claims — see the D1c receipts in PLAN-01 for the report-only invocation of Acceptance item 2."
+  },
+  "crossCheck": {
+    "specs": 119,
+    "specsClassified": 115,
+    "distribution": {
+      "T0": 28,
+      "T1": 45,
+      "T2": 42,
+      "T3": 0
+    },
+    "specsStrongestT0": 28,
+    "specsUnclassified": [],
+    "specsAllSkipped": [
+      "src/app/(auth)/_components/forgot-password-form.flawless.test.tsx",
+      "src/app/(auth)/_components/reset-password-form.flawless.test.tsx",
+      "src/app/dashboard/_components/dashboard-sidebar.flawless.test.tsx",
+      "src/app/dashboard/buildings/[id]/maintenance/[jobId]/_components/job-controls.flawless.test.tsx"
+    ],
+    "testsClassified": 287,
+    "testsUnclaimed": 23,
+    "testsSkipped": 50,
+    "perSpec": [
+      {
+        "path": "src/app/(auth)/_components/forgot-password-form.flawless.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/(auth)/_components/login-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/_components/oauth-buttons.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/_components/reset-password-form.flawless.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/(auth)/_components/signup-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/error.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/forgot-password/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/layout.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/login/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/reset-password/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/(auth)/signup/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/_components/dashboard-header.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/_components/dashboard-sidebar.flawless.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/_components/session-hydrator.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/_components/theme-toggle.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 5,
+        "unclaimed": 3,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/_components/user-menu.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/_components/insights-card.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/_components/invite-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/contractors/new/_components/add-contractor-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/contractors/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/contractors/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/finance/invoices/[invoiceId]/_components/record-payment.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/finance/invoices/[invoiceId]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/finance/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/finance/runs/new/_components/levy-run-wizard.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/finance/runs/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/rate-buttons.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/ticket-status-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/_components/ticket-update-composer.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/[ticketId]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/new/_components/create-ticket-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/helpdesk/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/layout.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/maintenance/[jobId]/_components/comment-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/maintenance/[jobId]/_components/job-controls.flawless.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/maintenance/[jobId]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/maintenance/new/_components/report-job-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/maintenance/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/maintenance/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/_components/action-items.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/_components/minutes-editor.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/_components/rsvp-buttons.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/[meetingId]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/new/_components/schedule-meeting-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 2,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/meetings/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/messages/[convId]/_components/message-composer.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/messages/[convId]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/messages/new/_components/create-conversation-form.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/messages/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/messages/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/_components/close-poll-button.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/_components/comment-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/_components/vote-card.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/[pollId]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/new/_components/create-poll-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 2,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/new/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/buildings/[id]/polls/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "src/app/dashboard/buildings/new/_components/add-building-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/new/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/buildings/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/error.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/layout.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/settings/_components/change-password-form.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 1
+      },
+      {
+        "path": "src/app/dashboard/settings/_components/password-section.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/settings/_components/profile-form.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/dashboard/settings/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/error.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/global-error.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/invite/[token]/page.flawless.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/layout.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/app/page.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/asha-rail.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 11,
+        "unclaimed": 9,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/notifications-bell.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/page-header.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/status-pill.InvoiceStatusPill.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/status-pill.PollStatusPill.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/status-pill.StatusPill.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/status-pill.TicketStatusPill.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/workflow-card.StatCard.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/mbc/workflow-card.WorkflowCard.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/providers/store-provider.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/providers/theme-provider.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/toaster.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "src/components/ui/alert-dialog.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/alert.Alert.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/alert.AlertDescription.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/alert.AlertTitle.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/avatar.Avatar.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/avatar.AvatarFallback.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/badge.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/button.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/card.Card.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/card.CardContent.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/card.CardDescription.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/card.CardHeader.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/card.CardTitle.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dialog.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenu.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenuContent.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenuGroup.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenuItem.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenuLabel.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenuSeparator.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/dropdown-menu.DropdownMenuTrigger.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/input.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/label.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/select.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/separator.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/sheet.Sheet.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/sheet.SheetContent.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/sheet.SheetHeader.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/sheet.SheetTitle.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/sonner.flawless.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/table.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "src/components/ui/textarea.flawless.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      }
+    ],
+    "note": "Committed colocated copies (*.flawless.test.ts(x) outside the out dir). Explicitly excluded from `headline`: the census subject is the suite this run emitted."
+  },
+  "perPlane": {
+    "browser": {
+      "specs": 72,
+      "distribution": {
+        "T0": 72,
+        "T1": 0,
+        "T2": 0,
+        "T3": 0
+      }
+    },
+    "unit": {
+      "specs": 119,
+      "distribution": {
+        "T0": 28,
+        "T1": 44,
+        "T2": 43,
+        "T3": 0
+      }
+    }
+  },
+  "census": {
+    "specs": 191,
+    "specsClassified": 187,
+    "distribution": {
+      "T0": 100,
+      "T1": 44,
+      "T2": 43,
+      "T3": 0
+    },
+    "specsStrongestT0": 100,
+    "specsUnclassified": [],
+    "specsAllSkipped": [
+      "flawless/unit/DashboardSidebar.test.tsx",
+      "flawless/unit/ForgotPasswordForm.test.tsx",
+      "flawless/unit/JobControls.test.tsx",
+      "flawless/unit/ResetPasswordForm.test.tsx"
+    ],
+    "testsClassified": 437,
+    "testsUnclaimed": 23,
+    "testsSkipped": 84,
+    "perSpec": [
+      {
+        "path": "flawless/browser/ActionItems.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AddBuildingForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AddContractorForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Alert.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AlertDescription.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AlertDialog.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AlertTitle.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AshaRail.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AuthError.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/AuthLayout.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Avatar.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Badge.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Button.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Card.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/CardContent.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/CardDescription.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/CardHeader.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/CardTitle.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/ChangePasswordForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/ClosePollButton.spec.ts",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/CommentForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/CommentForm__2.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/CreateConversationForm.spec.ts",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/CreatePollForm.spec.ts",
+        "tier": "T0",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/CreateTicketForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/DashboardError.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/DashboardHeader.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Dialog.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/DropdownMenu.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/ForgotPasswordPage.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Input.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/InviteForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/InvoiceStatusPill.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Label.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/LevyRunWizard.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/LoginForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/MessageComposer.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/MinutesEditor.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/NotificationsBell.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/OAuthButtons.spec.ts",
+        "tier": "T0",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/PageHeader.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/PasswordSection.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/PollStatusPill.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/ProfileForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/RateButtons.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/RecordPaymentForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/ReportJobForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/RootError.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/RsvpButtons.spec.ts",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/ScheduleMeetingForm.spec.ts",
+        "tier": "T0",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/Separator.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Sheet.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/SheetContent.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/SheetHeader.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/SheetTitle.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/SignupForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/SignupPage.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/StatCard.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/StatusPill.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/StoreProvider.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Table.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Textarea.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/ThemeProvider.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/ThemeToggle.spec.ts",
+        "tier": "T0",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/TicketStatusForm.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/TicketStatusPill.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/TicketUpdateComposer.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/Toaster.spec.ts",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/browser/Toaster__2.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/UserMenu.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/browser/VoteCard.spec.ts",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/browser/WorkflowCard.spec.ts",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ActionItems.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/AddBuildingForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AddContractorForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AddContractorPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/Alert.test.tsx",
+        "tier": "T1",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AlertDescription.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AlertDialog.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AlertTitle.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AshaRail.test.tsx",
+        "tier": "T1",
+        "tests": 11,
+        "unclaimed": 9,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AuthError.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AuthLayout.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Avatar.test.tsx",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/AvatarFallback.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Badge.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/BuildingDetailPage.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/BuildingScopeLayout.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/BuildingsPage.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Button.test.tsx",
+        "tier": "T1",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 9
+      },
+      {
+        "path": "flawless/unit/Card.test.tsx",
+        "tier": "T1",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/CardContent.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/CardDescription.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/CardHeader.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/CardTitle.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ChangePasswordForm.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/ClosePollButton.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/CommentForm.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/CommentForm__2.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ContractorsPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/ConversationPage.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/CreateConversationForm.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/CreatePollForm.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 2,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/CreateTicketForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DashboardError.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DashboardHeader.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DashboardLayout.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DashboardPage.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/DashboardSidebar.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/Dialog.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenu.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenuContent.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenuGroup.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenuItem.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenuLabel.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenuSeparator.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/DropdownMenuTrigger.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/FinancePage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/ForgotPasswordForm.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/ForgotPasswordPage.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/GlobalError.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/HelpdeskPage.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "flawless/unit/HomePage.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Input.test.tsx",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/InsightsCard.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/InviteForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/InvitePage.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/InvoiceDetailPage.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "flawless/unit/InvoiceStatusPill.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/JobControls.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/JobDetailPage.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/Label.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/LevyRunWizard.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/LoginForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/LoginPage.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/MaintenancePage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/MeetingDetailPage.test.tsx",
+        "tier": "T2",
+        "tests": 4,
+        "unclaimed": 0,
+        "skipped": 4
+      },
+      {
+        "path": "flawless/unit/MeetingsPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "flawless/unit/MessageComposer.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/MessagesPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/MinutesEditor.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/NewBuildingPage.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/NewConversationPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/NewLevyRunPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/NewMeetingPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/NewPollPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/NewTicketPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/NotificationsBell.test.tsx",
+        "tier": "T2",
+        "tests": 6,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/OAuthButtons.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/PageHeader.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/PasswordSection.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/PollDetailPage.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/PollStatusPill.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/PollsPage.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 3
+      },
+      {
+        "path": "flawless/unit/ProfileForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/RateButtons.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/RecordPaymentForm.test.tsx",
+        "tier": "T0",
+        "tests": 2,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ReportJobForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ReportJobPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/ResetPasswordForm.test.tsx",
+        "tier": null,
+        "tests": 0,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/ResetPasswordPage.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/RootError.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 1,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/RootLayout.test.tsx",
+        "tier": "T1",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/RsvpButtons.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/ScheduleMeetingForm.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 2,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/SelectGroup.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Separator.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SessionHydrator.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SettingsPage.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Sheet.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SheetContent.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SheetHeader.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SheetTitle.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SignupForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/SignupPage.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/StatCard.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/StatusPill.test.tsx",
+        "tier": "T1",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/StoreProvider.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Table.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/Textarea.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ThemeProvider.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/ThemeToggle.test.tsx",
+        "tier": "T1",
+        "tests": 5,
+        "unclaimed": 3,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/TicketDetailPage.test.tsx",
+        "tier": "T2",
+        "tests": 5,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/TicketStatusForm.test.tsx",
+        "tier": "T2",
+        "tests": 3,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/TicketStatusPill.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/TicketUpdateComposer.test.tsx",
+        "tier": "T2",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/Toaster.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/Toaster__2.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      },
+      {
+        "path": "flawless/unit/UserMenu.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 1
+      },
+      {
+        "path": "flawless/unit/VoteCard.test.tsx",
+        "tier": "T1",
+        "tests": 2,
+        "unclaimed": 0,
+        "skipped": 2
+      },
+      {
+        "path": "flawless/unit/WorkflowCard.test.tsx",
+        "tier": "T0",
+        "tests": 1,
+        "unclaimed": 0,
+        "skipped": 0
+      }
+    ]
+  }
+}
