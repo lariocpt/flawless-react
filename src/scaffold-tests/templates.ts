@@ -2822,7 +2822,7 @@ function buildProps(extra: Record<string, unknown> = {}): Record<string, unknown
   const guardSummary =
     guards.length > 0 ? guards.map((g) => `${g.effect}()`).join(" / ") : "no early-exit guards";
   const staticTextTests = emitStaticTextTests(name, info, "rsc", providerImport, autoProv);
-  const guardTests = emitGuardTests(name, info, apiRoutes);
+  const guardTests = emitGuardTests(name, info, apiRoutes, specDir);
   const inversionTests = emitPredicateInversionTests(
     name,
     info,
@@ -3012,14 +3012,26 @@ const GUARD_EFFECT_ERROR: Record<GuardEffect, string | undefined> = {
  * it guards return nothing, and the component must abort the way its own
  * source says it will.
  */
-function emitGuardTests(name: string, info: ComponentInfo, apiRoutes?: NextjsApiRoute[]): string {
+function emitGuardTests(
+  name: string,
+  info: ComponentInfo,
+  apiRoutes?: NextjsApiRoute[],
+  specDir?: string,
+): string {
   const deps = info.dataDeps ?? [];
   const callArgs = rscCallArgs(info);
   const parts: string[] = [];
   const importNames = new Map<string, string>(); // calleeRoot → specifier
   const addImport = (dep: DataDepInfo): void => {
-    if (dep.specifier !== undefined && !importNames.has(dep.calleeRoot))
-      importNames.set(dep.calleeRoot, dep.specifier);
+    if (dep.specifier === undefined || importNames.has(dep.calleeRoot)) return;
+    // Rebase exactly like the vi.mock line for the same module (mockSpecifier)
+    // — the legs assert through THAT mock, so the import and the mock must
+    // name one module. In colocate mode the two forms are identical; in the
+    // out-dir layout the raw specifier pointed at the component's directory,
+    // not the spec's, and died as TS2307/collect failure (the pre-D1c
+    // single-dep import carried the same latent gap).
+    const mi = (info.moduleImports ?? []).find((m) => m.specifier === dep.specifier);
+    importNames.set(dep.calleeRoot, mi !== undefined ? mockSpecifier(mi, specDir) : dep.specifier);
   };
   for (const g of info.guards ?? []) {
     // Emitted verbatim into the spec, so the escaping here is the escaping the
