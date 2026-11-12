@@ -1,5 +1,5 @@
 {
-  "_comment": "D1 falsifier re-score (PLAN-01 chunk 7 / D1c). The same 18-row D0 table (mutations-c00697f.json, byte-identical) re-probed on the same pinned tree with a binary built from the D1c tip. Result: 9/16 → 9/16 — zero transitions, zero regressions, and the same single tier finding (finance-invert-trustee expected T2, caught by T1 — pre-existing, unchanged). D1's movement is tier crossings in the census, not new falsifiable shapes on these 18 rows: the MISSED rows are the payload trio (D4 owns T3), login-drop-disabled (the app has no always-disabled control), login-signin-ternary-swap (pending-state copy — D3) and finance-variant-class (variant classes are not asserted). This commit is the re-score alone; the next commit adds three post-D1 mutations and re-runs.",
+  "_comment": "D1 falsifier re-score + post-D1 mutations (PLAN-01 chunk 7 / D1c). The same 18-row D0 table (mutations-c00697f.json, byte-identical) re-probed on the same pinned tree with a binary built from the D1c tip, plus 3 new rows that target shapes which only exist post-D1 (mutations-d1-df865c7.json). Re-score of the original 18: 9/16 → 9/16 — zero transitions, zero regressions, and the same single tier finding (finance-invert-trustee expected T2, caught by T1 — pre-existing, unchanged). D1's movement is tier crossings in the census, not new falsifiable shapes on these 18 rows: the MISSED rows are the payload trio (D4 owns T3), login-drop-disabled (the app has no always-disabled control), login-signin-ternary-swap (pending-state copy — D3) and finance-variant-class (variant classes are not asserted). New rows: bell-drop-read-all-fetch CAUGHT at T2, matched, by the four click-fetch tests D1b item 3 emits — the first new falsifier this table has gained; polls-new-drop-guard-dep MISSED — every one of the pinned tree's 10 multi-dep OR guards is refused by name (no per-dep legs exist on this tree), so deleting an operand from a refused guard changes nothing the frozen suite asserts; button-rename-capcut-variant MISSED — the cap-cut option is named in a skip title (disclosure, exactly as item 6 ships it) but a named skip is not a test. Rate with the new rows: 10/19. Two independent probe runs (the 18-row table, then the 21-row table, each generating its suite once) produced byte-equal results for the shared 18 rows.",
   "target": "mybodycorpai",
   "tree": "c00697f",
   "date": "2026-11-13",
@@ -8,13 +8,18 @@
     "sha256": "89ff0e5713b0ee49c05dd3ad4846f429ecdf35b8b7ce42baf373b6e57f2ed28d"
   },
   "generateCommand": "cd /tmp/opencode/mbc-c00697f-d1c/apps/web && /tmp/opencode/fl-bintest-df865c7 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
-  "table": "docs/plans/baselines/mutations-c00697f.json (the D0 table, byte-identical)",
+  "table": "docs/plans/baselines/mutations-d1-df865c7.json (the 18 D0 rows verbatim + 3 post-D1 rows)",
   "falsifierRate": {
+    "caught": 10,
+    "scored": 19,
+    "rate": 0.5263
+  },
+  "rescoreOfD0Rows": {
     "caught": 9,
     "scored": 16,
-    "rate": 0.5625
+    "rate": 0.5625,
+    "transitions": "none — identical status, catching spec, catching test and tier on all 18 rows vs falsifiers-c00697f.json"
   },
-  "transitionsVsD0": "none — identical status, catching spec, catching test and tier on all 18 rows vs falsifiers-c00697f.json",
   "controls": {
     "total": 2,
     "green": 2
@@ -26,7 +31,9 @@
     "finance-variant-class",
     "invite-roles-payload-key",
     "invite-success-copy",
-    "rate-payload-arg"
+    "rate-payload-arg",
+    "polls-new-drop-guard-dep",
+    "button-rename-capcut-variant"
   ],
   "results": [
     {
@@ -345,6 +352,78 @@
       "caughtBy": [],
       "tierMatch": null,
       "controlGreen": true
+    },
+    {
+      "name": "bell-drop-read-all-fetch",
+      "file": "src/components/mbc/notifications-bell.tsx",
+      "intent": "delete the click-triggered mark-all-read fetch (post-D1 dispatch-driven request count)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "caught",
+      "specsRun": [
+        "flawless/unit/NotificationsBell.test.tsx"
+      ],
+      "caughtBy": [
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all click fetches and renders with a successful response",
+          "line": 121,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        },
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all stays stable while the response is delayed (loading state)",
+          "line": 140,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        },
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all survives a 500 without crashing (error state)",
+          "line": 158,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        },
+        {
+          "spec": "flawless/unit/NotificationsBell.test.tsx",
+          "test": "NotificationsBell POST /api/me/notifications/read-all renders the empty state for an empty payload",
+          "line": 176,
+          "tier": "T2",
+          "tierSource": "assertion-line",
+          "evidence": "calls > 0 — request count read after a dispatch"
+        }
+      ],
+      "tierMatch": true
+    },
+    {
+      "name": "polls-new-drop-guard-dep",
+      "file": "src/app/dashboard/buildings/[id]/polls/new/page.tsx",
+      "intent": "delete one operand from a two-dep exit guard (post-D1 per-dep guard legs)",
+      "expectedTier": "T2",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/NewPollPage.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
+    },
+    {
+      "name": "button-rename-capcut-variant",
+      "file": "src/components/ui/button.tsx",
+      "intent": "rename a variant option the cap cuts — post-D1 it is named in a skip title, never rendered",
+      "expectedTier": "T1",
+      "control": false,
+      "status": "missed",
+      "specsRun": [
+        "flawless/unit/Button.test.tsx"
+      ],
+      "caughtBy": [],
+      "tierMatch": null
     }
   ]
 }
