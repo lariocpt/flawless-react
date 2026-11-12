@@ -19,6 +19,7 @@ import type {
   ComponentTree,
   FetchCallInfo,
   FormInfo,
+  GuardEffect,
   LabelSource,
   NextjsApiRoute,
   PredicateSiteInfo,
@@ -1038,6 +1039,8 @@ ${pinImports}import * as __flNodeModule from "node:module";
     "export function notFound(){throw new Error('notFound() called')}" +
     "export function redirect(){throw new Error('NEXT_REDIRECT')}" +
     "export function permanentRedirect(){throw new Error('NEXT_REDIRECT')}" +
+    "export function unauthorized(){throw new Error('NEXT_UNAUTHORIZED')}" +
+    "export function forbidden(){throw new Error('NEXT_FORBIDDEN')}" +
     "export function usePathname(){return '/'}" +
     "export function useRouter(){return{push:noop,replace:noop,refresh:noop,back:noop,forward:noop,prefetch:noop}}" +
     "export function useSearchParams(){return new URLSearchParams()}" +
@@ -1497,8 +1500,12 @@ if (typeof window !== "undefined") {
  // internally. Per-test mocks still override for specific components.
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("notFound() called"); }),
+  // Every guard exit raises a stable, nameable string: a guard test asserts the
+  // exact string its own effect raises, so an unrelated crash cannot pass it.
   redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  unauthorized: vi.fn(() => { throw new Error("NEXT_UNAUTHORIZED"); }),
+  forbidden: vi.fn(() => { throw new Error("NEXT_FORBIDDEN"); }),
   usePathname: vi.fn(() => "/"),
   useRouter: vi.fn(() => ({
     push: vi.fn(),
@@ -2817,9 +2824,9 @@ test("${name} (RSC): resolves, or takes one of its declared guard paths", async 
     const ui: React.ReactNode = await resolveAsyncUi(await ${name}(${callArgs}));
     ${renderExpr};
   } catch (err) {
-    // notFound()/redirect() are legitimate outcomes when the mocked data layer
-    // returns nothing — this component declares ${guardSummary}.
-    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;
+    // notFound()/redirect()/unauthorized()/forbidden() are legitimate outcomes
+    // when the mocked data layer returns nothing — this component declares ${guardSummary}.
+    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_UNAUTHORIZED|NEXT_FORBIDDEN/.test(String(err))) return;
 ${esc}    // Not a guard and not an admitted gap: a real failure, reported as itself
     // rather than as a confusing "expected TypeError to match /notFound/".
     throw err;
@@ -2916,12 +2923,12 @@ function emitStaticTextTests(
       try {
         ui = await resolveAsyncUi(await ${name}(${callArgs}));
       } catch (err) {
-        // A declared guard path (notFound()/redirect() against empty mocks):
-        // the main test already asserts that outcome, so this one has no text
-        // to assert — but it says so by NAME. A bare \`catch { return; }\`
-        // here is how a red suite pretends to be green.
-        if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) {
-          console.warn(\`[flawless] ${name} takes a guard path (notFound/redirect) at these props — no static text renders\`);
+        // A declared guard path (notFound()/redirect()/unauthorized()/forbidden()
+        // against empty mocks): the main test already asserts that outcome, so
+        // this one has no text to assert — but it says so by NAME. A bare
+        // \`catch { return; }\` here is how a red suite pretends to be green.
+        if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_UNAUTHORIZED|NEXT_FORBIDDEN/.test(String(err))) {
+          console.warn(\`[flawless] ${name} takes a guard path (notFound/redirect/unauthorized/forbidden) at these props — no static text renders\`);
           ctx.skip();
           return;
         }
@@ -2945,6 +2952,24 @@ describe("${name} static content", () => {
 }
 
 /**
+ * What each guard effect throws, as the emitted next/navigation mock raises
+ * it. The spec asserts the mock's own string, so a guard test cannot pass on
+ * an unrelated crash that merely mentions the right word — the pre-D1c map
+ * sent every non-notFound effect (including throw) to /NEXT_REDIRECT/, a
+ * false red for a component that threw its own message. `throw` has no entry:
+ * the component decides the message, so the assertion stays bare
+ * (rejects.toThrow()) rather than invented.
+ */
+const GUARD_EFFECT_ERROR: Record<GuardEffect, string | undefined> = {
+  notFound: "/notFound\\(\\) called/",
+  redirect: "/NEXT_REDIRECT/",
+  permanentRedirect: "/NEXT_REDIRECT/",
+  unauthorized: "/NEXT_UNAUTHORIZED/",
+  forbidden: "/NEXT_FORBIDDEN/",
+  throw: undefined,
+};
+
+/**
  * A guard whose trigger value is known can be asserted directly: make the dep
  * it guards return nothing, and the component must abort the way its own
  * source says it will.
@@ -2963,11 +2988,14 @@ function emitGuardTests(name: string, info: ComponentInfo): string {
     // Emitted verbatim into the spec, so the escaping here is the escaping the
     // generated regex literal gets — double-escaping produced /notFound\\(\\)/,
     // which matches nothing.
-    const expected = g.effect === "notFound" ? "/notFound\\(\\) called/" : "/NEXT_REDIRECT/";
+    const expected = GUARD_EFFECT_ERROR[g.effect];
+    const assertReject = expected
+      ? `await expect(${name}(${callArgs})).rejects.toThrow(${expected});`
+      : `await expect(${name}(${callArgs})).rejects.toThrow();`;
     parts.push(`
 test("${name}: ${g.effect}() when ${dep.calleeRoot} returns ${value}", async () => {
   vi.mocked(${dep.calleeRoot}).mockResolvedValueOnce(${value} as never);
-  await expect(${name}(${callArgs})).rejects.toThrow(${expected});
+  ${assertReject}
 });`);
   }
   if (parts.length === 0) return "";

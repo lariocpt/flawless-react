@@ -564,8 +564,12 @@ vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("notFound() called"); }),
   // These abort rendering in Next; a plain vi.fn() would let a guarded
   // component run straight past its own guard and crash on the data it guards.
+  // Every exit has a stable, nameable error string — a guard test asserts the
+  // exact string its own effect raises, so an unrelated crash cannot pass it.
   redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
   permanentRedirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }),
+  unauthorized: vi.fn(() => { throw new Error("NEXT_UNAUTHORIZED"); }),
+  forbidden: vi.fn(() => { throw new Error("NEXT_FORBIDDEN"); }),
   usePathname: vi.fn(() => "/"),
   useRouter: vi.fn(() => routerMock),
   useSearchParams: vi.fn(() => new URLSearchParams()),

@@ -220,8 +220,15 @@ test("P6 — a two-dep guard gets the generic RSC contract, no guard fixture (D1
   expect(spec).toContain(
     `test("GuardedPage (RSC): resolves, or takes one of its declared guard paths", async () => {`,
   );
+  // The extended regex no longer fits the formatter's line width, so the
+  // pinned bytes are the wrapped form the emitter writes out.
   expect(spec).toContain(
-    `    if (/notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND/.test(String(err))) return;`,
+    `    if (\n` +
+      `      /notFound\\(\\) called|NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_UNAUTHORIZED|NEXT_FORBIDDEN/.test(\n` +
+      `        String(err),\n` +
+      `      )\n` +
+      `    )\n` +
+      `      return;`,
   );
   expect(spec).toContain(`  expect(rendered?.container.innerHTML.length ?? 0).toBeGreaterThan(0);`);
   expect(spec).toContain(`  void screen;`);
