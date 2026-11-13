@@ -211,6 +211,28 @@ export interface UnitBrowserRenderOptions {
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
   const flat = flattenTrees(opts.trees);
+  // Field names this component's SUBTREE renders as text — the DOM port of
+  // the native plane's renderedFields (nativeTemplates.ts:84): `{building.name}`
+  // in a row component records propUsage { kind: "jsx-child", member: "name" },
+  // and every child's members count, because the walk is over the subtree and
+  // the evidence is attributed to the entry file. The D2a content witness
+  // (PLAN-02 item 1) is its only consumer: a fixture value under a rendered
+  // field is the only string the fetch-success assertion can claim is the
+  // fetched data — no display-key heuristic is involved anywhere.
+  const renderedFields = new Map<string, Set<string>>();
+  for (const tree of opts.trees) {
+    const members = new Set<string>();
+    const walk = (t: ComponentTree): void => {
+      for (const u of t.entry.propUsage ?? []) {
+        if (u.kind === "jsx-child" && u.member) members.add(u.member);
+      }
+      for (const child of t.children) walk(child);
+    };
+    walk(tree);
+    const existing = renderedFields.get(tree.entry.filePath) ?? new Set<string>();
+    for (const m of members) existing.add(m);
+    renderedFields.set(tree.entry.filePath, existing);
+  }
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
   const authStubs = collectAuthStubs(
@@ -295,7 +317,14 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
         absPath,
         skipIfExists: true,
         content: ensureJestDomAugmentation(
-          renderUnitFile(c, opts, srcDir, `./${base}`, opts.todos?.for(absPath)),
+          renderUnitFile(
+            c,
+            opts,
+            srcDir,
+            `./${base}`,
+            renderedFields.get(c.info.filePath) ?? new Set(),
+            opts.todos?.for(absPath),
+          ),
         ),
       });
     } else {
@@ -311,6 +340,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
             opts,
             fromDir,
             toRel(fromDir, c.info.filePath),
+            renderedFields.get(c.info.filePath) ?? new Set(),
             opts.todos?.for(target),
           ),
         ),
@@ -383,6 +413,8 @@ function renderUnitFile(
   opts: UnitBrowserRenderOptions,
   specDir: string,
   importPath: string,
+  /** Field names this component's subtree renders as text (jsx-child). */
+  renderedFields: Set<string>,
   todo?: TodoRecorder,
 ): string {
   const providerImport = opts.provider ? toImportPath(specDir, opts.provider) : undefined;
@@ -443,6 +475,7 @@ test("${name} is a next/og route handler", () => {
         providerImport,
         mocksImport,
         opts.apiRoutes,
+        renderedFields,
         specDir,
         todo,
         autoProv,
@@ -1710,6 +1743,8 @@ function unitSpec(
   providerImport: string | undefined,
   mocksImport: string | undefined,
   apiRoutes: NextjsApiRoute[] | undefined,
+  /** Field names this component's subtree renders as text (jsx-child). */
+  renderedFields: Set<string>,
   specDir?: string,
   todo?: TodoRecorder,
   autoProv?: AutoProvBits,
@@ -1833,6 +1868,7 @@ function unitSpec(
           fetchSubjects,
           apiRoutes,
           firstClickTrigger(info),
+          renderedFields,
           todo,
           hardDispatch,
         )
@@ -2374,6 +2410,8 @@ function emitFetchTests(
   fetches: FetchCallInfo[],
   apiRoutes: NextjsApiRoute[] | undefined,
   trigger: string | undefined,
+  /** Field names this component's subtree renders as text (jsx-child). */
+  renderedFields: Set<string>,
   todo?: TodoRecorder,
   hardDispatch?: Map<FetchCallInfo, string>,
 ): string {
@@ -2408,6 +2446,14 @@ function emitFetchTests(
       fixture !== undefined
         ? "// Fixture from the project's OpenAPI spec examples."
         : todoLine("no example found in the API spec — replace {} with a realistic fixture.");
+    // D2a (PLAN-02 item 2): the witness the success scenario may assert. The
+    // success test is the DECLARED-loaded-state test — its own handler returns
+    // exactly the FIXTURE above — so the fixture's value on screen is a claim
+    // about the fetched data, and the branch-stability rule (item 6) cannot
+    // conflict with it: the test declares the loaded branch, and this fixture
+    // is what makes that declaration true. When no rendered field carries a
+    // sentinel value the named TODO stays — the refusal is the rule, not a bug.
+    const witness = contentWitness(fixture, renderedFields);
 
     // URL holes that are props default to "" and would collapse a path
     // segment (/api/x//y never matches :param) — render with real values.
@@ -2427,7 +2473,11 @@ describe("${name} ${f.method} ${mswPath}", () => {
     const { container } = renderTarget(${renderArg});
     void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
-    ${todoLine("assert rendered content derived from FIXTURE.")}
+    ${
+      witness !== undefined
+        ? `// Content witness: the handler above returns the FIXTURE, and this\n    // component's subtree renders \`${witness.field}\` as text (propUsage\n    // jsx-child) — so the fixture's value at \`${witness.path}\` on screen proves\n    // the fetched data rendered, not copy that happens to match.\n    expect(screen.getAllByText(${JSON.stringify(witness.value)}, { exact: false }).length).toBeGreaterThan(0);`
+        : todoLine("assert rendered content derived from FIXTURE.")
+    }
   });
 
   test("stays stable while the response is delayed (loading state)", async () => {
