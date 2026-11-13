@@ -13,7 +13,7 @@
             "description": "OK",
             "content": {
               "application/json": {
-                "example": { "greeting": "Hello from the API" }
+                "example": { "greeting": "flawless-depthapp-p8" }
               }
             }
           }

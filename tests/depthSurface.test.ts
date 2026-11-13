@@ -31,7 +31,12 @@ import { classifySpec, type Tier } from "../src/reporters/depth.ts";
  * (items 3 and 4 shipped), each now a T2 surface row. Tier notes:
  * the classifier reads toBeDisabled as T2 (src/reporters/depth.ts:521) while
  * the D1a receipt calls it T1 — the census records the classifier's reading,
- * so P1 is pinned T2 here.
+ * so P1 is pinned T2 here. Re-pinned by D2a (PLAN-02 items 1–2): P8 crossed
+ * T1→T3 — the fixture restructure (parent fetches into state, child renders
+ * {data.greeting}) makes the OpenAPI example value witness-eligible, and the
+ * success scenario now asserts it on screen; the pin bytes are measured
+ * in-process on this tree, and the census block plus the binary lineage
+ * follow in the re-pin commit built from it.
  */
 
 const FIXTURE = path.resolve(__dirname, "fixtures", "depthapp");
@@ -284,29 +289,44 @@ test("P7 — the variant matrix names what the cap cut, as skips (D1 item 6, shi
   expect(specTier(SPEC_BY_ID.P7)).toBe("T1");
 });
 
-test("P8 — the effect fetch gets four state tests; the content witness is absent (D2, unshipped)", () => {
+test("P8 — the effect fetch gets four state tests; the success test asserts the content witness (D2a, shipped)", () => {
   const spec = read(SPEC_BY_ID.P8);
   expect(spec).toContain(`import { delay, HttpResponse, http } from "msw";`);
   expect(spec).toContain(`import { server } from "../../flawless/mocks/node";`);
   expect(spec).toContain(`describe("P8EffectFetch GET /api/items", () => {`);
-  expect(spec).toContain(`  const FIXTURE: unknown = { greeting: "Hello from the API" };`);
+  expect(spec).toContain(`  const FIXTURE: unknown = { greeting: "flawless-depthapp-p8" };`);
   const waitFors = spec.match(
     /await waitFor\(\(\) => expect\(calls\)\.toBeGreaterThan\(0\), \{ timeout: 3000 \}\);/g,
   );
   expect(waitFors ?? []).toHaveLength(4);
-  expect(spec.match(/\/\/ TODO\(flawless\):/g) ?? []).toHaveLength(4);
+  // D2a removes exactly one of the four TODOs: the success one, replaced by
+  // the witness. The loading/error/empty TODOs are D3's subject and stay.
+  expect(spec.match(/\/\/ TODO\(flawless\):/g) ?? []).toHaveLength(3);
   expect(spec).toContain(`        return new HttpResponse(null, { status: 500 });`);
   expect(spec).toContain(`  for (const t of ["Loading…"]) {`);
-  expect(spec).toContain(`// Detected state:\n//   greeting / setGreeting (unknown) = null`);
-  // D2's absence: the fixture value is carried into every fetch test but never
-  // asserted — every line that names it is a handler line, never an expect
-  // line. (The FIXTURE pin above guarantees this loop is not a no-op.)
-  for (const line of spec.split("\n")) {
-    if (line.includes(`greeting: "Hello from the API"`)) {
-      expect(line).not.toContain("expect(");
-    }
-  }
-  expect(specTier(SPEC_BY_ID.P8)).toBe("T1");
+  // The restructure that made the witness possible: the parent fetches the
+  // payload into `data` and hands it to Greeting, which renders {data.greeting}
+  // — a prop field the subtree provably renders as text, not a local-state
+  // read (the old shape, {greeting} from setGreeting, was the refusal).
+  expect(spec).toContain(`// Detected state:\n//   data / setData (unknown) = null`);
+  // The old D2 absence is now the witness, pinned byte-for-byte: field and
+  // path are both `greeting`, the value is the OpenAPI example's own string.
+  expect(spec).toContain(
+    `    // Content witness: the handler above returns the FIXTURE, and this\n` +
+      `    // component's subtree renders \`greeting\` as text (propUsage\n` +
+      `    // jsx-child) — so the fixture's value at \`greeting\` on screen proves\n` +
+      `    // the fetched data rendered, not copy that happens to match.`,
+  );
+  expect(spec).toContain(
+    `    expect(screen.getAllByText("flawless-depthapp-p8", { exact: false }).length).toBeGreaterThan(0);`,
+  );
+  expect(spec).not.toContain(`assert rendered content derived from FIXTURE`);
+  // The D0 ruler (095e8a8) reads a positive text query quoting a flawless-
+  // sentinel as T3 — the first T3 on this surface.
+  expect(specTier(SPEC_BY_ID.P8)).toBe("T3");
+  expect(testTier(SPEC_BY_ID.P8, "mount fetches and renders with a successful response")).toBe(
+    "T3",
+  );
 });
 
 test("P9 — the setter click is a canary; no text witness for the transition (D3, unshipped)", () => {

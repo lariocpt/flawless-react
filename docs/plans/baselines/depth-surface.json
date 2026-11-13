@@ -51,8 +51,9 @@
     },
     "P8": {
       "spec": "flawless/unit/P8EffectFetch.test.tsx",
-      "assertion": "not emitted — D2 (PLAN-02) unshipped: the four msw fetch-state tests exist (FIXTURE = { greeting: \"Hello from the API\" }, waitFor call-count) but the fixture value is never asserted — every test ends in TODO(flawless)",
-      "tier": "T1"
+      "assertion": "    // Content witness: the handler above returns the FIXTURE, and this\n    // component's subtree renders `greeting` as text (propUsage\n    // jsx-child) — so the fixture's value at `greeting` on screen proves\n    // the fetched data rendered, not copy that happens to match.\n    expect(screen.getAllByText(\"flawless-depthapp-p8\", { exact: false }).length).toBeGreaterThan(0);",
+      "tier": "T3",
+      "note": "D2a (PLAN-02 items 1–2, shipped on feat/d2a-content-witness): the fixture restructure (parent fetches the payload into `data`, non-exported Greeting renders {data.greeting}) is the witness-eligible shape — a prop field the subtree provably renders as text (propUsage jsx-child), not a local-state read. The success scenario asserts the OpenAPI example value on screen (field `greeting`, path `greeting`); the D0 ruler (095e8a8) reads the quoted flawless- sentinel text query as T3 — the first T3 on this surface. The other three fetch-state tests keep their TODOs (D3 owns the loading indicator and the error-state UI; the empty branch's copy has no harvested literal to witness)."
     },
     "P9": {
       "spec": "flawless/unit/P9SetterTransition.test.tsx",
