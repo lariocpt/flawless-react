@@ -1,11 +1,11 @@
 {
-  "_comment": "D1 depth-surface baseline (PLAN-01 chunk 5; re-pinned by chunk 6 / D1b and chunk 7 / D1c). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below, generated NON-colocated (the D0-mirrored shape: the out-dir planes only — flawless/unit + flawless/browser). The subject is the committed depth-surface fixture (tests/fixtures/depthapp): one component per pattern the track-D plans measure (P1–P10 present/absent shapes, N1/N2 refusal controls, plus the home page and the document-root layout). `patterns` pins, per id, the emitted spec path, the assertion text found there — or 'not emitted — <reason>' naming the plan item that owns the missing behaviour — and the tier the classifier measures. tests/depthSurface.test.ts generates the same fixture colocated and cross-checks this file: a found assertion must still be emitted and every tier must still hold. Two fresh copies of the fixture generated with the binary below produced byte-identical census JSON (sha256 2461763f9bd26c015a6efe88b9d72ca5567a1446950e3cffcb4cb3712d48404d) — the census is deterministic. D1b delta vs the chunk-5 pin (T0 12 / T1 12 / T2 2 / T3 0): P4 and P5 crossed T1→T2 — item 3's dispatch-driven request count and item 4's branch mirror pair are behaviour claims under the amended tier table; T1 12→10, T2 2→4, T0 unchanged. D1c delta vs the D1b pin (T0 12 / T1 10 / T2 4 / T3 0): P6 crossed T0→T2 — the per-dep guard legs each flip one operand and assert the guard's own throw message, a behaviour claim the classifier reads as T2 (depth-census classifies a message-specific rejects.toThrow as a behaviour change, the same reading as the P5 inversion legs); P7 stays T1 and gains the cap comment plus three named `not-analysed` skips for the cap-cut options. Headline: T0 12→11, T2 4→5, testsClassified 68→70, testsSkipped 1→4.",
+  "_comment": "D1 depth-surface baseline (PLAN-01 chunk 5; re-pinned by chunk 6 / D1b, chunk 7 / D1c, and D2a on feat/d2a-content-witness). The census is the output of `bun run scripts/depth-census.ts` over the suite emitted by the binary named below, generated NON-colocated (the D0-mirrored shape: the out-dir planes only — flawless/unit + flawless/browser). The subject is the committed depth-surface fixture (tests/fixtures/depthapp): one component per pattern the track-D plans measure (P1–P10 present/absent shapes, N1/N2 refusal controls, plus the home page and the document-root layout). `patterns` pins, per id, the emitted spec path, the assertion text found there — or 'not emitted — <reason>' naming the plan item that owns the missing behaviour — and the tier the classifier measures. tests/depthSurface.test.ts generates the same fixture colocated and cross-checks this file: a found assertion must still be emitted and every tier must still hold. Two fresh copies of the fixture generated with the binary below produced byte-identical census JSON (sha256 2c8ffcd79c795e5378efc216bda86f2dc076c6c6eeb105baee7eb7804c37f590) — the census is deterministic. D1b delta vs the chunk-5 pin (T0 12 / T1 12 / T2 2 / T3 0): P4 and P5 crossed T1→T2 — item 3's dispatch-driven request count and item 4's branch mirror pair are behaviour claims under the amended tier table; T1 12→10, T2 2→4, T0 unchanged. D1c delta vs the D1b pin (T0 12 / T1 10 / T2 4 / T3 0): P6 crossed T0→T2 — the per-dep guard legs each flip one operand and assert the guard's own throw message, a behaviour claim the classifier reads as T2 (depth-census classifies a message-specific rejects.toThrow as a behaviour change, the same reading as the P5 inversion legs); P7 stays T1 and gains the cap comment plus three named `not-analysed` skips for the cap-cut options. Headline: T0 12→11, T2 4→5, testsClassified 68→70, testsSkipped 1→4. D2a delta vs the D1c pin (T0 11 / T1 10 / T2 5 / T3 0): P8 crossed T1→T3 — the fixture restructure (parent fetches the payload into state, non-exported Greeting renders {data.greeting}) makes the OpenAPI example value witness-eligible (field and path both `greeting`), and the success scenario now asserts it on screen — the quoted flawless- sentinel text query the D0 ruler (095e8a8) reads as T3: the first T3 on this surface. The success test moves from unclaimed to classified (testsUnclaimed 9→8); the total test declaration count is unchanged (70) and no other row moved — T0 11 and T2 5 stand.",
   "target": "depth-surface fixture (tests/fixtures/depthapp)",
-  "treeHash": "df865c7",
-  "binary": "fl-bintest-df865c7",
-  "binarySha256": "89ff0e5713b0ee49c05dd3ad4846f429ecdf35b8b7ce42baf373b6e57f2ed28d",
-  "binaryBuiltFrom": "feat/d1c-guards-variants-close @ df865c7 (bun build --compile --minify --outfile /tmp/opencode/fl-bintest-df865c7 src/bin.ts)",
-  "generationCommand": "cd <copy-of-tests/fixtures/depthapp> && /tmp/opencode/fl-bintest-df865c7 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
+  "treeHash": "cc6bbbd",
+  "binary": "fl-bintest-cc6bbbd",
+  "binarySha256": "fd2642eff11f677b340ce255b60f7ade52c74e04883471667658e2c5b28c2cdb",
+  "binaryBuiltFrom": "feat/d2a-content-witness @ cc6bbbd (bun build --compile --minify --outfile /tmp/opencode/fl-bintest-cc6bbbd src/bin.ts)",
+  "generationCommand": "cd <copy-of-tests/fixtures/depthapp> && /tmp/opencode/fl-bintest-cc6bbbd 'src/**/*.tsx' --nextjs --api openapi.json --report --tasks perf-harness,unit-browser,perf-static,a11y,react-rules,e2e,load",
   "censusCommand": "cd <copy-of-tests/fixtures/depthapp> && bun run <flawless-react>/scripts/depth-census.ts . --json <out>",
   "date": "2026-11-13",
   "patterns": {
@@ -51,8 +51,9 @@
     },
     "P8": {
       "spec": "flawless/unit/P8EffectFetch.test.tsx",
-      "assertion": "not emitted — D2 (PLAN-02) unshipped: the four msw fetch-state tests exist (FIXTURE = { greeting: \"Hello from the API\" }, waitFor call-count) but the fixture value is never asserted — every test ends in TODO(flawless)",
-      "tier": "T1"
+      "assertion": "    // Content witness: the handler above returns the FIXTURE, and this\n    // component's subtree renders `greeting` as text (propUsage\n    // jsx-child) — so the fixture's value at `greeting` on screen proves\n    // the fetched data rendered, not copy that happens to match.\n    expect(screen.getAllByText(\"flawless-depthapp-p8\", { exact: false }).length).toBeGreaterThan(0);",
+      "tier": "T3",
+      "note": "D2a (PLAN-02 items 1–2, shipped on feat/d2a-content-witness): the fixture restructure (parent fetches the payload into `data`, non-exported Greeting renders {data.greeting}) is the witness-eligible shape — a prop field the subtree provably renders as text (propUsage jsx-child), not a local-state read. The success scenario asserts the OpenAPI example value on screen (field `greeting`, path `greeting`); the D0 ruler (095e8a8) reads the quoted flawless- sentinel text query as T3 — the first T3 on this surface. The other three fetch-state tests keep their TODOs (D3 owns the loading indicator and the error-state UI; the empty branch's copy has no harvested literal to witness)."
     },
     "P9": {
       "spec": "flawless/unit/P9SetterTransition.test.tsx",
@@ -94,15 +95,15 @@
       "specsClassified": 26,
       "distribution": {
         "T0": 11,
-        "T1": 10,
+        "T1": 9,
         "T2": 5,
-        "T3": 0
+        "T3": 1
       },
       "specsStrongestT0": 11,
       "specsUnclassified": [],
       "specsAllSkipped": [],
       "testsClassified": 70,
-      "testsUnclaimed": 9,
+      "testsUnclaimed": 8,
       "testsSkipped": 4,
       "perSpec": [
         {
@@ -268,9 +269,9 @@
         },
         {
           "path": "flawless/unit/P8EffectFetch.test.tsx",
-          "tier": "T1",
+          "tier": "T3",
           "tests": 6,
-          "unclaimed": 4,
+          "unclaimed": 3,
           "skipped": 0
         },
         {
@@ -321,9 +322,9 @@
         "specs": 14,
         "distribution": {
           "T0": 0,
-          "T1": 10,
+          "T1": 9,
           "T2": 4,
-          "T3": 0
+          "T3": 1
         }
       }
     }

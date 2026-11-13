@@ -258,6 +258,81 @@ describe("classifySpec — one case per tier", () => {
   });
 });
 
+describe("classifySpec — the D2a sentinel-witness rule (guard-the-guard)", () => {
+  // A text query over a quoted `flawless-` sentinel is the one literal that
+  // reads T3: the value came from a fixture the test feeds, so a data-flow
+  // change falsifies it. Every neighbouring shape below must read what it
+  // always read — the rule may not bleed past the sentinel prefix.
+
+  test("a plain literal text query stays T1, with or without an options arg", () => {
+    const spec = `
+test("renders the copy", () => {
+  renderTarget();
+  expect(screen.getAllByText("Pending", { exact: false }).length).toBeGreaterThan(0);
+});
+`;
+    const c = classifySpec(spec);
+    expect(c.tier).toBe("T1");
+    expect(c.perTest[0]?.evidence.join(" ")).toContain("literal text witness");
+  });
+
+  test("a quoted flawless- sentinel as the query's first argument reads T3", () => {
+    const spec = `
+describe("Greeting GET /api/items", () => {
+  const URL = "/api/items";
+  const FIXTURE: unknown = { greeting: "flawless-depthapp-p8" };
+
+  test("mount fetches and renders with a successful response", async () => {
+    let calls = 0;
+    server.use(http.get(URL, () => { calls++; return HttpResponse.json(FIXTURE as never); }));
+    const { container } = renderTarget();
+    void container;
+    await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
+    expect(screen.getAllByText("flawless-depthapp-p8", { exact: false }).length).toBeGreaterThan(0);
+  });
+});
+`;
+    const c = classifySpec(spec);
+    expect(c.tier).toBe("T3");
+    expect(c.unclaimed).toBe(0);
+    expect(c.perTest[0]?.evidence.join(" ")).toContain("fixture sentinel text witness");
+  });
+
+  test("the sentinel rule is matcher-blind: toBeInTheDocument over a sentinel reads T3 too", () => {
+    const spec = `
+test("renders the witness", () => {
+  renderTarget();
+  expect(screen.getByText("flawless-depthapp-p8")).toBeInTheDocument();
+});
+`;
+    expect(classifySpec(spec).tier).toBe("T3");
+  });
+
+  test("GUARD: an absence leg over a sentinel is NOT T3 — not-legs never over-read", () => {
+    const spec = `
+test("does not render the witness", () => {
+  renderTarget();
+  expect(screen.queryByText("flawless-depthapp-p8")).not.toBeInTheDocument();
+});
+`;
+    const c = classifySpec(spec);
+    expect(c.tier).toBe("T0");
+  });
+
+  test("GUARD: a sentinel bound to a const is a named value — it stays T1, not T3", () => {
+    const spec = `
+test("renders the children", () => {
+  const CHILD_TEXT = "flawless child";
+  renderTarget({ children: CHILD_TEXT });
+  expect(screen.getAllByText(CHILD_TEXT).length).toBeGreaterThan(0);
+});
+`;
+    const c = classifySpec(spec);
+    expect(c.tier).toBe("T1");
+    expect(c.perTest[0]?.evidence.join(" ")).toContain("loop/const-bound literal copy");
+  });
+});
+
 describe("classifySpec — the lying-shape guards", () => {
   test("GUARD: a T2 spec with its spy assertion deleted reads T0", () => {
     const neutered = t2SpySpec.replace("  expect(handlers.onClick).toHaveBeenCalled();\n", "");

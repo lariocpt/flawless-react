@@ -392,6 +392,12 @@ function findSites(strippedBody: string): Site[] {
  * "…"` and `for (const t of ["…", …])`. A text query over one of these asserts
  * literal copy (T1); a text query over any other identifier asserts a value
  * the spec cannot name — a fixture (T3).
+ *
+ * The one exception to the identifier rule is a QUOTED `flawless-` sentinel
+ * used directly as a text query's first argument: it is a literal, but the
+ * sentinel prefix says the value came from a fixture the test itself feeds,
+ * which is the T3 "state and payload" row, not T1 copy — classifySite's T3
+ * sentinel rule reads it before the T1 literal-text row ever does.
  */
 function literalBindings(stripped: string): Set<string> {
   const bound = new Set<string>();
@@ -457,6 +463,19 @@ function isLiteralArg(s: string): boolean {
   return isStringLiteral(s) || isNumericLiteral(s) || s === "true" || s === "false" || s === "null";
 }
 
+/**
+ * A quoted string in the `flawless-` sentinel convention. mockValues'
+ * `flawless-<seed>` literals are fixture values by construction, so a text
+ * query carrying one as its first argument asserts a payload the test feeds
+ * from its own fixture, not copy the source names — the D2a content witness
+ * emits exactly this shape, and reading it as T1 copy would under-count the
+ * only DOM assertion a data-flow change falsifies.
+ */
+function isFixtureSentinel(q: string): boolean {
+  if (!isStringLiteral(q)) return false;
+  return q.slice(1, -1).startsWith("flawless-");
+}
+
 // ---------------------------------------------------------------------------
 // The tier rules — one site at a time, straight from PLAN-00's table
 // ---------------------------------------------------------------------------
@@ -501,6 +520,21 @@ function classifySite(
   const textQuery = TEXT_QUERY.test(arg);
 
   // --- T3: falsified by data-flow changes (PLAN-00 T3 row) ---
+  // A positive text query whose first argument is a quoted `flawless-`
+  // sentinel is the T3 "state and payload" row: the value comes from the
+  // fixture the test feeds, so the claim dies when the data flow changes,
+  // not when copy is reworded. Any matcher — the sentinel in the query IS
+  // the payload claim, so even `toBeInTheDocument` over it reads T3. The
+  // rule sits BEFORE the T1 literal-text row on purpose: the same line read
+  // as a plain literal would be copy; the sentinel prefix is what makes it
+  // data. An absence leg (.not) falls through to the rows below like every
+  // other not-leg — the classifier never over-reads.
+  if (textQuery && !not) {
+    const q = textQueryArg(arg);
+    if (q !== undefined && isFixtureSentinel(q)) {
+      return { tier: "T3", evidence: `fixture sentinel text witness: ${short(q)}` };
+    }
+  }
   if (matcher === "toHaveBeenCalledWith" && !not) {
     if (isLiteralArg(matcherArg)) {
       // The router-target shape: the literal is copy the source itself names,

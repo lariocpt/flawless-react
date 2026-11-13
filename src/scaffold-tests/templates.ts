@@ -211,6 +211,28 @@ export interface UnitBrowserRenderOptions {
 
 export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[] {
   const flat = flattenTrees(opts.trees);
+  // Field names this component's SUBTREE renders as text — the DOM port of
+  // the native plane's renderedFields (nativeTemplates.ts:84): `{building.name}`
+  // in a row component records propUsage { kind: "jsx-child", member: "name" },
+  // and every child's members count, because the walk is over the subtree and
+  // the evidence is attributed to the entry file. The D2a content witness
+  // (PLAN-02 item 1) is its only consumer: a fixture value under a rendered
+  // field is the only string the fetch-success assertion can claim is the
+  // fetched data — no display-key heuristic is involved anywhere.
+  const renderedFields = new Map<string, Set<string>>();
+  for (const tree of opts.trees) {
+    const members = new Set<string>();
+    const walk = (t: ComponentTree): void => {
+      for (const u of t.entry.propUsage ?? []) {
+        if (u.kind === "jsx-child" && u.member) members.add(u.member);
+      }
+      for (const child of t.children) walk(child);
+    };
+    walk(tree);
+    const existing = renderedFields.get(tree.entry.filePath) ?? new Set<string>();
+    for (const m of members) existing.add(m);
+    renderedFields.set(tree.entry.filePath, existing);
+  }
   const specNames = allocateSpecNames(flat);
   const withBrowser = opts.browserSpecs !== false;
   const authStubs = collectAuthStubs(
@@ -295,7 +317,14 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
         absPath,
         skipIfExists: true,
         content: ensureJestDomAugmentation(
-          renderUnitFile(c, opts, srcDir, `./${base}`, opts.todos?.for(absPath)),
+          renderUnitFile(
+            c,
+            opts,
+            srcDir,
+            `./${base}`,
+            renderedFields.get(c.info.filePath) ?? new Set(),
+            opts.todos?.for(absPath),
+          ),
         ),
       });
     } else {
@@ -311,6 +340,7 @@ export function renderUnitBrowser(opts: UnitBrowserRenderOptions): RenderedFile[
             opts,
             fromDir,
             toRel(fromDir, c.info.filePath),
+            renderedFields.get(c.info.filePath) ?? new Set(),
             opts.todos?.for(target),
           ),
         ),
@@ -383,6 +413,8 @@ function renderUnitFile(
   opts: UnitBrowserRenderOptions,
   specDir: string,
   importPath: string,
+  /** Field names this component's subtree renders as text (jsx-child). */
+  renderedFields: Set<string>,
   todo?: TodoRecorder,
 ): string {
   const providerImport = opts.provider ? toImportPath(specDir, opts.provider) : undefined;
@@ -443,6 +475,7 @@ test("${name} is a next/og route handler", () => {
         providerImport,
         mocksImport,
         opts.apiRoutes,
+        renderedFields,
         specDir,
         todo,
         autoProv,
@@ -1710,6 +1743,8 @@ function unitSpec(
   providerImport: string | undefined,
   mocksImport: string | undefined,
   apiRoutes: NextjsApiRoute[] | undefined,
+  /** Field names this component's subtree renders as text (jsx-child). */
+  renderedFields: Set<string>,
   specDir?: string,
   todo?: TodoRecorder,
   autoProv?: AutoProvBits,
@@ -1833,6 +1868,7 @@ function unitSpec(
           fetchSubjects,
           apiRoutes,
           firstClickTrigger(info),
+          renderedFields,
           todo,
           hardDispatch,
         )
@@ -2284,12 +2320,98 @@ function clickFetchDispatch(info: ComponentInfo): Map<FetchCallInfo, string> {
   return out;
 }
 
+/**
+ * The D2a content witness: the fixture value the fetch-success test asserts
+ * on screen.
+ *
+ * Ported from the native plane's displayWitness (nativeTemplates.ts:1338)
+ * with exactly the two conditions the port carries:
+ *
+ *   (a) the value is a string starting with the `flawless-` sentinel —
+ *       mockValues' fixture-value convention, so the value is fixture data
+ *       by construction, not copy the app happens to contain;
+ *   (b) the field name is in `rendered` — a propUsage `jsx-child` member
+ *       somewhere in the component's SUBTREE (the parent's own member
+ *       reads count too: the walk attributes the whole subtree to the
+ *       root). This is the evidence the port exists to carry.
+ *
+ * The native's third rung, the DISPLAY_KEYS fallback, does NOT come across.
+ * PLAN-02's Moot list refuses "display-field heuristics not backed by
+ * propUsage (the documented 16-of-31 mistake)": the first cut picked the
+ * witness from a hand-written list of display-ish key names and 16 of 31
+ * loaded-state tests asserted a field the row does not render. Acceptance 3
+ * is the same refusal stated as a gate — "for every emitted witness, the
+ * field name appears in that component's propUsage jsx-child members". A
+ * key-name list satisfies neither, so it stays a native-plane fallback for
+ * the gap only that plane has (a row whose child the analyser could not
+ * reach) and is refused here, where the subtree walk is the evidence.
+ *
+ * Determinism is a gate, not a convenience: PLAN-02's Gates say "a witness
+ * chosen by Object.entries order would not be byte-stable, so the selection
+ * must be deterministic and sorted". The recursion therefore collects EVERY
+ * qualifying (field, value) pair and selects over the candidates a total
+ * order — depth ascending (depth of the owning object; the fixture root's
+ * own fields are 0), then key ascending, then full path ascending — taking
+ * the first. Comparison is plain codepoint, never locale, so the order is
+ * the same on every machine, every run, for any key insertion order.
+ *
+ * Bare strings inside arrays are NOT candidates: they have no owning field
+ * name, so condition (b) has nothing to check. The native has the same
+ * refusal (displayWitness returns undefined for non-object values).
+ */
+export interface ContentWitness {
+  /** The fixture value as written in the inlined FIXTURE. */
+  value: string;
+  /** The field name the subtree renders as a JSX child (condition b). */
+  field: string;
+  /** Dotted path from the fixture root, e.g. "rows.0.label". */
+  path: string;
+}
+
+export function contentWitness(
+  fixture: unknown,
+  rendered: Set<string>,
+): ContentWitness | undefined {
+  interface Candidate {
+    depth: number;
+    key: string;
+    path: string;
+    value: string;
+  }
+  const candidates: Candidate[] = [];
+  const walk = (value: unknown, depth: number, prefix: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, depth + 1, `${prefix}${i}.`));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      const path = `${prefix}${key}`;
+      if (rendered.has(key) && typeof v === "string" && v.startsWith("flawless-")) {
+        candidates.push({ depth, key, path, value: v });
+      }
+      walk(v, depth + 1, `${path}.`);
+    }
+  };
+  walk(fixture, 0, "");
+  if (candidates.length === 0) return undefined;
+  candidates.sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  });
+  const c = candidates[0] as Candidate;
+  return { value: c.value, field: c.key, path: c.path };
+}
+
 function emitFetchTests(
   name: string,
   info: ComponentInfo,
   fetches: FetchCallInfo[],
   apiRoutes: NextjsApiRoute[] | undefined,
   trigger: string | undefined,
+  /** Field names this component's subtree renders as text (jsx-child). */
+  renderedFields: Set<string>,
   todo?: TodoRecorder,
   hardDispatch?: Map<FetchCallInfo, string>,
 ): string {
@@ -2324,6 +2446,14 @@ function emitFetchTests(
       fixture !== undefined
         ? "// Fixture from the project's OpenAPI spec examples."
         : todoLine("no example found in the API spec — replace {} with a realistic fixture.");
+    // D2a (PLAN-02 item 2): the witness the success scenario may assert. The
+    // success test is the DECLARED-loaded-state test — its own handler returns
+    // exactly the FIXTURE above — so the fixture's value on screen is a claim
+    // about the fetched data, and the branch-stability rule (item 6) cannot
+    // conflict with it: the test declares the loaded branch, and this fixture
+    // is what makes that declaration true. When no rendered field carries a
+    // sentinel value the named TODO stays — the refusal is the rule, not a bug.
+    const witness = contentWitness(fixture, renderedFields);
 
     // URL holes that are props default to "" and would collapse a path
     // segment (/api/x//y never matches :param) — render with real values.
@@ -2343,7 +2473,11 @@ describe("${name} ${f.method} ${mswPath}", () => {
     const { container } = renderTarget(${renderArg});
     void container;${triggerLinesFor(f)}
     await waitFor(() => expect(calls).toBeGreaterThan(0), { timeout: 3000 });
-    ${todoLine("assert rendered content derived from FIXTURE.")}
+    ${
+      witness !== undefined
+        ? `// Content witness: the handler above returns the FIXTURE, and this\n    // component's subtree renders \`${witness.field}\` as text (propUsage\n    // jsx-child) — so the fixture's value at \`${witness.path}\` on screen proves\n    // the fetched data rendered, not copy that happens to match.\n    expect(screen.getAllByText(${JSON.stringify(witness.value)}, { exact: false }).length).toBeGreaterThan(0);`
+        : todoLine("assert rendered content derived from FIXTURE.")
+    }
   });
 
   test("stays stable while the response is delayed (loading state)", async () => {
