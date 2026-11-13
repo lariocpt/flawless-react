@@ -31,12 +31,13 @@ import { classifySpec, type Tier } from "../src/reporters/depth.ts";
  * (items 3 and 4 shipped), each now a T2 surface row. Tier notes:
  * the classifier reads toBeDisabled as T2 (src/reporters/depth.ts:521) while
  * the D1a receipt calls it T1 — the census records the classifier's reading,
- * so P1 is pinned T2 here. Re-pinned by D2a (PLAN-02 items 1–2): P8 crossed
- * T1→T3 — the fixture restructure (parent fetches into state, child renders
- * {data.greeting}) makes the OpenAPI example value witness-eligible, and the
- * success scenario now asserts it on screen; the pin bytes are measured
- * in-process on this tree, and the census block plus the binary lineage
- * follow in the re-pin commit built from it.
+ * so P1 is pinned T2 here. Re-pinned at cc6bbbd by D2a (PLAN-02 items 1–2):
+ * P8 crossed T1→T3 — the fixture restructure (parent fetches into state,
+ * child renders {data.greeting}) makes the OpenAPI example value
+ * witness-eligible, and the success scenario now asserts it on screen (the
+ * D0 ruler, 095e8a8, reads the quoted flawless- sentinel text query as T3);
+ * the census block in the baseline is measured from a binary built at that
+ * commit, per the D1b/D1c lineage convention.
  */
 
 const FIXTURE = path.resolve(__dirname, "fixtures", "depthapp");
