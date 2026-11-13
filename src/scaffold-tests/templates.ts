@@ -2284,6 +2284,90 @@ function clickFetchDispatch(info: ComponentInfo): Map<FetchCallInfo, string> {
   return out;
 }
 
+/**
+ * The D2a content witness: the fixture value the fetch-success test asserts
+ * on screen.
+ *
+ * Ported from the native plane's displayWitness (nativeTemplates.ts:1338)
+ * with exactly the two conditions the port carries:
+ *
+ *   (a) the value is a string starting with the `flawless-` sentinel —
+ *       mockValues' fixture-value convention, so the value is fixture data
+ *       by construction, not copy the app happens to contain;
+ *   (b) the field name is in `rendered` — a propUsage `jsx-child` member
+ *       somewhere in the component's SUBTREE (the parent's own member
+ *       reads count too: the walk attributes the whole subtree to the
+ *       root). This is the evidence the port exists to carry.
+ *
+ * The native's third rung, the DISPLAY_KEYS fallback, does NOT come across.
+ * PLAN-02's Moot list refuses "display-field heuristics not backed by
+ * propUsage (the documented 16-of-31 mistake)": the first cut picked the
+ * witness from a hand-written list of display-ish key names and 16 of 31
+ * loaded-state tests asserted a field the row does not render. Acceptance 3
+ * is the same refusal stated as a gate — "for every emitted witness, the
+ * field name appears in that component's propUsage jsx-child members". A
+ * key-name list satisfies neither, so it stays a native-plane fallback for
+ * the gap only that plane has (a row whose child the analyser could not
+ * reach) and is refused here, where the subtree walk is the evidence.
+ *
+ * Determinism is a gate, not a convenience: PLAN-02's Gates say "a witness
+ * chosen by Object.entries order would not be byte-stable, so the selection
+ * must be deterministic and sorted". The recursion therefore collects EVERY
+ * qualifying (field, value) pair and selects over the candidates a total
+ * order — depth ascending (depth of the owning object; the fixture root's
+ * own fields are 0), then key ascending, then full path ascending — taking
+ * the first. Comparison is plain codepoint, never locale, so the order is
+ * the same on every machine, every run, for any key insertion order.
+ *
+ * Bare strings inside arrays are NOT candidates: they have no owning field
+ * name, so condition (b) has nothing to check. The native has the same
+ * refusal (displayWitness returns undefined for non-object values).
+ */
+export interface ContentWitness {
+  /** The fixture value as written in the inlined FIXTURE. */
+  value: string;
+  /** The field name the subtree renders as a JSX child (condition b). */
+  field: string;
+  /** Dotted path from the fixture root, e.g. "rows.0.label". */
+  path: string;
+}
+
+export function contentWitness(
+  fixture: unknown,
+  rendered: Set<string>,
+): ContentWitness | undefined {
+  interface Candidate {
+    depth: number;
+    key: string;
+    path: string;
+    value: string;
+  }
+  const candidates: Candidate[] = [];
+  const walk = (value: unknown, depth: number, prefix: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, depth + 1, `${prefix}${i}.`));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      const path = `${prefix}${key}`;
+      if (rendered.has(key) && typeof v === "string" && v.startsWith("flawless-")) {
+        candidates.push({ depth, key, path, value: v });
+      }
+      walk(v, depth + 1, `${path}.`);
+    }
+  };
+  walk(fixture, 0, "");
+  if (candidates.length === 0) return undefined;
+  candidates.sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  });
+  const c = candidates[0] as Candidate;
+  return { value: c.value, field: c.key, path: c.path };
+}
+
 function emitFetchTests(
   name: string,
   info: ComponentInfo,
